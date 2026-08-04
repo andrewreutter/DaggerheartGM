@@ -109,6 +109,7 @@ Each hook: **name**, **when it runs**, **Context: list of subdocument names** wi
 
 - **onRest** — When building rest move options (getRestMovesForCharacter). **Context:** `rest` (4.4), `feature` (4.11).
 - **onSessionStart** — When GM clicks Start Session and acknowledges. **Context:** `characters` (4.9), `feature` (4.11 with get/set), `character` (4.2). When **sessionStartOnce: true**, called once with `feature: null` and `characters` = all party characters; otherwise called per character with `feature` = descriptor + get/set.
+- **onPhysicalRollResolved** *(V2 engine, optional)* — Called after the GM acknowledges a banner that was created by `table.sheet.rollThenResume(opts, resumeState)` inside `onUse`/`onSessionStart`/another hook. Receives the actual die values so deferred logic can run. **Signature:** `(table, rollResult, resumeState) => void`. `rollResult = { total: number, values: number[], notation: string }` — `values` contains individual face values parsed from `roll.subItems[].details`; `total` is their sum. `resumeState` is the opaque value passed to `rollThenResume`. `table.me` resolves to the viewer at trigger time (the character who triggered the roll, which may differ from the feature source in cross-sheet scenarios). Use `table.me.*` and `table.feature.*` mutations as usual. See Feature Authoring Guide §C.8 for full example and when-to-use guidance.
 
 ### Targeted (adversary targets character)
 

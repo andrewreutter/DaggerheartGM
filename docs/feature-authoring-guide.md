@@ -1451,6 +1451,44 @@ For **testability**, inject a deterministic RNG by passing `_rng: () => someValu
 
 **Use `table.rollDie()` only for automatic rolls.** If the feature lets the player choose whether to roll, implement it as a Chip with `onUse` calling `table.rollDie()`.
 
+#### C.8 Physical (Animated) Dice Rolls That Resume Logic (`table.sheet.rollThenResume`)
+
+Sometimes a feature needs to roll a die **visually** (3D animation + banner, GM-acknowledged) and then continue its logic once the real result is known. This is the case when the result must appear on-screen and be acknowledged by the GM before the effect is applied — for example, Seraph's Prayer Dice pool at session start, or Bard's Rally Die clearing stress.
+
+Use `table.sheet.rollThenResume(opts, resumeState)` instead of `table.rollDie`:
+
+```js
+hooks: {
+  onSessionStart(table) {
+    const n = spellcastDiceCount(table);
+    if (n <= 0) return;
+    table.sheet.rollThenResume(
+      { rollText: `${n}d4`, displayName: `${table.me?.name} — Prayer Dice` },
+      { diceCount: n }   // opaque resumeState, passed back verbatim to onPhysicalRollResolved
+    );
+  },
+
+  onPhysicalRollResolved(table, rollResult, resumeState) {
+    // rollResult = { total: number, values: number[], notation: string }
+    const pool = rollResult.values.length > 0 ? rollResult.values : [rollResult.total];
+    table.me.setPrayerDicePool(pool);
+  },
+},
+```
+
+**API contract:**
+
+- `table.sheet.rollThenResume(opts, resumeState)` — same `opts` shape as `table.sheet.actionRoll` (`rollText`, `displayName`, `rollMeta`). Additionally stamps `rollMeta._v2PhysicalRollResume` with the feature name and owner/viewer instance ids so the host can resume the correct feature after GM acknowledgment. Returns immediately — the `onUse`/hook ends here.
+- `hooks.onPhysicalRollResolved(table, rollResult, resumeState)` — optional hook, called once by the host after the GM acknowledges the banner. `rollResult = { total, values, notation }` where `values` contains individual die face values (parsed from `roll.subItems[].details`). `resumeState` is the opaque value passed to `rollThenResume`.
+
+**Owner vs viewer (cross-sheet rolls):** When an ally spends a Bard-granted Rally Die from their own sheet, the Bard owns the `Rally` feature definition but the ally is `table.me`. `rollThenResume` automatically captures both instance ids. During `onPhysicalRollResolved`, `table.me` resolves to the ally (viewer), not the Bard. This is transparent to the feature author — just write against `table.me` normally.
+
+**When to use this vs `rollDie` vs `actionRoll`:**
+- `table.rollDie(notation)` — silent, synchronous, no animation. Use for automatic sub-rolls inside a chip or hook where the visual is not needed (e.g. Resilient armor check).
+- `table.sheet.actionRoll(opts)` — fire-and-forget animated roll. No way to receive the result in engine code.
+- `table.sheet.rollThenResume(opts, resumeState)` — animated roll that resumes `hooks.onPhysicalRollResolved` with actual die values after GM acknowledgment. Use when the result must be visible on screen and must feed back into the feature's logic.
+- `gameTableDeferUntilBannerAck: true` on a chip — defers the `onUse` call until after a *different* banner is acknowledged; does not roll a new die.
+
 ---
 
 > **⚠️ A Note for AI Assistants & Developers:**

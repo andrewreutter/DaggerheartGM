@@ -165,6 +165,11 @@ describe('Divine Wielder — Sparing Touch', () => {
 });
 
 describe('Divine Wielder — Devout', () => {
+  // Devout.onSessionStart still uses table.rollDie (silent, inline) to roll n+1 d4s and set the
+  // pool directly. Seraph's PrayerDice.onSessionStart was migrated to rollThenResume (physical
+  // animated roll), so both features fire at session start but produce different mutation types.
+  // At tier 3+: PrayerDice emits a sheetActionRoll; Devout still emits setPrayerDicePool directly.
+
   it('onSessionStart replaces Prayer Dice pool with (n+1) d4 drop lowest at tier 3+', () => {
     const char = mockCharacter({
       instanceId: 'dw-1',
@@ -184,14 +189,20 @@ describe('Divine Wielder — Devout', () => {
       ]
     );
     const { mutations } = loop.runPhase('intent');
+    // Devout's inline pool replacement is the authoritative setPrayerDicePool mutation.
     const pools = mutations.filter((m) => m.type === 'setPrayerDicePool');
     const last = pools[pools.length - 1];
     expect(last.payload.instanceId).toBe('dw-1');
     expect(last.payload.pool).toHaveLength(2);
     expect(last.payload.pool).toEqual([2, 2]);
+    // PrayerDice also fires a sheetActionRoll (physical dice animation).
+    const sheetRolls = mutations.filter((m) => m.type === 'sheetActionRoll');
+    expect(sheetRolls.length).toBeGreaterThanOrEqual(1);
   });
 
-  it('does not replace Prayer Dice pool below tier 3', () => {
+  it('does not replace Prayer Dice pool below tier 3 — PrayerDice emits sheetActionRoll instead', () => {
+    // Below tier 3, Devout.onSessionStart returns early (no pool override).
+    // PrayerDice.onSessionStart now emits sheetActionRoll (physical die) rather than setPrayerDicePool.
     const char = mockCharacter({
       instanceId: 'dw-1',
       classId: 'srd-cls-seraph',
@@ -208,9 +219,13 @@ describe('Divine Wielder — Devout', () => {
       ]
     );
     const { mutations } = loop.runPhase('intent');
+    // No Devout pool override (tier < 3).
     const pools = mutations.filter((m) => m.type === 'setPrayerDicePool');
-    expect(pools).toHaveLength(1);
-    expect(pools[0].payload.pool).toHaveLength(2);
+    expect(pools).toHaveLength(0);
+    // PrayerDice emits the physical die roll instead.
+    const sheetRolls = mutations.filter((m) => m.type === 'sheetActionRoll');
+    expect(sheetRolls.length).toBe(1);
+    expect(sheetRolls[0].payload.rollText).toBe('[2d4]');
   });
 });
 

@@ -15,7 +15,7 @@ import { buildV2RegistryWithSrdItems } from '../client/lib/v2-declarative-sheet.
  *   chipKey: string,
  *   rng?: () => number,
  * }} params
- * @returns {{ ok: true, updates: { instanceId: string, updates: object }[], actionLoopNotifications: object[] } | { ok: false, status: number, error: string }}
+ * @returns {{ ok: true, updates: { instanceId: string, updates: object }[], actionLoopNotifications: object[], sheetActionRolls: { rollText: string, displayName: string, rollMeta: object }[] } | { ok: false, status: number, error: string }}
  */
 export function computePlayerV2CrossSheetChipApply(params) {
   const { activeElements, tableState, viewerInstanceId, chipKey, rng } = params || {};
@@ -59,11 +59,11 @@ export function computePlayerV2CrossSheetChipApply(params) {
     return { ok: false, status: 400, error: 'No effect' };
   }
 
-  const { updates, actionLoopNotifications } = applyV2LifecycleMutations(
+  const { updates, actionLoopNotifications, sheetActionRolls } = applyV2LifecycleMutations(
     activeElements,
     mutations,
     chip._ownerInstanceId
   );
 
-  return { ok: true, updates, actionLoopNotifications };
+  return { ok: true, updates, actionLoopNotifications, sheetActionRolls: sheetActionRolls || [] };
 }

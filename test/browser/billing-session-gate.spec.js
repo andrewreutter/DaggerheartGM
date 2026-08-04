@@ -46,11 +46,11 @@ import { authenticate } from '../helpers/auth.js';
  * with the same fake snapshot keeps every test's DOM state fully synthetic.
  *
  * @param {import('@playwright/test').Page} page
- * @param {{ pendingBanners?: object[], tableTop?: object }} opts
+ * @param {{ pendingBanners?: object[], tableTop?: object, elements?: object[] }} opts
  */
-async function mockGmStream(page, { pendingBanners = [], tableTop = { sessionStarted: false } } = {}) {
+async function mockGmStream(page, { pendingBanners = [], tableTop = { sessionStarted: false }, elements = [] } = {}) {
   const tableState = {
-    elements: [],
+    elements,
     featureCountdowns: {},
     sessionCountdowns: [],
     tableBattleMods: {},
@@ -263,6 +263,98 @@ test('T11: mid-session ops are NOT affected by tableNotLive (code-path check)', 
   // sessionStartOpIntercepted should still be false — we never tried to start
   // a session (the table is already live), so no billing check happened.
   expect(sessionStartOpIntercepted).toBe(false);
+});
+
+test('Regression: acknowledging Start Session does not pop the play-blocked dialog when clearing session-only feature usage', async ({ page }) => {
+  // Reproduces a bug where `runSessionStartClear()` (fired right after the GM
+  // acknowledges the Start Session banner) cleared a character's once/session
+  // `featureUsage` via the gated `updateActiveElement` wrapper. That wrapper reads
+  // the local `sessionPlayAllowed` prop, which is only refreshed once the next
+  // `table_state` SSE snapshot arrives — but `postTableOpAwait({ op: 'set-table-top' })`
+  // resolves as soon as the HTTP round-trip completes, well before that snapshot
+  // shows up. So the clear ran against stale "session not started" state and
+  // incorrectly popped the "Session not started" / "Session paused" dialog
+  // (Cancel / Allow all edits / Do it anyway) right after starting the session.
+  const mockSessionStartBanner = {
+    _rollDbId: 'mock-session-start-id',
+    _action: true,
+    _sessionStart: true,
+    rollUser: 'GM',
+    actionName: 'Start Session',
+    actionText: 'Start Session',
+    timestamp: Date.now(),
+    _fromHistory: false,
+  };
+
+  // A once/session feature usage entry — clearing it on session start is what
+  // drives the `updateActiveElement` call inside `runSessionStartClear`.
+  const characterEl = {
+    instanceId: 'char-session-start-1',
+    elementType: 'character',
+    name: 'Session Start Test Char',
+    tier: 1,
+    hope: 6, maxHope: 6, maxHp: 6, maxStress: 6,
+    currentHp: 6, currentStress: 0, conditions: '',
+    featureUsage: { someSessionFeature: { used: true, cycle: 'session' } },
+  };
+
+  await authenticate(page);
+  await mockMyTables(page);
+  await mockBillingStatus(page, { isLive: true, reason: 'campaign_pass', paidThroughAt: new Date(Date.now() + 30 * 86400000).toISOString(), trialEndsAt: null });
+  // Override mockMyTables()'s generic table_state mock (elements: []) so the initial
+  // loadTableState() REST call and the SSE table_state snapshot agree on `elements` —
+  // otherwise whichever resolves last can stomp the character back out and flake the test.
+  await page.route('/api/data/table_state*', (route) => {
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        items: [{
+          id: 'test-user-uid',
+          ownerUid: 'test-user-uid',
+          tableName: 'Test Table',
+          gmDisplayName: 'Test GM',
+          elements: [characterEl],
+          featureCountdowns: {},
+          sessionCountdowns: [],
+          tableBattleMods: {},
+          fearCount: 0,
+          playerEmails: [],
+          top: { sessionStarted: false },
+        }],
+        totalCount: 1,
+      }),
+    });
+  });
+  await mockGmStream(page, { pendingBanners: [mockSessionStartBanner], elements: [characterEl] });
+
+  await page.route('/api/room/my/banner-ack', (route) => {
+    route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ok: true }) });
+  });
+
+  const opBodies = [];
+  await page.route('/api/room/my/op', async (route) => {
+    const body = JSON.parse((await route.request().postData()) || '{}');
+    opBodies.push(body);
+    route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ok: true }) });
+  });
+
+  await page.goto('/table/test-user-uid');
+
+  const ackButton = page.locator('button', { hasText: 'Acknowledge' }).first();
+  await expect(ackButton).toBeVisible({ timeout: 10000 });
+  await ackButton.click();
+
+  // Give the session-start clear a moment to run its (now bypassed) element update.
+  await expect.poll(() => opBodies.some((b) =>
+    (b.op === 'update-element' && b.instanceId === 'char-session-start-1') ||
+    (b.op === 'update-elements' && (b.updates || []).some((u) => u.instanceId === 'char-session-start-1'))
+  ), { timeout: 5000 }).toBe(true);
+
+  // The play-blocked dialog must never have appeared.
+  await expect(page.locator('button', { hasText: 'Do it anyway' })).not.toBeVisible();
+  await expect(page.locator('button', { hasText: 'Allow all edits' })).not.toBeVisible();
+  await expect(page.locator('text=Session not started')).not.toBeVisible();
+  await expect(page.locator('text=Session paused')).not.toBeVisible();
 });
 
 test('T10: Support this table modal opens and shows table info', async ({ page }) => {

@@ -295,11 +295,12 @@ describe('Bard — Rally', () => {
     expect(party.payload.value).toEqual({ b1: { dice: 'd6' } });
   });
 
-  it('Spend Rally Die — Clear Stress clears Stress and partyDice for table.me', () => {
-    const ally = mockCharacter({
-      instanceId: 'c2',
-      currentStress: 4,
-    });
+  // After the rollThenResume migration, "Spend Rally Die — Clear Stress" now queues a physical
+  // (animated, GM-acknowledged) die roll via sheetActionRoll instead of silently calling rollDie
+  // + clearStress. The Stress clear happens in Rally.hooks.onPhysicalRollResolved after GM ack.
+
+  it('Spend Rally Die — Clear Stress emits sheetActionRoll with _v2PhysicalRollResume', () => {
+    const ally = mockCharacter({ instanceId: 'c2', currentStress: 4 });
     const bard = mockCharacter({ instanceId: 'b1', classId: 'srd-cls-bard' });
     const gs = mockGameState({
       activeElements: [bard, ally],
@@ -307,14 +308,41 @@ describe('Bard — Rally', () => {
       _featureKey: 'Rally',
       featureState: { Rally: { partyDice: { c2: { dice: 'd6' } } } },
     });
-    const t = buildTableSnapshot({ ...gs, _rng: () => 0.99 });
+    const t = buildTableSnapshot(gs);
     const chips = collectChips([{ ...Rally, _ownerInstanceId: 'b1' }], 'card', t);
     const stressChip = chips.find((c) => c.name === 'Spend Rally Die — Clear Stress');
     expect(stressChip).toBeDefined();
     const mut = activateChip(stressChip, t, makeChipState());
-    expect(mut.some((m) => m.type === 'clearStress' && m.payload.instanceId === 'c2' && m.payload.amount === 6)).toBe(true);
-    const party = mut.find((m) => m.type === 'setFeatureState' && m.payload.key === 'partyDice');
-    expect(party.payload.value).toEqual({});
+    // Should emit sheetActionRoll, not clearStress + rollDie.
+    const roll = mut.find((m) => m.type === 'sheetActionRoll');
+    expect(roll).toBeDefined();
+    expect(roll.payload.rollText).toBe('[d6]');
+    expect(roll.payload.rollMeta?._v2PhysicalRollResume).toBeDefined();
+    expect(roll.payload.rollMeta._v2PhysicalRollResume.resumeState?.spenderInstanceId).toBe('c2');
+    // No silent clearStress or rollDie in this phase.
+    expect(mut.some((m) => m.type === 'clearStress')).toBe(false);
+    expect(mut.some((m) => m.type === 'rollDie')).toBe(false);
+  });
+
+  it('Rally.hooks.onPhysicalRollResolved clears Stress and removes spender from partyDice', () => {
+    const bard = mockCharacter({ instanceId: 'b1', classId: 'srd-cls-bard' });
+    const ally = mockCharacter({ instanceId: 'c2', currentStress: 4 });
+    const gs = mockGameState({
+      activeElements: [bard, ally],
+      _ownerInstanceId: 'c2',  // table.me = ally (spender)
+      _featureKey: 'Rally',
+      _activeFeature: { ...Rally, _ownerInstanceId: 'b1' },
+      featureState: { Rally: { partyDice: { c2: { dice: 'd6' }, b1: { dice: 'd6' } } } },
+    });
+    const table = buildTableSnapshot(gs);
+    Rally.hooks.onPhysicalRollResolved(table, { total: 5, values: [5], notation: 'd6' }, { spenderInstanceId: 'c2' });
+    const mutations = applyMutations(table);
+    // Stress should be cleared on the ally (table.me = c2).
+    expect(mutations.some((m) => m.type === 'clearStress' && m.payload.instanceId === 'c2' && m.payload.amount === 5)).toBe(true);
+    // Only the spender's Rally Die should be removed.
+    const party = mutations.find((m) => m.type === 'setFeatureState' && m.payload.key === 'partyDice');
+    expect(party).toBeDefined();
+    expect(party.payload.value).toEqual({ b1: { dice: 'd6' } });
   });
 
   it('collectChipsForOtherCharacterSheets surfaces Rally stress chip for allies (Bard not viewer)', () => {

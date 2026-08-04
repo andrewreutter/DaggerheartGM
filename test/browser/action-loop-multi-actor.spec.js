@@ -603,6 +603,116 @@ test.describe('M2 — Cross-player reaction chip mid-banner (Seraph Prayer Dice)
   });
 });
 
+// Regression — real "Start Session" click actually rolls and grants Seraph Prayer Dice.
+//
+// Reported bug: clicking "▶ Session" and acknowledging the Start Session banner produced no
+// Prayer Dice roll at all — the die was never granted. Root causes (both now fixed):
+//   1. `runSessionStartClear` scanned raw `activeElements` for `.activeFeatures`, a field that
+//      is never present on server/SSE data (it's client-computed) — `onSessionStart` hooks
+//      never even ran.
+//   2. Once (1) was fixed, `Seraph.js`'s `onSessionStart` called `table.sheet.rollThenResume`
+//      with an un-bracketed dice notation (e.g. "2d4") — the server's rollFromText/buildRollData
+//      only extracts dice from `[expr]` segments, so the roll silently produced zero subItems
+//      and no banner was ever created (same bug as Bard Rally's "Spend — Clear Stress").
+// This test drives the real GM UI end to end: click "▶ Session" → Acknowledge the Start Session
+// banner → a real "<Seraph> — Prayer Dice" dice-roll banner appears → Acknowledge it → the pool
+// is granted (verified by the "Spend Rally Die"-style Prayer Die reviewAction chip becoming
+// available on the very next roll this character makes).
+test.describe('Regression — Start Session grants Seraph Prayer Dice via a real physical roll', () => {
+  let tableId;
+  let seraphInstanceId;
+  let seraphLibId;
+
+  test.beforeAll(async () => {
+    tableId = await setupTestTable({ playerEmails: [] });
+
+    const seraphLib = await createLibraryCharacter(ACTOR_GM, {
+      name: 'Session Test Seraph',
+      classId: 'srd-cls-seraph',
+      // `recomputeCharacter` only derives `spellcastTrait` when a subclass is resolved
+      // (`character-calc.js`: `if (srdSubclass || mcSubclass) result.spellcastTrait = ...`) —
+      // without one, spellcastDiceCount(table) is always 0 and onSessionStart never queues a
+      // roll, regardless of the rollThenResume fix. Divine Wielder is a real tier-1 Seraph
+      // subclass (spellcast trait Presence).
+      subclassId: 'srd-sub-divine-wielder',
+      tier: 1,
+      level: 1,
+      // Divine Wielder's SRD `spellcast_trait` is "Strength" (not the base Seraph class's
+      // Presence — subclasses can override) — a positive value is required for
+      // spellcastDiceCount(table) > 0 so onSessionStart actually queues a roll.
+      // `character-calc.js`'s `computeTraits` reads `baseTraits` (the raw character-builder
+      // input), NOT `traits` (the computed/derived output field on `activeElements`) — using
+      // the wrong key here silently zeroes every trait and spellcastDiceCount(table) stays 0.
+      baseTraits: { agility: 0, strength: 2, finesse: 0, instinct: 0, presence: 0, knowledge: 0 },
+    });
+    seraphLibId = seraphLib.id;
+
+    seraphInstanceId = `char-seraph-${Date.now()}`;
+    await addElementsToTable(tableId, [
+      {
+        instanceId: seraphInstanceId,
+        elementType: 'character',
+        id: seraphLib.id,
+        name: seraphLib.name,
+        currentHp: 6, maxHp: 6, currentStress: 0, maxStress: 6, hope: 2, maxHope: 6,
+        conditions: '',
+      },
+    ]);
+  });
+
+  test.afterAll(async () => {
+    if (tableId) await deleteTestTable(tableId);
+    if (seraphLibId) await deleteLibraryCharacter(ACTOR_GM, seraphLibId);
+  });
+
+  test('GM clicks Start Session; a real Prayer Dice banner rolls and, once acknowledged, the pool is granted', async ({ page }) => {
+    const consoleErrors = [];
+    page.on('console', (msg) => { if (msg.type() === 'error') consoleErrors.push(msg.text()); });
+
+    await authenticateActor(page, ACTOR_GM);
+    await page.goto(`/table/${tableId}`);
+    await expect(page.locator('text=Session Test Seraph').first()).toBeVisible({ timeout: 15000 });
+
+    // Hide the 3D dice canvas so pending banners resolve immediately and their Acknowledge
+    // buttons are clickable without waiting for/racing the tumbling-dice animation (same
+    // pattern as M2/M4/M5).
+    await page.getByLabel('Hide dice').click();
+
+    // Real click on the "▶ Session" button (handleSessionCycle('session')).
+    await page.getByRole('button', { name: '▶ Session' }).click();
+
+    // The Start Session action-only banner appears; acknowledging it runs runSessionStartClear(),
+    // which dispatches Seraph's onSessionStart hook.
+    const startSessionBanner = page.locator('.dice-result-banner', { hasText: 'Start Session' });
+    await expect(startSessionBanner).toBeVisible({ timeout: 8000 });
+    await startSessionBanner.locator('button', { hasText: 'Acknowledge' }).first().click();
+    await expect(startSessionBanner).not.toBeVisible({ timeout: 5000 });
+
+    // The Prayer Dice physical roll banner appears as a real dice-roll banner (not silently
+    // dropped) — this is the exact assertion that would have failed before either fix.
+    const prayerDiceBanner = page.locator('.dice-result-banner', { hasText: 'Session Test Seraph — Prayer Dice' });
+    await expect(prayerDiceBanner).toBeVisible({ timeout: 8000 });
+
+    // Acknowledge the Prayer Dice roll — this resolves onPhysicalRollResolved, which calls
+    // table.me.setPrayerDicePool(pool) and grants the die.
+    await prayerDiceBanner.locator('button', { hasText: 'Acknowledge' }).first().click();
+    await expect(prayerDiceBanner).not.toBeVisible({ timeout: 5000 });
+
+    // Verify the pool was actually granted (server-side state), rather than just that a roll
+    // happened: fetch the resolved table state and check the Seraph's `prayerDice.pool` runtime
+    // field (CHARACTER_RUNTIME_KEYS — `{ pool: number[] }`, set by `table.me.setPrayerDicePool`).
+    await expect(async () => {
+      const state = await getTableState(tableId);
+      const seraphEl = (state.elements || []).find((e) => e.instanceId === seraphInstanceId);
+      const pool = seraphEl?.prayerDice?.pool;
+      expect(Array.isArray(pool) && pool.length).toBeGreaterThan(0);
+    }).toPass({ timeout: 5000 });
+
+    const seriousErrors = consoleErrors.filter((e) => !/favicon|manifest|WebGL|\[DiceRoller\] init failed|Failed to load resource.*403/i.test(e));
+    expect(seriousErrors, `Unexpected console errors:\n${seriousErrors.join('\n')}`).toEqual([]);
+  });
+});
+
 // M3: Rest cycle with concurrent multi-player move selection
 // Status: PARTIALLY IMPLEMENTED — see below.
 
@@ -906,6 +1016,13 @@ test.describe('M5 — Cross-sheet chip affecting another player\'s sheet in real
     const filledBefore = await stressIconsOnA.count();
     expect(filledBefore).toBe(4); // seeded currentStress: 4
 
+    // Hide the 3D dice canvas on all three clients (real "Hide dice" button click) — same as
+    // M2/M4 — so the pending "Rally Die" physical-roll banner resolves immediately instead of
+    // intercepting clicks on the (invisible) tumbling-dice overlay for the Acknowledge click below.
+    for (const p of [page, playerAPage, playerBPage]) {
+      await p.getByLabel('Hide dice').click();
+    }
+
     // Player B opens their own character sheet (real click on their own sidebar card) to
     // reveal the cross-sheet chip sourced from the Bard's Rally feature
     // (`showOnOtherSheets: true`, collectV2CrossSheetChips → CharacterExperiences "Temporary
@@ -916,12 +1033,29 @@ test.describe('M5 — Cross-sheet chip affecting another player\'s sheet in real
     await expect(rallyChip).toBeVisible({ timeout: 8000 });
     await rallyChip.click();
 
-    // The activation POSTs to the real POST /api/room/:tableId/v2-cross-sheet-chip route,
-    // which recomputes the engine mutation server-side (roll the die, clear that much Stress,
-    // clear Player B's own partyDice entry) and applies it to Player B's own character
-    // element. The chip disappears from Player B's own sheet once the resulting `table_state`
-    // SSE snapshot reflects the mutation — there is no local optimistic update on the player
-    // chip-activation path.
+    // The activation POSTs to the real POST /api/room/:tableId/v2-cross-sheet-chip route, which
+    // recomputes the engine mutation server-side. "Spend Rally Die — Clear Stress" is a *physical*
+    // (animated, GM-acknowledged) roll via `table.sheet.rollThenResume` (src/features-v2/classes/Bard.js
+    // `spendRallyDieClearStress`) — the die roll itself becomes a real pending banner rather than
+    // applying instantly; the Stress clear + `partyDice` removal happen only once the GM Acknowledges
+    // that banner (`onPhysicalRollResolved`, resolved via `runV2PhysicalRollResolvedPhase`). The chip
+    // is not removed from Player B's sheet yet at this point — `partyDice` is only cleared on ack.
+    const rallyBannerTitle = 'Player B PC — Rally Die';
+    for (const p of [page, playerAPage, playerBPage]) {
+      await expect(p.locator('.dice-result-banner', { hasText: rallyBannerTitle })).toBeVisible({ timeout: 8000 });
+    }
+
+    // GM acknowledges the physical Rally Die roll (real click on the Acknowledge button).
+    const rallyBannerOnGm = page.locator('.dice-result-banner', { hasText: rallyBannerTitle });
+    const ackBtn = rallyBannerOnGm.locator('button', { hasText: 'Acknowledge' }).first();
+    await expect(ackBtn).toBeVisible({ timeout: 5000 });
+    await ackBtn.click();
+    await expect(page.locator('.dice-result-banner', { hasText: rallyBannerTitle })).not.toBeVisible({ timeout: 5000 });
+
+    // Once the GM's acknowledgment resolves `onPhysicalRollResolved` server-side, the resulting
+    // `table_state` SSE snapshot clears Player B's own `partyDice` entry (chip disappears on
+    // Player B's sheet) and reduces Player B's Stress — both propagate with no reload or further
+    // interaction on Player B's or Player A's side.
     await expect(rallyChip).toHaveCount(0, { timeout: 8000 });
 
     // Player A observes the same Stress-track change on their already-open Characters panel

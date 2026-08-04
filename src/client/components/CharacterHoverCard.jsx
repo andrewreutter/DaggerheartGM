@@ -444,7 +444,7 @@ export function CharacterHoverCard({
         fearCount,
         mapConfig,
       });
-      const { updates, actionLoopNotifications } = applyV2LifecycleMutations(
+      const { updates, actionLoopNotifications, sheetActionRolls } = applyV2LifecycleMutations(
         activeElementsForV2Snapshots,
         mutations,
         chip._ownerInstanceId
@@ -471,8 +471,12 @@ export function CharacterHoverCard({
             : {}),
         });
       }
+      // Post real VTT dice rolls for any `table.sheet.rollThenResume` / `actionRoll` mutations.
+      for (const p of sheetActionRolls || []) {
+        onRoll?.(p.rollText, p.displayName || el.name || '', p.rollMeta || {}, { characterEl: el });
+      }
     },
-    [v2Registry, el.instanceId, tableId, activeElementsForV2Snapshots, tableFeatureState, fearCount, mapConfig, onActionNotification]
+    [v2Registry, el, tableId, activeElementsForV2Snapshots, tableFeatureState, fearCount, mapConfig, onActionNotification, onRoll]
   );
 
   const handlePlayerCrossSheetChipClick = useCallback(

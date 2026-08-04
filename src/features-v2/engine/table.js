@@ -1611,6 +1611,45 @@ export function buildTableSnapshot(gameState = {}) {
           rollMeta: opts.rollMeta && typeof opts.rollMeta === 'object' ? opts.rollMeta : {},
         });
       },
+
+      /**
+       * Queue a physical (animated, GM-acknowledged) dice roll and resume deferred logic once the
+       * GM acks the resulting banner. The `onUse` / hook returns immediately; the host dispatches
+       * `hooks.onPhysicalRollResolved(table, rollResult, resumeState)` after acknowledgment.
+       *
+       * Two instance IDs are captured and stored in the mutation so that `table.me` resolves to
+       * the **correct character** during the resume phase — even for cross-sheet-triggered rolls
+       * (e.g. an ally spending a Bard-granted Rally Die) where the feature's natural owner (Bard)
+       * and the viewer (`table.me` at trigger time) differ:
+       *
+       * - `featureSourceInstanceId` — feature's natural owner; used to re-find the feature definition.
+       * - `meInstanceId` — viewer / `table.me` at trigger time; becomes `table.me` in the resume phase.
+       *
+       * For owned-chip and session-start cases these two ids are the same.
+       *
+       * @param {{ rollText: string, displayName?: string, rollMeta?: object }} opts
+       * @param {any} [resumeState] — opaque JSON-serializable context passed back to `onPhysicalRollResolved`
+       */
+      rollThenResume(opts = {}, resumeState = null) {
+        const rollText = typeof opts.rollText === 'string' ? opts.rollText.trim() : '';
+        if (!rollText) return;
+        const featureSourceInstanceId = activeFeature?._ownerInstanceId ?? ownerKey ?? null;
+        const meInstanceId = ownerKey ?? null;
+        const featureName = activeFeature?.name ?? gameState._featureKey ?? null;
+        addMutation(store, 'sheetActionRoll', {
+          rollText,
+          displayName: opts.displayName != null ? String(opts.displayName) : '',
+          rollMeta: {
+            ...(opts.rollMeta && typeof opts.rollMeta === 'object' ? opts.rollMeta : {}),
+            _v2PhysicalRollResume: {
+              featureName,
+              featureSourceInstanceId,
+              meInstanceId,
+              resumeState: resumeState !== undefined ? resumeState : null,
+            },
+          },
+        });
+      },
     },
 
     // Internal access for the engine

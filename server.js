@@ -4011,7 +4011,7 @@ app.post('/api/room/:tableId/v2-cross-sheet-chip', requireAuth, async (req, res)
     if (!computed.ok) {
       return res.status(computed.status).json({ error: computed.error });
     }
-    const { updates, actionLoopNotifications } = computed;
+    const { updates, actionLoopNotifications, sheetActionRolls } = computed;
     if (updates.length > 0) {
       await applyOpToTableState(tableId, { op: 'update-elements', updates });
     }
@@ -4035,6 +4035,15 @@ app.post('/api/room/:tableId/v2-cross-sheet-chip', requireAuth, async (req, res)
         _initiatorUid: req.uid,
       };
       await appendRollLog(gmUid, payload);
+    }
+    // Persist physical dice rolls queued by `table.sheet.rollThenResume` / `actionRoll` as real
+    // pending banners so the GM sees an animated dice roll and can acknowledge the result.
+    for (const p of sheetActionRolls || []) {
+      const rollData = buildRollData(p.rollText, p.displayName || '', req.uid, {
+        ...(p.rollMeta && typeof p.rollMeta === 'object' ? p.rollMeta : {}),
+        _initiatorUid: req.uid,
+      });
+      if (rollData) await appendRollLog(gmUid, rollData);
     }
     res.json({ ok: true });
   } catch (err) {

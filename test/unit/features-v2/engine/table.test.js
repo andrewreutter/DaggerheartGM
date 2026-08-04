@@ -1687,3 +1687,77 @@ describe('table.me.lastPosition', () => {
     expect(table.me?.lastPosition?.rangeFrom(advActor)).toBe('veryClose');
   });
 });
+
+// ---------------------------------------------------------------------------
+// table.sheet.rollThenResume
+// ---------------------------------------------------------------------------
+
+describe('table.sheet.rollThenResume()', () => {
+  it('stamps _v2PhysicalRollResume on the sheetActionRoll mutation', () => {
+    const char = mockCharacter({ instanceId: 'c1' });
+    const feature = { name: 'PrayerDice', _ownerInstanceId: 'c1' };
+    const gs = mockGameState({
+      activeElements: [char],
+      _ownerInstanceId: 'c1',
+      _featureKey: 'PrayerDice',
+      _activeFeature: feature,
+    });
+    const table = buildTableSnapshot(gs);
+    table.sheet.rollThenResume({ rollText: '2d4', displayName: 'Test' }, { diceCount: 2 });
+    const mutations = applyMutations(table);
+    expect(mutations).toHaveLength(1);
+    const [m] = mutations;
+    expect(m.type).toBe('sheetActionRoll');
+    expect(m.payload.rollText).toBe('2d4');
+    const resume = m.payload.rollMeta._v2PhysicalRollResume;
+    expect(resume).toBeDefined();
+    expect(resume.featureName).toBe('PrayerDice');
+    expect(resume.featureSourceInstanceId).toBe('c1');
+    expect(resume.meInstanceId).toBe('c1');
+    expect(resume.resumeState).toEqual({ diceCount: 2 });
+  });
+
+  it('captures separate featureSourceInstanceId and meInstanceId in cross-sheet scenario', () => {
+    // Simulate ally (c2) activating Bard (b1) cross-sheet feature.
+    // _activeFeature._ownerInstanceId = b1 (feature source), _ownerInstanceId = c2 (viewer/me).
+    const bard = mockCharacter({ instanceId: 'b1' });
+    const ally = mockCharacter({ instanceId: 'c2' });
+    const bardFeature = { name: 'Rally', _ownerInstanceId: 'b1' };
+    const gs = mockGameState({
+      activeElements: [bard, ally],
+      _ownerInstanceId: 'c2',    // ally is table.me
+      _featureKey: 'Rally',
+      _activeFeature: bardFeature,
+    });
+    const table = buildTableSnapshot(gs);
+    table.sheet.rollThenResume({ rollText: 'd6', displayName: 'Ally — Rally Die' }, { spenderInstanceId: 'c2' });
+    const mutations = applyMutations(table);
+    const resume = mutations[0].payload.rollMeta._v2PhysicalRollResume;
+    expect(resume.featureName).toBe('Rally');
+    expect(resume.featureSourceInstanceId).toBe('b1'); // feature owner
+    expect(resume.meInstanceId).toBe('c2');            // viewer/spender
+  });
+
+  it('falls back to _featureKey for featureName when _activeFeature is absent', () => {
+    const char = mockCharacter({ instanceId: 'c1' });
+    const gs = mockGameState({
+      activeElements: [char],
+      _ownerInstanceId: 'c1',
+      _featureKey: 'MyFeature',
+      _activeFeature: null,
+    });
+    const table = buildTableSnapshot(gs);
+    table.sheet.rollThenResume({ rollText: 'd6' }, null);
+    const mutations = applyMutations(table);
+    const resume = mutations[0].payload.rollMeta._v2PhysicalRollResume;
+    expect(resume.featureName).toBe('MyFeature');
+    expect(resume.resumeState).toBeNull();
+  });
+
+  it('does nothing when rollText is empty', () => {
+    const table = buildTableSnapshot(mockGameState());
+    table.sheet.rollThenResume({ rollText: '' }, null);
+    const mutations = applyMutations(table);
+    expect(mutations).toHaveLength(0);
+  });
+});

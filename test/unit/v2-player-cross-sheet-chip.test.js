@@ -17,7 +17,10 @@ describe('computePlayerV2CrossSheetChipApply', () => {
     expect(r.status).toBe(400);
   });
 
-  it('applies Rally clear stress for ally viewer (deterministic rng)', () => {
+  // After the rollThenResume migration, "Spend Rally Die — Clear Stress" now queues a physical
+  // die roll via sheetActionRoll instead of silently applying clearStress. The actual stress clear
+  // happens server-side via `onPhysicalRollResolved` after the GM acknowledges the banner.
+  it('Rally clear stress: emits sheetActionRoll with _v2PhysicalRollResume (no clearStress in updates)', () => {
     const bard = mockCharacter({ instanceId: 'b1', classId: 'srd-cls-bard' });
     const ally = mockCharacter({ instanceId: 'c2', currentStress: 4 });
     const activeElements = [bard, ally];
@@ -44,9 +47,16 @@ describe('computePlayerV2CrossSheetChipApply', () => {
       rng: () => 0.99,
     });
     expect(r.ok).toBe(true);
+    // The chip should produce a sheetActionRoll (physical die), not immediate clearStress updates.
+    expect(r.sheetActionRolls).toBeDefined();
+    expect(r.sheetActionRolls.length).toBe(1);
+    const physRoll = r.sheetActionRolls[0];
+    expect(physRoll.rollText).toBe('[d6]');
+    expect(physRoll.rollMeta?._v2PhysicalRollResume).toBeDefined();
+    expect(physRoll.rollMeta._v2PhysicalRollResume.featureName).toBe('Rally');
+    expect(physRoll.rollMeta._v2PhysicalRollResume.meInstanceId).toBe('c2');
+    // No immediate clearStress in updates (deferred to onPhysicalRollResolved).
     const clear = r.updates.find((u) => u.instanceId === 'c2' && u.updates.currentStress !== undefined);
-    expect(clear).toBeDefined();
-    const bardFs = r.updates.find((u) => u.instanceId === 'b1' && u.updates.featureState?.Rally);
-    expect(bardFs).toBeDefined();
+    expect(clear).toBeUndefined();
   });
 });

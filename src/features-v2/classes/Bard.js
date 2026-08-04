@@ -99,18 +99,29 @@ function spendRallyDieIntoPool(table, pool) {
   table.feature.set('partyDice', pd);
 }
 
-/** Roll the die, clear Stress equal to the result, and clear **`partyDice`** for **`table.me`**. */
+/**
+ * Queue a physical (animated, GM-acknowledged) Rally Die roll via `rollThenResume`.
+ * `onPhysicalRollResolved` on Rally will clear Stress and remove the spent die from `partyDice`.
+ * `resumeState` carries the instance id of the character spending the die (`table.me` at trigger
+ * time) so the resume phase can target the correct character even in cross-sheet scenarios.
+ */
 function spendRallyDieClearStress(table) {
   const me = table.me;
   if (!me?.isCharacter) return;
   const entry = partyDiceEntryForMe(table);
   if (!entry) return;
   const notation = entry.dice || 'd6';
-  const v = table.rollDie(notation);
-  me.clearStress(v);
-  const pd = { ...(table.feature.get('partyDice') || {}) };
-  delete pd[me.instanceId];
-  table.feature.set('partyDice', pd);
+  // Dice expressions in roll text must be bracket-wrapped ([...]) — the server's
+  // rollFromText/buildRollData only extracts subItems from `[expr]` segments; an
+  // unwrapped notation like "d6" parses to zero subItems and the roll (and banner)
+  // silently never gets created.
+  table.sheet.rollThenResume(
+    {
+      rollText: `[${notation}]`,
+      displayName: `${me.name ?? 'Ally'} — Rally Die`,
+    },
+    { spenderInstanceId: me.instanceId }
+  );
 }
 
 /**
@@ -157,6 +168,24 @@ export const Rally = {
     'Once per session, describe how you rally the party and give yourself and each of your allies a Rally Die. At level 1, your Rally Die is a d6. A PC can spend their Rally Die to roll it, adding the result to their action roll, reaction roll, damage roll, or to clear a number of Stress equal to the result. At the end of each session, clear all unspent Rally Dice. At level 5, your Rally Die increases to a d8.',
   frequency: 'session',
   onUse: rallySessionGrant,
+  hooks: {
+    /**
+     * Called after the GM acknowledges the "Clear Stress" physical die roll.
+     * `resumeState.spenderInstanceId` identifies the character who spent the die;
+     * `table.me` is already set to that character by the bridge module (meInstanceId).
+     */
+    onPhysicalRollResolved(table, rollResult, resumeState) {
+      const me = table.me;
+      if (!me?.isCharacter) return;
+      const total = rollResult.total ?? 0;
+      if (total > 0) me.clearStress(total);
+      // Clear the spent die from the Rally partyDice bag.
+      const spenderId = resumeState?.spenderInstanceId ?? me.instanceId;
+      const pd = { ...(table.feature.get('partyDice') || {}) };
+      delete pd[spenderId];
+      table.feature.set('partyDice', pd);
+    },
+  },
   chips: [
     {
       name: 'Grant Rally Dice',

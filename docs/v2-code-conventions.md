@@ -878,3 +878,25 @@ chips: [
 ];
 ```
 
+## CONV-042 — Physical roll resume: `rollThenResume` + `onPhysicalRollResolved` owner/viewer split
+
+**Problem:** `table.rollDie()` is silent (no animation, no banner). `table.sheet.actionRoll()` is fire-and-forget — `onUse`/hooks return immediately and cannot receive the actual result. Some features need to (a) show a 3D-animated die roll that the GM must acknowledge, and (b) continue their logic with the actual die values (e.g. Seraph Prayer Dice pool, Bard Rally "Clear Stress").
+
+**Solution:** `table.sheet.rollThenResume(opts, resumeState)` queues a `sheetActionRoll` mutation (same pipeline as `actionRoll`) and additionally stamps `rollMeta._v2PhysicalRollResume = { featureName, featureSourceInstanceId, meInstanceId, resumeState }` on the mutation. The `onUse`/hook returns immediately. After the GM acknowledges the resulting banner, `runV2PhysicalRollResolvedPhase` in `src/client/lib/v2-physical-roll-resume.js` re-resolves the feature and invokes `hooks.onPhysicalRollResolved(table, rollResult, resumeState)`.
+
+**Owner vs viewer:** Cross-sheet-triggered rolls (e.g. an ally spending a Bard-granted Rally Die from their own sheet) have two distinct instance ids:
+
+- **`featureSourceInstanceId`** — the feature's natural owner (Bard). Used to look up the `Rally` feature definition during `onPhysicalRollResolved` (mirrors existing `activateV2CrossSheetChip` matching by `f._ownerInstanceId === chip._ownerInstanceId`).
+- **`meInstanceId`** — the viewer / `table.me` at trigger time (ally). Becomes `_ownerInstanceId` on the `gameState` snapshot built for the resume phase so `table.me` resolves to the ally, not the Bard.
+
+For session-start hooks and owned-chip cases the two ids coincide.
+
+**Do not** look up `featureSourceInstanceId` as `table.me` during the resume phase — `table.me` is always the viewer. Feature authors should write against `table.me` without worrying about this split.
+
+**Files:**
+- Engine API: `table.sheet.rollThenResume` in `src/features-v2/engine/table.js`
+- Bridge: `runV2PhysicalRollResolvedPhase` in `src/client/lib/v2-physical-roll-resume.js`
+- Ack branch: `handleBannerAcknowledge` in `src/client/components/GMTableView.jsx`
+
+**Examples:** `src/features-v2/classes/Seraph.js` (`PrayerDice.hooks.onSessionStart`), `src/features-v2/classes/Bard.js` (`spendRallyDieClearStress` + `Rally.hooks.onPhysicalRollResolved`). See also Feature Authoring Guide §C.8.
+

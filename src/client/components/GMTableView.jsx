@@ -170,6 +170,7 @@ import { getWeaponSheetLabel } from '../lib/sheet-display-names.js';
 import { runV2TokenMoveHooks } from '../lib/v2-cross-sheet-lifecycle.js';
 import { applyV2BannerMutations, applyV2LifecycleMutations, partitionV2BannerChipMutations } from '../lib/table-ops.js';
 import { mergeV2TableFeatureState } from '../lib/v2-action-loop-bridge.js';
+import { runV2PhysicalRollResolvedPhase } from '../lib/v2-physical-roll-resume.js';
 import { buildTableSnapshot, applyMutations } from '../../features-v2/engine/table.js';
 import { dispatchSessionEndHooks } from '../../features-v2/engine/action-loop.js';
 import { RALLY_FEATURE_STATE_BAG_KEY, RALLY_SESSION_VOLATILE_KEYS } from '../../features-v2/classes/Bard.js';
@@ -658,7 +659,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
   }, []);
 
   const postRoll = useCallback((rollText, displayName, tid, rollMeta = {}) => {
-    if (!sessionPlayAllowed && !rollMeta.silent) {
+    if (!sessionPlayAllowed && !rollMeta.silent && rollMeta.bypassPrepGate !== true) {
       if (isPlayer) return Promise.reject(new Error('Session not started'));
       if (playBlockedAllowAllEdits) {
         return postRollToServer(rollText, displayName, tid, { ...rollMeta, bypassPrepGate: true });
@@ -2078,6 +2079,49 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
       return;
     }
 
+    // V2 physical-roll resume: run `hooks.onPhysicalRollResolved` with the actual roll values,
+    // apply any resulting element mutations, then mark the banner acknowledged.
+    // These are simple die rolls (no Hope/Fear duality) so we return early to skip unrelated side-effects.
+    if (roll._v2PhysicalRollResume) {
+      if (roll._rollDbId) postBannerAck(roll._rollDbId, 'acknowledge', { tableId }).catch(() => {});
+      if (v2Registry && srdData) {
+        const result = runV2PhysicalRollResolvedPhase(roll, {
+          activeElements,
+          v2Registry,
+          tableFeatureState,
+          fearCount,
+          mapConfig,
+        });
+        if (result?.updates?.length) {
+          sendOp({ op: 'update-elements', updates: result.updates });
+        }
+        for (const p of result?.actionLoopNotifications ?? []) {
+          const baseDesc = p.description || '';
+          const actionText =
+            p.affectedSummary && String(p.affectedSummary).trim()
+              ? `${baseDesc}\n${p.affectedSummary}`
+              : baseDesc;
+          handleActionNotification({
+            _action: true,
+            rollUser: p.rollUser || 'Table',
+            actionName: p.title || '',
+            actionText,
+            _v2ActionLoop: true,
+            _reactorInstanceId: p.instanceId,
+            ...v2RollDieExtrasFromActionLoopPayload(p),
+            ...(Array.isArray(p.affectedNames) && p.affectedNames.length > 0
+              ? { _affectedNames: p.affectedNames, _affectedInstanceIds: p.affectedInstanceIds }
+              : {}),
+          });
+        }
+        // Chain any nested rollThenResume calls from the hook.
+        for (const p of result?.sheetActionRolls ?? []) {
+          postRoll(p.rollText, p.displayName || 'Table', tableId, p.rollMeta || {}).catch(() => {});
+        }
+      }
+      return;
+    }
+
     // Virtual weapon feature: apply stressCost/hopeCost then delegate to onAcknowledge if present.
     if (roll._featureNeedsTarget && options.selectedFeatureTargetInstanceId && roll._featureName) {
       const selfEl = roll._attackerInstanceId ? activeElements.find(e => e.instanceId === roll._attackerInstanceId) : null;
@@ -2582,7 +2626,11 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
         updates.featureState = stripRallyVolatileSessionKeys({ ...char.featureState });
       }
       if (Object.keys(updates).length > 0) {
-        updateActiveElement(char.instanceId, updates);
+        // Bypass the play-blocked gate directly: this runs right after `set-table-top` confirmed
+        // the session as started, but the local `sessionPlayAllowed` prop (derived from the SSE
+        // snapshot) hasn't caught up yet — going through the gated `updateActiveElement` wrapper
+        // here would incorrectly pop the "Session not started"/"Session paused" dialog.
+        pushTableElementUpdate(char.instanceId, updates, { bypassPrepGate: true });
       }
     }
     // Root `table_state.featureState` merges into banner snapshots; clear Rally volatile keys (mirrors `runSessionEndClear`).
@@ -2593,8 +2641,10 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     }
     // V2: `hooks.onSessionStart(table)` lives on registry rows; merged `activeFeatures` often omit `hooks`.
     if (v2Registry && srdData) {
-      // SRD-derived fields (`spellcastTrait`, `traits`, `tier`) are often absent on raw table elements
-      // but required by V2 `hooks.onSessionStart` (e.g. Seraph Prayer Dice count).
+      // Raw `activeElements` never carry `activeFeatures` (it's a client-computed field, never
+      // persisted/sent by the server) — recompute it here alongside the other SRD-derived fields
+      // (`spellcastTrait`, `traits`, `tier`) so the hook-scanning loops below actually find features
+      // (e.g. Seraph Prayer Dice `onSessionStart`).
       let workingElements = activeElements.map((e) => {
         if (e.elementType !== 'character') return { ...e };
         const rec = recomputeCharacter(e, srdData);
@@ -2604,8 +2654,12 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
           spellcastTrait: rec.spellcastTrait ?? e.spellcastTrait,
           traits: rec.traits ?? e.traits,
           tier: rec.tier ?? e.tier,
+          activeFeatures: rec.activeFeatures ?? e.activeFeatures,
         };
       });
+      // Use the feature-enriched character list (not the raw `charactersList` above) for every
+      // `.activeFeatures` scan in this function — raw elements would always see `[]`.
+      const v2CharactersList = workingElements.filter((e) => e.elementType === 'character');
 
       const resolveV2SessionStartDescriptor = (f) => {
         if (typeof f.onSessionStart === 'function') return null;
@@ -2613,7 +2667,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
         const hook = f.hooks?.onSessionStart ?? desc?.hooks?.onSessionStart;
         if (typeof hook !== 'function') return null;
         const sessionStartOnce = desc?.sessionStartOnce === true;
-        return { hook, sessionStartOnce };
+        return { hook, sessionStartOnce, feature: f };
       };
 
       const applyElUpdates = (els, upd) => {
@@ -2633,12 +2687,15 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
           featureState: mergeV2TableFeatureState(sessionTableFeatureState, workingElements),
           registry: v2Registry,
           _ownerInstanceId: instanceId,
+          // Provide feature identity so `table.sheet.rollThenResume` can stamp featureName correctly.
+          _featureKey: resolved.feature?.name ?? '',
+          _activeFeature: resolved.feature ?? null,
         };
         const table = buildTableSnapshot(gameState);
         resolved.hook(table);
         const mutations = applyMutations(table);
         if (!mutations?.length) return;
-        const { updates, actionLoopNotifications } = applyV2LifecycleMutations(workingElements, mutations, undefined);
+        const { updates, actionLoopNotifications, sheetActionRolls } = applyV2LifecycleMutations(workingElements, mutations, undefined);
         if (updates.length) {
           sendOp({ op: 'update-elements', updates });
           workingElements = applyElUpdates(workingElements, updates);
@@ -2667,10 +2724,21 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
             )
           ).catch(() => {});
         }
+        // Post real VTT dice rolls for any `table.sheet.rollThenResume` / `actionRoll` mutations.
+        // `bypassPrepGate` because this runs synchronously right after `set-table-top` confirmed
+        // the session as started — the local `sessionPlayAllowed` prop hasn't caught up to the SSE
+        // snapshot yet, so the gated `postRoll` would otherwise stall this roll behind the
+        // play-blocked dialog (e.g. Seraph Prayer Dice never rolling at session start).
+        for (const p of sheetActionRolls || []) {
+          const charEl = workingElements.find(
+            (e) => e.elementType === 'character' && e.instanceId === instanceId
+          );
+          postRoll(p.rollText, p.displayName || charEl?.name || 'Table', tableId, { ...(p.rollMeta || {}), bypassPrepGate: true }).catch(() => {});
+        }
       };
 
       const onceDone = new Set();
-      for (const char of charactersList) {
+      for (const char of v2CharactersList) {
         for (const f of char.activeFeatures || []) {
           const t = f.type;
           if (t !== 'ancestry' && t !== 'community' && t !== 'class' && t !== 'subclass') continue;
@@ -2681,7 +2749,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
           runV2Hook(char.instanceId, r);
         }
       }
-      for (const char of charactersList) {
+      for (const char of v2CharactersList) {
         for (const f of char.activeFeatures || []) {
           const t = f.type;
           if (t !== 'ancestry' && t !== 'community' && t !== 'class' && t !== 'subclass') continue;
@@ -2690,47 +2758,47 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
           runV2Hook(char.instanceId, r);
         }
       }
-    }
 
-    /** Legacy: top-level `onSessionStart` only (Phase 1). */
-    const sessionByName = new Map();
-    for (const char of charactersList) {
-      for (const f of char.activeFeatures || []) {
-        if (typeof f.onSessionStart !== 'function') continue;
-        if (typeof f.hooks?.onSessionStart === 'function') continue;
-        const t = f.type;
-        if (t !== 'ancestry' && t !== 'community' && t !== 'class' && t !== 'subclass') continue;
-        if (!sessionByName.has(f.name)) sessionByName.set(f.name, f);
+      /** Legacy: top-level `onSessionStart` only (Phase 1). */
+      const sessionByName = new Map();
+      for (const char of v2CharactersList) {
+        for (const f of char.activeFeatures || []) {
+          if (typeof f.onSessionStart !== 'function') continue;
+          if (typeof f.hooks?.onSessionStart === 'function') continue;
+          const t = f.type;
+          if (t !== 'ancestry' && t !== 'community' && t !== 'class' && t !== 'subclass') continue;
+          if (!sessionByName.has(f.name)) sessionByName.set(f.name, f);
+        }
       }
-    }
-    const getFeatureForCharacter = (el, featureName) => {
-      const row = el.activeFeatures?.find((x) => x.name === featureName);
-      const descriptor = row || {};
-      const get = (key, defaultVal) => { const bag = el._originFeatureState?.[featureName]; return bag != null && key in bag ? bag[key] : defaultVal; };
-      const set = (key, value) => {
-        const current = el._originFeatureState ?? {};
-        const next = { ...current, [featureName]: { ...(current[featureName] ?? {}), [key]: value } };
-        updateActiveElement(el.instanceId, { _originFeatureState: next });
+      const getFeatureForCharacter = (el, featureName) => {
+        const row = el.activeFeatures?.find((x) => x.name === featureName);
+        const descriptor = row || {};
+        const get = (key, defaultVal) => { const bag = el._originFeatureState?.[featureName]; return bag != null && key in bag ? bag[key] : defaultVal; };
+        const set = (key, value) => {
+          const current = el._originFeatureState ?? {};
+          const next = { ...current, [featureName]: { ...(current[featureName] ?? {}), [key]: value } };
+          updateActiveElement(el.instanceId, { _originFeatureState: next });
+        };
+        return { ...descriptor, get, set };
       };
-      return { ...descriptor, get, set };
-    };
-    const wrappedCharacters = charactersList.map(el => wrapEntity(el, updateActiveElement));
-    for (const [, descriptor] of sessionByName) {
-      const hook = descriptor.onSessionStart;
-      if (typeof hook !== 'function') continue;
-      if (descriptor.sessionStartOnce) {
-        hook({ feature: null, characters: wrappedCharacters, system });
-      } else {
-        const charsWithFeature = charactersList.filter((el) =>
-          (el.activeFeatures || []).some(
-            (af) =>
-              af.name === descriptor.name &&
-              typeof af.onSessionStart === 'function' &&
-              typeof af.hooks?.onSessionStart !== 'function',
-          )
-        );
-        for (const el of charsWithFeature) {
-          hook({ feature: getFeatureForCharacter(el, descriptor.name), character: wrapEntity(el, updateActiveElement), characters: wrappedCharacters, system });
+      const wrappedCharacters = v2CharactersList.map(el => wrapEntity(el, updateActiveElement));
+      for (const [, descriptor] of sessionByName) {
+        const hook = descriptor.onSessionStart;
+        if (typeof hook !== 'function') continue;
+        if (descriptor.sessionStartOnce) {
+          hook({ feature: null, characters: wrappedCharacters, system });
+        } else {
+          const charsWithFeature = v2CharactersList.filter((el) =>
+            (el.activeFeatures || []).some(
+              (af) =>
+                af.name === descriptor.name &&
+                typeof af.onSessionStart === 'function' &&
+                typeof af.hooks?.onSessionStart !== 'function',
+            )
+          );
+          for (const el of charsWithFeature) {
+            hook({ feature: getFeatureForCharacter(el, descriptor.name), character: wrapEntity(el, updateActiveElement), characters: wrappedCharacters, system });
+          }
         }
       }
     }
@@ -2757,6 +2825,8 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
       sendOp({ op: 'set-table-feature-state', featureState: stripRallyVolatileSessionKeys({ ...tableFeatureState }) });
     }
     if (v2Registry && srdData) {
+      // Same `activeFeatures` recompute as `runSessionStartClear` — raw `activeElements` never
+      // carry it, so scanning the un-enriched `charactersList` below would always see `[]`.
       let workingElements = activeElements.map((e) => {
         if (e.elementType !== 'character') return { ...e };
         const rec = recomputeCharacter(e, srdData);
@@ -2766,10 +2836,12 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
           spellcastTrait: rec.spellcastTrait ?? e.spellcastTrait,
           traits: rec.traits ?? e.traits,
           tier: rec.tier ?? e.tier,
+          activeFeatures: rec.activeFeatures ?? e.activeFeatures,
         };
       });
+      const v2CharactersList = workingElements.filter((e) => e.elementType === 'character');
       const flat = [];
-      for (const char of charactersList) {
+      for (const char of v2CharactersList) {
         for (const f of char.activeFeatures || []) {
           const t = f.type;
           if (t !== 'ancestry' && t !== 'community' && t !== 'class' && t !== 'subclass') continue;
@@ -3489,6 +3561,18 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     // GM uses /api/room/my/roll (tableId=null) so server uses req.uid and banner subscription key matches; player uses table-scoped endpoint.
     const targetTableId = isPlayer ? tableId : null;
     const meta = { ...rollMeta, _playerInitiated: true };
+
+    // `table.sheet.rollThenResume` rolls (e.g. Seraph Prayer Dice, Bard Rally spend) are plain
+    // mechanical dice rolls with no modifiers — the deferred `onPhysicalRollResolved` hook applies
+    // all game logic once the GM acknowledges the result. Skip the entire preroll intent-chip /
+    // "Before your roll" pipeline below (difficulty chip, advantage/disadvantage triggers, etc.)
+    // and post the roll exactly as specified.
+    if (rollMeta._v2PhysicalRollResume) {
+      dismissAllHoverCards();
+      postRoll(rollText, displayName || rollText, targetTableId, meta)
+        .catch(err => handleRollTransportError(err, 'Player roll failed:'));
+      return;
+    }
 
     // Resolve character from activeElements so we have latest runtime (e.g. disadvantageSources from Galapa Retract).
     const contextChar = context?.characterEl;

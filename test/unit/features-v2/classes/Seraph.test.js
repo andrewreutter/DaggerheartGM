@@ -2,11 +2,15 @@ import { describe, it, expect } from 'vitest';
 import { PrayerDice } from '../../../../src/features-v2/classes/Seraph.js';
 import { createActionLoop } from '../../../../src/features-v2/engine/action-loop.js';
 import { collectChips, activateChip, makeChipState } from '../../../../src/features-v2/engine/chip-system.js';
-import { buildTableSnapshot } from '../../../../src/features-v2/engine/table.js';
+import { buildTableSnapshot, applyMutations } from '../../../../src/features-v2/engine/table.js';
 import { mockCharacter, mockAdversary, mockGameState, mockAction, mockRoll } from '../helpers.js';
 
 describe('Seraph — Prayer Dice', () => {
-  it('onSessionStart rolls d4s equal to Spellcast trait and sets pool', () => {
+  // After the rollThenResume migration, onSessionStart emits a sheetActionRoll mutation (for the
+  // animated physical die roll) instead of rollDie + setPrayerDicePool. The pool is populated in
+  // onPhysicalRollResolved after the GM acknowledges the banner.
+
+  it('onSessionStart emits a sheetActionRoll with _v2PhysicalRollResume stamped', () => {
     const seraph = mockCharacter({
       instanceId: 's1',
       classId: 'srd-cls-seraph',
@@ -19,17 +23,36 @@ describe('Seraph — Prayer Dice', () => {
       [{ ...PrayerDice, _ownerInstanceId: 's1' }]
     );
     const { mutations } = loop.runPhase('intent');
-    const pools = mutations.filter((m) => m.type === 'setPrayerDicePool');
-    expect(pools.length).toBeGreaterThanOrEqual(1);
-    const last = pools[pools.length - 1];
-    expect(last.payload.instanceId).toBe('s1');
-    expect(last.payload.pool).toHaveLength(2);
-    expect(last.payload.pool.every((n) => n >= 1 && n <= 4)).toBe(true);
-    const rolls = mutations.filter((m) => m.type === 'rollDie');
-    expect(rolls.length).toBe(2);
+    const sheetRolls = mutations.filter((m) => m.type === 'sheetActionRoll');
+    expect(sheetRolls.length).toBe(1);
+    const m = sheetRolls[0];
+    expect(m.payload.rollText).toBe('[2d4]');
+    expect(m.payload.rollMeta?._v2PhysicalRollResume).toBeDefined();
+    expect(m.payload.rollMeta._v2PhysicalRollResume.featureName).toBe('Prayer Dice');
+    // No silent rollDie or setPrayerDicePool mutations — those happen after ack.
+    expect(mutations.filter((x) => x.type === 'rollDie').length).toBe(0);
+    expect(mutations.filter((x) => x.type === 'setPrayerDicePool').length).toBe(0);
   });
 
-  it('onSessionStart resolves Spellcast count when spellcastTrait is title case (traits keys are lowercase)', () => {
+  it('onSessionStart uses "1d4" notation when Spellcast trait is 1', () => {
+    const seraph = mockCharacter({
+      instanceId: 's1',
+      classId: 'srd-cls-seraph',
+      spellcastTrait: 'presence',
+      traits: { presence: 1, agility: 0, strength: 0, finesse: 0, instinct: 0, knowledge: 0 },
+    });
+    const loop = createActionLoop(
+      mockGameState({ activeElements: [seraph], featureState: {} }),
+      mockAction({ type: 'sessionStart', actorInstanceId: 's1', targetInstanceIds: [] }),
+      [{ ...PrayerDice, _ownerInstanceId: 's1' }]
+    );
+    const { mutations } = loop.runPhase('intent');
+    const sheetRolls = mutations.filter((m) => m.type === 'sheetActionRoll');
+    expect(sheetRolls.length).toBe(1);
+    expect(sheetRolls[0].payload.rollText).toBe('[d4]');
+  });
+
+  it('onSessionStart emits sheetActionRoll when spellcastTrait is title case', () => {
     const seraph = mockCharacter({
       instanceId: 's1',
       classId: 'srd-cls-seraph',
@@ -42,9 +65,31 @@ describe('Seraph — Prayer Dice', () => {
       [{ ...PrayerDice, _ownerInstanceId: 's1' }]
     );
     const { mutations } = loop.runPhase('intent');
-    const pools = mutations.filter((m) => m.type === 'setPrayerDicePool');
-    expect(pools.length).toBeGreaterThanOrEqual(1);
-    expect(pools[pools.length - 1].payload.pool).toHaveLength(2);
+    const sheetRolls = mutations.filter((m) => m.type === 'sheetActionRoll');
+    expect(sheetRolls.length).toBe(1);
+    expect(sheetRolls[0].payload.rollText).toBe('[2d4]');
+  });
+
+  it('onPhysicalRollResolved populates the pool from individual die values', () => {
+    const seraph = mockCharacter({ instanceId: 's1', spellcastTrait: 'presence', traits: { presence: 3 } });
+    const gs = mockGameState({ activeElements: [seraph], _ownerInstanceId: 's1', _featureKey: 'Prayer Dice', _activeFeature: { ...PrayerDice, _ownerInstanceId: 's1' } });
+    const table = buildTableSnapshot(gs);
+    PrayerDice.hooks.onPhysicalRollResolved(table, { total: 8, values: [2, 3, 3], notation: '3d4' });
+    const mutations = applyMutations(table);
+    const setPool = mutations.find((m) => m.type === 'setPrayerDicePool');
+    expect(setPool).toBeDefined();
+    expect(setPool.payload.instanceId).toBe('s1');
+    expect(setPool.payload.pool).toEqual([2, 3, 3]);
+  });
+
+  it('onPhysicalRollResolved falls back to [total] when values array is empty', () => {
+    const seraph = mockCharacter({ instanceId: 's1', spellcastTrait: 'presence', traits: { presence: 1 } });
+    const gs = mockGameState({ activeElements: [seraph], _ownerInstanceId: 's1', _activeFeature: { ...PrayerDice, _ownerInstanceId: 's1' } });
+    const table = buildTableSnapshot(gs);
+    PrayerDice.hooks.onPhysicalRollResolved(table, { total: 4, values: [], notation: 'd4' });
+    const mutations = applyMutations(table);
+    const setPool = mutations.find((m) => m.type === 'setPrayerDicePool');
+    expect(setPool?.payload.pool).toEqual([4]);
   });
 
   it('reviewAction chip adds Prayer Die static to action roll and removes die from pool', () => {

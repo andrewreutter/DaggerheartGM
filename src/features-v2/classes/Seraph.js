@@ -100,13 +100,40 @@ export const PrayerDice = {
   description:
     "At the beginning of each session, roll a number of d4s equal to your subclass's Spellcast trait and place them on your character sheet in the space provided. These are your Prayer Dice. You can spend any number of Prayer Dice to aid yourself or an ally within Far range. You can use a spent die's value to reduce incoming damage, add to a roll's result after the roll is made, or gain Hope equal to the result. At the end of each session, clear all unspent Prayer Dice.",
   hooks: {
+    /**
+     * Roll d4s equal to the Spellcast trait as a physical (animated, GM-acknowledged) dice roll,
+     * then populate the pool from the actual die values once acknowledged.
+     *
+     * We use `rollThenResume` so the GM sees the dice tumble across the table at session start
+     * instead of silently computing values in the background with `table.rollDie`.
+     * `onPhysicalRollResolved` receives the roll result and calls `setPrayerDicePool`.
+     */
     onSessionStart(table) {
       const n = spellcastDiceCount(table);
       if (n <= 0) return;
-      const pool = [];
-      for (let i = 0; i < n; i++) {
-        pool.push(table.rollDie('d4'));
+      const notation = n === 1 ? 'd4' : `${n}d4`;
+      // Dice expressions in roll text must be bracket-wrapped ([...]) — the server's
+      // rollFromText/buildRollData only extracts subItems from `[expr]` segments; an
+      // unwrapped notation like "d4" parses to zero subItems and the roll (and banner)
+      // silently never gets created.
+      table.sheet.rollThenResume(
+        {
+          rollText: `[${notation}]`,
+          displayName: `${table.me?.name ?? 'Seraph'} — Prayer Dice`,
+        },
+        { diceCount: n }
+      );
+    },
+
+    onPhysicalRollResolved(table, rollResult /*, resumeState */) {
+      // `rollResult.values` contains individual d4 face values from the roll.
+      // Fall back to splitting the total equally when per-die values are unavailable.
+      let pool = rollResult.values ?? [];
+      if (pool.length === 0 && rollResult.total > 0) {
+        // Fallback: single-value roll — treat total as the one die.
+        pool = [rollResult.total];
       }
+      if (pool.length === 0) return;
       table.me.setPrayerDicePool(pool);
     },
   },

@@ -1,3 +1,5 @@
+import { recomputeCharacter } from './character-calc.js';
+
 /**
  * Preview copy for the Start Session action banner. Logic must stay aligned with
  * {@link runSessionStartClear} in GMTableView.jsx (V2 hooks + legacy onSessionStart).
@@ -53,7 +55,16 @@ export function collectSessionStartHookLabels(activeElements, opts) {
     getV2OriginFeatureDescriptor,
   } = opts;
 
-  const charactersList = (activeElements || []).filter((e) => e.elementType === 'character');
+  // Raw `activeElements` never carry `activeFeatures` (client-computed, never persisted/sent by
+  // the server) — recompute it here so the scans below actually find features to preview.
+  const charactersList = (activeElements || [])
+    .filter((e) => e.elementType === 'character')
+    .map((e) => {
+      if (!srdData) return e;
+      const rec = recomputeCharacter(e, srdData);
+      if (!rec || rec === e || !rec.activeFeatures) return e;
+      return { ...e, activeFeatures: rec.activeFeatures };
+    });
   const labels = [];
 
   const resolveV2SessionStartDescriptor = (f) => {
