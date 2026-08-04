@@ -9,7 +9,7 @@ import { readFile } from 'fs/promises';
 import { initializeApp, getApps } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import cron from 'node-cron';
-import { runMigrations, getPool, getItems, getPublicItems, upsertItem, deleteItem, countItems, getItemsPaginated, countCommunityItems, getCommunityItemsPaginated, getItemsByIds, getItem, recordClone, recordPlay, upsertMirror, findAutoClone, getUnifiedItems, getUnifiedLibraryAll, getUnifiedLibraryAllBranchCounts, getExternalCacheByIds, getTableStatesByPlayerEmail, getTableStateById, listTableStates, appendDiceRoll, ackDiceRoll, getRecentDiceRolls, setBannerStatus, getPendingBanners, getDiceRollById, updateDiceRollData, resolveCharacterElements as resolveCharacterElementsDb, stripCharacterElementsForDb, getResolvedTableState, setTableStateNotifyHook, getUserPreferences, upsertUserPreferences, queryAiUsageAggregates, stampFreeTrialStart, checkTableIsLive, extendTableCampaignPass, recordCampaignPassPurchase, markStripeEventProcessed, recordCharacterTablePlacement, removeCharacterTablePlacementsForTable, countUserAiCallsThisMonth, getBugReportsPaginated, countBugReports } from './src/db.js';
+import { runMigrations, getPool, getItems, getPublicItems, upsertItem, deleteItem, countItems, getItemsPaginated, countCommunityItems, getCommunityItemsPaginated, getItemsByIds, getItem, recordClone, recordPlay, upsertMirror, findAutoClone, getUnifiedItems, getUnifiedLibraryAll, getUnifiedLibraryAllBranchCounts, getExternalCacheByIds, getTableStatesByPlayerEmail, getTableStateById, listTableStates, appendDiceRoll, ackDiceRoll, getRecentDiceRolls, setBannerStatus, getPendingBanners, getDiceRollById, updateDiceRollData, resolveCharacterElements as resolveCharacterElementsDb, stripCharacterElementsForDb, getResolvedTableState, setTableStateNotifyHook, getUserPreferences, upsertUserPreferences, queryAiUsageAggregates, stampFreeTrialStart, checkTableIsLive, extendTableCampaignPass, recordCampaignPassPurchase, markStripeEventProcessed, recordCharacterTablePlacement, removeCharacterTablePlacementsForTable, countUserAiCallsThisMonth, getBugReportsPaginated, countBugReports, setBugReportResolved } from './src/db.js';
 import { isStripeConfigured, getStripe, constructWebhookEvent, CAMPAIGN_PASS_PRICE_CENTS, getCampaignPassPriceId } from './src/stripe.js';
 import { srdRouter, warmCache, getItem as getSrdItem } from './src/srd/index.js';
 import { fetchHoDFoundryDetail } from './src/hod-search.js';
@@ -333,10 +333,11 @@ app.get('/api/admin/bug-reports', requireAuth, requireAdmin, async (req, res) =>
     const rawOffset = parseInt(req.query?.offset, 10);
     const limit = Math.min(Number.isFinite(rawLimit) && rawLimit > 0 ? rawLimit : 50, 200);
     const offset = Number.isFinite(rawOffset) && rawOffset >= 0 ? rawOffset : 0;
+    const resolved = req.query?.resolved === '1' ? true : req.query?.resolved === '0' ? false : undefined;
 
     const [items, totalCount] = await Promise.all([
-      getBugReportsPaginated(APP_ID, { limit, offset }),
-      countBugReports(APP_ID),
+      getBugReportsPaginated(APP_ID, { limit, offset, resolved }),
+      countBugReports(APP_ID, { resolved }),
     ]);
 
     res.setHeader('Cache-Control', 'no-store');
@@ -344,6 +345,29 @@ app.get('/api/admin/bug-reports', requireAuth, requireAdmin, async (req, res) =>
   } catch (err) {
     console.error('GET /api/admin/bug-reports:', err);
     res.status(500).json({ error: 'Failed to load bug reports' });
+  }
+});
+
+/** Admin: mark a bug report resolved (Completed tab) or unresolved (back to Active). */
+app.patch('/api/admin/bug-reports/:id', requireAuth, requireAdmin, async (req, res) => {
+  if (!process.env.DATABASE_URL) {
+    return res.status(503).json({ error: 'Database required for bug reports' });
+  }
+  const id = parseInt(req.params.id, 10);
+  if (!Number.isFinite(id)) {
+    return res.status(400).json({ error: 'Invalid id' });
+  }
+  const resolved = !!req.body?.resolved;
+  try {
+    const item = await setBugReportResolved(APP_ID, id, { resolved, resolvedByEmail: req.email });
+    if (!item) {
+      return res.status(404).json({ error: 'Not found' });
+    }
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({ item });
+  } catch (err) {
+    console.error('PATCH /api/admin/bug-reports/:id:', err);
+    res.status(500).json({ error: 'Failed to update bug report' });
   }
 });
 

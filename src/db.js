@@ -1723,11 +1723,16 @@ export async function queryAiUsageAggregates(appId, opts) {
   return { totals, byDay };
 }
 
-/** Returns the total number of bug reports for this app (across all GMs/tables). */
-export async function countBugReports(appId) {
+/**
+ * Returns the total number of bug reports for this app (across all GMs/tables).
+ * @param {string} appId
+ * @param {{ resolved?: boolean }} opts — when set, filters to resolved (true) or unresolved (false) reports only.
+ */
+export async function countBugReports(appId, { resolved } = {}) {
   const db = getPool();
+  const resolvedClause = resolved === true ? 'AND resolved_at IS NOT NULL' : resolved === false ? 'AND resolved_at IS NULL' : '';
   const { rows } = await db.query(
-    'SELECT COUNT(*)::int AS total FROM bug_reports WHERE app_id = $1',
+    `SELECT COUNT(*)::int AS total FROM bug_reports WHERE app_id = $1 ${resolvedClause}`,
     [appId]
   );
   return rows[0]?.total ?? 0;
@@ -1736,14 +1741,15 @@ export async function countBugReports(appId) {
 /**
  * Returns a page of bug reports for this app, newest-first.
  * @param {string} appId
- * @param {{ limit?: number, offset?: number }} opts
+ * @param {{ limit?: number, offset?: number, resolved?: boolean }} opts — `resolved` filters to resolved (true) or unresolved (false) reports only; omit for all.
  */
-export async function getBugReportsPaginated(appId, { limit = 50, offset = 0 } = {}) {
+export async function getBugReportsPaginated(appId, { limit = 50, offset = 0, resolved } = {}) {
   const db = getPool();
+  const resolvedClause = resolved === true ? 'AND resolved_at IS NOT NULL' : resolved === false ? 'AND resolved_at IS NULL' : '';
   const { rows } = await db.query(
-    `SELECT id, gm_uid, table_id, payload, created_at
+    `SELECT id, gm_uid, table_id, payload, created_at, resolved_at, resolved_by
      FROM bug_reports
-     WHERE app_id = $1
+     WHERE app_id = $1 ${resolvedClause}
      ORDER BY created_at DESC
      LIMIT $2 OFFSET $3`,
     [appId, limit, offset]
@@ -1754,5 +1760,35 @@ export async function getBugReportsPaginated(appId, { limit = 50, offset = 0 } =
     tableId: r.table_id,
     payload: r.payload,
     createdAt: r.created_at,
+    resolvedAt: r.resolved_at,
+    resolvedBy: r.resolved_by,
   }));
+}
+
+/**
+ * Marks a bug report resolved (complete) or unresolved (moves it back to Active).
+ * @param {string} appId
+ * @param {number} id
+ * @param {{ resolved: boolean, resolvedByEmail?: string }} opts
+ */
+export async function setBugReportResolved(appId, id, { resolved, resolvedByEmail } = {}) {
+  const db = getPool();
+  const { rows } = await db.query(
+    `UPDATE bug_reports
+     SET resolved_at = ${resolved ? 'now()' : 'NULL'}, resolved_by = $3
+     WHERE app_id = $1 AND id = $2
+     RETURNING id, gm_uid, table_id, payload, created_at, resolved_at, resolved_by`,
+    [appId, id, resolved ? (resolvedByEmail ?? null) : null]
+  );
+  const r = rows[0];
+  if (!r) return null;
+  return {
+    id: r.id,
+    gmUid: r.gm_uid,
+    tableId: r.table_id,
+    payload: r.payload,
+    createdAt: r.created_at,
+    resolvedAt: r.resolved_at,
+    resolvedBy: r.resolved_by,
+  };
 }
