@@ -50,10 +50,18 @@ export function MapImageQuickPickMenu({
 
   if (!open || typeof document === 'undefined') return null;
 
+  // Previously errors here were console.error-only, so a failed upload (e.g. a large pasted
+  // screenshot hitting the 10MB map-image limit or a network/proxy size limit) silently closed
+  // the menu with nothing placed and no indication anything went wrong. Surface it.
+  const reportError = (err) => {
+    console.error('[MapImageQuickPickMenu]', err);
+    alert(`Failed to add image: ${err?.message || err}. It may be too large (10MB limit) — try a smaller image.`);
+  };
+
   const handleAction = async (key, callback) => {
     if (seedFile) {
       setLoading(key);
-      try { await callback(seedFile); } catch (err) { console.error('[MapImageQuickPickMenu]', err); }
+      try { await callback(seedFile); } catch (err) { reportError(err); }
       setLoading(null);
       onClose();
     } else {
@@ -70,7 +78,7 @@ export function MapImageQuickPickMenu({
     const cb = pendingCallback;
     setPendingCallback(null);
     setLoading('file');
-    try { await cb(file); } catch (err) { console.error('[MapImageQuickPickMenu]', err); }
+    try { await cb(file); } catch (err) { reportError(err); }
     setLoading(null);
     onClose();
   };

@@ -1073,7 +1073,12 @@ function App() {
     try {
       return await apiSaveImage(collectionName, id, imageUrl, opts);
     } catch (err) {
+      // Previously silent (console.error only) — a failed image save (e.g. a large pasted
+      // screenshot hitting a network/proxy size limit) left the editor showing the image from
+      // local state while the library record never actually persisted it, so it never appeared
+      // on tokens/sheets elsewhere with no indication anything went wrong. Surface it.
       console.error(`saveImage(${collectionName}, ${id}) failed:`, err);
+      alert(`Failed to save image: ${err.message || err}. It may be too large — try a smaller image.`);
     }
   };
 

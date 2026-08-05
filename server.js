@@ -891,6 +891,31 @@ function getOrCreateRoom(tableId) {
   return rooms.get(tableId);
 }
 
+/**
+ * Notify the `table_state` subscription for every currently-connected room (table) where `uid`
+ * is either the table owner or a connected player, so `resolveCharacterElements` re-runs and
+ * pushes fresh character data (e.g. after a character library/image save) without a reload.
+ *
+ * `rooms` is keyed by tableId, NOT the owner's Firebase uid — legacy tables happen to have
+ * `id === ownerUid` so a naive `tableId === uid` check works for those, but tables created via
+ * `POST /api/my-tables` use a UUID id, so that check silently never matches for the table
+ * owner's own session on those tables. Resolve owned table ids via `listTableStates` instead.
+ */
+async function notifyCharacterTableRoomsForUid(uid) {
+  if (!rooms.size) return;
+  let ownedTableIds;
+  try {
+    ownedTableIds = new Set((await listTableStates(APP_ID, uid)).map((t) => t.id));
+  } catch {
+    ownedTableIds = new Set();
+  }
+  for (const [tableId, room] of rooms) {
+    if (ownedTableIds.has(tableId) || room.players?.has(uid)) {
+      subscriptionManager.notifyChange('table_state', tableId);
+    }
+  }
+}
+
 async function appendRollLog(gmUid, rollData) {
   const suppressBanner = rollData._suppressActionBanner === true;
   const toStore = { ...rollData };
@@ -2363,11 +2388,7 @@ app.put('/api/data/:collection/:id/image', requireAuth, async (req, res) => {
     res.json({ id, ...rest, is_public: Boolean(merged.is_public), _source: 'own' });
     // Broadcast to active rooms so character tokens update immediately without a page reload.
     if (collection === 'characters') {
-      for (const [gmUid, room] of rooms) {
-        if (gmUid === req.uid || room.players?.has(req.uid)) {
-          subscriptionManager.notifyChange('table_state', gmUid);
-        }
-      }
+      await notifyCharacterTableRoomsForUid(req.uid);
     }
   } catch (err) {
     console.error(`PUT /api/data/${collection}/${id}/image error:`, err);
@@ -2427,11 +2448,7 @@ app.put('/api/data/:collection', requireAuth, async (req, res) => {
     // getResolvedTableState which calls resolveCharacterElements, so all clients receive
     // fresh character data without a separate op type.
     if (collection === 'characters' && saved.id) {
-      for (const [gmUid, room] of rooms) {
-        if (gmUid === req.uid || room.players.has(req.uid)) {
-          subscriptionManager.notifyChange('table_state', gmUid);
-        }
-      }
+      await notifyCharacterTableRoomsForUid(req.uid);
     }
 
     // Notify table_state subscribers when the table_state record itself is saved.

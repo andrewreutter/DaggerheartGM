@@ -491,13 +491,21 @@ export function stripImageFields(obj) {
 export const saveImage = async (collectionName, id, imageUrl, { _additionalImages, path } = {}) => {
   const token = await getAuthToken();
   if (!token || !id) return null;
-  const body = { imageUrl };
-  if (_additionalImages !== undefined) body._additionalImages = _additionalImages;
-  if (path) body.path = path;
+  const bodyObj = { imageUrl };
+  if (_additionalImages !== undefined) bodyObj._additionalImages = _additionalImages;
+  if (path) bodyObj.path = path;
+  // Pasted/AI-generated images are frequently multi-MB base64 data: URLs — the single largest
+  // payloads this app sends. Compress like saveItem() does; uncompressed multi-MB JSON bodies are
+  // far more likely to hit a proxy/host body-size limit or time out on a real network (production)
+  // than on localhost, where this previously went unnoticed.
+  const bodyStr = JSON.stringify(bodyObj);
+  const { body, encoding } = await maybeCompressBody(bodyStr);
+  const headers = apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` });
+  if (encoding) headers['Content-Encoding'] = 'gzip';
   const res = await fetch(`/api/data/${collectionName}/${id}/image`, {
     method: 'PUT',
-    headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
-    body: JSON.stringify(body),
+    headers,
+    body,
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
