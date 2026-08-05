@@ -1606,6 +1606,7 @@ function App() {
   }, [tableId, effectiveIsPlayer]);
 
   const sendUpdateMapImageObject = useCallback((instanceId, updates) => {
+    setActiveElements(prev => prev.map(el => el.instanceId === instanceId ? { ...el, ...updates } : el));
     if (effectiveIsPlayer) {
       postMapImageObject(tableId, { action: 'update', instanceId, updates }).catch(console.error);
     } else {
