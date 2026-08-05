@@ -257,6 +257,8 @@ export function CharacterHoverCard({
   surfaceVariant = 'default',
   /** When true, identity header is omitted (Game Table shared title bar above sheet + editor). */
   omitHeader = false,
+  /** When provided, the portrait image in the identity header becomes click-to-fullscreen. */
+  onOpenImageLightbox,
   /**
    * Pre-computed merged display character (e.g. GMTableView's `characterDisplayByInstanceId`,
    * built once per character for the sidebar cards). When provided, this sheet reuses it instead
@@ -1168,7 +1170,7 @@ export function CharacterHoverCard({
         )
       ) : (
         <div className="shrink-0">
-          <CharacterIdentityHeader el={el} actions={headerActions} />
+          <CharacterIdentityHeader el={el} actions={headerActions} onOpenImageLightbox={onOpenImageLightbox} />
         </div>
       )}
       {el.description && (

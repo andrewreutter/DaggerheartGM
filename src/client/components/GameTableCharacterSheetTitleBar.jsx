@@ -42,6 +42,8 @@ export function GameTableCharacterSheetTitleBar({
   onLevelPreviewChange,
   /** Saved character level from the editor (slider max). */
   maxLevelForPreview = 1,
+  /** When provided, portrait image becomes click-to-fullscreen. */
+  onOpenImageLightbox,
 }) {
   const nm = el?.name || 'Unnamed Character';
   const badge = item?._source ? (SOURCE_BADGE[item._source] ?? SOURCE_BADGE.own) : null;
@@ -102,6 +104,15 @@ export function GameTableCharacterSheetTitleBar({
         style={editDrawerOpen ? { width: sheetColumnWidth, minWidth: 0 } : undefined}
       >
         <div className="flex items-center gap-1.5 shrink-0 self-center">
+          {el?.imageUrl && (
+            <img
+              src={el.imageUrl}
+              alt=""
+              className={`w-6 h-6 rounded-full object-cover border border-dh-border/60 shrink-0${onOpenImageLightbox ? ' cursor-pointer hover:opacity-80 transition-opacity' : ''}`}
+              aria-hidden
+              onClick={onOpenImageLightbox ? (e) => { e.stopPropagation(); onOpenImageLightbox(el.imageUrl); } : undefined}
+            />
+          )}
           <TierShieldBadge tier={el?.tier ?? 1} scaledFromTier={el?._scaledFromTier} size="md" />
           {el?.level != null && <LevelBadge level={el.level} size="md" />}
         </div>

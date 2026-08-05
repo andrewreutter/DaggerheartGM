@@ -46,6 +46,8 @@ import {
   Pipette,
   Plus,
   Sparkles,
+  Image as ImageIcon,
+  Maximize2,
 } from 'lucide-react';
 import { Tooltip } from './Tooltip.jsx';
 import { CheckboxTrack } from './DetailCardContent.jsx';
@@ -688,6 +690,8 @@ function MapConfigToolbar({
   onMapConfigChange,
   isUploading,
   onFileSelect,
+  /** When provided, the upload label opens the quick-pick menu instead of a raw file picker. */
+  onOpenQuickPick,
   tableName = '',
   tableStateReady = false,
   onTableNameChange,
@@ -808,25 +812,42 @@ function MapConfigToolbar({
           <span className="text-[10px] text-dh-muted/45 select-none whitespace-nowrap">Paste, drop, or</span>
         ) : null}
 
-        <label
-          className={`flex items-center gap-1.5 px-2 py-1 rounded cursor-pointer transition-colors ${
-            isUploading
-              ? 'bg-dh-hover text-dh-muted cursor-not-allowed'
-              : 'bg-dh-hover hover:bg-dh-hover text-dh hover:opacity-90'
-          }`}
-          title="Upload or replace map image"
-        >
-          <Upload size={12} />
-          {isUploading ? 'Uploading…' : mapImageUrl ? 'Replace Map' : 'Upload Map Image'}
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/*"
-            className="hidden"
+        {onOpenQuickPick ? (
+          <button
+            type="button"
+            onClick={() => onOpenQuickPick()}
             disabled={isUploading}
-            onChange={e => { const f = e.target.files?.[0]; if (f) { onFileSelect(f); e.target.value = ''; } }}
-          />
-        </label>
+            className={`flex items-center gap-1.5 px-2 py-1 rounded cursor-pointer transition-colors ${
+              isUploading
+                ? 'bg-dh-hover text-dh-muted cursor-not-allowed'
+                : 'bg-dh-hover hover:bg-dh-hover text-dh hover:opacity-90'
+            }`}
+            title="Upload map image or place image on map"
+          >
+            <Upload size={12} />
+            {isUploading ? 'Uploading…' : mapImageUrl ? 'Map Image…' : 'Upload Map Image…'}
+          </button>
+        ) : (
+          <label
+            className={`flex items-center gap-1.5 px-2 py-1 rounded cursor-pointer transition-colors ${
+              isUploading
+                ? 'bg-dh-hover text-dh-muted cursor-not-allowed'
+                : 'bg-dh-hover hover:bg-dh-hover text-dh hover:opacity-90'
+            }`}
+            title="Upload or replace map image"
+          >
+            <Upload size={12} />
+            {isUploading ? 'Uploading…' : mapImageUrl ? 'Replace Map' : 'Upload Map Image'}
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              disabled={isUploading}
+              onChange={e => { const f = e.target.files?.[0]; if (f) { onFileSelect(f); e.target.value = ''; } }}
+            />
+          </label>
+        )}
 
         {showImageGenAiUi ? (
           <>
@@ -973,12 +994,14 @@ function TokenCircle({
       ? (isMyCharacter ? 'bg-green-700' : 'bg-sky-700')
       : (advDefeated ? 'bg-black' : 'bg-amber-800');
 
+  const hasImage = !!element.imageUrl;
+
   return (
     <div
       className={`
         relative rounded-full flex items-center justify-center select-none cursor-grab active:cursor-grabbing
         border-2 border-black transition-opacity
-        ${bgClass}
+        ${!hasImage ? bgClass : ''}
         ${isDragging ? 'opacity-30' : ''}
         ${isGhost ? 'opacity-90 pointer-events-none' : ''}
         ${isProxy ? (isOtherMapShelf ? 'opacity-[0.38]' : 'opacity-20') : ''}
@@ -994,23 +1017,46 @@ function TokenCircle({
       }}
       title={isBoard ? (element.label || element.name || 'Token') : element.name}
     >
+      {hasImage && (
+        <img
+          src={element.imageUrl}
+          alt={element.name || ''}
+          className="absolute inset-0 w-full h-full object-cover rounded-full pointer-events-none"
+          draggable={false}
+        />
+      )}
       {!isProxy && <TokenDotRing size={size} groups={dotGroups} />}
-      <div className="relative z-10 flex flex-col items-center justify-center leading-none pointer-events-none">
-        <span
-          className="text-white font-bold leading-none"
-          style={{ fontSize: Math.max(10, Math.round(size * (instLabel ? 0.3 : 0.35))) }}
-        >
-          {label}
-        </span>
-        {instLabel && (
+      {advDefeated && (
+        <div className="absolute inset-0 rounded-full bg-black/70 pointer-events-none" />
+      )}
+      {!hasImage && (
+        <div className="relative z-10 flex flex-col items-center justify-center leading-none pointer-events-none">
           <span
-            className="text-white/90 font-bold tabular-nums mt-0.5"
+            className="text-white font-bold leading-none"
+            style={{ fontSize: Math.max(10, Math.round(size * (instLabel ? 0.3 : 0.35))) }}
+          >
+            {label}
+          </span>
+          {instLabel && (
+            <span
+              className="text-white/90 font-bold tabular-nums mt-0.5"
+              style={{ fontSize: Math.max(7, Math.round(size * 0.2)) }}
+            >
+              {instLabel}
+            </span>
+          )}
+        </div>
+      )}
+      {hasImage && instLabel && (
+        <div className="absolute bottom-0 left-0 right-0 flex justify-center pointer-events-none z-10">
+          <span
+            className="bg-black/70 text-white font-bold tabular-nums rounded-sm px-0.5 leading-tight"
             style={{ fontSize: Math.max(7, Math.round(size * 0.2)) }}
           >
             {instLabel}
           </span>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1182,6 +1228,7 @@ function TokenDetailPanel({
   onClose,
   anchorX,
   anchorY,
+  onOpenImageLightbox,
   tableId,
   /** Adversary pin: Encounter-panel-style marked stats + party target aid (replaces HP/Stress checkbox tracks). */
   adversaryTargetAid = null,
@@ -1254,11 +1301,24 @@ function TokenDetailPanel({
     >
       {/* Header */}
       <div className="flex items-start justify-between gap-2 mb-2">
-        <div className="min-w-0">
-          <div className="font-semibold text-white text-sm truncate">{element.name}</div>
-          {isAdv && (
-            <div className="text-xs text-dh-muted capitalize">{element.role || ''} {element.tier ? `T${element.tier}` : ''}</div>
+        <div className="flex items-center gap-2 min-w-0">
+          {element.imageUrl && (
+            <button
+              type="button"
+              onClick={() => onOpenImageLightbox?.(element.imageUrl)}
+              className="shrink-0 rounded-full overflow-hidden border border-dh-strong hover:border-white transition-colors focus:outline-none focus:ring-1 focus:ring-white"
+              style={{ width: 36, height: 36 }}
+              title="View image"
+            >
+              <img src={element.imageUrl} alt={element.name || ''} className="w-full h-full object-cover" draggable={false} />
+            </button>
           )}
+          <div className="min-w-0">
+            <div className="font-semibold text-white text-sm truncate">{element.name}</div>
+            {isAdv && (
+              <div className="text-xs text-dh-muted capitalize">{element.role || ''} {element.tier ? `T${element.tier}` : ''}</div>
+            )}
+          </div>
         </div>
         <div className="flex items-center gap-1 shrink-0">
           {onRemoveFromMap && (
@@ -1386,6 +1446,232 @@ function TrayColumn({ tokens, side, isHighlighted, trayRef, tokenSizePx, dragRef
   );
 }
 
+// ─── MapImageObject ──────────────────────────────────────────────────────────
+
+/**
+ * Placeable, resizable image element rendered between the draw-overlay layer and the token layer.
+ * Drag the body to move; drag any of the four corner grips (when selected) to resize (aspect-ratio
+ * locked, opposite corner anchored). Double-click opens the image in a lightbox.
+ * A floating toolbar (shown when selected) provides a Delete action.
+ */
+function MapImageObject({
+  element,
+  pxPerFt,
+  mapZoom,
+  isSelected,
+  onSelect,
+  onDeselect,
+  onUpdateMapImageObject,
+  onRemoveMapImageObject,
+  onOpenImageLightbox,
+}) {
+  const dragRef = useRef(null);
+  const resizeRef = useRef(null);
+  // Tracks timestamp of last pointer-down for manual double-click detection.
+  // The <img> is pointer-events-none so native dblclick never fires; we synthesize it here.
+  const lastPointerDownTimeRef = useRef(0);
+
+  // Local optimistic position during body drag
+  const [localPos, setLocalPos] = useState(null); // { xFt, yFt }
+  // Local optimistic position+size during corner resize (center moves as opposite corner is anchored)
+  const [localResize, setLocalResize] = useState(null); // { xFt, yFt, widthFt, heightFt }
+
+  const onPointerDownBody = useCallback((e) => {
+    if (e.button !== 0) return;
+    e.stopPropagation();
+    // Prevent browser from treating rapid clicks as a text/element selection gesture.
+    e.preventDefault();
+
+    // Manual double-click: two pointer-downs within 400ms without a drag between them → open lightbox.
+    const now = performance.now();
+    const dt = now - lastPointerDownTimeRef.current;
+    lastPointerDownTimeRef.current = now;
+    if (dt < 400 && dt > 0 && onOpenImageLightbox) {
+      lastPointerDownTimeRef.current = 0; // reset so triple-tap doesn't re-trigger
+      onOpenImageLightbox(element.imageUrl);
+      return;
+    }
+
+    if (!isSelected) { onSelect(); return; }
+    e.currentTarget.setPointerCapture(e.pointerId);
+    dragRef.current = {
+      startClientX: e.clientX,
+      startClientY: e.clientY,
+      startXFt: element.tokenX ?? 0,
+      startYFt: element.tokenY ?? 0,
+      moved: false,
+    };
+  }, [isSelected, onSelect, element.tokenX, element.tokenY, element.imageUrl, onOpenImageLightbox]);
+
+  const onPointerMoveBody = useCallback((e) => {
+    if (!dragRef.current) return;
+    const dx = (e.clientX - dragRef.current.startClientX) / (pxPerFt * mapZoom);
+    const dy = (e.clientY - dragRef.current.startClientY) / (pxPerFt * mapZoom);
+    if (Math.abs(e.clientX - dragRef.current.startClientX) > 4 || Math.abs(e.clientY - dragRef.current.startClientY) > 4) {
+      dragRef.current.moved = true;
+    }
+    setLocalPos({ xFt: dragRef.current.startXFt + dx, yFt: dragRef.current.startYFt + dy });
+  }, [pxPerFt, mapZoom]);
+
+  const onPointerUpBody = useCallback((e) => {
+    if (!dragRef.current) return;
+    const d = dragRef.current;
+    dragRef.current = null;
+    if (d.moved && localPos) {
+      // A real drag completed — clear the double-click timer so the next tap starts fresh.
+      lastPointerDownTimeRef.current = 0;
+      onUpdateMapImageObject?.(element.instanceId, { tokenX: localPos.xFt, tokenY: localPos.yFt });
+    }
+    setLocalPos(null);
+  }, [localPos, element.instanceId, onUpdateMapImageObject]);
+
+  // Corner resize — supports NW/NE/SW/SE with opposite-corner anchoring.
+  const onPointerDownCorner = useCallback((e, corner) => {
+    if (e.button !== 0) return;
+    e.stopPropagation();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    const ratio = element.imageNaturalHeight && element.imageNaturalWidth
+      ? element.imageNaturalHeight / element.imageNaturalWidth
+      : 1;
+    const cx = element.tokenX ?? 0;
+    const cy = element.tokenY ?? 0;
+    const w = element.widthFt ?? 20;
+    const h = element.heightFt ?? w * ratio;
+    // Anchor = the opposite corner's position in feet (stays fixed during resize)
+    const anchorX = corner === 'NW' || corner === 'SW' ? cx + w / 2 : cx - w / 2;
+    const anchorY = corner === 'NW' || corner === 'NE' ? cy + h / 2 : cy - h / 2;
+    resizeRef.current = { corner, startClientX: e.clientX, startWidthFt: w, ratio, anchorX, anchorY };
+  }, [element.tokenX, element.tokenY, element.widthFt, element.heightFt, element.imageNaturalWidth, element.imageNaturalHeight]);
+
+  const onPointerMoveCorner = useCallback((e) => {
+    if (!resizeRef.current) return;
+    const { corner, startClientX, startWidthFt, ratio, anchorX, anchorY } = resizeRef.current;
+    const dxFt = (e.clientX - startClientX) / (pxPerFt * mapZoom);
+    // Left-side corners grow leftward (negative dxFt = larger); right-side grow rightward
+    const newWidthFt = Math.max(2, corner === 'NW' || corner === 'SW' ? startWidthFt - dxFt : startWidthFt + dxFt);
+    const newHeightFt = newWidthFt * ratio;
+    // New center: offset from anchor by half the new size, toward the dragged corner
+    const newXFt = corner === 'NW' || corner === 'SW' ? anchorX - newWidthFt / 2 : anchorX + newWidthFt / 2;
+    const newYFt = corner === 'NW' || corner === 'NE' ? anchorY - newHeightFt / 2 : anchorY + newHeightFt / 2;
+    setLocalResize({ xFt: newXFt, yFt: newYFt, widthFt: newWidthFt, heightFt: newHeightFt });
+  }, [pxPerFt, mapZoom]);
+
+  const onPointerUpCorner = useCallback((e) => {
+    if (!resizeRef.current) return;
+    resizeRef.current = null;
+    if (localResize) {
+      onUpdateMapImageObject?.(element.instanceId, {
+        tokenX: localResize.xFt,
+        tokenY: localResize.yFt,
+        widthFt: localResize.widthFt,
+        heightFt: localResize.heightFt,
+      });
+    }
+    setLocalResize(null);
+  }, [localResize, element.instanceId, onUpdateMapImageObject]);
+
+  const displayXFt = localResize ? localResize.xFt : (localPos ? localPos.xFt : (element.tokenX ?? 0));
+  const displayYFt = localResize ? localResize.yFt : (localPos ? localPos.yFt : (element.tokenY ?? 0));
+  const displayWidthFt = localResize ? localResize.widthFt : (element.widthFt ?? 20);
+  const displayHeightFt = localResize ? localResize.heightFt : (element.heightFt ?? 20);
+
+  const displayWidthPx = displayWidthFt * pxPerFt;
+  const displayHeightPx = displayHeightFt * pxPerFt;
+  const displayLeftPx = displayXFt * pxPerFt - displayWidthPx / 2;
+  const displayTopPx = displayYFt * pxPerFt - displayHeightPx / 2;
+
+  // Shared style for all four corner grips (visual size halved from original 16px → 8px;
+  // hit area kept at 20px via padding wrapper for comfortable grab)
+  const cornerGripStyle = {
+    width: 8,
+    height: 8,
+    background: 'rgba(56,189,248,0.9)',
+    border: '1.5px solid white',
+    borderRadius: 2,
+    touchAction: 'none',
+  };
+  const cornerWrapStyle = (corner) => ({
+    position: 'absolute',
+    ...(corner === 'NW' || corner === 'SW' ? { left: -10 } : { right: -10 }),
+    ...(corner === 'NW' || corner === 'NE' ? { top: -10 } : { bottom: -10 }),
+    width: 20,
+    height: 20,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    cursor: corner === 'NW' ? 'nw-resize' : corner === 'NE' ? 'ne-resize' : corner === 'SW' ? 'sw-resize' : 'se-resize',
+    touchAction: 'none',
+    zIndex: 2,
+  });
+
+  return (
+    <>
+      <div
+        style={{
+          position: 'absolute',
+          left: displayLeftPx,
+          top: displayTopPx,
+          width: displayWidthPx,
+          height: displayHeightPx,
+          cursor: isSelected ? 'grab' : 'pointer',
+          touchAction: 'none',
+          userSelect: 'none',
+          // z=22 sits above the scribble canvas (z=21) so pointer events reach the image body
+          zIndex: 22,
+        }}
+        onPointerDown={onPointerDownBody}
+        onPointerMove={onPointerMoveBody}
+        onPointerUp={onPointerUpBody}
+      >
+        <img
+          src={element.imageUrl}
+          alt=""
+          draggable={false}
+          className={`w-full h-full object-contain pointer-events-none select-none ${isSelected ? 'ring-2 ring-sky-400' : ''}`}
+          style={{ display: 'block' }}
+        />
+        {isSelected && (
+          <>
+            {/* Four corner resize grips — each anchors the opposite corner */}
+            {['NW', 'NE', 'SW', 'SE'].map((corner) => (
+              <div
+                key={corner}
+                style={cornerWrapStyle(corner)}
+                onPointerDown={(e) => onPointerDownCorner(e, corner)}
+                onPointerMove={onPointerMoveCorner}
+                onPointerUp={onPointerUpCorner}
+              >
+                <div style={cornerGripStyle} />
+              </div>
+            ))}
+            {/* Delete toolbar — top-center */}
+            <div
+              style={{
+                position: 'absolute',
+                top: -28,
+                left: '50%',
+                transform: 'translateX(-50%)',
+                zIndex: 10,
+              }}
+            >
+              <button
+                type="button"
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={(e) => { e.stopPropagation(); onRemoveMapImageObject?.(element.instanceId); }}
+                className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-dh-raised border border-dh-strong text-red-400 hover:text-red-300 hover:bg-red-950/40 text-xs shadow-md transition-colors"
+                title="Remove image from map"
+              >
+                <Trash2 size={11} />
+                Remove
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </>
+  );
+}
+
 // ─── BattleMap ───────────────────────────────────────────────────────────────
 
 export function BattleMap({
@@ -1398,6 +1684,14 @@ export function BattleMap({
   onMapConfigChange,
   /** GM only: debounced persist of normalized zoom/pan (`set-map-view`) */
   onMapViewSync,
+  /** Uploads file then adds a `mapImage` element (GM: postTableOp; player: postMapImageObject). */
+  onAddMapImageObject,
+  /** Updates an existing `mapImage` element (instanceId, updates). */
+  onUpdateMapImageObject,
+  /** Removes a `mapImage` element (instanceId). */
+  onRemoveMapImageObject,
+  /** Opens a lightbox with the given image URL (threaded from GMTableView). */
+  onOpenImageLightbox,
   tableName = '',
   tableStateReady = false,
   onTableNameChange,
@@ -1460,6 +1754,12 @@ export function BattleMap({
   onSetMapViewOverlay,
   /** Live map viewport width/height ratio (scroll wrapper) — for import map camera rectangles matching the table. */
   onViewportAspectChange,
+  /**
+   * Called with `{ xFt, yFt }` whenever the viewport center in map-feet changes (pan/zoom/resize).
+   * Lets callers (e.g. app.jsx) store the latest center so paste/drop placement of new mapImage
+   * objects defaults to the visible viewport center rather than map coordinate (0, 0).
+   */
+  onViewportCenterChange,
   /**
    * When set, clicking a placed character token opens this panel instead of the compact `TokenDetailPanel`.
    * Uses `GameTableCharacterListCard` (same as the Characters sidebar); sheet open is wired via `sheetTriggerProps` on that card.
@@ -1534,7 +1834,7 @@ export function BattleMap({
   useEffect(() => () => {
     if (bullseyeRafRef.current != null) cancelAnimationFrame(bullseyeRafRef.current);
   }, []);
-  const { openImport, enabled: unifiedImportEnabled } = useUnifiedImport();
+  const { openImport, enabled: unifiedImportEnabled, openMapImageQuickPick, canMapImagePaste } = useUnifiedImport();
   // Frozen bullseye position during drag (feet coords of dragged token's origin)
   const frozenBullseyeRef = useRef(null);
   // Second bullseye that follows the dragged token during drag (only when frozen bullseye is set)
@@ -1728,6 +2028,29 @@ export function BattleMap({
    */
   const viewStateRef = useRef({ viewZoom, viewPanLeft, viewPanTop });
   viewStateRef.current = { viewZoom, viewPanLeft, viewPanTop };
+
+  /** Opens the quick-pick menu with the current viewport center pre-filled for initial placement.
+   *  Placed here so all deps (viewZoom, viewPanLeft, viewPanTop, pxPerFt, activeMapIdResolved) are initialized. */
+  const openMapImageQuickPickWithCenter = useCallback((file) => {
+    const centerXFt = containerWidth > 0 && pxPerFt > 0 && viewZoom > 0
+      ? (containerWidth / 2 + viewPanLeft) / (viewZoom * pxPerFt)
+      : null;
+    const centerYFt = containerHeight > 0 && pxPerFt > 0 && viewZoom > 0
+      ? (containerHeight / 2 + viewPanTop) / (viewZoom * pxPerFt)
+      : null;
+    openMapImageQuickPick(file, { mapId: activeMapIdResolved, centerXFt, centerYFt });
+  }, [openMapImageQuickPick, containerWidth, containerHeight, viewPanLeft, viewPanTop, viewZoom, pxPerFt, activeMapIdResolved]);
+
+  // Emit current viewport center to parent whenever pan/zoom/container changes so the parent can
+  // cache it for paste/drop image placement (which goes through the global listener and doesn't
+  // have direct access to BattleMap's internal pan/zoom state).
+  useEffect(() => {
+    if (!onViewportCenterChange || !containerWidth || !containerHeight || !pxPerFt || !viewZoom) return;
+    onViewportCenterChange({
+      xFt: (containerWidth / 2 + viewPanLeft) / (viewZoom * pxPerFt),
+      yFt: (containerHeight / 2 + viewPanTop) / (viewZoom * pxPerFt),
+    });
+  }, [onViewportCenterChange, containerWidth, containerHeight, viewPanLeft, viewPanTop, viewZoom, pxPerFt]);
 
   /** Clips map to shared `mapViewVisibleNorm` rect (players / saved cameras); null for GM live view. */
   const [mapLetterboxClipPx, setMapLetterboxClipPx] = useState(null);
@@ -2527,6 +2850,11 @@ export function BattleMap({
     () => activeElements.filter((el) => el.elementType === 'boardToken'),
     [activeElements],
   );
+  const mapImages = useMemo(
+    () => activeElements.filter((el) => el.elementType === 'mapImage' && effectiveTokenMapId(el.mapId) === activeMapIdResolved),
+    [activeElements, activeMapIdResolved],
+  );
+  const [selectedMapImageId, setSelectedMapImageId] = useState(null);
   const parentByInstanceId = useMemo(() => {
     const m = new Map();
     for (const el of activeElements) {
@@ -4025,12 +4353,13 @@ export function BattleMap({
   /** Keep the stable proxy callbacks (declared earlier) pointed at the latest handler closures. */
   handlersRef.current = { handlePointerDown, handlePointerMove, handlePointerUp };
 
-  // Dismiss detail panel when clicking outside
+  // Dismiss detail panel and selected map image when clicking outside
   const handleMapClick = useCallback((e) => {
     if (e.button !== 0) return;
     // Only dismiss if clicking directly on the map/scroll container (not a token)
     if (e.target === scrollContainerRef.current || e.target === e.currentTarget) {
       setPinnedToken(null);
+      setSelectedMapImageId(null);
     }
   }, []);
 
@@ -4177,6 +4506,7 @@ export function BattleMap({
           onMapConfigChange={handleMapConfigChange}
           isUploading={false}
           onFileSelect={(f) => unifiedImportEnabled && openImport([f])}
+          onOpenQuickPick={canMapImagePaste ? () => openMapImageQuickPickWithCenter(null) : undefined}
           tableName={tableName}
           tableStateReady={tableStateReady}
           onTableNameChange={onTableNameChange}
@@ -4655,6 +4985,18 @@ export function BattleMap({
                   )}
                   {!isPlayer && (
                     <>
+                      {canMapImagePaste && (
+                        <Tooltip label="Place an image on the map">
+                          <button
+                            type="button"
+                            onClick={() => openMapImageQuickPickWithCenter(null)}
+                            className="inline-flex items-center justify-center rounded border border-dh-strong bg-dh-raised/70 p-1.5 text-sky-400 hover:text-sky-300 hover:border-sky-800/60"
+                            aria-label="Place image on map"
+                          >
+                            <ImageIcon size={15} aria-hidden />
+                          </button>
+                        </Tooltip>
+                      )}
                       <Tooltip label="Scribble: fades over 10 seconds (not saved). Click and drag.">
                         <button
                           type="button"
@@ -5109,6 +5451,22 @@ export function BattleMap({
                 </svg>
               )}
 
+              {/* Placed mapImage objects — between draw layer (z=4) and tokens (z=10+) */}
+              {mapImages.map((el) => (
+                <MapImageObject
+                  key={el.instanceId}
+                  element={el}
+                  pxPerFt={pxPerFt}
+                  mapZoom={mapZoom}
+                  isSelected={selectedMapImageId === el.instanceId}
+                  onSelect={() => setSelectedMapImageId(el.instanceId)}
+                  onDeselect={() => setSelectedMapImageId(null)}
+                  onUpdateMapImageObject={onUpdateMapImageObject}
+                  onRemoveMapImageObject={onRemoveMapImageObject}
+                  onOpenImageLightbox={onOpenImageLightbox}
+                />
+              ))}
+
               {/* Placed character tokens — rising z-index so overlaps pick the topmost; padded hit target for edges */}
               {charMapTokens.map(({ element, isMyCharacter: myChar }, stackIdx) => {
                 const bandIdx = tokenRangeBands[element.instanceId];
@@ -5265,7 +5623,19 @@ export function BattleMap({
               (!isPlayer && maps.length > 0 && onSetActiveView && onMapFreeExplore) ||
               (isPlayer && tableId && showPlayerMapViewStrip)
             ) && (
-            <div className="pointer-events-none absolute right-2 bottom-2 z-20">
+            <div className="pointer-events-none absolute right-2 bottom-2 z-20 flex flex-col items-end gap-1.5">
+              {isPlayer && onAddMapImageObject && (
+                <Tooltip label="Place an image on the map">
+                  <button
+                    type="button"
+                    aria-label="Place image on map"
+                    onClick={() => openMapImageQuickPickWithCenter(null)}
+                    className="pointer-events-auto shrink-0 p-1.5 rounded border border-dh-strong bg-dh-raised/90 shadow-md hover:bg-dh-hover text-sky-400 hover:text-sky-300"
+                  >
+                    <ImageIcon size={14} />
+                  </button>
+                </Tooltip>
+              )}
               <Tooltip label="Zoom to actors — fit everyone on the map at the closest zoom">
                 <button
                   type="button"
@@ -5373,6 +5743,7 @@ export function BattleMap({
             anchorX={pinnedToken.anchorX}
             anchorY={pinnedToken.anchorY}
             tableId={tableId}
+            onOpenImageLightbox={onOpenImageLightbox}
             adversaryTargetAid={
               el.elementType === 'adversary' && typeof renderAdversaryTargetAid === 'function'
                 ? renderAdversaryTargetAid(el)

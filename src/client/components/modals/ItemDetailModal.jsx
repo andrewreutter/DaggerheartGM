@@ -35,6 +35,7 @@ import { SRD_UNIFIED_COLLECTIONS, LIBRARY_CUSTOM_DETAIL_COLLECTIONS } from '../.
 import { buildDefaultNewSrdLibraryItem } from '../../lib/library-default-new-item.js';
 import { isCharacterComplete } from '../../lib/character-calc.js';
 import { CharacterIdentityTitleRow } from '../CharacterDisplay.jsx';
+import { useUnifiedImport } from '../../lib/unified-import-context.jsx';
 
 const SRD_UNIFIED_SET = new Set(SRD_UNIFIED_COLLECTIONS);
 
@@ -258,6 +259,46 @@ export const ItemDetailModal = forwardRef(function ItemDetailModal({
 
   const { srdData: characterSrdData } = useCharacterSrdData();
 
+  // Register the open editable character/adversary item with the UnifiedImportProvider so that
+  // image paste/drop shows "Add to [Name]" in the quick-pick menu.
+  const { registerEditableItem, unregisterEditableItem } = useUnifiedImport();
+
+  // A ref always points to the latest formData so the callback below never goes stale.
+  const formDataRef = useRef(formData);
+  formDataRef.current = formData;
+
+  // Stable callback — reads formDataRef at call time, mirrors ImageEditor.handleAddUrl semantics.
+  const addImageUrlToItem = useCallback((url) => {
+    const fd = formDataRef.current;
+    const additional = Array.isArray(fd._additionalImages) ? fd._additionalImages : [];
+    const willSetPrimary = !fd.imageUrl;
+    setFormData(willSetPrimary
+      ? { ...fd, imageUrl: url }
+      : { ...fd, _additionalImages: [...additional, url] });
+    // Persist to DB immediately so the library record is updated and character-library-update is broadcast.
+    if (item?.id && saveImage) {
+      saveImage(
+        collection,
+        item.id,
+        willSetPrimary ? url : fd.imageUrl,
+        { _additionalImages: willSetPrimary ? additional : [...additional, url] },
+      ).catch(console.error);
+    }
+  }, [setFormData, item?.id, saveImage, collection]);
+
+  useEffect(() => {
+    if (!editable || (collection !== 'characters' && collection !== 'adversaries')) return;
+    registerEditableItem({
+      name: formData?.name,
+      collection,
+      onAddImageUrl: addImageUrlToItem,
+    });
+    return unregisterEditableItem;
+  // formData?.name is intentionally included so the displayed item name stays current in the menu.
+  // addImageUrlToItem is stable; re-registration just updates the ref in the context.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editable, collection, formData?.name, addImageUrlToItem, registerEditableItem, unregisterEditableItem]);
+
   // Lock body scroll while the modal is open.
   useEffect(() => {
     const prev = document.body.style.overflow;
@@ -403,6 +444,7 @@ export const ItemDetailModal = forwardRef(function ItemDetailModal({
           isOwn={isOwn}
           cardKey="preview"
           onCharacterRuntimeUpdate={onCharacterRuntimeUpdate}
+          onOpenImageLightbox={setLightboxUrl}
         />
 
         </div>

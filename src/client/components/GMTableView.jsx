@@ -550,6 +550,10 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
   onMapFreeExplore,
   onForcePlayersToMapView,
   onBattleMapViewportAspectChange,
+  onBattleMapViewportCenterChange,
+  onAddMapImageObject,
+  onUpdateMapImageObject,
+  onRemoveMapImageObject,
   isAdmin = false,
 }) {
   const { hideAiUi } = useAiUiPreference();
@@ -4884,6 +4888,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
             v2TableContext={v2TableContextForPanels}
             onV2CardChipFactory={handleCharacterPanelV2CardChip}
             pendingBanners={pendingBanners}
+            onOpenImageLightbox={setLightboxUrl}
           />
         </AnchoredFloatingPanel>
       );
@@ -5924,6 +5929,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                 v2TableContext={v2TableContextForPanels}
                 onV2CardChipFactory={handleCharacterPanelV2CardChip}
                 pendingBanners={pendingBanners}
+                onOpenImageLightbox={setLightboxUrl}
               />
             );
           })}
@@ -6641,6 +6647,11 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
             onSetMapOverlay={onSetMapOverlay}
             onSetMapViewOverlay={onSetMapViewOverlay}
             onViewportAspectChange={onBattleMapViewportAspectChange}
+            onViewportCenterChange={onBattleMapViewportCenterChange}
+            onAddMapImageObject={onAddMapImageObject}
+            onUpdateMapImageObject={onUpdateMapImageObject}
+            onRemoveMapImageObject={onRemoveMapImageObject}
+            onOpenImageLightbox={setLightboxUrl}
             className="flex-1 min-h-0"
             renderPinnedCharacterPanel={renderPinnedCharacterPanel}
             renderAdversaryTargetAid={renderAdversaryTargetAid}
@@ -7567,6 +7578,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
               showUnsavedDirtyHint={sync?.showUnsavedDirtyHint}
               userHasInteractedWithEditor={sync?.userHasInteractedWithEditor}
               savedFlash={sync?.savedFlash}
+              onOpenImageLightbox={setLightboxUrl}
               v2LibrarySourcePath={v2TitlePath}
               showIncomplete
               sheetColumnWidth={
@@ -7601,6 +7613,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                     el={titleBarEl}
                     surfaceVariant="panelEmbedded"
                     omitHeader
+                    onOpenImageLightbox={setLightboxUrl}
                     fearCount={fearCount}
                     updateFn={sheetOwner ? updateActiveElement : undefined}
                     expandedKeys={featureExpanded[liveEl.instanceId] ?? []}

@@ -728,6 +728,8 @@ export function LibraryItemDisplayContent({
   cardKey = 'library-preview',
   /** When `'libraryCard'`, shows the first image floated upper-right so content flows around it. */
   layout = 'default',
+  /** When provided, character portrait image becomes click-to-fullscreen. */
+  onOpenImageLightbox,
 }) {
   const libraryCard = layout === 'libraryCard';
 
@@ -780,7 +782,7 @@ export function LibraryItemDisplayContent({
         <MarkdownText text={item.description} className="text-sm italic text-dh" />
       )}
       {collection === 'characters' && (
-        <CharacterDetailPane item={item} srdData={srdData} onCharacterRuntimeUpdate={onCharacterRuntimeUpdate} />
+        <CharacterDetailPane item={item} srdData={srdData} onCharacterRuntimeUpdate={onCharacterRuntimeUpdate} onOpenImageLightbox={onOpenImageLightbox} />
       )}
       {GENERIC_DETAIL_SET.has(collection) && (
         <GenericLibraryRecordBody item={item} collection={collection} srdData={srdData} />

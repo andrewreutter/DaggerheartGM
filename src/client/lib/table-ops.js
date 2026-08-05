@@ -86,6 +86,24 @@ export const CHARACTER_RUNTIME_KEYS = [
  */
 export const TABLE_STATE_V2_ROOT_KEYS = ['featureState'];
 
+/**
+ * Shape for `elementType: 'mapImage'` — a placeable, resizable image object on the battle map.
+ * Stored in `activeElements` like any other element; generic `add-elements`, `update-element`,
+ * and `remove-element` ops already handle it without special-casing.
+ * `clear-table` drops mapImage elements because they are not characters or character boardTokens.
+ *
+ * Fields:
+ *   instanceId          — unique id
+ *   elementType         — 'mapImage'
+ *   mapId               — which parallel map it belongs to (null = unplaced)
+ *   imageUrl            — public URL (never an inline data: URL — server guard strips those)
+ *   imageNaturalWidth   — original px width (for aspect-ratio locking)
+ *   imageNaturalHeight  — original px height
+ *   tokenX, tokenY      — center position in feet (same convention as token elements; null = not placed)
+ *   widthFt             — current rendered width in feet (aspect-ratio locked)
+ *   heightFt            — current rendered height in feet (= widthFt * naturalH/naturalW)
+ */
+
 /** Persisted fields for `elementType: 'boardToken'` (companion token, etc.). */
 export const BOARD_TOKEN_RUNTIME_KEYS = [
   'instanceId',

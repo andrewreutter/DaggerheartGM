@@ -1060,6 +1060,36 @@ export const postMapImageFile = async (file) => {
   return body;
 };
 
+/** Player: upload a map/overlay image for a table the user is invited to. Returns `{ url }`. */
+export const postMapImageFileForTable = async (tableId, file) => {
+  const token = await getAuthToken();
+  if (!token) throw new Error('Not signed in');
+  const form = new FormData();
+  form.append('file', file);
+  const res = await fetch(`/api/room/${encodeURIComponent(tableId)}/map-image`, {
+    method: 'POST',
+    headers: apiHeaders({ Authorization: `Bearer ${token}` }),
+    body: form,
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+  return body;
+};
+
+/** Player (or GM): add/update/remove a mapImage element on the table via the player-safe route. */
+export const postMapImageObject = async (tableId, payload) => {
+  const token = await getAuthToken();
+  if (!token) throw new Error('Not signed in');
+  const res = await fetch(`/api/room/${encodeURIComponent(tableId)}/map-image-object`, {
+    method: 'POST',
+    headers: apiHeaders({ Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }),
+    body: JSON.stringify(payload),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+  return body;
+};
+
 export const postActionNotification = async (notification, tableId = null, opts = {}) => {
   const token = await getAuthToken();
   if (!token) return null;

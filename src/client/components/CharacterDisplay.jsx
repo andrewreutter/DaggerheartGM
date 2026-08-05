@@ -648,11 +648,22 @@ export function CharacterIdentityTitleRow({ el, showIncomplete = false, classNam
   );
 }
 
-export function CharacterIdentityHeader({ el, showIncomplete = false, actions }) {
+export function CharacterIdentityHeader({ el, showIncomplete = false, actions, onOpenImageLightbox }) {
+  const portrait = el?.imageUrl;
   return (
     <div className="px-3 py-2.5 border-b dh-tint-spellcast-strip">
       <div className="flex items-center gap-2 min-w-0">
-        <User size={14} className="dh-text-magic-icon shrink-0" aria-hidden />
+        {portrait ? (
+          <img
+            src={portrait}
+            alt=""
+            className={`w-7 h-7 rounded-full object-cover shrink-0 border border-dh-border/60${onOpenImageLightbox ? ' cursor-pointer hover:opacity-80 transition-opacity' : ''}`}
+            aria-hidden
+            onClick={onOpenImageLightbox ? (e) => { e.stopPropagation(); onOpenImageLightbox(portrait); } : undefined}
+          />
+        ) : (
+          <User size={14} className="dh-text-magic-icon shrink-0" aria-hidden />
+        )}
         <div className="min-w-0 flex-1">
           <CharacterIdentityTitleRow el={el} showIncomplete={showIncomplete} />
         </div>
@@ -2660,7 +2671,7 @@ export function CharacterInventory({ el }) {
  * Full character detail pane for use in ItemDetailModal display side.
  * @param {{ item: object, srdData: object, onCharacterRuntimeUpdate?: (patch: object) => void }} props
  */
-export function CharacterDetailPane({ item, srdData, onCharacterRuntimeUpdate }) {
+export function CharacterDetailPane({ item, srdData, onCharacterRuntimeUpdate, onOpenImageLightbox }) {
   const el = useMemo(() => {
     const raw = item || {};
     if (!srdData) return raw;
@@ -2718,7 +2729,7 @@ export function CharacterDetailPane({ item, srdData, onCharacterRuntimeUpdate })
     <div className="flex flex-col gap-3 min-h-0 w-full min-w-0 lg:min-w-[48rem]">
       <CharacterSheetSourceHighlightProvider>
       <CharacterSheetHighlightSurface className="bg-dh-raised border border-dh-border rounded-xl shadow-2xl overflow-hidden flex flex-col min-h-0 flex-1 max-h-full w-full min-w-0">
-        <CharacterIdentityHeader el={el} />
+        <CharacterIdentityHeader el={el} onOpenImageLightbox={onOpenImageLightbox} />
         {el.description && (
           <div className="px-3 pt-2 pb-2 shrink-0 bg-dh-canvas/30 w-full">
             <p className="text-[11px] text-dh-muted leading-relaxed italic">{el.description}</p>

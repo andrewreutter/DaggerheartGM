@@ -36,6 +36,7 @@ import { WARDEN_OF_THE_ELEMENTS_SCOPE_KEY } from '../../features-v2/engine/featu
  * @param {object} [props.v2TableContext]
  * @param {(characterEl: object, displayEl: object) => (payload: object) => void} [props.onV2CardChipFactory]
  * @param {object[]} [props.pendingBanners]
+ * @param {(url: string) => void} [props.onOpenImageLightbox] — when provided, portrait thumb becomes click-to-fullscreen
  */
 export function GameTableCharacterListCard({
   el,
@@ -60,6 +61,7 @@ export function GameTableCharacterListCard({
   v2TableContext,
   onV2CardChipFactory,
   pendingBanners,
+  onOpenImageLightbox,
 }) {
   const isIncomplete = !charComplete.complete;
 
@@ -74,7 +76,17 @@ export function GameTableCharacterListCard({
       {...sheetTriggerProps}
     >
       <div className="px-2.5 py-1.5 border-b border-dh-border flex items-center gap-1.5 hover:bg-dh-hover transition-colors">
-        <User size={10} className={isMyCharacter ? 'text-emerald-500 shrink-0' : 'text-sky-500 shrink-0'} />
+        {el.imageUrl ? (
+          <img
+            src={el.imageUrl}
+            alt=""
+            className={`w-4 h-4 rounded-full object-cover shrink-0 border ${isMyCharacter ? 'border-emerald-500/60' : 'border-sky-500/60'}${onOpenImageLightbox ? ' cursor-pointer hover:opacity-80 transition-opacity' : ''}`}
+            aria-hidden
+            onClick={onOpenImageLightbox ? (e) => { e.stopPropagation(); onOpenImageLightbox(el.imageUrl); } : undefined}
+          />
+        ) : (
+          <User size={10} className={isMyCharacter ? 'text-emerald-500 shrink-0' : 'text-sky-500 shrink-0'} />
+        )}
         <span className="text-xs font-semibold text-dh truncate flex-1">{el.name || 'Unnamed'}</span>
         {isIncomplete && (
           <span className="flex items-center gap-0.5 text-orange-400 shrink-0" title={`Missing: ${charComplete.missing?.join(', ') ?? ''}`}>

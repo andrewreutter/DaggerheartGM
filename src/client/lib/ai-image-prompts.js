@@ -70,6 +70,19 @@ export function buildImagePrompt(formData, collection) {
     }).filter(Boolean);
     if (featParts.length) lines.push('', `Features: ${featParts.join(' | ')}`);
 
+  } else if (collection === 'characters') {
+    const { name, pronouns, description, class: className, subclass: subclassName,
+            ancestry: ancestryName, community: communityName,
+            armor: armorName, primaryWeapon: primaryWeaponName, secondaryWeapon: secondaryWeaponName } = formData || {};
+    const pronounsPart = pronouns ? ` (${stripMd(pronouns)})` : '';
+    const identityParts = [ancestryName, communityName, className, subclassName].filter(Boolean).map(stripMd);
+    const identityStr = identityParts.length ? `, ${identityParts.join(' ')}` : '';
+    lines.push(`A dark fantasy TTRPG character portrait of ${stripMd(name) || 'a character'}${pronounsPart}${identityStr}.`);
+    if (description?.trim()) lines.push('', stripMd(description));
+    const weaponParts = [primaryWeaponName, secondaryWeaponName].filter(Boolean).map(stripMd);
+    if (weaponParts.length) lines.push('', `Wielding: ${weaponParts.join(' and ')}`);
+    if (armorName?.trim()) lines.push('', `Wearing: ${stripMd(armorName)}`);
+
   } else if (collection === 'scenes') {
     const { name, description } = formData || {};
     lines.push(`A dark fantasy TTRPG scene: ${stripMd(name) || 'an encounter'}.`);

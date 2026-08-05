@@ -1102,6 +1102,28 @@ async function applyOpToTableState(tableId, op, opts = {}) {
       if (pngField) {
         op = { ...op, [pngField]: await uploadDataUrlToMapStorageIfNeeded(userId, op[pngField], 'map-overlays') };
       }
+    } else if (op.op === 'add-elements') {
+      // Defense in depth: sanitize inline data: URLs on mapImage elements (same pattern as add-map/set-map).
+      const anyInline = (op.elements || []).some(
+        (el) => el.elementType === 'mapImage' && typeof el.imageUrl === 'string' && el.imageUrl.startsWith('data:'),
+      );
+      if (anyInline) {
+        const sanitized = await Promise.all(
+          (op.elements || []).map(async (el) => {
+            if (el.elementType === 'mapImage' && typeof el.imageUrl === 'string' && el.imageUrl.startsWith('data:')) {
+              return { ...el, imageUrl: await uploadDataUrlToMapStorageIfNeeded(userId, el.imageUrl, 'map-images') };
+            }
+            return el;
+          }),
+        );
+        op = { ...op, elements: sanitized };
+      }
+    } else if (op.op === 'update-element' && typeof op.updates?.imageUrl === 'string' && op.updates.imageUrl.startsWith('data:')) {
+      const stateElements = state.elements || [];
+      const targetEl = stateElements.find((e) => e.instanceId === op.instanceId);
+      if (targetEl?.elementType === 'mapImage') {
+        op = { ...op, updates: { ...op.updates, imageUrl: await uploadDataUrlToMapStorageIfNeeded(userId, op.updates.imageUrl, 'map-images') } };
+      }
     }
     // applyTableOp uses 'activeElements' key; DB uses 'elements'
     const stateForOp = { ...state, activeElements: state.elements || [] };
@@ -1979,6 +2001,59 @@ app.post('/api/room/my/map-image', requireAuth, mapImageUpload.single('file'), a
   }
 });
 
+// POST /api/room/:tableId/map-image — Player (or GM) uploads a map image scoped to the table owner's storage folder.
+// Mirrors POST /api/room/my/map-image but uses resolveTableAccess so players may upload.
+app.post('/api/room/:tableId/map-image', requireAuth, mapImageUpload.single('file'), async (req, res) => {
+  const ctx = await resolveTableAccess(APP_ID, req.params.tableId, req);
+  if (ctx.error) return res.status(ctx.error).json({ error: ctx.message });
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+  const { gmUid } = ctx;
+  if (!supabase) {
+    const b64 = req.file.buffer.toString('base64');
+    return res.json({ url: `data:${req.file.mimetype};base64,${b64}` });
+  }
+  try {
+    const url = await uploadBufferToMapStorage(gmUid, req.file.buffer, req.file.mimetype, 'map-images');
+    res.json({ url });
+  } catch (err) {
+    console.error('POST /api/room/:tableId/map-image error:', err);
+    res.status(500).json({ error: err.message || 'Upload failed' });
+  }
+});
+
+// POST /api/room/:tableId/map-image-object — GM or player adds/updates/removes a mapImage element.
+// Players can only add/update/remove elements with elementType === 'mapImage' (safety boundary).
+app.post('/api/room/:tableId/map-image-object', requireAuth, async (req, res) => {
+  const ctx = await resolveTableAccess(APP_ID, req.params.tableId, req);
+  if (ctx.error) return res.status(ctx.error).json({ error: ctx.message });
+  const { tableId, tableState } = ctx;
+  const { action, instanceId, updates, ...addFields } = req.body || {};
+  if (!action || !['add', 'update', 'remove'].includes(action)) {
+    return res.status(400).json({ error: 'action must be add|update|remove' });
+  }
+  try {
+    if (action === 'add') {
+      const el = { elementType: 'mapImage', instanceId: crypto.randomUUID(), ...addFields };
+      await applyOpToTableState(tableId, { op: 'add-elements', elements: [el] });
+    } else {
+      if (!instanceId) return res.status(400).json({ error: 'instanceId required for update/remove' });
+      const elements = tableState.elements || [];
+      const target = elements.find((e) => e.instanceId === instanceId);
+      if (!target) return res.status(404).json({ error: 'Element not found' });
+      if (target.elementType !== 'mapImage') return res.status(403).json({ error: 'Target is not a mapImage element' });
+      if (action === 'update') {
+        await applyOpToTableState(tableId, { op: 'update-element', instanceId, updates });
+      } else {
+        await applyOpToTableState(tableId, { op: 'remove-element', instanceId });
+      }
+    }
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('POST /api/room/:tableId/map-image-object error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 // --- x.ai Grok Imagine image generation ---
 
 app.post('/api/generate-image', requireAuth, async (req, res) => {
@@ -2286,6 +2361,14 @@ app.put('/api/data/:collection/:id/image', requireAuth, async (req, res) => {
     const { id: _id, is_public, _source, _owner, ...rest } = merged;
     await upsertItem(APP_ID, req.uid, collection, id, rest, Boolean(merged.is_public));
     res.json({ id, ...rest, is_public: Boolean(merged.is_public), _source: 'own' });
+    // Broadcast to active rooms so character tokens update immediately without a page reload.
+    if (collection === 'characters') {
+      for (const [gmUid, room] of rooms) {
+        if (gmUid === req.uid || room.players?.has(req.uid)) {
+          subscriptionManager.notifyChange('table_state', gmUid);
+        }
+      }
+    }
   } catch (err) {
     console.error(`PUT /api/data/${collection}/${id}/image error:`, err);
     res.status(500).json({ error: 'Failed to save image' });

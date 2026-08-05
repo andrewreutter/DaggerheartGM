@@ -33,6 +33,7 @@ import { collectEditorCardsForCharacter } from '../../lib/build-feature-card-mod
 import { DeclarativeSchemaEditorCard } from '../DeclarativeSchemaCard.jsx';
 import { CharacterAiConceptStrip } from '../CharacterAiConceptStrip.jsx';
 import { AdvancementTierPanels } from './AdvancementTierPanels.jsx';
+import { ImageEditor } from './ImageEditor.jsx';
 
 /** After Level Up: scroll to the tier band and focus tier-exp name (2/5/8) or domain card select (other levels). */
 function focusAdvancementFirstWidgetForNewLevel(rootEl, nextLevel) {
@@ -360,6 +361,7 @@ export function CharacterForm({
   value,
   onChange,
   onAiBusyChange,
+  onImageSaved,
   autoRunAiConcept,
   onAutoRunAiConceptConsumed,
   autoRunSessionKey = '',
@@ -908,6 +910,27 @@ export function CharacterForm({
           rows={2}
           className="w-full bg-dh-raised border border-dh-border rounded px-2 py-1.5 text-sm text-dh focus:border-sky-500 focus:outline-none resize-y"
           placeholder="A brief description..."
+        />
+      </FormRow>
+
+      <FormRow label="Portrait (optional)">
+        <ImageEditor
+          imageUrl={formData.imageUrl}
+          _additionalImages={formData._additionalImages}
+          onChange={({ imageUrl, _additionalImages }) => set({ imageUrl, _additionalImages })}
+          onImageSaved={onImageSaved}
+          collection="characters"
+          formData={{
+            ...formData,
+            class: srdData?.classesById?.[formData.classId]?.name,
+            subclass: srdData?.subclassesById?.[formData.subclassId]?.name,
+            ancestry: formData.ancestryIds?.[0] ? srdData?.ancestriesById?.[formData.ancestryIds[0]]?.name : undefined,
+            community: srdData?.communitiesById?.[formData.communityId]?.name,
+            armor: srdData?.armorById?.[formData.armorId]?.name,
+            primaryWeapon: srdData?.weaponsById?.[formData.primaryWeaponId]?.name,
+            secondaryWeapon: srdData?.weaponsById?.[formData.secondaryWeaponId]?.name,
+          }}
+          inline
         />
       </FormRow>
 

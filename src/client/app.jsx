@@ -4,8 +4,8 @@ import { createPortal } from 'react-dom';
 import { signOut, onAuthStateChanged } from 'firebase/auth';
 import { Swords, BookOpen, LayoutDashboard, ChevronDown, LogOut, Upload, Download, Trash2, Circle, Plus, ScrollText, Sparkles, Bot, ShieldOff, Bug } from 'lucide-react';
 
-import { auth, getAuthToken, CLIENT_ID, loadCollection, loadTableState, resolveItems, saveItem as apiSaveItem, saveImage as apiSaveImage, deleteItem as apiDeleteItem, cloneItemToLibrary, recordPlay, fetchMe, fetchMyRooms, fetchMyTables, createTable, postCharacterUpdate, postAddCharacter, postTableOp, postLifeSupportSelect, postRestMoveSelect, normalizeRoll, conceptAiEnabled, imageGenEnabled, fetchTableBillingStatus, postMapImageFile } from './lib/api.js';
-import { dataUrlToFile } from './lib/map-image-data-url.js';
+import { auth, getAuthToken, CLIENT_ID, loadCollection, loadTableState, resolveItems, saveItem as apiSaveItem, saveImage as apiSaveImage, deleteItem as apiDeleteItem, cloneItemToLibrary, recordPlay, fetchMe, fetchMyRooms, fetchMyTables, createTable, postCharacterUpdate, postAddCharacter, postTableOp, postLifeSupportSelect, postRestMoveSelect, normalizeRoll, conceptAiEnabled, imageGenEnabled, fetchTableBillingStatus, postMapImageFile, postMapImageFileForTable, postMapImageObject } from './lib/api.js';
+import { dataUrlToFile, loadImageNaturalSizeFromUrl } from './lib/map-image-data-url.js';
 import { AiUiPreferenceProvider, useAiUiPreference } from './lib/ai-ui-preference-context.jsx';
 import { generateId } from './lib/helpers.js';
 import { computeSessionCountdownUpdatesFromRoll } from './lib/session-countdowns.js';
@@ -150,6 +150,9 @@ function App() {
   const adventuresCacheRef = useRef([]);
   const charactersCacheRef = useRef([]);
   const charLoadResolversRef = useRef([]);
+  // Tracks BattleMap's current viewport center in feet; updated via onViewportCenterChange.
+  // Used as fallback placement position when paste/drop opens the quick-pick menu without explicit coords.
+  const mapViewportCenterRef = useRef(null);
 
   const [isAdmin, setIsAdmin] = useState(false);
   /** After first `fetchMe` for this session — avoids redirecting admins before `/api/me` returns. */
@@ -1552,6 +1555,67 @@ function App() {
     );
   }, [tableId]);
 
+  /**
+   * Replace the current map's image in place (`set-map`).
+   * Mirrors sendAddMapWithImage's upload-then-op pattern.
+   */
+  const sendReplaceMapWithImage = useCallback(async (file) => {
+    const uploaded = await postMapImageFile(file);
+    if (!uploaded?.url) throw new Error('Map image upload did not return a URL');
+    const { width, height } = await loadImageNaturalSizeFromUrl(uploaded.url);
+    sendSetMapConfig({ mapImageUrl: uploaded.url, mapImageNaturalWidth: width, mapImageNaturalHeight: height, mapAiImagePrompt: null });
+  }, [sendSetMapConfig]);
+
+  /** Upload a file and add it as a `mapImage` element on the current active map. */
+  const sendAddMapImageObject = useCallback(async (file, opts = {}) => {
+    let uploaded;
+    if (effectiveIsPlayer) {
+      uploaded = await postMapImageFileForTable(tableId, file);
+    } else {
+      uploaded = await postMapImageFile(file);
+    }
+    if (!uploaded?.url) throw new Error('Map image upload did not return a URL');
+    const { width, height } = await loadImageNaturalSizeFromUrl(uploaded.url);
+    const defaultWidthFt = 20;
+    // Fall back to the last known viewport center (kept current by BattleMap's onViewportCenterChange)
+    // so paste/drop placement also lands in the visible area rather than at map coord (0, 0).
+    const centerX = opts.centerXFt ?? mapViewportCenterRef.current?.xFt ?? null;
+    const centerY = opts.centerYFt ?? mapViewportCenterRef.current?.yFt ?? null;
+    const el = {
+      instanceId: generateId(),
+      elementType: 'mapImage',
+      mapId: opts.mapId ?? null,
+      imageUrl: uploaded.url,
+      imageNaturalWidth: width,
+      imageNaturalHeight: height,
+      tokenX: centerX,
+      tokenY: centerY,
+      widthFt: defaultWidthFt,
+      heightFt: defaultWidthFt * (height / width),
+    };
+    if (effectiveIsPlayer) {
+      await postMapImageObject(tableId, { action: 'add', ...el });
+    } else {
+      postTableOp({ op: 'add-elements', elements: [el] }, tableId);
+    }
+  }, [tableId, effectiveIsPlayer]);
+
+  const sendUpdateMapImageObject = useCallback((instanceId, updates) => {
+    if (effectiveIsPlayer) {
+      postMapImageObject(tableId, { action: 'update', instanceId, updates }).catch(console.error);
+    } else {
+      postTableOp({ op: 'update-element', instanceId, updates }, tableId);
+    }
+  }, [tableId, effectiveIsPlayer]);
+
+  const sendRemoveMapImageObject = useCallback((instanceId) => {
+    if (effectiveIsPlayer) {
+      postMapImageObject(tableId, { action: 'remove', instanceId }).catch(console.error);
+    } else {
+      postTableOp({ op: 'remove-element', instanceId }, tableId);
+    }
+  }, [tableId, effectiveIsPlayer]);
+
   const sendRemoveMap = useCallback((mapId) => {
     postTableOp({ op: 'remove-map', mapId }, tableId);
   }, [tableId]);
@@ -1680,6 +1744,9 @@ function App() {
       saveItem={saveItem}
       addToTable={sendAddToTable}
       onAddMapWithImage={route.view === 'table' && !effectiveIsPlayer ? sendAddMapWithImage : undefined}
+      onReplaceMapWithImage={route.view === 'table' && !effectiveIsPlayer ? sendReplaceMapWithImage : undefined}
+      onAddMapImageObject={route.view === 'table' ? sendAddMapImageObject : undefined}
+      effectiveIsPlayer={effectiveIsPlayer}
       navigate={navigate}
       tableId={tableId}
       isGameTableGm={route.view === 'table' && !effectiveIsPlayer}
@@ -2023,6 +2090,10 @@ function App() {
                 onSetActiveMap={effectiveIsPlayer ? undefined : sendSetActiveMap}
                 onAddMap={effectiveIsPlayer ? undefined : sendAddMap}
                 onAddMapWithImage={effectiveIsPlayer ? undefined : sendAddMapWithImage}
+                onReplaceMapWithImage={effectiveIsPlayer ? undefined : sendReplaceMapWithImage}
+                onAddMapImageObject={sendAddMapImageObject}
+                onUpdateMapImageObject={sendUpdateMapImageObject}
+                onRemoveMapImageObject={sendRemoveMapImageObject}
                 onRemoveMap={effectiveIsPlayer ? undefined : sendRemoveMap}
                 onRenameMap={effectiveIsPlayer ? undefined : sendRenameMap}
                 onMapConfigChange={effectiveIsPlayer ? () => {} : sendSetMapConfig}
@@ -2048,6 +2119,7 @@ function App() {
                 onSetMapOverlay={!effectiveIsPlayer ? sendSetMapOverlay : undefined}
                 onSetMapViewOverlay={!effectiveIsPlayer ? sendSetMapViewOverlay : undefined}
                 onBattleMapViewportAspectChange={setBattleMapViewportAspect}
+                onBattleMapViewportCenterChange={(center) => { mapViewportCenterRef.current = center; }}
                 isAdmin={isAdmin}
               />
             </div>

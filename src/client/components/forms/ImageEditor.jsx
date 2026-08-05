@@ -34,8 +34,11 @@ export function ImageEditor({ imageUrl, _additionalImages, onChange, onImageSave
     if (!url) return;
     if (!imageUrl) {
       handleChange({ imageUrl: url });
+      onImageSaved?.(url, { _additionalImages: additional });
     } else {
-      handleChange({ _additionalImages: [...additional, url] });
+      const newAdditional = [...additional, url];
+      handleChange({ _additionalImages: newAdditional });
+      onImageSaved?.(imageUrl, { _additionalImages: newAdditional });
     }
     setAddUrl('');
     setShowAddInput(false);
