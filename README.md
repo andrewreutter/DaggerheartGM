@@ -38,6 +38,7 @@ DaggerheartGM/
 │   ├── crawl.js                # Manual FCG + HoD sync (npm run crawl)
 │   ├── refresh-daggerstack-uuids.js # Regenerates daggerstack-uuid-map.json (npm run refresh:daggerstack)
 │   ├── migrate-map-images-to-storage.mjs # One-time: move inline data: map images out of table_state rows into Supabase Storage (npm run migrate:map-images -- --apply)
+│   ├── migrate-item-images-to-storage.mjs # One-time: move inline data: item images (characters/adversaries/environments/scenes/adventures) into Supabase Storage (npm run migrate:item-images -- --apply)
 │   ├── orchestrate.js          # Parallel overnight Cloud Agents orchestrator (npm run agents)
 │   ├── dev-agent-queue-worker.mjs # GitHub Issues + Cursor CLI worker (spawned from npm run dev when enabled)
 │   ├── setup-dev-agent-labels.mjs # One-time GitHub label creation (npm run setup:dev-agent-labels)
@@ -131,7 +132,8 @@ DaggerheartGM/
 │   │   ├── router.js           # Express Router — GET /api/srd/collections, /:collection, /:collection/:id
 │   │   └── index.js            # Re-exports srdRouter, warmCache, getItem, searchCollection, COLLECTION_NAMES
 │   ├── server/                 # Server-only helpers used by server.js route handlers
-│   │   └── map-storage.js      # Supabase Storage helpers for map/overlay images — upload buffer/data-URL, MIME_TO_EXT (Fix 1, game table latency plan: keeps base64 blobs out of table_state)
+│   │   ├── map-storage.js      # Supabase Storage helpers for map/overlay images — upload buffer/data-URL, MIME_TO_EXT (Fix 1, game table latency plan: keeps base64 blobs out of table_state)
+│   │   └── item-image-storage.js # Defense-in-depth guard for library item images — sanitizeImageFields (shallow) and sanitizeItemImageDataUrlsDeep (recursive), built on map-storage.js
 │   ├── db.js                   # Postgres pool + migration runner + query helpers (unified query, item_popularity, external cache, billing/placement helpers)
 │   ├── stripe.js               # Stripe client (optional; gated on STRIPE_SECRET_KEY); CAMPAIGN_PASS_PRICE_CENTS; constructWebhookEvent for raw-byte HMAC verify
 │   ├── external-sync.js        # Background sync of FCG + HoD (parallel; HoD incremental + weekly full)

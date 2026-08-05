@@ -1050,6 +1050,26 @@ export const postMapScribble = async (tableId, payload, isGm) => {
 };
 
 /**
+ * Upload an item image (character portrait, adversary art, etc.) to Supabase Storage or
+ * receive a data URL fallback when Storage is not configured. Field name must be `file`
+ * (multer). Returns `{ url }`.
+ */
+export const postImageUpload = async (file) => {
+  const token = await getAuthToken();
+  if (!token) throw new Error('Not signed in');
+  const form = new FormData();
+  form.append('file', file);
+  const res = await fetch('/api/images/upload', {
+    method: 'POST',
+    headers: apiHeaders({ Authorization: `Bearer ${token}` }),
+    body: form,
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+  return body;
+};
+
+/**
  * GM: upload a map image file to storage (Supabase) or receive a data URL fallback.
  * Field name must be `file` (multer). Returns `{ url }`.
  */

@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { UnifiedImportModal } from '../components/modals/UnifiedImportModal.jsx';
 import { MapImageQuickPickMenu } from '../components/modals/MapImageQuickPickMenu.jsx';
+import { postImageUpload } from './api.js';
 
 const UnifiedImportContext = createContext(null);
 
@@ -223,12 +224,18 @@ export function UnifiedImportProvider({
   }), []);
 
   /**
-   * When an editable item modal is open, handler that converts the file to a data URL and
-   * sets it on that item's form data via the registered callback.
+   * When an editable item modal is open, handler that uploads the file to Storage and sets
+   * the resulting hosted URL on that item's form data via the registered callback.
    */
   const onAddToItem = hasEditableItem ? async (file) => {
-    const url = await fileToDataUrl(file);
-    editableItemRef.current?.onAddImageUrl(url);
+    try {
+      const { url } = await postImageUpload(file);
+      editableItemRef.current?.onAddImageUrl(url);
+    } catch {
+      // Fall back to data URL when upload fails (local dev without Supabase)
+      const url = await fileToDataUrl(file);
+      editableItemRef.current?.onAddImageUrl(url);
+    }
   } : null;
 
   return (

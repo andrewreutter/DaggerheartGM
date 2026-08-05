@@ -1,10 +1,10 @@
 import { useState, useCallback } from 'react';
 import { Sparkles } from 'lucide-react';
-import { generateImage, editImage, imageGenEnabled } from '../lib/api.js';
+import { generateImage, editImage, imageGenEnabled, postImageUpload } from '../lib/api.js';
 import { useAiUiPreference } from '../lib/ai-ui-preference-context.jsx';
 import { shouldShowImageGenAiUi } from '../lib/ai-ui-visibility.js';
 import { buildImagePrompt } from '../lib/ai-image-prompts.js';
-import { imageSrcToDataUrlForApi } from '../lib/map-image-data-url.js';
+import { dataUrlToFile, imageSrcToDataUrlForApi } from '../lib/map-image-data-url.js';
 import { AiImageWorkbench } from './AiImageWorkbench.jsx';
 
 /**
@@ -47,20 +47,32 @@ export function ImageGenerator({ formData, collection, onImageGenerated, inline 
     setEditedPrompt(buildImagePrompt(formData, collection));
   };
 
+  const uploadGeneratedDataUrl = useCallback(async (dataUrl) => {
+    try {
+      const file = await dataUrlToFile(dataUrl, 'ai-image');
+      const { url } = await postImageUpload(file);
+      return url;
+    } catch {
+      // Fall back to the raw data URL if upload fails (local dev without Supabase, etc.)
+      return dataUrl;
+    }
+  }, []);
+
   const handleGenerate = useCallback(async () => {
     setError(null);
     setGenerating(true);
     setLastPrompt(editedPrompt);
     try {
-      const { imageUrl } = await generateImage(editedPrompt);
-      setImageHistory(prev => [...prev, imageUrl]);
+      const { imageUrl: rawUrl } = await generateImage(editedPrompt);
+      const url = await uploadGeneratedDataUrl(rawUrl);
+      setImageHistory(prev => [...prev, url]);
       setHistoryIndex(prev => prev + 1);
     } catch (err) {
       setError(err.message || 'Image generation failed.');
     } finally {
       setGenerating(false);
     }
-  }, [editedPrompt]);
+  }, [editedPrompt, uploadGeneratedDataUrl]);
 
   const handleEdit = useCallback(async () => {
     if (!currentPreview || !editInstruction.trim()) return;
@@ -68,15 +80,16 @@ export function ImageGenerator({ formData, collection, onImageGenerated, inline 
     setGenerating(true);
     try {
       const dataUrl = await imageSrcToDataUrlForApi(currentPreview);
-      const { imageUrl } = await editImage(dataUrl, editInstruction.trim());
-      setImageHistory(prev => [...prev, imageUrl]);
+      const { imageUrl: rawUrl } = await editImage(dataUrl, editInstruction.trim());
+      const url = await uploadGeneratedDataUrl(rawUrl);
+      setImageHistory(prev => [...prev, url]);
       setHistoryIndex(prev => prev + 1);
     } catch (err) {
       setError(err.message || 'Image editing failed.');
     } finally {
       setGenerating(false);
     }
-  }, [currentPreview, editInstruction]);
+  }, [currentPreview, editInstruction, uploadGeneratedDataUrl]);
 
   const handleUse = () => {
     onImageGenerated(currentPreview);

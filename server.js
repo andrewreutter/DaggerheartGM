@@ -64,6 +64,10 @@ import {
   uploadBufferToMapStorage as uploadBufferToMapStorageImpl,
   uploadDataUrlToMapStorageIfNeeded as uploadDataUrlToMapStorageIfNeededImpl,
 } from './src/server/map-storage.js';
+import {
+  sanitizeImageFields as sanitizeImageFieldsImpl,
+  sanitizeItemImageDataUrlsDeep as sanitizeItemImageDataUrlsDeepImpl,
+} from './src/server/item-image-storage.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const FEATURES_V2_ROOT = join(__dirname, 'src', 'features-v2');
@@ -109,6 +113,11 @@ const uploadBufferToMapStorage = (ownerUid, buffer, mimetype, folder) =>
   uploadBufferToMapStorageImpl(supabase, ownerUid, buffer, mimetype, folder);
 const uploadDataUrlToMapStorageIfNeeded = (ownerUid, value, folder) =>
   uploadDataUrlToMapStorageIfNeededImpl(supabase, ownerUid, value, folder);
+// Item image storage helpers (bound to this process's supabase client).
+const sanitizeImageFields = (ownerUid, fields, folder) =>
+  sanitizeImageFieldsImpl(supabase, ownerUid, fields, folder);
+const sanitizeItemImageDataUrlsDeep = (ownerUid, value, folder) =>
+  sanitizeItemImageDataUrlsDeepImpl(supabase, ownerUid, value, folder);
 
 // --- Firebase Admin (token verification only; no service account key needed) ---
 if (!getApps().length) {
@@ -1128,26 +1137,49 @@ async function applyOpToTableState(tableId, op, opts = {}) {
         op = { ...op, [pngField]: await uploadDataUrlToMapStorageIfNeeded(userId, op[pngField], 'map-overlays') };
       }
     } else if (op.op === 'add-elements') {
-      // Defense in depth: sanitize inline data: URLs on mapImage elements (same pattern as add-map/set-map).
+      // Defense in depth: sanitize inline data: URLs on any element's imageUrl/_additionalImages.
+      // mapImage elements use the 'map-images' folder; all other elements use 'item-images'.
       const anyInline = (op.elements || []).some(
-        (el) => el.elementType === 'mapImage' && typeof el.imageUrl === 'string' && el.imageUrl.startsWith('data:'),
+        (el) => (typeof el.imageUrl === 'string' && el.imageUrl.startsWith('data:')) ||
+          (Array.isArray(el._additionalImages) && el._additionalImages.some((u) => typeof u === 'string' && u.startsWith('data:'))),
       );
       if (anyInline) {
         const sanitized = await Promise.all(
           (op.elements || []).map(async (el) => {
-            if (el.elementType === 'mapImage' && typeof el.imageUrl === 'string' && el.imageUrl.startsWith('data:')) {
-              return { ...el, imageUrl: await uploadDataUrlToMapStorageIfNeeded(userId, el.imageUrl, 'map-images') };
+            const isMapImg = el.elementType === 'mapImage';
+            const folder = isMapImg ? 'map-images' : 'item-images';
+            const needsImageUrl = typeof el.imageUrl === 'string' && el.imageUrl.startsWith('data:');
+            const needsAdditional = Array.isArray(el._additionalImages) && el._additionalImages.some((u) => typeof u === 'string' && u.startsWith('data:'));
+            if (!needsImageUrl && !needsAdditional) return el;
+            const patch = {};
+            if (needsImageUrl) patch.imageUrl = await uploadDataUrlToMapStorageIfNeeded(userId, el.imageUrl, folder);
+            if (needsAdditional) {
+              patch._additionalImages = await Promise.all(
+                el._additionalImages.map((u) => uploadDataUrlToMapStorageIfNeeded(userId, u, folder)),
+              );
             }
-            return el;
+            return { ...el, ...patch };
           }),
         );
         op = { ...op, elements: sanitized };
       }
-    } else if (op.op === 'update-element' && typeof op.updates?.imageUrl === 'string' && op.updates.imageUrl.startsWith('data:')) {
-      const stateElements = state.elements || [];
-      const targetEl = stateElements.find((e) => e.instanceId === op.instanceId);
-      if (targetEl?.elementType === 'mapImage') {
-        op = { ...op, updates: { ...op.updates, imageUrl: await uploadDataUrlToMapStorageIfNeeded(userId, op.updates.imageUrl, 'map-images') } };
+    } else if (op.op === 'update-element') {
+      const hasInlineImageUrl = typeof op.updates?.imageUrl === 'string' && op.updates.imageUrl.startsWith('data:');
+      const hasInlineAdditional = Array.isArray(op.updates?._additionalImages) &&
+        op.updates._additionalImages.some((u) => typeof u === 'string' && u.startsWith('data:'));
+      if (hasInlineImageUrl || hasInlineAdditional) {
+        const stateElements = state.elements || [];
+        const targetEl = stateElements.find((e) => e.instanceId === op.instanceId);
+        const isMapImg = targetEl?.elementType === 'mapImage';
+        const folder = isMapImg ? 'map-images' : 'item-images';
+        const updPatch = {};
+        if (hasInlineImageUrl) updPatch.imageUrl = await uploadDataUrlToMapStorageIfNeeded(userId, op.updates.imageUrl, folder);
+        if (hasInlineAdditional) {
+          updPatch._additionalImages = await Promise.all(
+            op.updates._additionalImages.map((u) => uploadDataUrlToMapStorageIfNeeded(userId, u, folder)),
+          );
+        }
+        op = { ...op, updates: { ...op.updates, ...updPatch } };
       }
     }
     // applyTableOp uses 'activeElements' key; DB uses 'elements'
@@ -2046,6 +2078,26 @@ app.post('/api/room/:tableId/map-image', requireAuth, mapImageUpload.single('fil
   }
 });
 
+// POST /api/images/upload — any authenticated user uploads an item image (character portrait,
+// adversary/environment art, etc.) to Supabase Storage under item-images/{ownerUid}/{uuid}.{ext}.
+// Mirrors POST /api/room/my/map-image but uses the 'item-images' folder. Falls back to returning
+// a data URL when Supabase is not configured so local dev without Storage keeps working.
+app.post('/api/images/upload', requireAuth, mapImageUpload.single('file'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+  const ownerUid = req.uid;
+  if (!supabase) {
+    const b64 = req.file.buffer.toString('base64');
+    return res.json({ url: `data:${req.file.mimetype};base64,${b64}` });
+  }
+  try {
+    const url = await uploadBufferToMapStorage(ownerUid, req.file.buffer, req.file.mimetype, 'item-images');
+    res.json({ url });
+  } catch (err) {
+    console.error('POST /api/images/upload error:', err);
+    res.status(500).json({ error: err.message || 'Upload failed' });
+  }
+});
+
 // POST /api/room/:tableId/map-image-object — GM or player adds/updates/removes a mapImage element.
 // Players can only add/update/remove elements with elementType === 'mapImage' (safety boundary).
 app.post('/api/room/:tableId/map-image-object', requireAuth, async (req, res) => {
@@ -2360,9 +2412,11 @@ app.put('/api/data/:collection/:id/image', requireAuth, async (req, res) => {
       return res.status(404).json({ error: 'Item not found' });
     }
     const pathParts = (jsonPath || '').split('.').filter(Boolean);
+    // Defense in depth: upload any inline data: URLs before they reach the DB.
+    const sanitized = await sanitizeImageFields(req.uid, { imageUrl, _additionalImages });
     const imageUpdates = {};
-    if (imageUrl !== undefined) imageUpdates.imageUrl = imageUrl;
-    if (_additionalImages !== undefined) imageUpdates._additionalImages = _additionalImages;
+    if (imageUrl !== undefined) imageUpdates.imageUrl = sanitized.imageUrl;
+    if (_additionalImages !== undefined) imageUpdates._additionalImages = sanitized._additionalImages;
 
     let merged;
     if (pathParts.length === 0) {
@@ -2438,6 +2492,10 @@ app.put('/api/data/:collection', requireAuth, async (req, res) => {
     // Strip character elements to only persisted keys before writing to DB
     if (collection === 'table_state' && Array.isArray(dataToSave.elements)) {
       dataToSave = { ...dataToSave, elements: stripCharacterElements(dataToSave.elements) };
+    }
+    // Defense in depth: upload any inline data: URLs on item images before persisting.
+    if (collection !== 'table_state') {
+      dataToSave = await sanitizeItemImageDataUrlsDeep(req.uid, dataToSave);
     }
     await upsertItem(APP_ID, req.uid, collection, id, dataToSave, Boolean(is_public));
     const saved = { id, ...dataToSave, is_public: Boolean(is_public), _source: 'own' };

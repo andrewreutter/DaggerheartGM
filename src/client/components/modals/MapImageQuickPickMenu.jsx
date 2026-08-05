@@ -91,7 +91,12 @@ export function MapImageQuickPickMenu({
 
   return createPortal(
     <div
-      className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50"
+      // z-[200] matches the app-wide "dialog that must sit above an open ItemDetailModal
+      // (z-[80]/[81])" convention (AdversaryStatChangeModal, SceneAdoptDialog, FullPageOverlay,
+      // CharacterHoverCard/DiceRoller target menus, etc.) — this menu is commonly opened via
+      // paste/drop while editing an adversary/character/environment in ItemDetailModal, so it
+      // must render above that modal's backdrop and body, not behind it.
+      className="fixed inset-0 z-[200] flex items-center justify-center bg-black/50"
       onClick={(e) => { if (e.target === e.currentTarget && !isLoading) onClose(); }}
     >
       <div

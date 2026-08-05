@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { Plus, Trash2, Star } from 'lucide-react';
 import { ImageGenerator } from '../ImageGenerator.jsx';
+import { postImageUpload } from '../../lib/api.js';
+import { dataUrlToFile } from '../../lib/map-image-data-url.js';
 
 /**
  * List-based image editor for item forms. Supports add/remove images via URL,
@@ -18,6 +20,7 @@ import { ImageGenerator } from '../ImageGenerator.jsx';
 export function ImageEditor({ imageUrl, _additionalImages, onChange, onImageSaved, collection, formData, inline = false }) {
   const [addUrl, setAddUrl] = useState('');
   const [showAddInput, setShowAddInput] = useState(false);
+  const [uploading, setUploading] = useState(false);
 
   const additional = Array.isArray(_additionalImages) ? _additionalImages : [];
   const allImages = [imageUrl, ...additional].filter(Boolean);
@@ -29,9 +32,22 @@ export function ImageEditor({ imageUrl, _additionalImages, onChange, onImageSave
     });
   };
 
-  const handleAddUrl = () => {
-    const url = addUrl?.trim();
-    if (!url) return;
+  const handleAddUrl = async () => {
+    const raw = addUrl?.trim();
+    if (!raw) return;
+    let url = raw;
+    if (raw.startsWith('data:')) {
+      setUploading(true);
+      try {
+        const file = await dataUrlToFile(raw, 'item-image');
+        const { url: hosted } = await postImageUpload(file);
+        url = hosted;
+      } catch {
+        // Fall back to raw data URL (local dev without Supabase)
+      } finally {
+        setUploading(false);
+      }
+    }
     if (!imageUrl) {
       handleChange({ imageUrl: url });
       onImageSaved?.(url, { _additionalImages: additional });
@@ -119,10 +135,10 @@ export function ImageEditor({ imageUrl, _additionalImages, onChange, onImageSave
           <button
             type="button"
             onClick={handleAddUrl}
-            disabled={!addUrl?.trim()}
+            disabled={!addUrl?.trim() || uploading}
             className="px-3 py-1.5 text-sm rounded bg-dh-hover hover:bg-dh-hover disabled:opacity-50 disabled:cursor-not-allowed text-dh"
           >
-            Add
+            {uploading ? 'Uploading…' : 'Add'}
           </button>
         </div>
       )}
