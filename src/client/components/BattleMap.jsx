@@ -1225,6 +1225,7 @@ function TokenDetailPanel({
   pendingResourceCosts = {},
   lifeSupportSelections = {},
   onRemoveFromMap,
+  onDeleteFromTable,
   onClose,
   anchorX,
   anchorY,
@@ -1329,6 +1330,14 @@ function TokenDetailPanel({
             >
               <ArrowLeftToLine size={13} />
             </button>
+          )}
+          {isAdv && onDeleteFromTable && (
+            <button
+              type="button"
+              onClick={onDeleteFromTable}
+              className="p-1 rounded text-dh-muted hover:text-red-400 transition-colors"
+              title="Delete from table"
+            ><Trash2 size={13} /></button>
           )}
           <button onClick={onClose} className="p-1 rounded text-dh-muted hover:text-white transition-colors">
             <X size={13} />
@@ -1767,6 +1776,8 @@ export function BattleMap({
   renderPinnedCharacterPanel,
   /** Adversary pin — party target aid + offense (built in GMTableView). */
   renderAdversaryTargetAid,
+  /** GM-only. Called with `instanceId` when the GM deletes an adversary from the table via the map token panel. */
+  onRemoveAdversaryFromTable,
 }) {
   const { hideAiUi } = useAiUiPreference();
   const showImageGenAiUi = shouldShowImageGenAiUi(imageGenEnabled, hideAiUi);
@@ -5738,6 +5749,12 @@ export function BattleMap({
             onRemoveFromMap={canRemove ? () => {
               updateActiveElement(el.instanceId, { tokenX: null, tokenY: null, mapId: null });
               setPinnedToken(null);
+            } : undefined}
+            onDeleteFromTable={el.elementType === 'adversary' && !isPlayer && onRemoveAdversaryFromTable ? () => {
+              if (window.confirm(`Remove ${el.name || 'Unnamed'} from the table?`)) {
+                onRemoveAdversaryFromTable(el.instanceId);
+                setPinnedToken(null);
+              }
             } : undefined}
             onClose={() => setPinnedToken(null)}
             anchorX={pinnedToken.anchorX}

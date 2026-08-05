@@ -813,6 +813,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
   // Character dialog removed — characters are now managed through the Library picker
   const [playerEmailInput, setPlayerEmailInput] = useState('');
   const [showPlayerEmailPanel, setShowPlayerEmailPanel] = useState(false);
+  const [showOnlinePlayersPanel, setShowOnlinePlayersPanel] = useState(false);
   const [contactsToken, setContactsToken] = useState(null);
   const [contactSuggestions, setContactSuggestions] = useState([]);
   const [contactsLoading, setContactsLoading] = useState(false);
@@ -5687,6 +5688,13 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                 title="Manage invited players"
               ><Users size={13} /></button>
             )}
+            {isPlayer && connectedPlayers.length > 0 && (
+              <button
+                onClick={() => setShowOnlinePlayersPanel(p => !p)}
+                className="text-dh-muted hover:text-sky-400 transition-colors"
+                title={showOnlinePlayersPanel ? 'Hide online players' : 'Show online players'}
+              ><Users size={13} /></button>
+            )}
           </div>
           {/* Player email management (GM only) */}
           {!isPlayer && showPlayerEmailPanel && (
@@ -5810,7 +5818,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
             </div>
           )}
           {/* Player view: show who's online */}
-          {isPlayer && connectedPlayers.length > 0 && (
+          {isPlayer && showOnlinePlayersPanel && connectedPlayers.length > 0 && (
             <div className="mt-2 space-y-0.5">
               <p className="text-[10px] text-dh-muted uppercase tracking-wider">Online ({connectedPlayers.length})</p>
               {connectedPlayers.map(p => (
@@ -6640,6 +6648,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
             pendingBannerCount={!isPlayer ? (pendingBanners?.length ?? 0) : 0}
             onCancelAllBanners={!isPlayer ? handleCancelAllBanners : undefined}
             onTokenDragEnd={!isPlayer ? handleTokenDragEnd : undefined}
+            onRemoveAdversaryFromTable={!isPlayer ? removeActiveElement : undefined}
             mapPings={mapPings}
             onDismissMapPing={onDismissMapPing}
             appendMapPing={appendMapPing}
@@ -7085,7 +7094,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                     return (
                       <div
                         key={inst.instanceId}
-                        className="space-y-1 rounded"
+                        className="space-y-1 rounded group/inst"
                       >
                         {(count > 1 || budgetCardOpen) && (
                           <div className="flex items-center gap-1.5 text-[10px] text-dh-muted">
@@ -7100,6 +7109,13 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                                   : <span className="text-dh-muted tabular-nums">{ROLE_BP_COST[displayEl.role || 'standard'] ?? ROLE_BP_COST.standard} BP</span>
                                 }
                               </>
+                            )}
+                            {count > 1 && (
+                              <button
+                                onClick={(e) => { e.stopPropagation(); removeActiveElement(inst.instanceId); }}
+                                className="ml-auto hidden group-hover/inst:flex w-4 h-4 rounded bg-dh-raised hover:bg-red-900 text-dh-muted hover:text-red-300 items-center justify-center transition-colors leading-none shrink-0"
+                                title={`Remove #${idx + 1}`}
+                              ><X size={9} /></button>
                             )}
                           </div>
                         )}
