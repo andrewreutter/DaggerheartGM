@@ -28,15 +28,19 @@ const { resolveCharacterElements, invalidateCharacterLibraryCache, clearCharacte
 
 const APP_ID = 'test-app';
 
-/** Simulates the `getItemsByIds` query: params = [appId, collection, ids]. */
+/** Simulates the character-resolution fetch: params = [appId, ids]. */
 function makeLibRow(id, overrides = {}) {
-  return { id, user_id: 'owner-uid', is_public: false, data: { name: `Character ${id}`, tier: 1, ...overrides } };
+  const { user_id = 'owner-uid', updated_at = '2026-01-01T00:00:00Z', ...dataOverrides } = overrides;
+  return { id, user_id, is_public: false, updated_at, data: { name: `Character ${id}`, tier: 1, ...dataOverrides } };
 }
 
+/** rowsById values may be a single row or an array of rows (duplicate id across users). */
 function installQueryImpl(rowsById) {
   queryMock.mockImplementation((sql, params) => {
-    const ids = params[2];
-    const rows = ids.filter((id) => rowsById.has(id)).map((id) => rowsById.get(id));
+    const ids = params[1];
+    const rows = ids
+      .filter((id) => rowsById.has(id))
+      .flatMap((id) => [].concat(rowsById.get(id)));
     return Promise.resolve({ rows });
   });
 }
@@ -105,7 +109,7 @@ describe('resolveCharacterElements character library cache', () => {
     const resolved = await resolveCharacterElements(APP_ID, elements);
     expect(queryMock).toHaveBeenCalledTimes(2);
     const [, params] = queryMock.mock.calls[1];
-    expect(params[2]).toEqual(['c1']); // only the invalidated id was re-fetched, not c2
+    expect(params[1]).toEqual(['c1']); // only the invalidated id was re-fetched, not c2
     expect(resolved.find((e) => e.instanceId === 'i1').name).toBe('Character c1 (renamed)');
     expect(resolved.find((e) => e.instanceId === 'i2').name).toBe('Character c2'); // unaffected
   });
@@ -120,6 +124,44 @@ describe('resolveCharacterElements character library cache', () => {
     const resolvedB = await resolveCharacterElements('app-b', [{ elementType: 'character', id: 'c1', instanceId: 'i1' }]);
     expect(queryMock).toHaveBeenCalledTimes(2); // different app — cache miss, fresh query
     expect(resolvedB[0].name).toBe('App B char');
+  });
+
+  it('resolves the most recently updated row when the same character id exists under multiple users', async () => {
+    // Regression: items PK is (app_id, user_id, collection, id), so a GM and a player who both
+    // synced the same Daggerstack character hold rows with the SAME id. The player's stale,
+    // imageless copy must not shadow the GM's freshly edited row (production bug: portraits
+    // vanished on every table_state re-push, e.g. after a map pan).
+    const rowsById = new Map([
+      ['c1', [
+        makeLibRow('c1', { user_id: 'gm-uid', updated_at: '2026-08-05T13:00:00Z', name: 'Vodalus', imageUrl: 'https://storage.example/vodalus.png' }),
+        makeLibRow('c1', { user_id: 'player-uid', updated_at: '2026-07-07T00:00:00Z', name: 'Vodalus' }),
+      ]],
+    ]);
+    installQueryImpl(rowsById);
+
+    const resolved = await resolveCharacterElements(APP_ID, [{ elementType: 'character', id: 'c1', instanceId: 'i1' }]);
+    expect(resolved[0].imageUrl).toBe('https://storage.example/vodalus.png');
+
+    // Row order from Postgres is arbitrary heap order — reversed order must give the same pick.
+    clearCharacterLibraryCacheForTests();
+    rowsById.set('c1', [...rowsById.get('c1')].reverse());
+    const resolvedReversed = await resolveCharacterElements(APP_ID, [{ elementType: 'character', id: 'c1', instanceId: 'i1' }]);
+    expect(resolvedReversed[0].imageUrl).toBe('https://storage.example/vodalus.png');
+  });
+
+  it('breaks updated_at ties deterministically regardless of row order', async () => {
+    const sameTs = '2026-08-05T13:00:00Z';
+    const rowA = makeLibRow('c1', { user_id: 'a-uid', updated_at: sameTs, name: 'From A' });
+    const rowB = makeLibRow('c1', { user_id: 'b-uid', updated_at: sameTs, name: 'From B' });
+
+    installQueryImpl(new Map([['c1', [rowA, rowB]]]));
+    const r1 = await resolveCharacterElements(APP_ID, [{ elementType: 'character', id: 'c1', instanceId: 'i1' }]);
+
+    clearCharacterLibraryCacheForTests();
+    installQueryImpl(new Map([['c1', [rowB, rowA]]]));
+    const r2 = await resolveCharacterElements(APP_ID, [{ elementType: 'character', id: 'c1', instanceId: 'i1' }]);
+
+    expect(r1[0].name).toBe(r2[0].name); // same winner either way
   });
 
   it('returns elements unchanged (no query) when there are no character elements', async () => {

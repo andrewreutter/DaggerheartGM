@@ -1115,6 +1115,46 @@ export function clearCharacterLibraryCacheForTests() {
 }
 
 /**
+ * Fetch character library rows by id for table-state resolution, deduplicated to ONE row per id.
+ *
+ * The `items` primary key is (app_id, user_id, collection, id), so the SAME character id can
+ * exist under multiple users — e.g. a GM and a player who each synced the same Daggerstack
+ * character into their own libraries. Table elements store only the character id, so resolution
+ * must pick one row deterministically: the most recently updated row wins (last-writer-wins —
+ * whichever copy was edited last, GM's or player's, is what the table shows). The previous
+ * getItemsByIds-based fetch returned every duplicate and populated the cache "last row wins"
+ * in arbitrary heap order, which in production let a player's stale, imageless copy shadow the
+ * GM's freshly edited row on every server-side re-resolve (portraits vanished on the next
+ * table_state push after any op, e.g. a map pan).
+ */
+async function fetchCharacterLibraryRowsByIds(appId, ids) {
+  const db = getPool();
+  const { rows } = await db.query(
+    `SELECT i.id, i.user_id, i.data, i.is_public, i.updated_at
+     FROM items i
+     WHERE i.app_id = $1 AND i.collection = 'characters' AND i.id = ANY($2)`,
+    [appId, ids]
+  );
+  const newestById = new Map();
+  for (const r of rows) {
+    const prev = newestById.get(r.id);
+    if (!prev) { newestById.set(r.id, r); continue; }
+    const tPrev = new Date(prev.updated_at ?? 0).getTime();
+    const tCur = new Date(r.updated_at ?? 0).getTime();
+    // Newest updated_at wins; tie-break on user_id so the pick is stable across resolves.
+    if (tCur > tPrev || (tCur === tPrev && String(r.user_id) < String(prev.user_id))) {
+      newestById.set(r.id, r);
+    }
+  }
+  return [...newestById.values()].map(r => ({
+    id: r.id,
+    ...r.data,
+    is_public: r.is_public,
+    _source: r.is_public ? 'public' : 'own',
+  }));
+}
+
+/**
  * Resolve character elements against the live character library.
  * Non-character elements are returned unchanged. Characters not found
  * fall back to their stored data.
@@ -1127,7 +1167,7 @@ export async function resolveCharacterElements(appId, elements) {
   if (!charIds.length) return elements;
   const missingIds = charIds.filter(id => !characterLibraryCache.has(characterCacheKey(appId, id)));
   if (missingIds.length) {
-    const fetched = await getItemsByIds(appId, 'characters', missingIds, { withPopularity: false });
+    const fetched = await fetchCharacterLibraryRowsByIds(appId, missingIds);
     for (const row of fetched) {
       characterLibraryCache.set(characterCacheKey(appId, row.id), row);
     }
