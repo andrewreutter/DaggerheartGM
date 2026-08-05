@@ -12,6 +12,7 @@ import { FeaturesInput } from './FeaturesInput.jsx';
 import { LibraryPanelStack } from './LibraryPanelStack.jsx';
 import { MarkdownHelpTooltip } from '../MarkdownHelpTooltip.jsx';
 import { ImageEditor } from './ImageEditor.jsx';
+import { TokenSizeFields } from './TokenSizeFields.jsx';
 import { AdversaryStatChangeModal } from '../modals/AdversaryStatChangeModal.jsx';
 import { ConceptAiStrip } from '../ConceptAiStrip.jsx';
 import { postAdversaryAiBuild } from '../../lib/api.js';
@@ -281,6 +282,13 @@ export function AdversaryForm({
             collection="adversaries"
             formData={formData}
             inline
+          />
+        </FormRow>
+
+        <FormRow label="Battle map token size">
+          <TokenSizeFields
+            value={formData}
+            onChange={(patch) => update({ ...formData, ...patch })}
           />
         </FormRow>
 

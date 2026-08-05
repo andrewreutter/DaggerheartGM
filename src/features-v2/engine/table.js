@@ -50,6 +50,7 @@
 
 import { SRD_CLASS_DRUID_SCOPE_KEY } from './feature-scope-keys.js';
 import { normalizeConditionsToList } from '../../client/lib/conditions-utils.js';
+import { tokenDistanceFt, getTokenFootprintFt, DEFAULT_TOKEN_FOOTPRINT_FT } from '../../client/lib/map-range.js';
 
 const MUTATIONS_KEY = Symbol('mutations');
 
@@ -91,20 +92,18 @@ function calcRangeBand(dist) {
   return 'veryFar';
 }
 
-/** Half-width of a standard 5×5' map token in feet (matches `map-range.js` / BattleMap). */
-const TOKEN_HALF_FT = 2.5;
-
 /**
- * Compute range band between two token **top-left** positions (feet).
- * Uses the same nearest-edge distance as `tokenDistanceFt` (`map-range.js`) so engine
- * `actor.rangeFrom(other)` matches BattleMap range highlights and VTT pending-move checks (e.g. Faun Kick).
+ * Compute range band between two token **top-left** positions (feet), accounting for each
+ * token's own (possibly non-default) footprint. Delegates to `tokenDistanceFt` (`map-range.js`)
+ * — the single canonical distance implementation — so engine `actor.rangeFrom(other)` matches
+ * BattleMap range highlights and VTT pending-move checks (e.g. Faun Kick) exactly.
+ *
+ * @param {{halfWidth:number,halfLength:number}} [aFootprint] - defaults to standard 5×5'
+ * @param {{halfWidth:number,halfLength:number}} [bFootprint] - defaults to standard 5×5'
  */
-function rangeBetween(x1, y1, x2, y2) {
+function rangeBetween(x1, y1, x2, y2, aFootprint = DEFAULT_TOKEN_FOOTPRINT_FT, bFootprint = DEFAULT_TOKEN_FOOTPRINT_FT) {
   if (x1 == null || y1 == null || x2 == null || y2 == null) return null;
-  const dx = x1 + TOKEN_HALF_FT - (x2 + TOKEN_HALF_FT);
-  const dy = y1 + TOKEN_HALF_FT - (y2 + TOKEN_HALF_FT);
-  const centerDist = Math.sqrt(dx * dx + dy * dy);
-  const dist = Math.max(0, centerDist - TOKEN_HALF_FT);
+  const dist = tokenDistanceFt(x1, y1, x2, y2, aFootprint, bFootprint);
   return calcRangeBand(dist);
 }
 
@@ -185,6 +184,7 @@ function buildBoardTokenActor(element, gameState, mutations, instanceId) {
   const virtualTokenId = element.virtualTokenId ?? element.id ?? null;
   const tokenKind = element.tokenKind ?? null;
   const parentInstanceId = element.parentInstanceId ?? null;
+  const footprint = getTokenFootprintFt(element);
 
   return {
     name,
@@ -201,8 +201,14 @@ function buildBoardTokenActor(element, gameState, mutations, instanceId) {
     tokenY: element.tokenY ?? null,
     mapId: element.mapId ?? null,
 
+    /** Footprint in feet (`{ halfWidth, halfLength }`); used by `rangeBetween` for ellipse-projected reach. */
+    _footprint: footprint,
+
     rangeFrom(otherActor) {
-      return rangeBetween(element.tokenX, element.tokenY, otherActor?.tokenX, otherActor?.tokenY);
+      return rangeBetween(
+        element.tokenX, element.tokenY, otherActor?.tokenX, otherActor?.tokenY,
+        footprint, otherActor?._footprint,
+      );
     },
     get rangeFromTarget() {
       const targets = gameState.action?.targetInstanceIds || [];
@@ -211,7 +217,10 @@ function buildBoardTokenActor(element, gameState, mutations, instanceId) {
         (e) => (e.instanceId || e.id) === targets[0],
       );
       if (!targetEl) return null;
-      return rangeBetween(element.tokenX, element.tokenY, targetEl.tokenX, targetEl.tokenY);
+      return rangeBetween(
+        element.tokenX, element.tokenY, targetEl.tokenX, targetEl.tokenY,
+        footprint, getTokenFootprintFt(targetEl),
+      );
     },
     get lastPosition() {
       const prev = gameState._previousPositions?.[instanceId];
@@ -224,10 +233,16 @@ function buildBoardTokenActor(element, gameState, mutations, instanceId) {
             (e) => (e.instanceId || e.id) === targets[0],
           );
           if (!targetEl) return null;
-          return rangeBetween(prev.tokenX, prev.tokenY, targetEl.tokenX, targetEl.tokenY);
+          return rangeBetween(
+            prev.tokenX, prev.tokenY, targetEl.tokenX, targetEl.tokenY,
+            footprint, getTokenFootprintFt(targetEl),
+          );
         },
         rangeFrom(otherActor) {
-          return rangeBetween(prev.tokenX, prev.tokenY, otherActor?.tokenX, otherActor?.tokenY);
+          return rangeBetween(
+            prev.tokenX, prev.tokenY, otherActor?.tokenX, otherActor?.tokenY,
+            footprint, otherActor?._footprint,
+          );
         },
       };
     },
@@ -244,6 +259,7 @@ function buildActor(element, gameState, mutations) {
 
   const isChar = element.elementType === 'character';
   const isAdversary = !isChar;
+  const footprint = getTokenFootprintFt(element);
 
   /** Match roll `action.actorInstanceId` to runtime `instanceId` or library `id` when both exist (VTT may send either). */
   const aid = gameState.action?.actorInstanceId;
@@ -563,6 +579,9 @@ function buildActor(element, gameState, mutations) {
     tokenX: element.tokenX ?? null,
     tokenY: element.tokenY ?? null,
 
+    /** Footprint in feet (`{ halfWidth, halfLength }`); used by `rangeBetween` for ellipse-projected reach. */
+    _footprint: footprint,
+
     // Conditions (persisted as comma-separated text or legacy string[]; normalize for reads)
     get conditions() {
       return normalizeConditionsToList(element.conditions);
@@ -624,11 +643,17 @@ function buildActor(element, gameState, mutations) {
         (e) => (e.instanceId || e.id) === targets[0]
       );
       if (!targetEl) return null;
-      return rangeBetween(element.tokenX, element.tokenY, targetEl.tokenX, targetEl.tokenY);
+      return rangeBetween(
+        element.tokenX, element.tokenY, targetEl.tokenX, targetEl.tokenY,
+        footprint, getTokenFootprintFt(targetEl),
+      );
     },
 
     rangeFrom(otherActor) {
-      return rangeBetween(element.tokenX, element.tokenY, otherActor?.tokenX, otherActor?.tokenY);
+      return rangeBetween(
+        element.tokenX, element.tokenY, otherActor?.tokenX, otherActor?.tokenY,
+        footprint, otherActor?._footprint,
+      );
     },
 
     /**
@@ -649,10 +674,16 @@ function buildActor(element, gameState, mutations) {
             (e) => (e.instanceId || e.id) === targets[0]
           );
           if (!targetEl) return null;
-          return rangeBetween(prev.tokenX, prev.tokenY, targetEl.tokenX, targetEl.tokenY);
+          return rangeBetween(
+            prev.tokenX, prev.tokenY, targetEl.tokenX, targetEl.tokenY,
+            footprint, getTokenFootprintFt(targetEl),
+          );
         },
         rangeFrom(otherActor) {
-          return rangeBetween(prev.tokenX, prev.tokenY, otherActor?.tokenX, otherActor?.tokenY);
+          return rangeBetween(
+            prev.tokenX, prev.tokenY, otherActor?.tokenX, otherActor?.tokenY,
+            footprint, otherActor?._footprint,
+          );
         },
       };
     },

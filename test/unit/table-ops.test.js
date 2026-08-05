@@ -798,6 +798,40 @@ describe('applyTableOp', () => {
     expect(result.maps[0].shareWithPlayers).toBe(false);
   });
 
+  it('set-view-locked toggles view locked', () => {
+    const state = {
+      maps: [
+        {
+          id: 'a',
+          name: 'A',
+          mapImageUrl: 'x',
+          mapDimension: 'width',
+          mapSizeFt: 100,
+          mapImageNaturalWidth: null,
+          mapImageNaturalHeight: null,
+          shareWithPlayers: true,
+        },
+      ],
+      mapViews: [
+        {
+          id: 'v1',
+          mapId: 'a',
+          name: 'Main',
+          mapViewZoomRatio: null,
+          mapViewPanNorm: null,
+          broadcastToPlayers: true,
+          locked: false,
+        },
+      ],
+      gmActiveViewId: 'v1',
+      activeElements: [],
+    };
+    const locked = applyTableOp({ op: 'set-view-locked', viewId: 'v1', locked: true }, state);
+    expect(locked.mapViews[0].locked).toBe(true);
+    const unlocked = applyTableOp({ op: 'set-view-locked', viewId: 'v1', locked: false }, { ...state, mapViews: locked.mapViews });
+    expect(unlocked.mapViews[0].locked).toBe(false);
+  });
+
   it('set-map-free-explore clears gmActiveViewId and keeps framing on gmMapView only', () => {
     const state = {
       maps: [

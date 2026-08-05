@@ -4,6 +4,8 @@ import {
   applyViewportWheelPanZoom,
   clampMapZoom,
   clampPanScroll,
+  computeDragDropTopLeftLocalPx,
+  computeDragGhostCenterClientPx,
   computeMapZoomBounds,
   computePanToCenterInnerPointPx,
   computeZoomAndPanToFitInnerBounds,
@@ -48,6 +50,8 @@ import {
   Sparkles,
   Image as ImageIcon,
   Maximize2,
+  Lock,
+  LockOpen,
 } from 'lucide-react';
 import { Tooltip } from './Tooltip.jsx';
 import { CheckboxTrack } from './DetailCardContent.jsx';
@@ -65,7 +69,14 @@ import { getGmTotMEmptyMapHint, getPlayerTotMEmptyMapHint } from '../lib/battle-
 import { isAdversaryDefeated } from '../lib/helpers.js';
 import { EncounterAdversaryMarkedSummary } from './EncounterAdversaryMarkedSummary.jsx';
 import { playerEncounterInstanceRowVisible } from '../lib/encounter-adversary-player-summary.js';
-import { getRangeBandIndexForDistanceFt } from '../lib/map-range.js';
+import {
+  getRangeBandIndexForDistanceFt,
+  getTokenFootprintFt,
+  ellipseRadiusAtAngle,
+  tokenDistanceFtForElements,
+  DEFAULT_TOKEN_FOOTPRINT_FT,
+} from '../lib/map-range.js';
+import { computeTokenRenderPx } from '../lib/token-size.js';
 import {
   computeMapDrawCanvasSize,
   DEFAULT_MAP_DRAW_BRUSH_RADIUS_FT,
@@ -137,6 +148,21 @@ function tokenAbbrev(name) {
   if (words.length === 0) return '?';
   if (words.length === 1) return words[0].slice(0, 2).toUpperCase();
   return (words[0][0] + words[1][0]).toUpperCase();
+}
+
+/**
+ * Resolve the object that carries `tokenSizeWidth`/`tokenSizeLength`/`tokenSizeLinked` for a
+ * placed/tray token. Characters and adversaries carry these fields directly (library-scoped
+ * fields resolved onto the element). A Beastbound companion `boardToken` has no library record
+ * of its own — its size lives on the parent character's `companion` sub-object instead.
+ */
+function resolveTokenSizeSource(element, parentByInstanceId) {
+  if (!element) return null;
+  if (element.elementType === 'boardToken' && element.tokenKind === 'companion') {
+    const parent = parentByInstanceId?.get(element.parentInstanceId);
+    return parent?.companion ?? null;
+  }
+  return element;
 }
 
 function isInsideRect(clientX, clientY, rect) {
@@ -621,17 +647,22 @@ const MapViewStripTile = memo(function MapViewStripTileRaw({
  * Each group's center is equally spaced around the ring (clockwise from 12 o'clock).
  * Within a group, filled dots come first, then empty (outline) dots.
  */
-function TokenDotRing({ size, groups }) {
+function TokenDotRing({ sizeW, sizeH, groups }) {
   const numGroups = groups.length;
   if (numGroups === 0) return null;
   const totalDots = groups.reduce((s, g) => s + g.total, 0);
   if (totalDots === 0) return null;
 
-  const cx = size / 2;
-  const cy = size / 2;
-  const rr = Math.max(1, size / 2 - 1);
+  const cx = sizeW / 2;
+  const cy = sizeH / 2;
+  const rx = Math.max(1, sizeW / 2 - 1);
+  const ry = Math.max(1, sizeH / 2 - 1);
+  // Average radius drives dot size/spacing math (exact for circles — the default 1×1 token —
+  // and a reasonable visual approximation for ellipses).
+  const rr = (rx + ry) / 2;
 
-  const preferredDr = Math.max(2, Math.round(size * 0.09));
+  const minSize = Math.min(sizeW, sizeH);
+  const preferredDr = Math.max(2, Math.round(minSize * 0.09));
   // Max dr where the gap between groups fits one empty dot slot (2×dotSpacing center-to-center):
   // totalArc = (totalDots−numGroups)·ds + numGroups·2·ds = (totalDots+numGroups)·ds = 2π
   // ds = (2dr+1)/rr → dr = (2π·rr/(totalDots+numGroups) − 1) / 2
@@ -648,8 +679,8 @@ function TokenDotRing({ size, groups }) {
   groups.forEach((group, gi) => {
     for (let i = 0; i < group.total; i++) {
       const angle = cursor + i * dotSpacing;
-      const x = cx + rr * Math.cos(angle);
-      const y = cy + rr * Math.sin(angle);
+      const x = cx + rx * Math.cos(angle);
+      const y = cy + ry * Math.sin(angle);
       const isFilled = i < group.filled;
       dots.push({ x, y, color: group.color, filled: isFilled, key: `${gi}-${i}` });
     }
@@ -662,9 +693,9 @@ function TokenDotRing({ size, groups }) {
   return (
     <svg
       className="absolute pointer-events-none"
-      width={size}
-      height={size}
-      viewBox={`0 0 ${size} ${size}`}
+      width={sizeW}
+      height={sizeH}
+      viewBox={`0 0 ${sizeW} ${sizeH}`}
       style={{ overflow: 'visible', top: -2, left: -2 }}
     >
       {dots.map(d => (
@@ -925,7 +956,8 @@ function MapConfigToolbar({
 
 function TokenCircle({
   element,
-  size,
+  sizeW,
+  sizeH,
   instanceNum,
   isMyCharacter,
   isPlayer,
@@ -995,6 +1027,7 @@ function TokenCircle({
       : (advDefeated ? 'bg-black' : 'bg-amber-800');
 
   const hasImage = !!element.imageUrl;
+  const minSize = Math.min(sizeW, sizeH);
 
   return (
     <div
@@ -1008,10 +1041,10 @@ function TokenCircle({
         ${isPinned ? 'ring-2 ring-white ring-offset-1 ring-offset-dh-surface' : ''}
       `}
       style={{
-        width: size,
-        height: size,
-        minWidth: size,
-        minHeight: size,
+        width: sizeW,
+        height: sizeH,
+        minWidth: sizeW,
+        minHeight: sizeH,
         userSelect: 'none',
         ...glowStyle,
       }}
@@ -1025,7 +1058,7 @@ function TokenCircle({
           draggable={false}
         />
       )}
-      {!isProxy && <TokenDotRing size={size} groups={dotGroups} />}
+      {!isProxy && <TokenDotRing sizeW={sizeW} sizeH={sizeH} groups={dotGroups} />}
       {advDefeated && (
         <div className="absolute inset-0 rounded-full bg-black/70 pointer-events-none" />
       )}
@@ -1033,14 +1066,14 @@ function TokenCircle({
         <div className="relative z-10 flex flex-col items-center justify-center leading-none pointer-events-none">
           <span
             className="text-white font-bold leading-none"
-            style={{ fontSize: Math.max(10, Math.round(size * (instLabel ? 0.3 : 0.35))) }}
+            style={{ fontSize: Math.max(10, Math.round(minSize * (instLabel ? 0.3 : 0.35))) }}
           >
             {label}
           </span>
           {instLabel && (
             <span
               className="text-white/90 font-bold tabular-nums mt-0.5"
-              style={{ fontSize: Math.max(7, Math.round(size * 0.2)) }}
+              style={{ fontSize: Math.max(7, Math.round(minSize * 0.2)) }}
             >
               {instLabel}
             </span>
@@ -1051,7 +1084,7 @@ function TokenCircle({
         <div className="absolute bottom-0 left-0 right-0 flex justify-center pointer-events-none z-10">
           <span
             className="bg-black/70 text-white font-bold tabular-nums rounded-sm px-0.5 leading-tight"
-            style={{ fontSize: Math.max(7, Math.round(size * 0.2)) }}
+            style={{ fontSize: Math.max(7, Math.round(minSize * 0.2)) }}
           >
             {instLabel}
           </span>
@@ -1084,7 +1117,10 @@ function tokenElementFieldsEqual(pE, nE) {
     pE.maxStress === nE.maxStress &&
     pE.stress_max === nE.stress_max &&
     pE.currentArmor === nE.currentArmor &&
-    pE.maxArmor === nE.maxArmor
+    pE.maxArmor === nE.maxArmor &&
+    pE.tokenSizeWidth === nE.tokenSizeWidth &&
+    pE.tokenSizeLength === nE.tokenSizeLength &&
+    pE.tokenSizeLinked === nE.tokenSizeLinked
   );
 }
 
@@ -1092,7 +1128,8 @@ const placedTokenPropsAreEqual = (prev, next) => {
   if (
     prev.zIndex !== next.zIndex ||
     prev.pxPerFt !== next.pxPerFt ||
-    prev.tokenSizePx !== next.tokenSizePx ||
+    prev.tokenSizeWpx !== next.tokenSizeWpx ||
+    prev.tokenSizeHpx !== next.tokenSizeHpx ||
     prev.isMyCharacter !== next.isMyCharacter ||
     prev.isPlayer !== next.isPlayer ||
     prev.isDragging !== next.isDragging ||
@@ -1123,7 +1160,8 @@ const PlacedToken = memo(function PlacedTokenRaw({
   rangeBand,
   zIndex,
   pxPerFt,
-  tokenSizePx,
+  tokenSizeWpx,
+  tokenSizeHpx,
   onPointerDown,
   onPointerMove,
   onPointerUp,
@@ -1136,8 +1174,8 @@ const PlacedToken = memo(function PlacedTokenRaw({
         left: element.tokenX * pxPerFt - p,
         top: element.tokenY * pxPerFt - p,
         padding: p,
-        width: tokenSizePx + 2 * p,
-        height: tokenSizePx + 2 * p,
+        width: tokenSizeWpx + 2 * p,
+        height: tokenSizeHpx + 2 * p,
         boxSizing: 'border-box',
         touchAction: 'none',
         zIndex,
@@ -1148,7 +1186,8 @@ const PlacedToken = memo(function PlacedTokenRaw({
     >
       <TokenCircle
         element={element}
-        size={tokenSizePx}
+        sizeW={tokenSizeWpx}
+        sizeH={tokenSizeHpx}
         instanceNum={instanceNum}
         isMyCharacter={isMyCharacter}
         isPlayer={isPlayer}
@@ -1201,7 +1240,8 @@ const TrayToken = memo(function TrayTokenRaw({
     >
       <TokenCircle
         element={element}
-        size={tokenSizePx}
+        sizeW={tokenSizePx}
+        sizeH={tokenSizePx}
         instanceNum={instanceNum}
         isMyCharacter={isMyCharacter}
         isDragging={isDragging}
@@ -1739,6 +1779,8 @@ export function BattleMap({
   onRemoveMapView,
   onRenameMapView,
   onSetViewBroadcast,
+  /** GM: lock active camera against accidental pan/zoom */
+  onSetViewLocked,
   /** GM: per-map allow player pan/zoom */
   onSetMapShare,
   playerSelectedViewId = null,
@@ -1856,6 +1898,7 @@ export function BattleMap({
   const [aiMapOpen, setAiMapOpen] = useState(false);
   const mapAiGenPreviewUrlRef = useRef(null);
   mapAiGenPreviewUrlRef.current = mapAiGenPreviewUrl;
+  const gmCameraLockedRef = useRef(false);
 
   // Track scroll area size for pxPerFt and display zoom bounds
   useLayoutEffect(() => {
@@ -2264,6 +2307,10 @@ export function BattleMap({
   const canControlMapView =
     (!isPlayer && !!onMapViewSync) ||
     (isPlayer && mapAllowsPlayerCameras && playerFreeMapExplore);
+
+  const activeGmMapView = !isPlayer ? mapViews.find(v => v.id === gmActiveViewId) ?? null : null;
+  const gmCameraLocked = !!activeGmMapView?.locked;
+  gmCameraLockedRef.current = gmCameraLocked;
 
   const mapViewSig = useMemo(
     () =>
@@ -2707,6 +2754,14 @@ export function BattleMap({
     onPlayerExitMapFreeExplore,
   ]);
 
+  const parentByInstanceId = useMemo(() => {
+    const m = new Map();
+    for (const el of activeElements) {
+      if (el.instanceId) m.set(el.instanceId, el);
+    }
+    return m;
+  }, [activeElements]);
+
   const centerMapOnPlacedActor = useCallback(
     (element) => {
       if (!canControlMapView) return;
@@ -2721,8 +2776,9 @@ export function BattleMap({
       const z = mapZoomRef.current;
       const rw = renderedWRef.current;
       const rh = renderedHRef.current;
-      const innerCx = (element.tokenX + 2.5) * pxPerFt;
-      const innerCy = (element.tokenY + 2.5) * pxPerFt;
+      const footprint = getTokenFootprintFt(resolveTokenSizeSource(element, parentByInstanceId));
+      const innerCx = (element.tokenX + footprint.halfWidth) * pxPerFt;
+      const innerCy = (element.tokenY + footprint.halfLength) * pxPerFt;
       const next = computePanToCenterInnerPointPx({
         innerCenterXPx: innerCx,
         innerCenterYPx: innerCy,
@@ -2739,7 +2795,7 @@ export function BattleMap({
       if (onMapViewSync) schedulePersistView();
       if (isPlayer) schedulePersistPlayerViewport();
     },
-    [canControlMapView, onMapViewSync, pxPerFt, schedulePersistView, schedulePersistPlayerViewport, isPlayer, activeMapIdResolved],
+    [canControlMapView, onMapViewSync, pxPerFt, schedulePersistView, schedulePersistPlayerViewport, isPlayer, activeMapIdResolved, parentByInstanceId],
   );
 
   useEffect(() => {
@@ -2814,6 +2870,7 @@ export function BattleMap({
 
     const onWheel = (e) => {
       if (mapAiGenPreviewUrlRef.current) return;
+      if (gmCameraLockedRef.current) return;
       const vw = el.clientWidth;
       const vh = el.clientHeight;
       if (vw <= 0 || vh <= 0) return;
@@ -2866,13 +2923,6 @@ export function BattleMap({
     [activeElements, activeMapIdResolved],
   );
   const [selectedMapImageId, setSelectedMapImageId] = useState(null);
-  const parentByInstanceId = useMemo(() => {
-    const m = new Map();
-    for (const el of activeElements) {
-      if (el.instanceId) m.set(el.instanceId, el);
-    }
-    return m;
-  }, [activeElements]);
 
   // Build adversary instance numbers (1-based per unique id)
   const instanceNumbers = useMemo(() => {
@@ -3924,6 +3974,7 @@ export function BattleMap({
       pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
       if (!mapPinchActiveRef.current || pointers.size < 2) return;
       if (mapAiGenPreviewUrlRef.current) return;
+      if (gmCameraLockedRef.current) return;
 
       const vw = el.clientWidth;
       const vh = el.clientHeight;
@@ -4031,17 +4082,19 @@ export function BattleMap({
     const rect = container.getBoundingClientRect();
     const mapX = (clientX - rect.left + viewPanLeft) / viewZoom;
     const mapY = (clientY - rect.top + viewPanTop) / viewZoom;
-    const halfToken = tokenSizePx / 2;
     for (const { element } of allMapTokens) {
       if (element.tokenX == null) continue;
-      const cx = element.tokenX * pxPerFt + halfToken;
-      const cy = element.tokenY * pxPerFt + halfToken;
-      if (Math.abs(mapX - cx) <= halfToken && Math.abs(mapY - cy) <= halfToken) {
+      const footprint = getTokenFootprintFt(resolveTokenSizeSource(element, parentByInstanceId));
+      const halfWidthPx = footprint.halfWidth * pxPerFt;
+      const halfHeightPx = footprint.halfLength * pxPerFt;
+      const cx = element.tokenX * pxPerFt + halfWidthPx;
+      const cy = element.tokenY * pxPerFt + halfHeightPx;
+      if (Math.abs(mapX - cx) <= halfWidthPx && Math.abs(mapY - cy) <= halfHeightPx) {
         return element;
       }
     }
     return null;
-  }, [allMapTokens, pxPerFt, tokenSizePx, viewZoom, viewPanLeft, viewPanTop]);
+  }, [allMapTokens, pxPerFt, viewZoom, viewPanLeft, viewPanTop, parentByInstanceId]);
 
   // Handle pointer move over the map canvas area (not trays)
   const handleMapPointerMove = useCallback((e) => {
@@ -4055,12 +4108,17 @@ export function BattleMap({
     }
     // Snap to token center if hovering over a placed token (reuse the lookup above — same point).
     if (overToken) {
-      scheduleBullseyeFt({ x: overToken.tokenX + 2.5, y: overToken.tokenY + 2.5, excludeInstanceId: overToken.instanceId });
+      const footprint = getTokenFootprintFt(resolveTokenSizeSource(overToken, parentByInstanceId));
+      scheduleBullseyeFt({
+        x: overToken.tokenX + footprint.halfWidth,
+        y: overToken.tokenY + footprint.halfLength,
+        excludeInstanceId: overToken.instanceId,
+      });
     } else {
       const ft = clientToFt(e.clientX, e.clientY);
       if (ft) scheduleBullseyeFt(ft);
     }
-  }, [findTokenAtClient, clientToFt, scheduleBullseyeFt]);
+  }, [findTokenAtClient, clientToFt, scheduleBullseyeFt, parentByInstanceId]);
 
   const handleMapPointerLeave = useCallback(() => {
     setHoveringTokenBlocksDraw(false);
@@ -4136,25 +4194,36 @@ export function BattleMap({
     for (const { element } of allMapTokens) {
       if (element.tokenX == null) continue;
       if (element.instanceId === center.excludeInstanceId) continue;
-      const dx = (element.tokenX + 2.5) - center.x;
-      const dy = (element.tokenY + 2.5) - center.y;
-      // Use nearest-edge distance: subtract token radius so any overlap with a band counts (shared with map-range)
-      const dist = Math.max(0, Math.sqrt(dx * dx + dy * dy) - 2.5);
+      const footprint = getTokenFootprintFt(resolveTokenSizeSource(element, parentByInstanceId));
+      const dx = (element.tokenX + footprint.halfWidth) - center.x;
+      const dy = (element.tokenY + footprint.halfLength) - center.y;
+      const centerDist = Math.sqrt(dx * dx + dy * dy);
+      // Point-to-token nearest-edge distance: subtract the token's own directional ellipse
+      // radius toward the point (no averaging — the point side has zero radius; shared math with map-range).
+      const reach = centerDist < 1e-9
+        ? (footprint.halfWidth + footprint.halfLength) / 2
+        : ellipseRadiusAtAngle(footprint.halfWidth, footprint.halfLength, Math.atan2(dy, dx));
+      const dist = Math.max(0, centerDist - reach);
       const bandIdx = getRangeBandIndexForDistanceFt(dist);
       result[element.instanceId] = bandIdx; // -1 means Out of Range
     }
     return result;
-  }, [bullseyeFt, followBullseyeFt, allMapTokens]);
+  }, [bullseyeFt, followBullseyeFt, allMapTokens, parentByInstanceId]);
 
   // Dragged token's range band relative to the static (left-behind) bullseye, for ghost highlight
   const draggedTokenRangeBandFromStatic = useMemo(() => {
     if (!bullseyeFt || !followBullseyeFt) return null;
+    const footprint = getTokenFootprintFt(resolveTokenSizeSource(dragRef.current?.element, parentByInstanceId));
     const dx = followBullseyeFt.x - bullseyeFt.x;
     const dy = followBullseyeFt.y - bullseyeFt.y;
-    const dist = Math.max(0, Math.sqrt(dx * dx + dy * dy) - 2.5);
+    const centerDist = Math.sqrt(dx * dx + dy * dy);
+    const reach = centerDist < 1e-9
+      ? (footprint.halfWidth + footprint.halfLength) / 2
+      : ellipseRadiusAtAngle(footprint.halfWidth, footprint.halfLength, Math.atan2(dy, dx));
+    const dist = Math.max(0, centerDist - reach);
     const bandIdx = getRangeBandIndexForDistanceFt(dist);
     return bandIdx >= 0 ? RANGE_BANDS[bandIdx] : null;
-  }, [bullseyeFt, followBullseyeFt]);
+  }, [bullseyeFt, followBullseyeFt, parentByInstanceId]);
 
   // ─── Drag handlers ──────────────────────────────────────────────────────
 
@@ -4175,12 +4244,16 @@ export function BattleMap({
     e.stopPropagation();
     e.currentTarget.setPointerCapture(e.pointerId);
 
-    const tokenSize = fromTray ? trayTokenSizePx : tokenSizePx;
+    const renderPx = fromTray
+      ? { widthPx: trayTokenSizePx, heightPx: trayTokenSizePx }
+      : computeTokenRenderPx(tokenSizePx, resolveTokenSizeSource(element, parentByInstanceId));
+    const tokenSizeW = renderPx.widthPx;
+    const tokenSizeH = renderPx.heightPx;
 
     // Compute where on the token the user grabbed, so the ghost stays aligned
     // and the drop lands exactly where the ghost was.
-    let grabOffsetX = tokenSize / 2;
-    let grabOffsetY = tokenSize / 2;
+    let grabOffsetX = tokenSizeW / 2;
+    let grabOffsetY = tokenSizeH / 2;
     if (!fromTray && element.tokenX != null) {
       const container = scrollContainerRef.current;
       if (container) {
@@ -4188,8 +4261,10 @@ export function BattleMap({
         const rect = container.getBoundingClientRect();
         const tokenClientX = element.tokenX * pxPerFt * vz - vpl + rect.left;
         const tokenClientY = element.tokenY * pxPerFt * vz - vpt + rect.top;
-        grabOffsetX = Math.max(0, Math.min(tokenSize, e.clientX - tokenClientX));
-        grabOffsetY = Math.max(0, Math.min(tokenSize, e.clientY - tokenClientY));
+        // Clamp against the token's real (post-zoom) on-screen size, since grabOffsetX/Y are
+        // real screen pixels (tokenSizeW/H is the unzoomed base size).
+        grabOffsetX = Math.max(0, Math.min(tokenSizeW * vz, e.clientX - tokenClientX));
+        grabOffsetY = Math.max(0, Math.min(tokenSizeH * vz, e.clientY - tokenClientY));
       }
     }
 
@@ -4208,7 +4283,8 @@ export function BattleMap({
       pointerId: e.pointerId,
       instanceNum: instanceNumbers[element.instanceId],
       myChar,
-      tokenSize,
+      tokenSizeW,
+      tokenSizeH,
       grabOffsetX,
       grabOffsetY,
       prevTokenFt:
@@ -4229,7 +4305,12 @@ export function BattleMap({
       // Freeze bullseye at the dragged token's origin center
       const el = ds.element;
       if (el.tokenX != null) {
-        frozenBullseyeRef.current = { x: el.tokenX + 2.5, y: el.tokenY + 2.5, excludeInstanceId: el.instanceId };
+        const footprint = getTokenFootprintFt(resolveTokenSizeSource(el, parentByInstanceId));
+        frozenBullseyeRef.current = {
+          x: el.tokenX + footprint.halfWidth,
+          y: el.tokenY + footprint.halfLength,
+          excludeInstanceId: el.instanceId,
+        };
         setBullseyeFt(frozenBullseyeRef.current);
       }
     }
@@ -4240,7 +4321,8 @@ export function BattleMap({
         clientY: e.clientY,
         instanceNum: ds.instanceNum,
         isMyChar: ds.myChar,
-        tokenSize: ds.tokenSize,
+        tokenSizeW: ds.tokenSizeW,
+        tokenSizeH: ds.tokenSizeH,
         grabOffsetX: ds.grabOffsetX,
         grabOffsetY: ds.grabOffsetY,
         fromTray: ds.fromTray,
@@ -4249,8 +4331,16 @@ export function BattleMap({
       setHighlightRightTray(!isPlayer && pointInRect(e.clientX, e.clientY, rightTrayRef.current));
       // Update follow bullseye at ghost center when we have a frozen origin (drag from map)
       if (frozenBullseyeRef.current) {
-        const ghostCenterX = e.clientX - ds.grabOffsetX + ds.tokenSize / 2;
-        const ghostCenterY = e.clientY - ds.grabOffsetY + ds.tokenSize / 2;
+        const { viewZoom: vz } = viewStateRef.current;
+        const { x: ghostCenterX, y: ghostCenterY } = computeDragGhostCenterClientPx({
+          clientX: e.clientX,
+          clientY: e.clientY,
+          grabOffsetX: ds.grabOffsetX,
+          grabOffsetY: ds.grabOffsetY,
+          tokenSizeWpx: ds.tokenSizeW,
+          tokenSizeHpx: ds.tokenSizeH,
+          viewZoom: vz,
+        });
         let ft = clientToFt(ghostCenterX, ghostCenterY);
         if (ft) {
           ft = {
@@ -4262,7 +4352,7 @@ export function BattleMap({
         setFollowBullseyeFt(ft);
       }
     }
-  }, [isPlayer, clientToFt, mapWidthFt, mapHeightFt]);
+  }, [isPlayer, clientToFt, mapWidthFt, mapHeightFt, parentByInstanceId]);
 
   const handlePointerUp = useCallback((e) => {
     const ds = dragRef.current;
@@ -4324,18 +4414,26 @@ export function BattleMap({
     if (container) {
       const { viewZoom: vz, viewPanLeft: vpl, viewPanTop: vpt } = viewStateRef.current;
       const rect = container.getBoundingClientRect();
-      // Subtract grab offset so the token's top-left lands where the ghost was,
-      // not where the raw cursor was.
-      const mapX =
-        (e.clientX - rect.left + vpl) / vz - (ds.grabOffsetX ?? ds.tokenSize / 2);
-      const mapY =
-        (e.clientY - rect.top + vpt) / vz - (ds.grabOffsetY ?? ds.tokenSize / 2);
+      // Subtract grab offset so the token's top-left lands where the ghost was, not where the
+      // raw cursor was.
+      const { x: mapX, y: mapY } = computeDragDropTopLeftLocalPx({
+        clientX: e.clientX,
+        clientY: e.clientY,
+        rectLeft: rect.left,
+        rectTop: rect.top,
+        viewPanLeft: vpl,
+        viewPanTop: vpt,
+        viewZoom: vz,
+        grabOffsetX: ds.grabOffsetX ?? ds.tokenSizeW / 2,
+        grabOffsetY: ds.grabOffsetY ?? ds.tokenSizeH / 2,
+      });
       const ftX = mapX / pxPerFt;
       const ftY = mapY / pxPerFt;
 
       if (ftX >= 0 && ftX <= mapWidthFt && ftY >= 0 && ftY <= mapHeightFt) {
-        const clampedX = Math.max(0, Math.min(mapWidthFt - 5, ftX));
-        const clampedY = Math.max(0, Math.min(mapHeightFt - 5, ftY));
+        const dropFootprint = getTokenFootprintFt(resolveTokenSizeSource(ds.element, parentByInstanceId));
+        const clampedX = Math.max(0, Math.min(mapWidthFt - dropFootprint.halfWidth * 2, ftX));
+        const clampedY = Math.max(0, Math.min(mapHeightFt - dropFootprint.halfLength * 2, ftY));
         updateActiveElement(ds.instanceId, { tokenX: clampedX, tokenY: clampedY, mapId: activeMapIdResolved });
         const postMove = activeElements.map((el) =>
           el.instanceId === ds.instanceId ? { ...el, tokenX: clampedX, tokenY: clampedY, mapId: activeMapIdResolved } : el
@@ -4359,7 +4457,7 @@ export function BattleMap({
         });
       }
     }
-  }, [isPlayer, pxPerFt, mapWidthFt, mapHeightFt, updateActiveElement, pinnedToken, activeElements, onTokenDragEnd, canControlMapView, centerMapOnPlacedActor, activeMapIdResolved, navigateShelfToCharacterMap]);
+  }, [isPlayer, pxPerFt, mapWidthFt, mapHeightFt, updateActiveElement, pinnedToken, activeElements, onTokenDragEnd, canControlMapView, centerMapOnPlacedActor, activeMapIdResolved, navigateShelfToCharacterMap, parentByInstanceId]);
 
   /** Keep the stable proxy callbacks (declared earlier) pointed at the latest handler closures. */
   handlersRef.current = { handlePointerDown, handlePointerMove, handlePointerUp };
@@ -4378,6 +4476,7 @@ export function BattleMap({
     (e) => {
       if (!canControlMapView) return;
       if (mapAiGenPreviewUrlRef.current) return;
+      if (gmCameraLocked) return;
       if (!canPanMap) return;
       if (e.button !== 2) return;
       e.preventDefault();
@@ -4396,7 +4495,7 @@ export function BattleMap({
       }
       setRightPanDragging(true);
     },
-    [canControlMapView, canPanMap],
+    [canControlMapView, canPanMap, gmCameraLocked],
   );
 
   const handleRightPanPointerMove = useCallback(
@@ -4802,17 +4901,47 @@ export function BattleMap({
             ))}
           </div>
           {canControlMapView ? (
-            <div
-              className="flex shrink-0 flex-col items-stretch pt-0.5 box-border overflow-hidden self-start"
-              style={{ width: CHARACTER_TRAY_WIDTH_PX, maxWidth: CHARACTER_TRAY_WIDTH_PX }}
-            >
-              <Tooltip label="Fit everyone on the map at the closest zoom" placement="left" className="relative block w-full min-w-0">
+            <div className="flex shrink-0 flex-row items-stretch gap-1 pt-0.5 box-border overflow-hidden self-start">
+              {onSetViewLocked && activeGmMapView ? (
+                <Tooltip
+                  label={gmCameraLocked ? 'Camera locked — click to unlock pan/zoom' : 'Lock this camera to prevent accidental pan/zoom'}
+                  placement="left"
+                  className="relative block min-w-0"
+                >
+                  <button
+                    type="button"
+                    onClick={() => onSetViewLocked(activeGmMapView.id, !gmCameraLocked)}
+                    aria-pressed={gmCameraLocked}
+                    aria-label={gmCameraLocked ? 'Unlock camera' : 'Lock camera'}
+                    className={`w-full max-w-full min-w-0 flex flex-col items-center justify-center gap-0.5 rounded px-1 py-1 text-[10px] leading-tight text-center box-border border ${
+                      gmCameraLocked
+                        ? 'text-amber-200 border-amber-500/60 bg-amber-900/40 hover:bg-amber-800/50'
+                        : 'text-dh-muted border-dh-strong/50 bg-dh-raised/40 hover:bg-dh-raised/70 hover:text-dh'
+                    }`}
+                    style={{ width: CHARACTER_TRAY_WIDTH_PX, maxWidth: CHARACTER_TRAY_WIDTH_PX }}
+                  >
+                    {gmCameraLocked
+                      ? <Lock size={Math.max(12, trayTokenSizePx - 8)} strokeWidth={1.25} aria-hidden />
+                      : <LockOpen size={Math.max(12, trayTokenSizePx - 8)} strokeWidth={1.25} aria-hidden />
+                    }
+                    <span className="px-0.5 font-medium">
+                      {gmCameraLocked ? <>Unlock<br />Pan /<br />Zoom</> : <>Lock<br />Pan /<br />Zoom</>}
+                    </span>
+                  </button>
+                </Tooltip>
+              ) : null}
+              <Tooltip
+                label="Fit everyone on the map at the closest zoom"
+                placement="left"
+                className="relative block min-w-0"
+              >
                 <button
                   type="button"
                   onClick={applyZoomToFitActors}
                   disabled={!hasPlacedActorsOnMap || mapAiPreviewActive}
                   className="w-full max-w-full min-w-0 flex flex-col items-center justify-center gap-0.5 rounded px-1 py-1 text-[10px] leading-tight text-center text-violet-200/95 border border-violet-500/35 bg-violet-950/25 hover:bg-violet-900/35 disabled:opacity-40 disabled:pointer-events-none box-border"
                   aria-label="Zoom to Actors"
+                  style={{ width: CHARACTER_TRAY_WIDTH_PX, maxWidth: CHARACTER_TRAY_WIDTH_PX }}
                 >
                   <Focus size={Math.max(12, trayTokenSizePx - 8)} strokeWidth={1.25} aria-hidden />
                   <span className="px-0.5 font-medium">Zoom to Actors</span>
@@ -5199,7 +5328,7 @@ export function BattleMap({
                 ? 'cursor-crosshair'
                 : !isPlayer && (drawTool === 'rect' || drawTool === 'oval')
                   ? 'cursor-crosshair'
-                  : canControlMapView && !mapAiPreviewActive && (canPanMap || rightPanDragging)
+                  : canControlMapView && !mapAiPreviewActive && !gmCameraLocked && (canPanMap || rightPanDragging)
                     ? (rightPanDragging ? 'cursor-grabbing' : 'cursor-grab')
                     : ''
             }`}
@@ -5220,7 +5349,7 @@ export function BattleMap({
             onPointerUp={handleRightPanPointerUp}
             onPointerCancel={handleRightPanPointerUp}
             onLostPointerCapture={handleRightPanLostCapture}
-            onContextMenu={canControlMapView && canPanMap ? (ev) => { ev.preventDefault(); } : undefined}
+            onContextMenu={canControlMapView && canPanMap && !gmCameraLocked ? (ev) => { ev.preventDefault(); } : undefined}
             onDragOver={!isPlayer ? handleMapPanelDragOver : undefined}
             onDrop={!isPlayer ? handleMapPanelDrop : undefined}
           >
@@ -5482,6 +5611,7 @@ export function BattleMap({
               {charMapTokens.map(({ element, isMyCharacter: myChar }, stackIdx) => {
                 const bandIdx = tokenRangeBands[element.instanceId];
                 const rangeBand = (bandIdx != null && bandIdx >= 0) ? RANGE_BANDS[bandIdx] : null;
+                const renderPx = computeTokenRenderPx(tokenSizePx, element);
                 return (
                   <PlacedToken
                     key={element.instanceId}
@@ -5493,7 +5623,8 @@ export function BattleMap({
                     rangeBand={rangeBand}
                     zIndex={10 + stackIdx}
                     pxPerFt={pxPerFt}
-                    tokenSizePx={tokenSizePx}
+                    tokenSizeWpx={renderPx.widthPx}
+                    tokenSizeHpx={renderPx.heightPx}
                     onPointerDown={stableOnPointerDown}
                     onPointerMove={stableOnPointerMove}
                     onPointerUp={stableOnPointerUp}
@@ -5505,6 +5636,7 @@ export function BattleMap({
               {boardMapTokens.map(({ element, isMyCharacter: myChar }, stackIdx) => {
                 const bandIdx = tokenRangeBands[element.instanceId];
                 const rangeBand = bandIdx != null && bandIdx >= 0 ? RANGE_BANDS[bandIdx] : null;
+                const renderPx = computeTokenRenderPx(tokenSizePx, resolveTokenSizeSource(element, parentByInstanceId));
                 return (
                   <PlacedToken
                     key={element.instanceId}
@@ -5516,7 +5648,8 @@ export function BattleMap({
                     rangeBand={rangeBand}
                     zIndex={10 + charMapTokens.length + stackIdx}
                     pxPerFt={pxPerFt}
-                    tokenSizePx={tokenSizePx}
+                    tokenSizeWpx={renderPx.widthPx}
+                    tokenSizeHpx={renderPx.heightPx}
                     onPointerDown={stableOnPointerDown}
                     onPointerMove={stableOnPointerMove}
                     onPointerUp={stableOnPointerUp}
@@ -5528,6 +5661,7 @@ export function BattleMap({
               {advMapTokens.map(({ element, instanceNum }, advIdx) => {
                 const bandIdx = tokenRangeBands[element.instanceId];
                 const rangeBand = (bandIdx != null && bandIdx >= 0) ? RANGE_BANDS[bandIdx] : null;
+                const renderPx = computeTokenRenderPx(tokenSizePx, element);
                 return (
                   <PlacedToken
                     key={element.instanceId}
@@ -5540,7 +5674,8 @@ export function BattleMap({
                     rangeBand={rangeBand}
                     zIndex={10 + charMapTokens.length + boardMapTokens.length + advIdx}
                     pxPerFt={pxPerFt}
-                    tokenSizePx={tokenSizePx}
+                    tokenSizeWpx={renderPx.widthPx}
+                    tokenSizeHpx={renderPx.heightPx}
                     onPointerDown={stableOnPointerDown}
                     onPointerMove={stableOnPointerMove}
                     onPointerUp={stableOnPointerUp}
@@ -5689,16 +5824,21 @@ export function BattleMap({
           <div
             className="fixed pointer-events-none z-50"
             style={{
-              left: dragGhost.clientX - (dragGhost.grabOffsetX ?? dragGhost.tokenSize / 2),
-              top: dragGhost.clientY - (dragGhost.grabOffsetY ?? dragGhost.tokenSize / 2),
+              left: dragGhost.clientX - (dragGhost.grabOffsetX ?? dragGhost.tokenSizeW / 2),
+              top: dragGhost.clientY - (dragGhost.grabOffsetY ?? dragGhost.tokenSizeH / 2),
             }}
           >
             <TokenCircle
               element={dragGhost.element}
-              size={
+              sizeW={
                 dragGhost.fromTray
-                  ? (dragGhost.tokenSize ?? trayTokenSizePx)
-                  : Math.round((dragGhost.tokenSize ?? tokenSizePx) * viewZoom)
+                  ? (dragGhost.tokenSizeW ?? trayTokenSizePx)
+                  : Math.round((dragGhost.tokenSizeW ?? tokenSizePx) * viewZoom)
+              }
+              sizeH={
+                dragGhost.fromTray
+                  ? (dragGhost.tokenSizeH ?? trayTokenSizePx)
+                  : Math.round((dragGhost.tokenSizeH ?? tokenSizePx) * viewZoom)
               }
               instanceNum={dragGhost.instanceNum}
               isMyCharacter={dragGhost.isMyChar}

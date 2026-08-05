@@ -2,6 +2,8 @@ import { Swords } from 'lucide-react';
 import { CheckboxTrack } from './DetailCardContent.jsx';
 import { omitShapeId, getBoundObject, setBoundObject } from '../lib/json-schema-dh.js';
 import { generateId } from '../lib/helpers.js';
+import { TokenSizeFields } from './forms/TokenSizeFields.jsx';
+import { roundTokenSizeMultiplier } from '../lib/token-size.js';
 
 function SchemaSection({ label, children, labelUppercase = true }) {
   return (
@@ -30,7 +32,7 @@ function orderedPropertyKeys(jsonSchema) {
  * @param {boolean} [props.preview]
  * @param {(fieldKey: string, schema: object) => void} [props.onFieldRoll] — sheet: attack rolls only
  * @param {(filled: number) => void} [props.onTrackedSetFilled]
- * @param {(path: string[], value: unknown) => void} [props.onEditorChange] — editor: patch by logical path
+ * @param {(path: string[], value: unknown) => void | ((patch: object) => void)} [props.onEditorChange] — editor: either set one (possibly nested) key by path segments, or (single-object-argument form) atomically merge multiple top-level sibling keys — see `sizeMultiplierPair`
  */
 export function DeclarativeSchemaCardBody({
   jsonSchema,
@@ -95,6 +97,42 @@ export function DeclarativeSchemaCardBody({
           </div>,
         );
       }
+      continue;
+    }
+
+    if (t === 'sizeMultiplierPair') {
+      const widthKey = sub.widthKey || 'tokenSizeWidth';
+      const lengthKey = sub.lengthKey || 'tokenSizeLength';
+      const linkedKey = sub.linkedKey || 'tokenSizeLinked';
+      const width = data?.[widthKey] != null ? roundTokenSizeMultiplier(data[widthKey]) : 1;
+      const length = data?.[lengthKey] != null ? roundTokenSizeMultiplier(data[lengthKey]) : 1;
+      const linked = data?.[linkedKey] !== false;
+
+      if (mode === 'sheet') {
+        if (width === 1 && length === 1) continue;
+        nodes.push(
+          <div key={key} className="text-[11px] text-dh-muted">
+            Size {width.toFixed(1)}x × {length.toFixed(1)}x
+          </div>,
+        );
+        continue;
+      }
+
+      nodes.push(
+        <div key={key}>
+          <label className="text-[10px] text-dh-muted block mb-1">{title}</label>
+          <TokenSizeFields
+            value={{ tokenSizeWidth: width, tokenSizeLength: length, tokenSizeLinked: linked }}
+            onChange={(patch) => {
+              const remapped = {};
+              if ('tokenSizeWidth' in patch) remapped[widthKey] = patch.tokenSizeWidth;
+              if ('tokenSizeLength' in patch) remapped[lengthKey] = patch.tokenSizeLength;
+              if ('tokenSizeLinked' in patch) remapped[linkedKey] = patch.tokenSizeLinked;
+              onEditorChange?.(remapped);
+            }}
+          />
+        </div>,
+      );
       continue;
     }
 
@@ -353,19 +391,29 @@ export function DeclarativeSchemaEditorCard({ featureName, jsonSchema, bind, for
           ],
         };
 
-  const onEditorChange = (pathSegs, value) => {
-    let next = { ...data };
-    if (pathSegs.length === 1) {
-      next[pathSegs[0]] = value;
-    } else {
-      next = { ...data };
-      let cur = next;
-      for (let i = 0; i < pathSegs.length - 1; i++) {
-        const k = pathSegs[i];
-        cur[k] = cur[k] && typeof cur[k] === 'object' ? { ...cur[k] } : {};
-        cur = cur[k];
+  /**
+   * Two call shapes:
+   * - `onEditorChange(pathSegs, value)` — set one (possibly nested) key by path segments.
+   * - `onEditorChange(patch)` — atomically merge multiple top-level sibling keys (e.g.
+   *   `sizeMultiplierPair`'s linked width+length update, which must land in one state update).
+   */
+  const onEditorChange = (pathSegsOrPatch, value) => {
+    const next = { ...data };
+    if (Array.isArray(pathSegsOrPatch)) {
+      const pathSegs = pathSegsOrPatch;
+      if (pathSegs.length === 1) {
+        next[pathSegs[0]] = value;
+      } else {
+        let cur = next;
+        for (let i = 0; i < pathSegs.length - 1; i++) {
+          const k = pathSegs[i];
+          cur[k] = cur[k] && typeof cur[k] === 'object' ? { ...cur[k] } : {};
+          cur = cur[k];
+        }
+        cur[pathSegs[pathSegs.length - 1]] = value;
       }
-      cur[pathSegs[pathSegs.length - 1]] = value;
+    } else if (pathSegsOrPatch && typeof pathSegsOrPatch === 'object') {
+      Object.assign(next, pathSegsOrPatch);
     }
     const nextChar = setBoundObject(formCharacter, path, next);
     setCharacter(nextChar);

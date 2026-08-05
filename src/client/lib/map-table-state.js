@@ -129,6 +129,7 @@ export function normalizeMapState(state) {
         mapViewPanNorm,
         mapViewVisibleNorm,
         broadcastToPlayers: isFirstMap,
+        locked: false,
       });
     }
     out.mapViews = mapViews;
@@ -139,6 +140,7 @@ export function normalizeMapState(state) {
       ...v,
       name: (v.name && String(v.name).trim()) || 'View',
       broadcastToPlayers: !!v.broadcastToPlayers,
+      locked: !!v.locked,
     }));
     const hasValidActiveId =
       out.gmActiveViewId != null && out.mapViews.some(v => v.id === out.gmActiveViewId);

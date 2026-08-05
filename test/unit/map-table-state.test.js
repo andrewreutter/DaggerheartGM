@@ -75,4 +75,32 @@ describe('map-table-state', () => {
     expect(out.maps?.length).toBe(1);
     expect(out.mapConfig.mapSizeFt).toBe(80);
   });
+
+  it('normalizeMapState defaults mapViews[].locked to false when migrating legacy state', () => {
+    const n = normalizeMapState({
+      mapConfig: { mapImageUrl: 'https://x/map.png', mapSizeFt: 50 },
+    });
+    expect(n.mapViews.length).toBeGreaterThan(0);
+    for (const v of n.mapViews) {
+      expect(v.locked).toBe(false);
+    }
+  });
+
+  it('normalizeMapState normalizes locked on pre-existing mapViews missing the field', () => {
+    const n = normalizeMapState({
+      maps: [{ id: 'm1', name: 'M', mapImageUrl: 'x', mapDimension: 'width', mapSizeFt: 100, mapImageNaturalWidth: null, mapImageNaturalHeight: null }],
+      mapViews: [{ id: 'v1', mapId: 'm1', name: 'Main', broadcastToPlayers: true }],
+      gmActiveViewId: 'v1',
+    });
+    expect(n.mapViews[0].locked).toBe(false);
+  });
+
+  it('normalizeMapState preserves locked: true on pre-existing mapViews', () => {
+    const n = normalizeMapState({
+      maps: [{ id: 'm1', name: 'M', mapImageUrl: 'x', mapDimension: 'width', mapSizeFt: 100, mapImageNaturalWidth: null, mapImageNaturalHeight: null }],
+      mapViews: [{ id: 'v1', mapId: 'm1', name: 'Main', broadcastToPlayers: true, locked: true }],
+      gmActiveViewId: 'v1',
+    });
+    expect(n.mapViews[0].locked).toBe(true);
+  });
 });

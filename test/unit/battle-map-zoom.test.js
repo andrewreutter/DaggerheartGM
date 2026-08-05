@@ -5,6 +5,8 @@ import {
   applyViewportWheelPanZoom,
   clampMapZoom,
   clampPanScroll,
+  computeDragDropTopLeftLocalPx,
+  computeDragGhostCenterClientPx,
   normalizeWheelDeltaPixels,
   computePanToCenterInnerPointPx,
   computeZoomAndPanToFitInnerBounds,
@@ -159,6 +161,83 @@ describe('battle-map-zoom', () => {
     expect(next).not.toBeNull();
     expect(next.mapZoom).not.toBe(0.5);
     expect(Number.isFinite(next.scrollLeft)).toBe(true);
+  });
+
+  describe('computeDragGhostCenterClientPx / computeDragDropTopLeftLocalPx (drag bullseye/drop drift regression)', () => {
+    // A 5×5' token at pxPerFt=10 renders at 50px (unzoomed base). Grabbed dead-center means
+    // grabOffsetX/Y equal half of the token's *real* (post-zoom) on-screen size.
+    const pxPerFt = 10;
+    const tokenSizeWpx = 50;
+    const tokenSizeHpx = 50;
+
+    it('at 100% zoom, ghost center matches the token center exactly (sanity baseline)', () => {
+      const viewZoom = 1;
+      const grabOffsetX = (tokenSizeWpx * viewZoom) / 2;
+      const grabOffsetY = (tokenSizeHpx * viewZoom) / 2;
+      // Token top-left at (0,0)ft → real on-screen center at (25,25)px; simulate grabbing there
+      // and releasing the pointer at the same client position (no movement).
+      const clientX = 0 + grabOffsetX;
+      const clientY = 0 + grabOffsetY;
+      const center = computeDragGhostCenterClientPx({
+        clientX, clientY, grabOffsetX, grabOffsetY, tokenSizeWpx, tokenSizeHpx, viewZoom,
+      });
+      expect(center.x).toBeCloseTo(clientX, 6);
+      expect(center.y).toBeCloseTo(clientY, 6);
+    });
+
+    it('when zoomed out (viewZoom < 1), an unmoved drag reports the ghost center at the true token center, not shifted down/right', () => {
+      const viewZoom = 0.5;
+      // Token top-left at local (0,0)px → real on-screen top-left is also (0,0) (rect at origin,
+      // no pan). Real on-screen size is tokenSizeWpx*viewZoom = 25px, so true real center is (12.5,12.5).
+      const grabOffsetX = 12.5; // grabbed at the token's real on-screen center
+      const grabOffsetY = 12.5;
+      const clientX = 12.5; // pointer stayed exactly where it grabbed (no movement)
+      const clientY = 12.5;
+      const center = computeDragGhostCenterClientPx({
+        clientX, clientY, grabOffsetX, grabOffsetY, tokenSizeWpx, tokenSizeHpx, viewZoom,
+      });
+      // Regression: before the fix this returned (25, 25) — a 12.5px (real) / 2.5ft drift
+      // down-and-right from the token's actual on-screen center whenever zoomed out.
+      expect(center.x).toBeCloseTo(12.5, 6);
+      expect(center.y).toBeCloseTo(12.5, 6);
+    });
+
+    it('when zoomed out (viewZoom < 1), releasing without moving the pointer drops the token back at its original top-left', () => {
+      const viewZoom = 0.5;
+      const rectLeft = 0;
+      const rectTop = 0;
+      const viewPanLeft = 0;
+      const viewPanTop = 0;
+      const grabOffsetX = 12.5; // grabbed at the token's real on-screen center (see above)
+      const grabOffsetY = 12.5;
+      const clientX = 12.5; // no movement since grab
+      const clientY = 12.5;
+      const { x, y } = computeDragDropTopLeftLocalPx({
+        clientX, clientY, rectLeft, rectTop, viewPanLeft, viewPanTop, viewZoom, grabOffsetX, grabOffsetY,
+      });
+      // Regression: before the fix this returned (12.5, 12.5) local px (1.25ft) instead of (0, 0) —
+      // a stationary drag-and-drop would silently nudge the token when the map wasn't at 100% zoom.
+      expect(x / pxPerFt).toBeCloseTo(0, 6);
+      expect(y / pxPerFt).toBeCloseTo(0, 6);
+    });
+
+    it('ghost center and drop position agree on where a moved token lands, at non-1x zoom', () => {
+      const viewZoom = 0.5;
+      const grabOffsetX = 12.5;
+      const grabOffsetY = 12.5;
+      // Drag 30 real px to the right, 0 vertically.
+      const clientX = 12.5 + 30;
+      const clientY = 12.5;
+      const center = computeDragGhostCenterClientPx({
+        clientX, clientY, grabOffsetX, grabOffsetY, tokenSizeWpx, tokenSizeHpx, viewZoom,
+      });
+      const drop = computeDragDropTopLeftLocalPx({
+        clientX, clientY, rectLeft: 0, rectTop: 0, viewPanLeft: 0, viewPanTop: 0, viewZoom, grabOffsetX, grabOffsetY,
+      });
+      // 30 real px at 0.5x zoom = 60 local px = 6ft of movement.
+      expect(center.x / viewZoom / pxPerFt).toBeCloseTo(2.5 + 6, 6); // ghost center in ft
+      expect((drop.x + tokenSizeWpx / 2) / pxPerFt).toBeCloseTo(2.5 + 6, 6); // drop top-left + half-width in ft
+    });
   });
 
   it('scrollAfterZoomTowardPoint keeps point under cursor', () => {

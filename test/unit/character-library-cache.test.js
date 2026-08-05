@@ -170,4 +170,71 @@ describe('resolveCharacterElements character library cache', () => {
     expect(queryMock).not.toHaveBeenCalled();
     expect(resolved).toBe(elements);
   });
+
+  it('refreshes companion fields from the library while preserving only currentStress from the table snapshot', async () => {
+    // Regression: companion used to be in CHARACTER_RUNTIME_KEYS_DB so the entire stale table
+    // snapshot won over fresh library data — companion name/species/evasion/tokenSize edits in
+    // the character editor never propagated to a placed character even after a full reload.
+    const freshCompanion = {
+      name: 'Spike',
+      species: 'Wolf',
+      evasion: 12,
+      tokenSizeWidth: 2,
+      tokenSizeLength: 3,
+      tokenSizeLinked: false,
+    };
+    const rowsById = new Map([
+      ['c1', makeLibRow('c1', { companion: freshCompanion })],
+    ]);
+    installQueryImpl(rowsById);
+
+    // Placed element has an older companion snapshot with a different name/size but live currentStress.
+    const element = {
+      elementType: 'character',
+      id: 'c1',
+      instanceId: 'i1',
+      currentHp: 10,
+      companion: {
+        name: 'Spike (old)',
+        species: 'Cat',
+        evasion: 8,
+        tokenSizeWidth: 1,
+        tokenSizeLength: 1,
+        tokenSizeLinked: true,
+        currentStress: 3,
+      },
+    };
+
+    const [resolved] = await resolveCharacterElements(APP_ID, [element]);
+
+    // Fresh library fields must win.
+    expect(resolved.companion.name).toBe('Spike');
+    expect(resolved.companion.species).toBe('Wolf');
+    expect(resolved.companion.evasion).toBe(12);
+    expect(resolved.companion.tokenSizeWidth).toBe(2);
+    expect(resolved.companion.tokenSizeLength).toBe(3);
+    expect(resolved.companion.tokenSizeLinked).toBe(false);
+    // currentStress is the only field that must be preserved from the table's live snapshot.
+    expect(resolved.companion.currentStress).toBe(3);
+  });
+
+  it('preserves companion.currentStress as undefined when the element has no live companion', async () => {
+    // If the character hasn't been placed with a companion yet, no stale stress should appear.
+    const rowsById = new Map([
+      ['c1', makeLibRow('c1', { companion: { name: 'Buddy', tokenSizeWidth: 1.5 } })],
+    ]);
+    installQueryImpl(rowsById);
+
+    const element = {
+      elementType: 'character',
+      id: 'c1',
+      instanceId: 'i1',
+      // no companion key at all
+    };
+
+    const [resolved] = await resolveCharacterElements(APP_ID, [element]);
+    expect(resolved.companion.name).toBe('Buddy');
+    expect(resolved.companion.tokenSizeWidth).toBe(1.5);
+    expect(resolved.companion.currentStress).toBeUndefined();
+  });
 });

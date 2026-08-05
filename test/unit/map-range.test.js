@@ -1,5 +1,19 @@
 import { describe, it, expect } from 'vitest';
-import { tokenDistanceFt, getCharactersWithinFarRange, getCharactersWithinCloseRangeWithMarkedHp, getAdversariesWithinMeleeRange, getAdversariesWithinRangeFt, rangeBandNameToFt, RANGE_BANDS_FT, FAR_RANGE_FT, CLOSE_RANGE_FT } from '../../src/client/lib/map-range.js';
+import {
+  tokenDistanceFt,
+  tokenDistanceFtForElements,
+  positionAtDistanceFt,
+  ellipseRadiusAtAngle,
+  getTokenFootprintFt,
+  getCharactersWithinFarRange,
+  getCharactersWithinCloseRangeWithMarkedHp,
+  getAdversariesWithinMeleeRange,
+  getAdversariesWithinRangeFt,
+  rangeBandNameToFt,
+  RANGE_BANDS_FT,
+  FAR_RANGE_FT,
+  CLOSE_RANGE_FT,
+} from '../../src/client/lib/map-range.js';
 
 describe('tokenDistanceFt', () => {
   it('returns 0 for overlapping tokens', () => {
@@ -14,6 +28,101 @@ describe('tokenDistanceFt', () => {
   it('clamps to 0 when tokens are adjacent / overlapping', () => {
     // Centers 2' apart: center-to-center 2, minus 2.5 = -0.5, clamped to 0
     expect(tokenDistanceFt(0, 0, 2, 0)).toBe(0);
+  });
+});
+
+describe('getTokenFootprintFt', () => {
+  it('defaults to the standard 2.5/2.5 footprint', () => {
+    expect(getTokenFootprintFt(null)).toEqual({ halfWidth: 2.5, halfLength: 2.5 });
+    expect(getTokenFootprintFt({})).toEqual({ halfWidth: 2.5, halfLength: 2.5 });
+  });
+
+  it('scales with tokenSizeWidth/tokenSizeLength', () => {
+    expect(getTokenFootprintFt({ tokenSizeWidth: 2, tokenSizeLength: 1 })).toEqual({
+      halfWidth: 5,
+      halfLength: 2.5,
+    });
+  });
+});
+
+describe('ellipseRadiusAtAngle', () => {
+  it('is constant (a circle) when halfWidth === halfLength', () => {
+    for (const angle of [0, Math.PI / 4, Math.PI / 2, Math.PI, 3.7]) {
+      expect(ellipseRadiusAtAngle(2.5, 2.5, angle)).toBeCloseTo(2.5, 10);
+    }
+  });
+
+  it('returns halfWidth along the X axis and halfLength along the Y axis', () => {
+    expect(ellipseRadiusAtAngle(5, 2.5, 0)).toBeCloseTo(5, 10);
+    expect(ellipseRadiusAtAngle(5, 2.5, Math.PI / 2)).toBeCloseTo(2.5, 10);
+  });
+
+  it('is symmetric under +π (direction-agnostic)', () => {
+    const a = ellipseRadiusAtAngle(5, 2, 0.7);
+    const b = ellipseRadiusAtAngle(5, 2, 0.7 + Math.PI);
+    expect(b).toBeCloseTo(a, 10);
+  });
+});
+
+describe('tokenDistanceFt with custom footprints', () => {
+  it('reproduces the default-token result exactly when footprints are omitted', () => {
+    expect(tokenDistanceFt(0, 0, 100, 0)).toBeCloseTo(97.5, 10);
+  });
+
+  it('averages the two tokens\' directional reach (not summed)', () => {
+    // Two default-sized tokens 100' apart center-to-center: reach = (2.5+2.5)/2 = 2.5
+    const aFootprint = { halfWidth: 2.5, halfLength: 2.5 };
+    const bFootprint = { halfWidth: 2.5, halfLength: 2.5 };
+    expect(tokenDistanceFt(0, 0, 100, 0, aFootprint, bFootprint)).toBeCloseTo(97.5, 10);
+  });
+
+  it('a wider token reaches further along its wide axis', () => {
+    // Token A is 10'x5' (half 5/2.5) at top-left (0,0) -> center (5, 2.5).
+    // Token B is default 5x5' at top-left (100,0) -> center (102.5, 2.5).
+    // Center distance = 102.5 - 5 = 97.5; reach = (5 + 2.5)/2 = 3.75; distance = 93.75.
+    const aFootprint = { halfWidth: 5, halfLength: 2.5 };
+    const bFootprint = { halfWidth: 2.5, halfLength: 2.5 };
+    expect(tokenDistanceFt(0, 0, 100, 0, aFootprint, bFootprint)).toBeCloseTo(93.75, 10);
+  });
+
+  it('clamps to 0 for overlapping tokens', () => {
+    expect(tokenDistanceFt(0, 0, 0, 0)).toBe(0);
+  });
+});
+
+describe('tokenDistanceFtForElements', () => {
+  it('matches tokenDistanceFt with default footprints for default-sized elements', () => {
+    const a = { tokenX: 0, tokenY: 0 };
+    const b = { tokenX: 100, tokenY: 0 };
+    expect(tokenDistanceFtForElements(a, b)).toBeCloseTo(tokenDistanceFt(0, 0, 100, 0), 10);
+  });
+
+  it('uses each element\'s tokenSizeWidth/tokenSizeLength', () => {
+    const a = { tokenX: 0, tokenY: 0, tokenSizeWidth: 2, tokenSizeLength: 1 };
+    const b = { tokenX: 100, tokenY: 0 };
+    // a's footprint = {halfWidth: 5, halfLength: 2.5} -> center (5, 2.5); b's center (102.5, 2.5).
+    // Center distance = 97.5; reach = (5+2.5)/2 = 3.75; distance = 93.75.
+    expect(tokenDistanceFtForElements(a, b)).toBeCloseTo(93.75, 10);
+  });
+});
+
+describe('positionAtDistanceFt', () => {
+  it('reproduces default-token behavior when footprints are omitted', () => {
+    const pos = positionAtDistanceFt(0, 0, 10, 0, 50);
+    // A center (2.5,2.5); direction toward B is +X; new center at (52.5, 2.5); top-left = (50, 0)
+    expect(pos.x).toBeCloseTo(50, 10);
+    expect(pos.y).toBeCloseTo(0, 10);
+  });
+
+  it('converts the new center back to top-left using the target\'s own footprint', () => {
+    // A default footprint (2.5/2.5) at (0,0) -> center (2.5, 2.5).
+    // B footprint halfLength matches A's (2.5) so the direction stays pure +X; halfWidth is 5.
+    const bFootprint = { halfWidth: 5, halfLength: 2.5 };
+    const pos = positionAtDistanceFt(0, 0, 10, 0, 50, undefined, bFootprint);
+    // B's center at (10+5, 0+2.5) = (15, 2.5); direction from A center (2.5,2.5) is pure +X.
+    // New center = (2.5+50, 2.5) = (52.5, 2.5); top-left = center - bFootprint = (47.5, 0).
+    expect(pos.x).toBeCloseTo(47.5, 10);
+    expect(pos.y).toBeCloseTo(0, 10);
   });
 });
 

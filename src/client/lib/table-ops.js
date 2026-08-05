@@ -590,6 +590,16 @@ export function applyTableOp(op, state) {
       const nextState = { ...base, mapViews };
       return { mapViews, mapConfig: deriveMapConfigFromState(nextState) };
     }
+    case 'set-view-locked': {
+      const base = normalizeMapState(state);
+      const vid = op.viewId;
+      if (!vid || !base.mapViews.some(v => v.id === vid)) return {};
+      const mapViews = base.mapViews.map(v =>
+        v.id === vid ? { ...v, locked: !!op.locked } : v
+      );
+      const nextState = { ...base, mapViews };
+      return { mapViews, mapConfig: deriveMapConfigFromState(nextState) };
+    }
     case 'set-map-share': {
       const base = normalizeMapState(state);
       const mid = op.mapId;

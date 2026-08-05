@@ -33,6 +33,10 @@ export function mapDhSchemaTypesForValidator(node) {
   } else if (t === 'attack') {
     out.type = 'string';
     if (out.minLength == null) out.minLength = 1;
+  } else if (t === 'sizeMultiplierPair') {
+    // Virtual reference field (bridges widthKey/lengthKey/linkedKey sibling properties) —
+    // no real data lives at this key, so any object shape validates.
+    out.type = 'object';
   }
   for (const k of Object.keys(out)) {
     if (k === 'properties' && out.properties && typeof out.properties === 'object') {

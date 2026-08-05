@@ -1071,7 +1071,7 @@ const CHARACTER_RUNTIME_KEYS_DB = new Set([
   'mapId',
   'assignedPlayerEmail', 'assignedPlayerUid', 'playerName',
   'reinforcedActive', 'selectedExperienceIndex',
-  'featureUsage', 'activeModifiers', 'focusTargetId', 'focusTargetInstanceId', 'rangerFocusOnNextAttack', 'companion',
+  'featureUsage', 'activeModifiers', 'focusTargetId', 'focusTargetInstanceId', 'rangerFocusOnNextAttack',
   'activeBeastform', 'selectedBeastformAdvantage',
   'faerieWingsFlying',
   'retractedActive',
@@ -1186,6 +1186,12 @@ export async function resolveCharacterElements(appId, elements) {
     // Auto-preserve any _ prefixed keys (ancestry/class feature toggle state).
     Object.keys(el).forEach(k => { if (k.startsWith('_') && k in el) runtime[k] = el[k]; });
     const merged = { ...lib, ...runtime, elementType: 'character' };
+    // companion: take fresh library fields (name, species, evasion, experiences, tokenSize*, etc.)
+    // but preserve only currentStress from the table's live snapshot, matching the client-side
+    // character-library-update logic in table-ops.js.
+    if (lib.companion || el.companion) {
+      merged.companion = { ...(lib.companion || {}), currentStress: el.companion?.currentStress };
+    }
     return normalizePersistedCharacterElement(merged);
   });
 }

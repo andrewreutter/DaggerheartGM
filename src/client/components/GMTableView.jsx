@@ -124,7 +124,7 @@ import {
 import { buildAdvantageTriggerPrerollChips } from '../lib/advantage-trigger-preroll.js';
 import { applyRangerFocusV2IntentToPending } from '../lib/ranger-focus-v2-intent.js';
 import { extractDetailsValues } from '../lib/dice-utils.js';
-import { getCharactersWithinFarRange, getCharactersWithinCloseRangeWithMarkedHp, getAdversariesWithinMeleeRange, getAdversariesWithinRangeFt, getCharactersWithinRangeFt, getCharactersWithinRangeOfAny, rangeBandNameToFt, rangeFtToLabel, RANGE_BANDS_FT, tokenDistanceFt, positionAtDistanceFt } from '../lib/map-range.js';
+import { getCharactersWithinFarRange, getCharactersWithinCloseRangeWithMarkedHp, getAdversariesWithinMeleeRange, getAdversariesWithinRangeFt, getCharactersWithinRangeFt, getCharactersWithinRangeOfAny, rangeBandNameToFt, rangeFtToLabel, RANGE_BANDS_FT, tokenDistanceFtForElements, positionAtDistanceFt, getTokenFootprintFt } from '../lib/map-range.js';
 import { mapConfigHasImage } from '../lib/map-table-state.js';
 import { useCharacterSrdData } from '../lib/useCharacterSrdData.js';
 import { recomputeCharacter, isCharacterComplete, getEffectiveWeaponRange, projectCharacterFormToLevel } from '../lib/character-calc.js';
@@ -539,7 +539,7 @@ function buildGameTableNewEnvironmentStub(tier = 1, type = 'exploration') {
 
 export function GMTableView({ tableId, activeElements, updateActiveElement: pushTableElementUpdate, removeActiveElement, updateActiveElementsBaseData, data, saveItem, saveImage, addToTable, sendDoAddToTable, onMergeAdversary, user, route, navigate, featureCountdowns = {}, sessionCountdowns = [], updateCountdown, partySize = 1, partyTier = 1, characters = [], tableBattleMods, setTableBattleMods, fearCount = 0, setFearCount, tableName = '', gmDisplayName = '', tableStateReady = false, onTableNameChange, onDeleteTable, ensureScenesLoaded, ensureAdventuresLoaded, ensureCharactersLoaded, clearTable, isPlayer = false, playerEmail, connectedPlayers = [], playerEmails = [], setPlayerEmails, gmUid, onPlayerAddCharacter, pendingBanners = [], pendingPlayerIntent = null, onFeatureRequestSuccess, onFeatureRequestCancel, rangerFocusRequestedBannerIds, onRangerFocusRerollRequestSuccess, onRangerFocusRerollRequestCancel, previewAsPlayerEmail = null, onPreviewAsPlayer, onExitPreview, actionLog = [], setActionLog, mapConfig, maps = [], activeMapId = null, gmMapView = null, onSetActiveMap, onAddMap, onAddMapWithImage, onRemoveMap, onRenameMap, onMapConfigChange, onMapViewSync, lifeSupportSelections = {}, onLifeSupportSelect, onLifeSupportClear, restMovesSelections = {}, onRestMoveSelect, onRestMoveClear, tableFeatureState = {}, sessionPlayAllowed = true, sessionStarted = true, sessionPaused = false, mapPings = [], onDismissMapPing = () => {}, appendMapPing = () => {},
   mapScribbles = [],
-  mapViews = [], gmActiveViewId = null, onSetActiveView, onAddMapViewOp, onRemoveMapView, onRenameMapView, onSetViewBroadcast, onSetMapShare,
+  mapViews = [], gmActiveViewId = null, onSetActiveView, onAddMapViewOp, onRemoveMapView, onRenameMapView, onSetViewBroadcast, onSetViewLocked, onSetMapShare,
   onSetMapOverlay,
   onSetMapViewOverlay,
   playerSelectedViewId = null, onPlayerSelectView,
@@ -1389,7 +1389,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
         ? attackerIds.some(id => {
             const att = activeElements.find(e => e.instanceId === id);
             return att?.tokenX != null && att?.tokenY != null
-              && tokenDistanceFt(charEl.tokenX, charEl.tokenY, att.tokenX, att.tokenY) <= RANGE_BANDS_FT.MELEE;
+              && tokenDistanceFtForElements(charEl, att) <= RANGE_BANDS_FT.MELEE;
           })
         : (roll._attackRangeFt != null && roll._attackRangeFt <= RANGE_BANDS_FT.MELEE);
       if (isMelee && attackerIds.length > 0) {
@@ -1411,7 +1411,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
         ? attackerIds.some(id => {
             const att = activeElements.find(e => e.instanceId === id);
             return att?.tokenX != null && att?.tokenY != null
-              && tokenDistanceFt(charEl.tokenX, charEl.tokenY, att.tokenX, att.tokenY) <= RANGE_BANDS_FT.MELEE;
+              && tokenDistanceFtForElements(charEl, att) <= RANGE_BANDS_FT.MELEE;
           })
         : (roll._attackRangeFt != null && roll._attackRangeFt <= RANGE_BANDS_FT.MELEE);
       if (isMelee && attackerIds.length > 0) {
@@ -1659,7 +1659,10 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     updateActiveElement(roll._attackerInstanceId, { hope: Math.max(0, (attackerEl.hope ?? 0) - 1) });
     const targetEl = activeElements.find(e => e.instanceId === targetInstanceId);
     if (targetEl?.tokenX != null && targetEl?.tokenY != null && attackerEl.tokenX != null && attackerEl.tokenY != null) {
-      const pos = positionAtDistanceFt(attackerEl.tokenX, attackerEl.tokenY, targetEl.tokenX, targetEl.tokenY, 50);
+      const pos = positionAtDistanceFt(
+        attackerEl.tokenX, attackerEl.tokenY, targetEl.tokenX, targetEl.tokenY, 50,
+        getTokenFootprintFt(attackerEl), getTokenFootprintFt(targetEl),
+      );
       updateActiveElement(targetInstanceId, { tokenX: pos.x, tokenY: pos.y });
     }
     const targetName = targetEl?.name ?? 'Target';
@@ -6621,6 +6624,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
             onRemoveMapView={onRemoveMapView}
             onRenameMapView={onRenameMapView}
             onSetViewBroadcast={onSetViewBroadcast}
+            onSetViewLocked={onSetViewLocked}
             onSetMapShare={onSetMapShare}
             playerSelectedViewId={playerSelectedViewId}
             onPlayerSelectView={onPlayerSelectView}

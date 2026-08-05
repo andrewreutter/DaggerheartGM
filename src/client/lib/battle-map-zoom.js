@@ -268,6 +268,79 @@ export function applyViewportWheelPanZoom(e, {
   return { scrollLeft: next.scrollLeft, scrollTop: next.scrollTop, mapZoom: z };
 }
 
+/**
+ * True on-screen (client-pixel) center of a dragged token's ghost.
+ *
+ * The ghost's top-left is `clientX - grabOffsetX` (grabOffsetX/Y are already real, post-zoom
+ * screen pixels — see `handlePointerDown` in `BattleMap.jsx`), and its rendered size is the
+ * token's unzoomed base size scaled by the current `viewZoom` (matching the drag-ghost's actual
+ * render). Forgetting the `viewZoom` factor on the half-size term here made the "follow" bullseye
+ * (and the drop position — see {@link computeDragDropTopLeftLocalPx}) drift away from the ghost
+ * whenever the map wasn't at exactly 100% zoom — a `viewZoom`-scaled distance too far down/right
+ * when zoomed out below 1×.
+ *
+ * @param {object} p
+ * @param {number} p.clientX — current pointer client X
+ * @param {number} p.clientY — current pointer client Y
+ * @param {number} p.grabOffsetX — real screen-pixel offset from the token's on-screen top-left where it was grabbed
+ * @param {number} p.grabOffsetY
+ * @param {number} p.tokenSizeWpx — token's unzoomed base render width (px)
+ * @param {number} p.tokenSizeHpx
+ * @param {number} p.viewZoom — current map zoom
+ * @returns {{ x: number, y: number }} real client-pixel center of the ghost
+ */
+export function computeDragGhostCenterClientPx({
+  clientX,
+  clientY,
+  grabOffsetX,
+  grabOffsetY,
+  tokenSizeWpx,
+  tokenSizeHpx,
+  viewZoom,
+}) {
+  return {
+    x: clientX - grabOffsetX + (tokenSizeWpx * viewZoom) / 2,
+    y: clientY - grabOffsetY + (tokenSizeHpx * viewZoom) / 2,
+  };
+}
+
+/**
+ * Local (unzoomed) map-layer top-left pixel position where a dragged token should land.
+ *
+ * `grabOffsetX/Y` are real (post-zoom) screen pixels, so — like the cursor term — they must be
+ * divided by `viewZoom` before converting to local map-layer units; dividing only the cursor
+ * term (and not the grab offset) leaves a `viewZoom`-dependent drift between the drop position
+ * and where the ghost was actually rendered.
+ *
+ * @param {object} p
+ * @param {number} p.clientX
+ * @param {number} p.clientY
+ * @param {number} p.rectLeft — scroll container `getBoundingClientRect().left`
+ * @param {number} p.rectTop
+ * @param {number} p.viewPanLeft — current pan offset (real px)
+ * @param {number} p.viewPanTop
+ * @param {number} p.viewZoom
+ * @param {number} p.grabOffsetX — real screen-pixel offset from the token's on-screen top-left where it was grabbed
+ * @param {number} p.grabOffsetY
+ * @returns {{ x: number, y: number }} local (unzoomed) map-layer pixel top-left
+ */
+export function computeDragDropTopLeftLocalPx({
+  clientX,
+  clientY,
+  rectLeft,
+  rectTop,
+  viewPanLeft,
+  viewPanTop,
+  viewZoom,
+  grabOffsetX,
+  grabOffsetY,
+}) {
+  return {
+    x: (clientX - rectLeft + viewPanLeft - grabOffsetX) / viewZoom,
+    y: (clientY - rectTop + viewPanTop - grabOffsetY) / viewZoom,
+  };
+}
+
 export function computeZoomAndPanToFitInnerBounds({
   minInnerX,
   minInnerY,

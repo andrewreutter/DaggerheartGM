@@ -1,4 +1,7 @@
 import { effectiveTokenMapId } from './map-table-state.js';
+import { getTokenFootprintFt } from './token-size.js';
+
+export { getTokenFootprintFt };
 
 /**
  * Parallel maps: tokens on different `mapId` planes do not measure range to each other.
@@ -76,20 +79,78 @@ export function rangeFtToLabel(maxFt) {
  */
 const TOKEN_HALF_FT = 2.5;
 
+/** Default token footprint (standard 5×5' token, size multiplier 1×1). */
+export const DEFAULT_TOKEN_FOOTPRINT_FT = { halfWidth: TOKEN_HALF_FT, halfLength: TOKEN_HALF_FT };
+
 /**
- * Nearest-edge distance in feet between two placed tokens.
- * Matches the distance formula used in BattleMap.jsx for range band highlighting.
+ * Radius (feet) of an axis-aligned ellipse with half-extents `halfWidth`/`halfLength`
+ * along the direction `angleRad`. For `halfWidth === halfLength` this is constant
+ * (a circle) regardless of angle — reproducing the old flat-radius behavior exactly.
+ *
+ * @param {number} halfWidth - half-extent along the X axis (feet)
+ * @param {number} halfLength - half-extent along the Y axis (feet)
+ * @param {number} angleRad - direction of travel (radians); symmetric under +π
+ * @returns {number}
+ */
+export function ellipseRadiusAtAngle(halfWidth, halfLength, angleRad) {
+  const hw = Math.max(1e-6, Number(halfWidth) || 0);
+  const hl = Math.max(1e-6, Number(halfLength) || 0);
+  const cos = Math.cos(angleRad);
+  const sin = Math.sin(angleRad);
+  const denom = Math.sqrt((cos * cos) / (hw * hw) + (sin * sin) / (hl * hl));
+  return denom > 0 ? 1 / denom : Math.max(hw, hl);
+}
+
+/**
+ * Nearest-edge distance in feet between two placed tokens, accounting for each token's own
+ * (possibly non-default) footprint. Matches the distance formula used in BattleMap.jsx for
+ * range band highlighting.
+ *
+ * Each token's "reach" toward the other is its own directional ellipse radius at the angle
+ * between the two centers; the two reaches are **averaged** (not summed) so that two
+ * default-sized (2.5'/2.5') tokens reproduce the original flat `-2.5'` subtraction exactly.
  *
  * @param {number} ax - Token A's tokenX (feet, top-left)
  * @param {number} ay - Token A's tokenY (feet, top-left)
  * @param {number} bx - Token B's tokenX (feet, top-left)
  * @param {number} by - Token B's tokenY (feet, top-left)
+ * @param {{halfWidth:number,halfLength:number}} [aFootprint] - Token A's footprint (default: standard 5×5')
+ * @param {{halfWidth:number,halfLength:number}} [bFootprint] - Token B's footprint (default: standard 5×5')
  * @returns {number} nearest-edge distance in feet (≥ 0)
  */
-export function tokenDistanceFt(ax, ay, bx, by) {
-  const dx = (ax + TOKEN_HALF_FT) - (bx + TOKEN_HALF_FT);
-  const dy = (ay + TOKEN_HALF_FT) - (by + TOKEN_HALF_FT);
-  return Math.max(0, Math.sqrt(dx * dx + dy * dy) - TOKEN_HALF_FT);
+export function tokenDistanceFt(
+  ax, ay, bx, by,
+  aFootprint = DEFAULT_TOKEN_FOOTPRINT_FT,
+  bFootprint = DEFAULT_TOKEN_FOOTPRINT_FT,
+) {
+  const acx = ax + aFootprint.halfWidth;
+  const acy = ay + aFootprint.halfLength;
+  const bcx = bx + bFootprint.halfWidth;
+  const bcy = by + bFootprint.halfLength;
+  const dx = acx - bcx;
+  const dy = acy - bcy;
+  const centerDist = Math.sqrt(dx * dx + dy * dy);
+  if (centerDist < 1e-9) {
+    const reach = ((aFootprint.halfWidth + aFootprint.halfLength) / 2 + (bFootprint.halfWidth + bFootprint.halfLength) / 2) / 2;
+    return Math.max(0, centerDist - reach);
+  }
+  const angle = Math.atan2(dy, dx);
+  const rA = ellipseRadiusAtAngle(aFootprint.halfWidth, aFootprint.halfLength, angle);
+  const rB = ellipseRadiusAtAngle(bFootprint.halfWidth, bFootprint.halfLength, angle);
+  const reach = (rA + rB) / 2;
+  return Math.max(0, centerDist - reach);
+}
+
+/**
+ * Convenience wrapper: extracts position + footprint (via `getTokenFootprintFt`) from two
+ * elements and computes their nearest-edge distance in feet.
+ *
+ * @param {object} a - element with tokenX/tokenY and optional tokenSizeWidth/tokenSizeLength
+ * @param {object} b - element with tokenX/tokenY and optional tokenSizeWidth/tokenSizeLength
+ * @returns {number} nearest-edge distance in feet (≥ 0)
+ */
+export function tokenDistanceFtForElements(a, b) {
+  return tokenDistanceFt(a.tokenX, a.tokenY, b.tokenX, b.tokenY, getTokenFootprintFt(a), getTokenFootprintFt(b));
 }
 
 /**
@@ -101,13 +162,19 @@ export function tokenDistanceFt(ax, ay, bx, by) {
  * @param {number} bx - Token B tokenX (top-left)
  * @param {number} by - Token B tokenY (top-left)
  * @param {number} d - Desired center-to-center distance in feet (e.g. RANGE_BANDS_FT.FAR for mid-Far)
+ * @param {{halfWidth:number,halfLength:number}} [aFootprint] - Token A's footprint (default: standard 5×5')
+ * @param {{halfWidth:number,halfLength:number}} [bFootprint] - Token B's footprint (default: standard 5×5'); used to convert the new center back to top-left
  * @returns {{ x: number, y: number }} Token top-left position for the new placement
  */
-export function positionAtDistanceFt(ax, ay, bx, by, d) {
-  const acx = ax + TOKEN_HALF_FT;
-  const acy = ay + TOKEN_HALF_FT;
-  const bcx = bx + TOKEN_HALF_FT;
-  const bcy = by + TOKEN_HALF_FT;
+export function positionAtDistanceFt(
+  ax, ay, bx, by, d,
+  aFootprint = DEFAULT_TOKEN_FOOTPRINT_FT,
+  bFootprint = DEFAULT_TOKEN_FOOTPRINT_FT,
+) {
+  const acx = ax + aFootprint.halfWidth;
+  const acy = ay + aFootprint.halfLength;
+  const bcx = bx + bFootprint.halfWidth;
+  const bcy = by + bFootprint.halfLength;
   const dx = bcx - acx;
   const dy = bcy - acy;
   const L = Math.sqrt(dx * dx + dy * dy);
@@ -121,7 +188,7 @@ export function positionAtDistanceFt(ax, ay, bx, by, d) {
   }
   const newCx = acx + d * ux;
   const newCy = acy + d * uy;
-  return { x: newCx - TOKEN_HALF_FT, y: newCy - TOKEN_HALF_FT };
+  return { x: newCx - bFootprint.halfWidth, y: newCy - bFootprint.halfLength };
 }
 
 /** Ordered range bands (name + maxFt) for distance → band logic. Same edge rule as BattleMap token highlighting. */
@@ -181,7 +248,7 @@ export function getCharactersWithinFarRange(activeElements, sourceInstanceId) {
       sameTokenMapPlane(source, e) &&
       e.tokenX != null &&
       e.tokenY != null &&
-      tokenDistanceFt(source.tokenX, source.tokenY, e.tokenX, e.tokenY) <= FAR_RANGE_FT
+      tokenDistanceFtForElements(source, e) <= FAR_RANGE_FT
     )
     .map(e => ({ instanceId: e.instanceId, name: e.name }));
 }
@@ -207,7 +274,7 @@ export function getAdversariesWithinMeleeRange(activeElements, sourceInstanceId)
       sameTokenMapPlane(source, e) &&
       e.tokenX != null &&
       e.tokenY != null &&
-      tokenDistanceFt(source.tokenX, source.tokenY, e.tokenX, e.tokenY) <= RANGE_BANDS_FT.MELEE
+      tokenDistanceFtForElements(source, e) <= RANGE_BANDS_FT.MELEE
     )
     .map(e => ({ instanceId: e.instanceId, name: e.name ?? '' }));
 }
@@ -232,7 +299,7 @@ export function getAdversariesWithinRangeFt(activeElements, sourceInstanceId, ma
       sameTokenMapPlane(source, e) &&
       e.tokenX != null &&
       e.tokenY != null &&
-      tokenDistanceFt(source.tokenX, source.tokenY, e.tokenX, e.tokenY) <= maxFt
+      tokenDistanceFtForElements(source, e) <= maxFt
     )
     .map(e => ({ instanceId: e.instanceId, name: e.name ?? '' }));
 }
@@ -260,7 +327,7 @@ export function getCharactersWithinRangeFt(activeElements, sourceInstanceId, max
       sameTokenMapPlane(source, e) &&
       e.tokenX != null &&
       e.tokenY != null &&
-      tokenDistanceFt(source.tokenX, source.tokenY, e.tokenX, e.tokenY) <= maxFt
+      tokenDistanceFtForElements(source, e) <= maxFt
     )
     .map(e => ({ instanceId: e.instanceId, name: e.name ?? '' }));
 }
@@ -314,7 +381,7 @@ export function getCharactersWithinCloseRangeWithMarkedHp(activeElements, source
       if (e.elementType !== 'character' || e.instanceId === sourceInstanceId) return false;
       if (!sameTokenMapPlane(source, e)) return false;
       if (e.tokenX == null || e.tokenY == null) return false;
-      const dist = tokenDistanceFt(source.tokenX, source.tokenY, e.tokenX, e.tokenY);
+      const dist = tokenDistanceFtForElements(source, e);
       if (dist > CLOSE_RANGE_FT) return false;
       const maxHp = e.maxHp ?? 0;
       const currentHp = e.currentHp ?? maxHp;

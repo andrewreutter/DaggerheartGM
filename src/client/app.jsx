@@ -1508,6 +1508,13 @@ function App() {
     [tableId],
   );
 
+  const sendSetViewLocked = useCallback(
+    (viewId, locked) => {
+      postTableOp({ op: 'set-view-locked', viewId, locked }, tableId);
+    },
+    [tableId],
+  );
+
   const sendSetMapShare = useCallback(
     (mapId, shareWithPlayers) => {
       postTableOp({ op: 'set-map-share', mapId, shareWithPlayers }, tableId);
@@ -2084,6 +2091,7 @@ function App() {
                 onRemoveMapView={effectiveIsPlayer ? undefined : sendRemoveMapView}
                 onRenameMapView={effectiveIsPlayer ? undefined : sendRenameMapView}
                 onSetViewBroadcast={effectiveIsPlayer ? undefined : sendSetViewBroadcast}
+                onSetViewLocked={effectiveIsPlayer ? undefined : sendSetViewLocked}
                 onSetMapShare={effectiveIsPlayer ? undefined : sendSetMapShare}
                 playerSelectedViewId={effectiveIsPlayer ? playerSelectedViewId : null}
                 onPlayerSelectView={effectiveIsPlayer ? handlePlayerSelectMapView : undefined}

@@ -3,7 +3,7 @@
  */
 
 import {
-  tokenDistanceFt,
+  tokenDistanceFtForElements,
   rangeBandNameToFt,
   distanceFtToRangeBandName,
   rangeFtToLabel,
@@ -26,7 +26,7 @@ export function distancePcToAdversaryFt(pcEl, advEl) {
   if (!pcEl || !advEl) return null;
   if (!sameMapPlane(pcEl, advEl)) return null;
   if (pcEl.tokenX == null || pcEl.tokenY == null || advEl.tokenX == null || advEl.tokenY == null) return null;
-  return tokenDistanceFt(pcEl.tokenX, pcEl.tokenY, advEl.tokenX, advEl.tokenY);
+  return tokenDistanceFtForElements(pcEl, advEl);
 }
 
 /**

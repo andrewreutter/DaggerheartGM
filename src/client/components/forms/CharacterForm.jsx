@@ -34,6 +34,7 @@ import { DeclarativeSchemaEditorCard } from '../DeclarativeSchemaCard.jsx';
 import { CharacterAiConceptStrip } from '../CharacterAiConceptStrip.jsx';
 import { AdvancementTierPanels } from './AdvancementTierPanels.jsx';
 import { ImageEditor } from './ImageEditor.jsx';
+import { TokenSizeFields } from './TokenSizeFields.jsx';
 
 /** After Level Up: scroll to the tier band and focus tier-exp name (2/5/8) or domain card select (other levels). */
 function focusAdvancementFirstWidgetForNewLevel(rootEl, nextLevel) {
@@ -931,6 +932,13 @@ export function CharacterForm({
             secondaryWeapon: srdData?.weaponsById?.[formData.secondaryWeaponId]?.name,
           }}
           inline
+        />
+      </FormRow>
+
+      <FormRow label="Battle map token size">
+        <TokenSizeFields
+          value={formData}
+          onChange={(patch) => set(patch)}
         />
       </FormRow>
 

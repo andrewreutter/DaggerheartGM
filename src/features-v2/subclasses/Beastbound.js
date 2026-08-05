@@ -60,6 +60,17 @@ const companionShape = {
           },
         },
       },
+      /** Battle map token footprint (multiplier of the standard 5×5' token); see `sizeMultiplierPair` below. */
+      tokenSizeWidth: { type: 'number', minimum: 0.1, maximum: 5, default: 1, title: 'Token width' },
+      tokenSizeLength: { type: 'number', minimum: 0.1, maximum: 5, default: 1, title: 'Token length' },
+      tokenSizeLinked: { type: 'boolean', default: true, title: 'Link width/length' },
+      tokenSize: {
+        type: 'sizeMultiplierPair',
+        widthKey: 'tokenSizeWidth',
+        lengthKey: 'tokenSizeLength',
+        linkedKey: 'tokenSizeLinked',
+        title: 'Battle map token size',
+      },
     },
   },
 };
@@ -86,6 +97,9 @@ export function srdifyRangerCompanion(companion) {
       name: exp?.name != null ? String(exp.name) : '',
       score: typeof exp?.score === 'number' ? exp.score : typeof exp?.modifier === 'number' ? exp.modifier : 0,
     })),
+    tokenSizeWidth: typeof companion.tokenSizeWidth === 'number' ? companion.tokenSizeWidth : 1,
+    tokenSizeLength: typeof companion.tokenSizeLength === 'number' ? companion.tokenSizeLength : 1,
+    tokenSizeLinked: companion.tokenSizeLinked !== false,
   };
 }
 

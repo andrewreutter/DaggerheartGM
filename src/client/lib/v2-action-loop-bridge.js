@@ -25,7 +25,7 @@ import {
 import {
   RANGE_BANDS_FT,
   distanceFtToRangeBandName,
-  tokenDistanceFt,
+  tokenDistanceFtForElements,
 } from './map-range.js';
 import { buildV2RegistryWithSrdItems, expandSrdAncestryIdsToV2Keys } from './v2-declarative-sheet.js';
 import { computeHpLoss, effectiveEvasion, effectiveThresholds } from './helpers.js';
@@ -530,7 +530,7 @@ export function buildActionConfigFromRoll(roll, activeElements) {
 
   let range = engineRangeBandFromWeaponMaxFt(roll._weaponRangeFt);
   if (attacker && target && attacker.tokenX != null && target.tokenY != null && target.tokenX != null && target.tokenY != null) {
-    const d = tokenDistanceFt(attacker.tokenX, attacker.tokenY, target.tokenX, target.tokenY);
+    const d = tokenDistanceFtForElements(attacker, target);
     range = engineRangeBandFromDistanceFt(d);
   }
 
@@ -1602,7 +1602,7 @@ export function computeV2DamageBannerAckNotices(opts) {
       const advTarget = activeElements.find((e) => e.instanceId === selectedDamageTargetId);
       const isMeleeHit = (() => {
         if (atk.tokenX != null && advTarget?.tokenX != null) {
-          return tokenDistanceFt(atk.tokenX, atk.tokenY, advTarget.tokenX, advTarget.tokenY) <= RANGE_BANDS_FT.MELEE;
+          return tokenDistanceFtForElements(atk, advTarget) <= RANGE_BANDS_FT.MELEE;
         }
         return true;
       })();
@@ -1618,7 +1618,7 @@ export function computeV2DamageBannerAckNotices(opts) {
             if (el.elementType !== 'adversary' && el.type !== 'adversary') continue;
             if (String(el.instanceId) === String(selectedDamageTargetId)) continue;
             if (el.tokenX == null || el.tokenY == null) continue;
-            const d = tokenDistanceFt(struck.tokenX, struck.tokenY, el.tokenX, el.tokenY);
+            const d = tokenDistanceFtForElements(struck, el);
             if (distanceFtToRangeBandName(d) === 'Very Close') {
               veryCloseAdvs.push({ instanceId: el.instanceId, name: el.name });
             }
