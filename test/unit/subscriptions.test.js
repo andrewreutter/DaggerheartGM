@@ -18,6 +18,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 vi.mock('../../src/db.js', () => ({
   getPendingBanners: vi.fn(),
   getResolvedTableState: vi.fn(),
+  invalidateCharacterLibraryCache: vi.fn(),
 }));
 
 // Mock session-countdowns so we can assert player-audience redaction without
@@ -26,7 +27,7 @@ vi.mock('../../src/client/lib/session-countdowns.js', () => ({
   redactTableStateForPlayerAudience: vi.fn((snapshot) => ({ ...snapshot, _redactedForPlayer: true })),
 }));
 
-import { getPendingBanners, getResolvedTableState } from '../../src/db.js';
+import { getPendingBanners, getResolvedTableState, invalidateCharacterLibraryCache } from '../../src/db.js';
 import { redactTableStateForPlayerAudience } from '../../src/client/lib/session-countdowns.js';
 
 // Import the module. Because it's a singleton, import once and reset state
@@ -59,6 +60,7 @@ describe('SubscriptionManager', () => {
     getPendingBanners.mockReset();
     getResolvedTableState.mockReset();
     redactTableStateForPlayerAudience.mockClear();
+    invalidateCharacterLibraryCache.mockClear();
   });
 
   afterEach(() => {
@@ -292,6 +294,57 @@ describe('SubscriptionManager', () => {
     // Still only 1 write total — debounce collapses the two notifyChanges,
     // and dedupe skips the write since the snapshot is identical.
     expect(res.writes.length).toBe(1);
+  });
+
+  // ── character_item_changed cross-process handling ─────────────────────────────
+  // This is the mechanism that fixes stale character data (name/stats/image) on a
+  // different server process than the one that handled the character save — see
+  // migrations/036_character_item_change_notify.sql for the Postgres side.
+
+  it('_handleCharacterItemChanged invalidates the character cache for the payload id', async () => {
+    manager._handleCharacterItemChanged(JSON.stringify({ id: 'char-abc' }));
+    expect(invalidateCharacterLibraryCache).toHaveBeenCalledWith('test-app', 'char-abc');
+  });
+
+  it('_handleCharacterItemChanged re-pushes every currently-subscribed table_state key on this process', async () => {
+    const snapshot = { elements: [{ instanceId: 'x', elementType: 'character', id: 'char-abc' }], fearCount: 0 };
+    getResolvedTableState.mockResolvedValue(snapshot);
+
+    const res1 = makeFakeRes();
+    const res2 = makeFakeRes();
+    manager.subscribe('table_state', 'tbl-1', res1);
+    manager.subscribe('table_state', 'tbl-2', res2);
+    await vi.runAllTimersAsync();
+    await Promise.resolve();
+    await Promise.resolve();
+    getResolvedTableState.mockClear();
+
+    // Return a fresh object each time so the dedupe check (which compares serialized
+    // strings, not object identity) doesn't suppress the write — the point here is
+    // that both table_state keys get re-queried and pushed, not the dedupe behavior.
+    getResolvedTableState.mockResolvedValue({ ...snapshot, fearCount: 1 });
+
+    manager._handleCharacterItemChanged(JSON.stringify({ id: 'char-abc' }));
+    await vi.runAllTimersAsync();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(getResolvedTableState).toHaveBeenCalledWith('test-app', 'tbl-1');
+    expect(getResolvedTableState).toHaveBeenCalledWith('test-app', 'tbl-2');
+    expect(res1.writes.length).toBe(2);
+    expect(res2.writes.length).toBe(2);
+  });
+
+  it('_handleCharacterItemChanged with a malformed payload does not throw and is a no-op', () => {
+    expect(() => manager._handleCharacterItemChanged('not json')).not.toThrow();
+    expect(invalidateCharacterLibraryCache).not.toHaveBeenCalled();
+  });
+
+  it('_handleCharacterItemChanged with no active table_state subscribers is a no-op beyond cache invalidation', () => {
+    manager._handleCharacterItemChanged(JSON.stringify({ id: 'char-xyz' }));
+    expect(invalidateCharacterLibraryCache).toHaveBeenCalledWith('test-app', 'char-xyz');
+    // No table_state subscribers registered in this test — nothing further to assert
+    // beyond "doesn't throw", which the lack of an exception here already proves.
   });
 
   // ── Per-audience stringify tests ──────────────────────────────────────────────

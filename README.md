@@ -79,7 +79,11 @@ DaggerheartGM/
 │   ├── 027_billing_customers.sql # T5/T6: billing_customers (Stripe customer + free trial state)
 │   ├── 028_table_campaign_passes.sql # T21: table_campaign_passes + table_campaign_pass_purchases
 │   ├── 029_character_table_placements.sql # T19: character_table_placements (telemetry only)
-│   └── 030_stripe_processed_events.sql # T7: Stripe webhook event dedup
+│   ├── 030_stripe_processed_events.sql # T7: Stripe webhook event dedup
+│   ├── 033_bug_reports.sql
+│   ├── 034_bug_reports_resolved.sql # superseded by 035's status column
+│   ├── 035_bug_reports_status.sql
+│   └── 036_character_item_change_notify.sql # cross-process character cache invalidation NOTIFY
 ├── public/
 │   ├── index.html              # SPA shell — importmap (React, Firebase, Lucide, marked, @3d-dice/dice-box)
 │   ├── styles.css              # Generated Tailwind output (do not edit by hand)

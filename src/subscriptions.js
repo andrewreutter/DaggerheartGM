@@ -18,7 +18,7 @@
  */
 
 import pg from 'pg';
-import { getPendingBanners, getResolvedTableState } from './db.js';
+import { getPendingBanners, getResolvedTableState, invalidateCharacterLibraryCache } from './db.js';
 import { redactTableStateForPlayerAudience } from './client/lib/session-countdowns.js';
 
 const { Client } = pg;
@@ -39,6 +39,17 @@ const NOTIFY_TO_CHANNEL = {
   dice_rolls_changed: 'banners',
   table_state_changed: 'table_state',
 };
+
+/**
+ * Postgres NOTIFY channel fired whenever a `characters` library row changes (any collection
+ * write, any process). Handled separately from NOTIFY_TO_CHANNEL because it doesn't map to one
+ * subscription key — a character can be placed on any table, and this process doesn't track a
+ * reverse index from characterId -> tableIds. Instead: invalidate that character everywhere in
+ * this process's characterLibraryCache (src/db.js), then conservatively re-push every
+ * table_state key this process currently has live subscribers for (cheap and debounced; far
+ * cheaper than getting this wrong and leaving another replica's clients stuck on stale data).
+ */
+const CHARACTER_CHANGED_NOTIFY_CHANNEL = 'character_item_changed';
 
 /**
  * Build the complete SSE event string for a channel snapshot and optional audience.
@@ -93,6 +104,10 @@ class SubscriptionManager {
       await client.connect();
 
       client.on('notification', (msg) => {
+        if (msg.channel === CHARACTER_CHANGED_NOTIFY_CHANNEL) {
+          this._handleCharacterItemChanged(msg.payload);
+          return;
+        }
         const channelName = NOTIFY_TO_CHANNEL[msg.channel];
         if (!channelName) return;
         try {
@@ -120,6 +135,7 @@ class SubscriptionManager {
       for (const notifyChannel of Object.keys(NOTIFY_TO_CHANNEL)) {
         await client.query(`LISTEN ${notifyChannel}`);
       }
+      await client.query(`LISTEN ${CHARACTER_CHANGED_NOTIFY_CHANNEL}`);
 
       this._client = client;
       console.log('[subscriptions] LISTEN client connected');
@@ -196,6 +212,26 @@ class SubscriptionManager {
     if (!resSet) return;
     resSet.delete(res);
     if (resSet.size === 0) keyMap.delete(key);
+  }
+
+  /**
+   * Handle a `character_item_changed` NOTIFY (fired by any process on any characters-collection
+   * write — see migrations/036_character_item_change_notify.sql). Invalidates this process's own
+   * characterLibraryCache entry for that character id (src/db.js), then re-pushes every
+   * table_state key this process currently has live subscribers for, so an already-open Game
+   * Table / character sheet on THIS replica reflects the change without a reload — regardless of
+   * which replica actually handled the character save.
+   */
+  _handleCharacterItemChanged(rawPayload) {
+    try {
+      const payload = JSON.parse(rawPayload || '{}');
+      if (payload.id) invalidateCharacterLibraryCache(this._appId, payload.id);
+    } catch {
+      // malformed payload — ignore, but still re-push below to be safe
+    }
+    const keyMap = this._subs.get('table_state');
+    if (!keyMap) return;
+    for (const key of keyMap.keys()) this.notifyChange('table_state', key);
   }
 
   /**
