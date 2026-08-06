@@ -68,10 +68,22 @@ Single-row chrome lives in `CharacterIdentityTitleRow` (used by `CharacterIdenti
 
 | Role | Colors | Notes |
 |------|--------|--------|
-| **Character** | Sky / blue | Default character token |
-| **Your character (player)** | Green tint | Assigned PC |
-| **Adversary** | Amber | |
+| **Characters & companions** | Rotating cool-family palette (`ALLY_TOKEN_PALETTE` in `BattleMap.jsx`): sky-600, emerald-600, cyan-400, blue-700, teal-500, green-600, blue-400, teal-800, green-800, cyan-700 | One distinct color per character/companion, assigned in table order; same assignment for every viewer. Keeps allies in the blue→green family so good vs bad guys stay readable at a glance |
+| **Character (fallback)** | Sky / blue (`bg-sky-700`); own assigned PC green (`bg-green-700`) | Only used on render paths without a palette assignment |
+| **Companion / board token** | Rotating palette + emerald ring (`ring-emerald-400/90`); fallback `bg-emerald-900` | The emerald ring remains the companion marker |
+| **Adversary — solo** | Red (`bg-red-800`) | |
+| **Adversary — bruiser** | Orange (`bg-orange-700`) | |
+| **Adversary — standard** | Amber (`bg-amber-800`) | Default fallback for unknown roles |
+| **Adversary — leader** | Yellow (`bg-yellow-500`) | |
+| **Adversary — ranged** | Lime (`bg-lime-500`) | |
+| **Adversary — skulk** | Violet (`bg-violet-700`) | |
+| **Adversary — horde** | Purple (`bg-purple-600`) | |
+| **Adversary — support** | Fuchsia (`bg-fuchsia-500`) | |
+| **Adversary — social** | Pink (`bg-pink-500`) | |
+| **Adversary — minion** | Rose (`bg-rose-400`) | Lighter; minions are common/weak |
 | **Defeated adversary** | Black | |
+
+**Image-border rule**: when a token has a portrait image, its border adopts the *role/type color* above (e.g. `border-red-800` for a solo adversary) instead of the default `border-black`. Defeated adversaries always keep a black border.
 
 ### App chrome & brand (semantic, not theme tokens)
 

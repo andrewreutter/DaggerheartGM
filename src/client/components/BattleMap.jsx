@@ -983,6 +983,42 @@ function MapConfigToolbar({
   );
 }
 
+// ─── Token color classes (bg + border) ───────────────────────────────────────
+// Both strings must be full literal class names so Tailwind's scanner picks them up.
+
+const ADVERSARY_ROLE_TOKEN_CLASSES = {
+  solo:     { bg: 'bg-red-800',     border: 'border-red-800' },
+  bruiser:  { bg: 'bg-orange-700',  border: 'border-orange-700' },
+  standard: { bg: 'bg-amber-800',   border: 'border-amber-800' },
+  leader:   { bg: 'bg-yellow-500',  border: 'border-yellow-500' },
+  ranged:   { bg: 'bg-lime-500',    border: 'border-lime-500' },
+  skulk:    { bg: 'bg-violet-700',  border: 'border-violet-700' },
+  horde:    { bg: 'bg-purple-600',  border: 'border-purple-600' },
+  support:  { bg: 'bg-fuchsia-500', border: 'border-fuchsia-500' },
+  social:   { bg: 'bg-pink-500',    border: 'border-pink-500' },
+  minion:   { bg: 'bg-rose-400',    border: 'border-rose-400' },
+};
+const CHAR_MINE_TOKEN_CLASSES  = { bg: 'bg-green-700',   border: 'border-green-700' };
+const CHAR_OTHER_TOKEN_CLASSES = { bg: 'bg-sky-700',     border: 'border-sky-700' };
+const COMPANION_TOKEN_CLASSES  = { bg: 'bg-emerald-900', border: 'border-emerald-900' };
+const DEFEATED_TOKEN_CLASSES   = { bg: 'bg-black',       border: 'border-black' };
+
+// Rotating ally palette for characters + companions. Stays in the cool blue→green family so
+// "good guys" remain visually distinct from the warm/magenta adversary role colors above.
+// Ordered so the first few assignments are maximally distinct hues.
+const ALLY_TOKEN_PALETTE = [
+  { bg: 'bg-sky-600',     border: 'border-sky-600' },
+  { bg: 'bg-emerald-600', border: 'border-emerald-600' },
+  { bg: 'bg-cyan-400',    border: 'border-cyan-400' },
+  { bg: 'bg-blue-700',    border: 'border-blue-700' },
+  { bg: 'bg-teal-500',    border: 'border-teal-500' },
+  { bg: 'bg-green-600',   border: 'border-green-600' },
+  { bg: 'bg-blue-400',    border: 'border-blue-400' },
+  { bg: 'bg-teal-800',    border: 'border-teal-800' },
+  { bg: 'bg-green-800',   border: 'border-green-800' },
+  { bg: 'bg-cyan-700',    border: 'border-cyan-700' },
+];
+
 // ─── TokenCircle ─────────────────────────────────────────────────────────────
 
 function TokenCircle({
@@ -999,6 +1035,7 @@ function TokenCircle({
   isOtherMapShelf,
   rangeBand,
   rangeBandGlowScale,
+  allyColorClasses = null,
 }) {
   const isChar = element.elementType === 'character';
   const isAdv = element.elementType === 'adversary';
@@ -1051,21 +1088,34 @@ function TokenCircle({
     : {};
 
   const advDefeated = isAdv && isAdversaryDefeated(element);
-  const bgClass = isBoard
-    ? 'bg-emerald-900 ring-2 ring-emerald-400/90'
+
+  // Pick the { bg, border } class pair for this token type. Characters and companions use their
+  // rotating ally-palette assignment when provided; the mine/other/companion constants remain as
+  // fallbacks for render paths without an assignment map.
+  const tokenColorClasses = isBoard
+    ? (allyColorClasses ?? COMPANION_TOKEN_CLASSES)
     : isChar
-      ? (isMyCharacter ? 'bg-green-700' : 'bg-sky-700')
-      : (advDefeated ? 'bg-black' : 'bg-amber-800');
+      ? (allyColorClasses ?? (isMyCharacter ? CHAR_MINE_TOKEN_CLASSES : CHAR_OTHER_TOKEN_CLASSES))
+      : advDefeated
+        ? DEFEATED_TOKEN_CLASSES
+        : (ADVERSARY_ROLE_TOKEN_CLASSES[element.role] ?? ADVERSARY_ROLE_TOKEN_CLASSES.standard);
 
   const hasImage = !!element.imageUrl;
+  // When the token has an image, use the role/type color as the border instead of black.
+  const borderClass = hasImage ? tokenColorClasses.border : 'border-black';
+  // Companions keep their ring decoration; other tokens use the plain bg.
+  const bgRingClass = isBoard
+    ? `${tokenColorClasses.bg} ring-2 ring-emerald-400/90`
+    : tokenColorClasses.bg;
+
   const minSize = Math.min(sizeW, sizeH);
 
   return (
     <div
       className={`
         relative rounded-full flex items-center justify-center select-none cursor-grab active:cursor-grabbing
-        border-2 border-black transition-opacity
-        ${!hasImage ? bgClass : ''}
+        border-2 ${borderClass} transition-opacity
+        ${!hasImage ? bgRingClass : ''}
         ${isDragging ? 'opacity-30' : ''}
         ${isGhost ? 'opacity-90 pointer-events-none' : ''}
         ${isProxy ? (isOtherMapShelf ? 'opacity-[0.38]' : 'opacity-20') : ''}
@@ -1168,6 +1218,7 @@ const placedTokenPropsAreEqual = (prev, next) => {
     prev.isPinned !== next.isPinned ||
     prev.instanceNum !== next.instanceNum ||
     prev.rangeBand !== next.rangeBand ||
+    prev.allyColorClasses !== next.allyColorClasses ||
     prev.onPointerDown !== next.onPointerDown ||
     prev.onPointerMove !== next.onPointerMove ||
     prev.onPointerUp !== next.onPointerUp
@@ -1194,6 +1245,7 @@ const PlacedToken = memo(function PlacedTokenRaw({
   pxPerFt,
   tokenSizeWpx,
   tokenSizeHpx,
+  allyColorClasses = null,
   onPointerDown,
   onPointerMove,
   onPointerUp,
@@ -1226,6 +1278,7 @@ const PlacedToken = memo(function PlacedTokenRaw({
         isDragging={isDragging}
         isPinned={isPinned}
         rangeBand={rangeBand}
+        allyColorClasses={allyColorClasses}
       />
     </div>
   );
@@ -1240,6 +1293,7 @@ const trayTokenPropsAreEqual = (prev, next) => {
     prev.isPinned !== next.isPinned ||
     prev.isProxy !== next.isProxy ||
     prev.isOtherMapShelf !== next.isOtherMapShelf ||
+    prev.allyColorClasses !== next.allyColorClasses ||
     prev.onPointerDown !== next.onPointerDown ||
     prev.onPointerMove !== next.onPointerMove ||
     prev.onPointerUp !== next.onPointerUp
@@ -1259,6 +1313,7 @@ const TrayToken = memo(function TrayTokenRaw({
   isDragging,
   isPinned,
   tokenSizePx,
+  allyColorClasses = null,
   onPointerDown,
   onPointerMove,
   onPointerUp,
@@ -1280,6 +1335,7 @@ const TrayToken = memo(function TrayTokenRaw({
         isPinned={isPinned}
         isProxy={isProxy}
         isOtherMapShelf={isOtherMapShelf}
+        allyColorClasses={allyColorClasses}
       />
     </div>
   );
@@ -1507,7 +1563,7 @@ function TokenDetailPanel({
 
 // ─── TrayColumn ──────────────────────────────────────────────────────────────
 
-function TrayColumn({ tokens, side, isHighlighted, trayRef, tokenSizePx, dragRef, onPointerDown, onPointerMove, onPointerUp, pinnedInstanceId }) {
+function TrayColumn({ tokens, side, isHighlighted, trayRef, tokenSizePx, dragRef, onPointerDown, onPointerMove, onPointerUp, pinnedInstanceId, allyColorsByInstanceId = null }) {
   if (tokens.length === 0) return null;
 
   const borderClass = side === 'left' ? 'border-r border-dh-border' : 'border-l border-dh-border';
@@ -1531,6 +1587,7 @@ function TrayColumn({ tokens, side, isHighlighted, trayRef, tokenSizePx, dragRef
           isDragging={dragRef.current?.instanceId === element.instanceId && dragRef.current?.isDragging}
           isPinned={pinnedInstanceId === element.instanceId}
           tokenSizePx={tokenSizePx}
+          allyColorClasses={allyColorsByInstanceId?.get(element.instanceId) ?? null}
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
@@ -3264,6 +3321,22 @@ export function BattleMap({
     () => activeElements.filter((el) => el.elementType === 'boardToken'),
     [activeElements],
   );
+
+  // Rotating ally colors: assign one blue/green-family palette entry per character + companion,
+  // in activeElements order (stable while elements are only appended). Palette entries are
+  // module-level constants, so `.get()` results keep referential identity across recomputes and
+  // the PlacedToken/TrayToken memo comparators stay effective.
+  const allyColorsByInstanceId = useMemo(() => {
+    const map = new Map();
+    let i = 0;
+    for (const el of activeElements) {
+      if (el.elementType === 'character' || el.elementType === 'boardToken') {
+        map.set(el.instanceId, ALLY_TOKEN_PALETTE[i % ALLY_TOKEN_PALETTE.length]);
+        i += 1;
+      }
+    }
+    return map;
+  }, [activeElements]);
   /** Layer filter shared by `mapImage` and `drawShape`: Map-layer objects (`viewId == null`) always
    *  show; a view-scoped object only shows while that specific view is the active layer. */
   const onMapObjectLayer = useCallback(
@@ -5540,6 +5613,7 @@ export function BattleMap({
                 onPointerMove={stableOnPointerMove}
                 onPointerUp={stableOnPointerUp}
                 pinnedInstanceId={pinnedToken?.element.instanceId}
+                allyColorsByInstanceId={allyColorsByInstanceId}
               />
             </div>
             {showDiceTrayControls && (
@@ -6146,6 +6220,7 @@ export function BattleMap({
                     pxPerFt={pxPerFt}
                     tokenSizeWpx={renderPx.widthPx}
                     tokenSizeHpx={renderPx.heightPx}
+                    allyColorClasses={allyColorsByInstanceId.get(element.instanceId) ?? null}
                     onPointerDown={stableOnPointerDown}
                     onPointerMove={stableOnPointerMove}
                     onPointerUp={stableOnPointerUp}
@@ -6171,6 +6246,7 @@ export function BattleMap({
                     pxPerFt={pxPerFt}
                     tokenSizeWpx={renderPx.widthPx}
                     tokenSizeHpx={renderPx.heightPx}
+                    allyColorClasses={allyColorsByInstanceId.get(element.instanceId) ?? null}
                     onPointerDown={stableOnPointerDown}
                     onPointerMove={stableOnPointerMove}
                     onPointerUp={stableOnPointerUp}
@@ -6367,6 +6443,7 @@ export function BattleMap({
               isGhost
               rangeBand={draggedTokenRangeBandFromStatic}
               rangeBandGlowScale={3}
+              allyColorClasses={allyColorsByInstanceId.get(dragGhost.element.instanceId) ?? null}
             />
           </div>
         )}
