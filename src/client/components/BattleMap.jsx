@@ -116,6 +116,11 @@ const DRAG_THRESHOLD_PX = 8;
 /** Approx. time for fireworks-js rocket to reach target (no API hook); tuned for default trace speed. */
 const MAP_PING_FIREWORK_LAND_MS = 800;
 const MAP_PING_LABEL_FADE_MS = 5000;
+/** Range-band bullseye ring overlays render at z-index 25 (hover) / 26 (drag-follow). The token
+ * currently snapped to the bullseye (bullseyeFt.excludeInstanceId) is elevated above both so it
+ * isn't visually obscured by the rings drawn over it — matching how non-snapped tokens whose
+ * normal stacking z-index happens to exceed 25/26 already render on top. */
+const SNAPPED_TOKEN_Z_INDEX = 27;
 
 function rgbBytesToHex(r, g, b) {
   return `#${[r, g, b]
@@ -2162,6 +2167,26 @@ export function BattleMap({
   useEffect(() => () => {
     if (bullseyeRafRef.current != null) cancelAnimationFrame(bullseyeRafRef.current);
   }, []);
+  // The ring+crosshair overlay is hidden while freely hovering over empty map space until the
+  // cursor has been at rest for BULLSEYE_IDLE_DELAY_MS. It shows immediately when snapped to a
+  // token (bullseyeFt.excludeInstanceId set) so this state only matters for the free-hover case.
+  const BULLSEYE_IDLE_DELAY_MS = 1500;
+  const [bullseyeIdleVisible, setBullseyeIdleVisible] = useState(false);
+  const bullseyeIdleTimerRef = useRef(null);
+  const clearBullseyeIdleTimer = useCallback(() => {
+    if (bullseyeIdleTimerRef.current != null) {
+      clearTimeout(bullseyeIdleTimerRef.current);
+      bullseyeIdleTimerRef.current = null;
+    }
+  }, []);
+  const armBullseyeIdleTimer = useCallback(() => {
+    if (bullseyeIdleTimerRef.current != null) clearTimeout(bullseyeIdleTimerRef.current);
+    bullseyeIdleTimerRef.current = setTimeout(() => {
+      bullseyeIdleTimerRef.current = null;
+      setBullseyeIdleVisible(true);
+    }, BULLSEYE_IDLE_DELAY_MS);
+  }, []);
+  useEffect(() => () => clearBullseyeIdleTimer(), [clearBullseyeIdleTimer]);
   const { openImport, enabled: unifiedImportEnabled, openMapImageQuickPick, canMapImagePaste } = useUnifiedImport();
   // Frozen bullseye position during drag (feet coords of dragged token's origin)
   const frozenBullseyeRef = useRef(null);
@@ -4521,6 +4546,8 @@ export function BattleMap({
     }
     // Snap to token center if hovering over a placed token (reuse the lookup above — same point).
     if (overToken) {
+      // Cancel any pending idle timer — snapped tokens show immediately via excludeInstanceId.
+      clearBullseyeIdleTimer();
       const footprint = getTokenFootprintFt(resolveTokenSizeSource(overToken, parentByInstanceId));
       scheduleBullseyeFt({
         x: overToken.tokenX + footprint.halfWidth,
@@ -4529,14 +4556,21 @@ export function BattleMap({
       });
     } else {
       const ft = clientToFt(e.clientX, e.clientY);
-      if (ft) scheduleBullseyeFt(ft);
+      if (ft) {
+        scheduleBullseyeFt(ft);
+        // Reset visibility and restart the 1.5s rest timer on every move over empty space.
+        setBullseyeIdleVisible(false);
+        armBullseyeIdleTimer();
+      }
     }
-  }, [findTokenAtClient, clientToFt, scheduleBullseyeFt, parentByInstanceId]);
+  }, [findTokenAtClient, clientToFt, scheduleBullseyeFt, parentByInstanceId, clearBullseyeIdleTimer, armBullseyeIdleTimer]);
 
   const handleMapPointerLeave = useCallback(() => {
     setHoveringTokenBlocksDraw(false);
     if (!frozenBullseyeRef.current) scheduleBullseyeFt(null);
-  }, [scheduleBullseyeFt]);
+    clearBullseyeIdleTimer();
+    setBullseyeIdleVisible(false);
+  }, [scheduleBullseyeFt, clearBullseyeIdleTimer]);
 
   const handleMapPingPointerDown = useCallback((e) => {
     if (e.button !== 0) return;
@@ -5908,7 +5942,9 @@ export function BattleMap({
               />
 
               {/* Range band bullseye overlay (above draw canvas z-20) */}
-              {bullseyeFt && (
+              {/* Show immediately when snapped to a token (excludeInstanceId set), otherwise only
+                  after the cursor has rested over empty map space for BULLSEYE_IDLE_DELAY_MS. */}
+              {bullseyeFt && (bullseyeFt.excludeInstanceId != null || bullseyeIdleVisible) && (
                 <svg
                   className="absolute inset-0 pointer-events-none"
                   style={{ width: renderedWidthPx, height: renderedHeightPx, zIndex: 25 }}
@@ -6068,7 +6104,7 @@ export function BattleMap({
                     isDragging={dragRef.current?.instanceId === element.instanceId && dragRef.current?.isDragging}
                     isPinned={pinnedToken?.element.instanceId === element.instanceId}
                     rangeBand={rangeBand}
-                    zIndex={10 + stackIdx}
+                    zIndex={element.instanceId === bullseyeFt?.excludeInstanceId ? SNAPPED_TOKEN_Z_INDEX : 10 + stackIdx}
                     pxPerFt={pxPerFt}
                     tokenSizeWpx={renderPx.widthPx}
                     tokenSizeHpx={renderPx.heightPx}
@@ -6093,7 +6129,7 @@ export function BattleMap({
                     isDragging={dragRef.current?.instanceId === element.instanceId && dragRef.current?.isDragging}
                     isPinned={pinnedToken?.element.instanceId === element.instanceId}
                     rangeBand={rangeBand}
-                    zIndex={10 + charMapTokens.length + stackIdx}
+                    zIndex={element.instanceId === bullseyeFt?.excludeInstanceId ? SNAPPED_TOKEN_Z_INDEX : 10 + charMapTokens.length + stackIdx}
                     pxPerFt={pxPerFt}
                     tokenSizeWpx={renderPx.widthPx}
                     tokenSizeHpx={renderPx.heightPx}
@@ -6119,7 +6155,7 @@ export function BattleMap({
                     isPinned={pinnedToken?.element.instanceId === element.instanceId}
                     instanceNum={instanceNum}
                     rangeBand={rangeBand}
-                    zIndex={10 + charMapTokens.length + boardMapTokens.length + advIdx}
+                    zIndex={element.instanceId === bullseyeFt?.excludeInstanceId ? SNAPPED_TOKEN_Z_INDEX : 10 + charMapTokens.length + boardMapTokens.length + advIdx}
                     pxPerFt={pxPerFt}
                     tokenSizeWpx={renderPx.widthPx}
                     tokenSizeHpx={renderPx.heightPx}
