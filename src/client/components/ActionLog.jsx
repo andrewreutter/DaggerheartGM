@@ -168,11 +168,20 @@ function LogEntry({ roll, compact, rollBuilder, onRollAgain }) {
  */
 const STRIP_MAX_ROLLS = 16;
 
+// Persisted (per-browser) so "Keep dice open" survives reloads/reopening the app, like other
+// unshared local UI prefs (e.g. `dh_featureExpanded` in GMTableView).
+const KEEP_DICE_OPEN_STORAGE_KEY = 'dh_actionLogKeepDiceOpen';
+
+function readKeepDiceOpen() {
+  try { return localStorage.getItem(KEEP_DICE_OPEN_STORAGE_KEY) === '1'; }
+  catch { return false; }
+}
+
 export function ActionLog({ rolls = [], rollBuilder }) {
   const [open, setOpen] = useState(false);
   // When on, the dice builder stays visible even while the full log is collapsed —
   // only the header and scrollable log list hide; the footer strip still shows.
-  const [keepDiceOpen, setKeepDiceOpen] = useState(false);
+  const [keepDiceOpen, setKeepDiceOpen] = useState(readKeepDiceOpen);
   const scrollRef = useRef(null);
   const stripScrollRef = useRef(null);
   const overlayRef = useRef(null);
@@ -381,7 +390,11 @@ export function ActionLog({ rolls = [], rollBuilder }) {
               <input
                 type="checkbox"
                 checked={keepDiceOpen}
-                onChange={(e) => setKeepDiceOpen(e.target.checked)}
+                onChange={(e) => {
+                  const next = e.target.checked;
+                  setKeepDiceOpen(next);
+                  try { localStorage.setItem(KEEP_DICE_OPEN_STORAGE_KEY, next ? '1' : '0'); } catch { /* ignore */ }
+                }}
                 className="w-3 h-3 rounded border-dh-strong bg-dh-raised text-amber-500 focus:ring-amber-500 cursor-pointer"
               />
               Keep dice open

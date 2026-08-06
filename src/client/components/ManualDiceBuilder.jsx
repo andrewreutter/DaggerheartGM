@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
-import { Minus, Plus } from 'lucide-react';
+import { Minus, Plus, Save, X } from 'lucide-react';
 import DiceBox from '@3d-dice/dice-box-threejs';
 import { renderColoredDiceGroups, DEFAULT_COLORSET } from '../lib/dice-color-groups.js';
 import { MANUAL_DICE_SIZES, buildManualRollText, buildPreviewGroups } from '../lib/manual-dice-roll-text.js';
+import { readSavedDiceRolls, buildSavedDiceRoll, addSavedDiceRoll, removeSavedDiceRoll } from '../lib/saved-dice-rolls.js';
 
 /** Preview dice count per size is capped so a huge input (e.g. 99) doesn't blow up the physics sim. */
 const TRAY_PREVIEW_CAP = 8;
@@ -118,6 +119,12 @@ function DiceCountStepper({ value, onChange, max = 99 }) {
  * State (dualityOn, counts, modifier) is owned by the parent (ActionLog) so it persists
  * across open/close cycles. This component is fully controlled for those three values.
  *
+ * Below the die columns, a left-to-right button strip shows any saved rolls (persisted via
+ * `saved-dice-rolls.js`; one click loads that preset's dualityOn/counts/modifier into the
+ * controls above — it does not roll immediately, the user still presses Roll), then Save
+ * (prompts for a name and stores the current controls as a new saved roll), then Roll —
+ * saved and Save buttons size to their content, Roll expands to fill the remaining width.
+ *
  * Props:
  *   rollBuilder   — { onRoll(rollText, displayName), displayName }
  *   onRolled      — called after a successful roll (e.g. close the overlay)
@@ -136,6 +143,7 @@ export function ManualDiceBuilder({
   setModifier,
 }) {
   const tray = usePreviewDiceBox();
+  const [savedRolls, setSavedRolls] = useState(() => readSavedDiceRolls());
 
   // Single shared preview spans the full width and reflects whatever will actually be rolled.
   // Rebuilt on a debounce so it settles once per pause in input activity.
@@ -157,6 +165,26 @@ export function ManualDiceBuilder({
     if (!rollText) return;
     rollBuilder.onRoll(rollText, rollBuilder.displayName);
     onRolled?.();
+  }
+
+  /** Loads a saved roll's dice/modifier into the builder controls; the user still presses Roll. */
+  function handleLoadSaved(saved) {
+    setDualityOn(!!saved.dualityOn);
+    setCounts(Object.fromEntries(MANUAL_DICE_SIZES.map((s) => [s, Number(saved.counts?.[s]) || 0])));
+    setModifier(Number(saved.modifier) || 0);
+  }
+
+  function handleSave() {
+    if (!canRoll) return;
+    const name = window.prompt('Name this roll');
+    if (!name || !name.trim()) return;
+    const entry = buildSavedDiceRoll(name, { dualityOn, counts, modifier });
+    setSavedRolls((prev) => addSavedDiceRoll(prev, entry));
+  }
+
+  function handleDeleteSaved(e, id) {
+    e.stopPropagation();
+    setSavedRolls((prev) => removeSavedDiceRoll(prev, id));
   }
 
   return (
@@ -242,12 +270,46 @@ export function ManualDiceBuilder({
         </div>
       </div>
 
-      <div className="flex justify-center">
+      {/* Saved rolls, then Save, then Roll — all left-to-right in one strip; saved-roll and
+          Save buttons take only as much width as their content needs, Roll expands to fill
+          whatever space remains. */}
+      <div className="flex items-stretch gap-1.5">
+        {savedRolls.map((saved) => (
+          <div key={saved.id} className="relative group shrink-0">
+            <button
+              type="button"
+              title={`Load: ${buildManualRollText(saved.dualityOn, saved.counts, saved.modifier)}`}
+              onClick={() => handleLoadSaved(saved)}
+              className="h-9 max-w-[8rem] truncate px-2.5 rounded border border-dh-strong bg-dh-raised hover:bg-dh-surface text-xs text-dh whitespace-nowrap"
+            >
+              {saved.name}
+            </button>
+            <button
+              type="button"
+              title={`Delete "${saved.name}"`}
+              aria-label={`Delete saved roll ${saved.name}`}
+              onClick={(e) => handleDeleteSaved(e, saved.id)}
+              className="hidden group-hover:flex absolute -top-1.5 -right-1.5 w-3.5 h-3.5 rounded-full bg-dh-raised border border-dh-strong items-center justify-center text-dh-muted hover:text-red-300 hover:bg-red-900 transition-colors"
+            >
+              <X size={8} />
+            </button>
+          </div>
+        ))}
+        <button
+          type="button"
+          disabled={!canRoll}
+          onClick={handleSave}
+          title="Save this roll for one-click reuse"
+          className="h-9 shrink-0 flex items-center gap-1 px-2.5 rounded border border-dh-strong bg-dh-raised hover:bg-dh-surface disabled:opacity-40 disabled:cursor-not-allowed text-xs font-semibold text-dh-muted hover:text-dh"
+        >
+          <Save size={12} />
+          Save
+        </button>
         <button
           type="button"
           disabled={!canRoll}
           onClick={handleRoll}
-          className="px-6 py-2 rounded bg-amber-600 hover:bg-amber-500 disabled:opacity-40 disabled:cursor-not-allowed text-sm font-semibold text-amber-950"
+          className="flex-1 h-9 rounded bg-amber-600 hover:bg-amber-500 disabled:opacity-40 disabled:cursor-not-allowed text-sm font-semibold text-amber-950"
         >
           Roll
         </button>
