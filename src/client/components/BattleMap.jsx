@@ -5020,16 +5020,16 @@ export function BattleMap({
     e.stopPropagation();
     e.currentTarget.setPointerCapture(e.pointerId);
 
-    const renderPx = fromTray
-      ? { widthPx: trayTokenSizePx, heightPx: trayTokenSizePx }
-      : computeTokenRenderPx(tokenSizePx, resolveTokenSizeSource(element, parentByInstanceId));
+    const renderPx = computeTokenRenderPx(tokenSizePx, resolveTokenSizeSource(element, parentByInstanceId));
     const tokenSizeW = renderPx.widthPx;
     const tokenSizeH = renderPx.heightPx;
 
     // Compute where on the token the user grabbed, so the ghost stays aligned
-    // and the drop lands exactly where the ghost was.
-    let grabOffsetX = tokenSizeW / 2;
-    let grabOffsetY = tokenSizeH / 2;
+    // and the drop lands exactly where the ghost was. grabOffsetX/Y are real
+    // (post-zoom) screen pixels, so scale the unzoomed base size by viewZoom.
+    const { viewZoom: initialViewZoom } = viewStateRef.current;
+    let grabOffsetX = (tokenSizeW * initialViewZoom) / 2;
+    let grabOffsetY = (tokenSizeH * initialViewZoom) / 2;
     if (!fromTray && element.tokenX != null) {
       const container = scrollContainerRef.current;
       if (container) {
@@ -5068,7 +5068,7 @@ export function BattleMap({
           ? { tokenX: element.tokenX, tokenY: element.tokenY }
           : null,
     };
-  }, [canDrag, instanceNumbers, isMyCharacter, isPlayer, trayTokenSizePx, tokenSizePx, pxPerFt, parentByInstanceId]);
+  }, [canDrag, instanceNumbers, isMyCharacter, isPlayer, tokenSizePx, pxPerFt, parentByInstanceId]);
 
   const handlePointerMove = useCallback((e) => {
     const ds = dragRef.current;
@@ -6671,16 +6671,8 @@ export function BattleMap({
           >
             <TokenCircle
               element={dragGhost.element}
-              sizeW={
-                dragGhost.fromTray
-                  ? (dragGhost.tokenSizeW ?? trayTokenSizePx)
-                  : Math.round((dragGhost.tokenSizeW ?? tokenSizePx) * viewZoom)
-              }
-              sizeH={
-                dragGhost.fromTray
-                  ? (dragGhost.tokenSizeH ?? trayTokenSizePx)
-                  : Math.round((dragGhost.tokenSizeH ?? tokenSizePx) * viewZoom)
-              }
+              sizeW={Math.round((dragGhost.tokenSizeW ?? tokenSizePx) * viewZoom)}
+              sizeH={Math.round((dragGhost.tokenSizeH ?? tokenSizePx) * viewZoom)}
               instanceNum={dragGhost.instanceNum}
               isMyCharacter={dragGhost.isMyChar}
               isPlayer={isPlayer}
