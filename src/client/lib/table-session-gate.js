@@ -26,8 +26,18 @@ export const PREP_MODE_ALLOWED_ELEMENT_UPDATE_KEYS = new Set([
   'conditions',
 ]);
 
+/**
+ * Element types that are scene-dressing (battle-map art / drawn shapes), not gameplay tokens.
+ * `add-elements` / `remove-element` are already prep-safe for every element type (see the
+ * `gateTableOpForPrepMode` switch), so moving or resizing one of these via `update-element`
+ * (drag/resize handled by `MapImageObject` / `DrawShapeObject` in `BattleMap.jsx`) is exempted
+ * from the token-move gate too — dragging map art around while setting up a scene isn't "play".
+ */
+export const PREP_MODE_EXEMPT_ELEMENT_TYPES = new Set(['mapImage', 'drawShape']);
+
 /** True if updates contain any key not allowed while play is blocked (e.g. token moves, HP, etc.). */
-export function isPrepModeElementUpdateBlocked(updates) {
+export function isPrepModeElementUpdateBlocked(updates, elementType) {
+  if (PREP_MODE_EXEMPT_ELEMENT_TYPES.has(elementType)) return false;
   if (!updates || typeof updates !== 'object') return false;
   for (const k of Object.keys(updates)) {
     if (!PREP_MODE_ALLOWED_ELEMENT_UPDATE_KEYS.has(k)) return true;
@@ -126,14 +136,19 @@ export function gateTableOpForPrepMode(state, op) {
     case 'set-table-name':
     case 'set-battle-mods':
       return { ok: true, op };
-    case 'update-element':
-      if (isPrepModeElementUpdateBlocked(op.updates)) {
+    case 'update-element': {
+      const elements = Array.isArray(state?.elements) ? state.elements : (Array.isArray(state?.activeElements) ? state.activeElements : []);
+      const el = elements.find((e) => e.instanceId === op.instanceId);
+      if (isPrepModeElementUpdateBlocked(op.updates, el?.elementType)) {
         return { ok: false, error: 'Session not started' };
       }
       return { ok: true, op };
+    }
     case 'update-elements': {
+      const elements = Array.isArray(state?.elements) ? state.elements : (Array.isArray(state?.activeElements) ? state.activeElements : []);
       for (const row of op.updates || []) {
-        if (isPrepModeElementUpdateBlocked(row.updates)) {
+        const el = elements.find((e) => e.instanceId === row.instanceId);
+        if (isPrepModeElementUpdateBlocked(row.updates, el?.elementType)) {
           return { ok: false, error: 'Session not started' };
         }
       }

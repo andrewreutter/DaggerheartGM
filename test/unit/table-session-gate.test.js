@@ -23,6 +23,49 @@ describe('table-session-gate', () => {
     expect(g.ok).toBe(false);
   });
 
+  it('allows dragging/resizing a mapImage during prep (scene setup, not a gameplay token)', () => {
+    expect(isPrepModeElementUpdateBlocked({ tokenX: 1 }, 'mapImage')).toBe(false);
+    const stateWithMapImage = {
+      ...prepState,
+      elements: [{ instanceId: 'a', elementType: 'mapImage', tokenX: 0, tokenY: 0 }],
+    };
+    const g = gateTableOpForPrepMode(stateWithMapImage, {
+      op: 'update-element',
+      instanceId: 'a',
+      updates: { tokenX: 5, tokenY: 3 },
+    });
+    expect(g.ok).toBe(true);
+  });
+
+  it('allows dragging/resizing a drawShape during prep', () => {
+    expect(isPrepModeElementUpdateBlocked({ widthFt: 10, heightFt: 10 }, 'drawShape')).toBe(false);
+    const stateWithShape = {
+      ...prepState,
+      elements: [{ instanceId: 'b', elementType: 'drawShape', tokenX: 0, tokenY: 0 }],
+    };
+    const g = gateTableOpForPrepMode(stateWithShape, {
+      op: 'update-elements',
+      updates: [{ instanceId: 'b', updates: { widthFt: 10, heightFt: 10 } }],
+    });
+    expect(g.ok).toBe(true);
+  });
+
+  it('still blocks token position updates on a real character/adversary token during prep, even with mapImage elements present', () => {
+    const state = {
+      ...prepState,
+      elements: [
+        { instanceId: 'a', elementType: 'mapImage' },
+        { instanceId: 'c', elementType: 'character' },
+      ],
+    };
+    const g = gateTableOpForPrepMode(state, {
+      op: 'update-element',
+      instanceId: 'c',
+      updates: { tokenX: 5, tokenY: 3 },
+    });
+    expect(g.ok).toBe(false);
+  });
+
   it('allows conditions-only updates during prep', () => {
     expect(isPrepModeElementUpdateBlocked({ conditions: 'foo' })).toBe(false);
     const g = gateTableOpForPrepMode(prepState, {
