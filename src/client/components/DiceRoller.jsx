@@ -43,7 +43,7 @@ import {
   getInitialV2ReviewTargetSelection,
   primaryDamageTargetIsInPickList,
 } from '../lib/v2-review-chip-target-selection.js';
-import { renderColoredDiceGroups } from '../lib/dice-color-groups.js';
+import { renderColoredDiceGroups, buildD100Groups } from '../lib/dice-color-groups.js';
 
 const SUPPORTED_SIDES = new Set([4, 6, 8, 10, 12, 20]);
 
@@ -79,7 +79,26 @@ export function parseRollDice(subItems) {
   const groups = [];
   for (const sub of (subItems || [])) {
     const parsed = parseDiceExpr(sub.input);
-    if (!parsed || !SUPPORTED_SIDES.has(parsed.sides)) continue;
+    if (!parsed) continue;
+
+    // Percentile (d100): render as two d10s — a "tens" die (d100 type) and a "ones" die (d10 type).
+    // dice-box-threejs ships built-in presets for both; swapDiceFace correctly maps 0-9 digits
+    // to the right face labels (d100: 0→"00", 1-9→tens; d10: 0→"0", 1-9→face).
+    if (parsed.sides === 100) {
+      const { all: detailValues } = parseSubDetails(sub.details);
+      const total = parseInt(sub.result, 10) || 0;
+      let values = detailValues;
+      if (!values && parsed.qty === 1) {
+        if (total >= 1 && total <= 100) values = [total];
+      }
+      if (values && values.length > 0) {
+        const label = (sub.pre || '').trim() || null;
+        for (const g of buildD100Groups(values, { label })) groups.push(g);
+      }
+      continue;
+    }
+
+    if (!SUPPORTED_SIDES.has(parsed.sides)) continue;
 
     const total = parseInt(sub.result, 10) || 0;
     const { all: detailValues, discarded } = parseSubDetails(sub.details);

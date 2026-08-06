@@ -1,5 +1,6 @@
-/** Sizes available in the Action Log manual dice builder (must match server `rollDice` support). */
-export const MANUAL_DICE_SIZES = [4, 6, 8, 10, 12, 20];
+/** Sizes available in the Action Log manual dice builder (must match server `rollDice` support).
+ *  100 is the percentile (d100) die — rendered as a tens die + ones die pair in 3D. */
+export const MANUAL_DICE_SIZES = [4, 6, 8, 10, 12, 20, 100];
 
 /**
  * @param {boolean} dualityOn
@@ -38,7 +39,16 @@ export function buildPreviewGroups(dualityOn, counts, cap = 8) {
   }
   for (const size of MANUAL_DICE_SIZES) {
     const n = Math.max(0, Number(counts[size]) || 0);
-    if (n > 0) groups.push({ label: null, qty: Math.min(n, cap), sides: size });
+    if (n <= 0) continue;
+    const qty = Math.min(n, cap);
+    if (size === 100) {
+      // Percentile dice are visually a "tens" die (d100 type) + "ones" die (d10 type).
+      // No real values yet for a cosmetic preview — let physics settle naturally.
+      groups.push({ label: null, qty, sides: 100 });
+      groups.push({ label: null, qty, sides: 10 });
+    } else {
+      groups.push({ label: null, qty, sides: size });
+    }
   }
   return groups;
 }

@@ -7,6 +7,19 @@ describe('manual-dice-roll-text', () => {
     expect(MANUAL_DICE_SIZES[0]).toBe(4);
   });
 
+  it('includes d100 in MANUAL_DICE_SIZES after d20', () => {
+    expect(MANUAL_DICE_SIZES).toContain(100);
+    const d20idx = MANUAL_DICE_SIZES.indexOf(20);
+    const d100idx = MANUAL_DICE_SIZES.indexOf(100);
+    expect(d100idx).toBe(d20idx + 1);
+  });
+
+  it('buildManualRollText emits [Nd100] bracket for percentile dice', () => {
+    const empty = Object.fromEntries(MANUAL_DICE_SIZES.map((s) => [s, 0]));
+    expect(buildManualRollText(false, { ...empty, 100: 1 })).toBe('[1d100]');
+    expect(buildManualRollText(false, { ...empty, 100: 3 })).toBe('[3d100]');
+  });
+
   it('buildManualRollText emits bracket notation for extra dice', () => {
     const empty = Object.fromEntries(MANUAL_DICE_SIZES.map((s) => [s, 0]));
     expect(buildManualRollText(false, { ...empty, 4: 2 })).toBe('[2d4]');
@@ -81,6 +94,29 @@ describe('manual-dice-roll-text', () => {
         { label: 'Fear', qty: 1, sides: 12 },
         { label: null, qty: 5, sides: 10 },
       ]);
+    });
+
+    it('emits two groups (sides:100 + sides:10) for d100 in the preview', () => {
+      const groups = buildPreviewGroups(false, { ...empty, 100: 2 }, 8);
+      expect(groups).toEqual([
+        { label: null, qty: 2, sides: 100 },
+        { label: null, qty: 2, sides: 10 },
+      ]);
+    });
+
+    it('caps both d100 preview groups at the cap value', () => {
+      const groups = buildPreviewGroups(false, { ...empty, 100: 99 }, 5);
+      expect(groups).toEqual([
+        { label: null, qty: 5, sides: 100 },
+        { label: null, qty: 5, sides: 10 },
+      ]);
+    });
+
+    it('d100 preview groups appear after non-percentile dice in order', () => {
+      const groups = buildPreviewGroups(false, { ...empty, 6: 1, 100: 1 }, 8);
+      expect(groups[0]).toEqual({ label: null, qty: 1, sides: 6 });
+      expect(groups[1]).toEqual({ label: null, qty: 1, sides: 100 });
+      expect(groups[2]).toEqual({ label: null, qty: 1, sides: 10 });
     });
   });
 });

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { Minus, Plus } from 'lucide-react';
 import DiceBox from '@3d-dice/dice-box-threejs';
 import { renderColoredDiceGroups, DEFAULT_COLORSET } from '../lib/dice-color-groups.js';
 import { MANUAL_DICE_SIZES, buildManualRollText, buildPreviewGroups } from '../lib/manual-dice-roll-text.js';
@@ -72,27 +73,72 @@ function usePreviewDiceBox() {
 }
 
 /**
- * Redesigned Action Log manual dice builder: a single shared live preview tray showing
- * whatever is currently selected (Duality's Hope/Fear d12s plus any active d4-d20 dice),
- * with a title/control column per die type — Duality's checkbox alongside the d4-d20 count
- * inputs, all in one aligned row.
- * rollBuilder — { onRoll(rollText, displayName), displayName }.
- * onRolled — called after a successful roll (used by ActionLog to close the overlay).
+ * A three-part stepper: decrement button / numeric input / increment button.
+ * The decrement is disabled at 0; increment is disabled at max (default 99).
  */
-export function ManualDiceBuilder({ rollBuilder, onRolled }) {
-  const [dualityOn, setDualityOn] = useState(false);
-  const [counts, setCounts] = useState(() =>
-    Object.fromEntries(MANUAL_DICE_SIZES.map((s) => [s, 0]))
+function DiceCountStepper({ value, onChange, max = 99 }) {
+  return (
+    <div className="w-full h-12 rounded border border-dh-strong bg-dh-raised flex items-stretch overflow-hidden">
+      <button
+        type="button"
+        disabled={value <= 0}
+        onClick={() => onChange(Math.max(0, value - 1))}
+        className="flex-1 flex items-center justify-center disabled:opacity-30 disabled:cursor-not-allowed hover:bg-dh-surface text-dh-muted transition-colors"
+        aria-label="Decrease"
+      >
+        <Minus size={12} />
+      </button>
+      <input
+        type="number"
+        min={0}
+        max={max}
+        value={value}
+        onChange={(e) => onChange(Math.max(0, Math.min(max, parseInt(e.target.value, 10) || 0)))}
+        className="flex-1 min-w-0 border-x border-dh-strong bg-transparent text-center text-dh text-base tabular-nums outline-none"
+      />
+      <button
+        type="button"
+        disabled={value >= max}
+        onClick={() => onChange(Math.min(max, value + 1))}
+        className="flex-1 flex items-center justify-center disabled:opacity-30 disabled:cursor-not-allowed hover:bg-dh-surface text-dh-muted transition-colors"
+        aria-label="Increase"
+      >
+        <Plus size={12} />
+      </button>
+    </div>
   );
-  const [modifier, setModifier] = useState(0);
+}
 
+/**
+ * Redesigned Action Log manual dice builder: a single shared live preview tray showing
+ * whatever is currently selected (Duality's Hope/Fear d12s plus any active die columns),
+ * with a title/control column per die type — Duality's checkbox alongside the die count
+ * steppers, all in one aligned row.
+ *
+ * State (dualityOn, counts, modifier) is owned by the parent (ActionLog) so it persists
+ * across open/close cycles. This component is fully controlled for those three values.
+ *
+ * Props:
+ *   rollBuilder   — { onRoll(rollText, displayName), displayName }
+ *   onRolled      — called after a successful roll (e.g. close the overlay)
+ *   dualityOn / setDualityOn
+ *   counts / setCounts
+ *   modifier / setModifier
+ */
+export function ManualDiceBuilder({
+  rollBuilder,
+  onRolled,
+  dualityOn,
+  setDualityOn,
+  counts,
+  setCounts,
+  modifier,
+  setModifier,
+}) {
   const tray = usePreviewDiceBox();
 
-  // Single shared preview spans the full width (including the space that used to be a
-  // separate dedicated Duality box) and reflects whatever will actually be rolled — Duality's
-  // Hope/Fear d12s (in their real amber/purple colors) only appear once the checkbox is on,
-  // same as any other die size only appearing once its count is > 0. Rebuilt on a debounce so
-  // it settles once per pause in input activity rather than animating on every keystroke.
+  // Single shared preview spans the full width and reflects whatever will actually be rolled.
+  // Rebuilt on a debounce so it settles once per pause in input activity.
   useEffect(() => {
     if (!tray.ready) return;
     const timer = setTimeout(() => {
@@ -115,14 +161,14 @@ export function ManualDiceBuilder({ rollBuilder, onRolled }) {
 
   return (
     <div className="flex flex-col gap-2">
-      {/* Single shared preview, full width — Duality's Hope/Fear d12s (amber/purple) and
-          the d4-d20 dice (neutral) only appear here once active, just like the controls below. */}
+      {/* Single shared preview, full width */}
       <div className="relative w-full min-h-[5rem] overflow-hidden rounded-lg border border-dh-strong bg-dh-raised/40">
         <div ref={tray.containerRef} className="absolute inset-0" />
       </div>
 
-      {/* Titles row + controls row, all columns aligned: Duality, then d4-d20 */}
+      {/* Titles row + controls row, all columns aligned: Duality, then die sizes, then modifier */}
       <div className="flex items-stretch justify-between gap-1.5">
+        {/* Duality checkbox column */}
         <div className="flex flex-col items-center gap-1 flex-1 min-w-0">
           <div
             className="w-full h-9 rounded-md border flex items-center justify-center text-[10px] font-bold leading-tight text-center transition-opacity"
@@ -144,6 +190,8 @@ export function ManualDiceBuilder({ rollBuilder, onRolled }) {
             />
           </label>
         </div>
+
+        {/* One stepper column per die size (d4, d6, d8, d10, d12, d20, d100) */}
         {MANUAL_DICE_SIZES.map((size) => {
           const active = (counts[size] || 0) > 0;
           return (
@@ -159,22 +207,15 @@ export function ManualDiceBuilder({ rollBuilder, onRolled }) {
               >
                 d{size}
               </div>
-              <input
-                type="number"
-                min={0}
-                max={99}
+              <DiceCountStepper
                 value={counts[size] || 0}
-                onChange={(e) => {
-                  const v = Math.max(0, Math.min(99, parseInt(e.target.value, 10) || 0));
-                  setCounts((c) => ({ ...c, [size]: v }));
-                }}
-                className="w-full h-12 rounded border border-dh-strong bg-dh-raised text-lg text-dh text-center tabular-nums"
+                onChange={(v) => setCounts((c) => ({ ...c, [size]: v }))}
               />
             </div>
           );
         })}
-        {/* Flat +/- modifier column (e.g. the "+3" in "2d6+3") — not a die, so it's excluded
-            from the shared 3D preview above. */}
+
+        {/* Flat +/- modifier column (e.g. "+3" in "2d6+3") — not a die, left as plain input */}
         <div className="flex flex-col items-center gap-1 flex-1 min-w-0">
           <div
             className="w-full h-9 rounded-md border flex items-center justify-center text-[11px] font-bold tabular-nums transition-opacity"
