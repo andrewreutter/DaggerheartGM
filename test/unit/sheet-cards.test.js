@@ -219,4 +219,18 @@ describe('companion JSON Schema (bootstrap + Ajv)', () => {
     };
     expect(validate(ok)).toBe(true);
   });
+
+  it('imagePortrait type maps to object (virtual/optional) via mapDhSchemaTypesForValidator', () => {
+    const fragment = {
+      properties: {
+        portrait: { type: 'imagePortrait', title: 'Portrait' },
+      },
+    };
+    const mapped = mapDhSchemaTypesForValidator(fragment);
+    expect(mapped.properties.portrait.type).toBe('object');
+    // Compile + validate so Ajv is happy with the output shape
+    const wrapped = wrapJsonSchemaFragment(mapped);
+    const ajv = new Ajv({ strict: false });
+    expect(() => ajv.compile(wrapped)).not.toThrow();
+  });
 });

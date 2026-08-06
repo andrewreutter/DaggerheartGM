@@ -71,6 +71,8 @@ const companionShape = {
         linkedKey: 'tokenSizeLinked',
         title: 'Battle map token size',
       },
+      /** Portrait image for the companion — shown as thumbnail on the sheet card and as the battle-map token image. */
+      portrait: { type: 'imagePortrait', title: 'Portrait' },
     },
   },
 };
@@ -100,6 +102,8 @@ export function srdifyRangerCompanion(companion) {
     tokenSizeWidth: typeof companion.tokenSizeWidth === 'number' ? companion.tokenSizeWidth : 1,
     tokenSizeLength: typeof companion.tokenSizeLength === 'number' ? companion.tokenSizeLength : 1,
     tokenSizeLinked: companion.tokenSizeLinked !== false,
+    imageUrl: companion.imageUrl != null ? companion.imageUrl : null,
+    _additionalImages: Array.isArray(companion._additionalImages) ? companion._additionalImages : [],
   };
 }
 

@@ -1996,6 +1996,7 @@ export function CharacterSheetDeclarativeCards({
   onRoll,
   interactionMode,
   onV2CardChip,
+  onOpenImageLightbox,
   /** Game Table: companion stress track is GM-only when false (default true: library / GM). */
   gmResourceTrackCheckboxEdits = true,
 }) {
@@ -2068,6 +2069,7 @@ export function CharacterSheetDeclarativeCards({
           preview={preview}
           onFieldRoll={companionHandlers ? onFieldRoll : undefined}
           onTrackedSetFilled={companionHandlers?.onStressChange}
+          onOpenImageLightbox={onOpenImageLightbox}
         />
         {shapeChips.length > 0 && (
           <div className="mt-2 pt-2 border-t border-dh-border/50 space-y-1.5">
@@ -2121,6 +2123,7 @@ export function CharacterFeaturesPanel({
   omitActions = false,
   omitDeclarativeCards = false,
   onSheetDisplayNameEdit,
+  onOpenImageLightbox,
 }) {
   const orderedEntries = useMemo(() => getOrderedGuideFeatureEntries(el, onV2CardChip), [el, onV2CardChip]);
   const hopeFeature = el.hopeFeature || el.hopeAbility;
@@ -2169,6 +2172,7 @@ export function CharacterFeaturesPanel({
     onRoll,
     onV2CardChip,
     interactionMode: mode,
+    onOpenImageLightbox,
   };
 
   return (

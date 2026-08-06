@@ -286,18 +286,63 @@ export const ItemDetailModal = forwardRef(function ItemDetailModal({
     }
   }, [setFormData, item?.id, saveImage, collection]);
 
+  // Same semantics as addImageUrlToItem, but targets the character's `companion` sub-object
+  // (e.g. Beastbound) via saveImage's generic nested `path` option — no server changes needed.
+  const addImageUrlToCompanion = useCallback((url) => {
+    const fd = formDataRef.current;
+    const comp = fd?.companion;
+    if (!comp || typeof comp !== 'object') return;
+    const additional = Array.isArray(comp._additionalImages) ? comp._additionalImages : [];
+    const willSetPrimary = !comp.imageUrl;
+    const nextComp = willSetPrimary
+      ? { ...comp, imageUrl: url }
+      : { ...comp, _additionalImages: [...additional, url] };
+    setFormData({ ...fd, companion: nextComp });
+    if (item?.id && saveImage) {
+      saveImage(
+        collection,
+        item.id,
+        willSetPrimary ? url : comp.imageUrl,
+        { _additionalImages: willSetPrimary ? additional : [...additional, url], path: 'companion' },
+      ).catch(console.error);
+    }
+  }, [setFormData, item?.id, saveImage, collection]);
+
+  const companionForImageTarget =
+    collection === 'characters' && formData?.companion && typeof formData.companion === 'object'
+      ? formData.companion
+      : null;
+
   useEffect(() => {
     if (!editable || (collection !== 'characters' && collection !== 'adversaries')) return;
     registerEditableItem({
       name: formData?.name,
       collection,
       onAddImageUrl: addImageUrlToItem,
+      extraTargets: companionForImageTarget
+        ? [{
+            key: 'companion',
+            label: companionForImageTarget.name ? String(companionForImageTarget.name) : 'Companion',
+            onAddImageUrl: addImageUrlToCompanion,
+          }]
+        : undefined,
     });
     return unregisterEditableItem;
-  // formData?.name is intentionally included so the displayed item name stays current in the menu.
-  // addImageUrlToItem is stable; re-registration just updates the ref in the context.
+  // formData?.name / companion presence+name are intentionally included so the menu labels stay
+  // current. addImageUrlToItem/addImageUrlToCompanion are stable; re-registration just updates
+  // the ref in the context.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editable, collection, formData?.name, addImageUrlToItem, registerEditableItem, unregisterEditableItem]);
+  }, [
+    editable,
+    collection,
+    formData?.name,
+    !!companionForImageTarget,
+    companionForImageTarget?.name,
+    addImageUrlToItem,
+    addImageUrlToCompanion,
+    registerEditableItem,
+    unregisterEditableItem,
+  ]);
 
   // Lock body scroll while the modal is open.
   useEffect(() => {

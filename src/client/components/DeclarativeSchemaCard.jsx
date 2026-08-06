@@ -4,6 +4,7 @@ import { omitShapeId, getBoundObject, setBoundObject } from '../lib/json-schema-
 import { generateId } from '../lib/helpers.js';
 import { TokenSizeFields } from './forms/TokenSizeFields.jsx';
 import { roundTokenSizeMultiplier } from '../lib/token-size.js';
+import { ImageEditor } from './forms/ImageEditor.jsx';
 
 function SchemaSection({ label, children, labelUppercase = true }) {
   return (
@@ -33,6 +34,7 @@ function orderedPropertyKeys(jsonSchema) {
  * @param {(fieldKey: string, schema: object) => void} [props.onFieldRoll] — sheet: attack rolls only
  * @param {(filled: number) => void} [props.onTrackedSetFilled]
  * @param {(path: string[], value: unknown) => void | ((patch: object) => void)} [props.onEditorChange] — editor: either set one (possibly nested) key by path segments, or (single-object-argument form) atomically merge multiple top-level sibling keys — see `sizeMultiplierPair`
+ * @param {(url: string, opts?: object) => void} [props.onImageSaved] — editor: called after an image is saved to the server; injected path is forwarded for nested saves
  */
 export function DeclarativeSchemaCardBody({
   jsonSchema,
@@ -42,6 +44,7 @@ export function DeclarativeSchemaCardBody({
   onFieldRoll,
   onTrackedSetFilled,
   onEditorChange,
+  onImageSaved,
   /** Sheet: hide keys shown in the card header (e.g. name, species). */
   skipKeys,
 }) {
@@ -130,6 +133,28 @@ export function DeclarativeSchemaCardBody({
               if ('tokenSizeLinked' in patch) remapped[linkedKey] = patch.tokenSizeLinked;
               onEditorChange?.(remapped);
             }}
+          />
+        </div>,
+      );
+      continue;
+    }
+
+    if (t === 'imagePortrait') {
+      if (mode === 'sheet') {
+        // Rendered in the card header, not the body — skip here.
+        continue;
+      }
+      nodes.push(
+        <div key={key}>
+          <label className="text-[10px] text-dh-muted block mb-1">{title}</label>
+          <ImageEditor
+            imageUrl={data?.imageUrl ?? null}
+            _additionalImages={data?._additionalImages ?? []}
+            onChange={(u) => onEditorChange?.(u)}
+            onImageSaved={onImageSaved}
+            collection="companion"
+            formData={data}
+            inline
           />
         </div>,
       );
@@ -328,6 +353,7 @@ export function DeclarativeSchemaCardBody({
  * @param {boolean} [props.preview]
  * @param {(fieldKey: string, schema: object) => void} [props.onFieldRoll]
  * @param {(filled: number) => void} [props.onTrackedSetFilled]
+ * @param {(url: string) => void} [props.onOpenImageLightbox] — when provided and the card has an imageUrl, a clickable portrait thumbnail is shown in the header
  */
 export function DeclarativeSchemaSheetCard({
   featureName,
@@ -336,18 +362,35 @@ export function DeclarativeSchemaSheetCard({
   preview = false,
   onFieldRoll,
   onTrackedSetFilled,
+  onOpenImageLightbox,
 }) {
   const clean = omitShapeId(data);
   const headerName = typeof clean.name === 'string' ? clean.name : '';
   const headerSpecies = typeof clean.species === 'string' ? clean.species : '';
+  const portraitUrl = typeof clean.imageUrl === 'string' && clean.imageUrl ? clean.imageUrl : null;
   return (
     <div className="bg-dh-raised border border-dh-border rounded-xl shadow-2xl overflow-hidden flex flex-col min-w-[14rem]">
       <div className="px-3 py-2 border-b dh-tint-spellcast-strip shrink-0">
         <p className="text-[10px] uppercase tracking-widest dh-text-spellcast-header-sub font-semibold">
           {featureName}
         </p>
-        {headerName !== '' && <div className="font-semibold text-dh truncate">{headerName}</div>}
-        {headerSpecies.trim() !== '' && <div className="text-[11px] text-dh-muted">{headerSpecies}</div>}
+        <div className="flex items-center gap-2 min-w-0">
+          {portraitUrl && (
+            <button
+              type="button"
+              onClick={() => onOpenImageLightbox?.(portraitUrl)}
+              className="shrink-0 rounded-full overflow-hidden border border-dh-strong hover:border-white transition-colors focus:outline-none focus:ring-1 focus:ring-white"
+              style={{ width: 32, height: 32 }}
+              title="View portrait"
+            >
+              <img src={portraitUrl} alt={headerName || 'Companion'} className="w-full h-full object-cover" draggable={false} />
+            </button>
+          )}
+          <div className="min-w-0">
+            {headerName !== '' && <div className="font-semibold text-dh truncate">{headerName}</div>}
+            {headerSpecies.trim() !== '' && <div className="text-[11px] text-dh-muted">{headerSpecies}</div>}
+          </div>
+        </div>
       </div>
       <div className="p-3 space-y-2 flex-1 min-h-0">
         <DeclarativeSchemaCardBody
@@ -357,7 +400,7 @@ export function DeclarativeSchemaSheetCard({
           preview={preview}
           onFieldRoll={onFieldRoll}
           onTrackedSetFilled={onTrackedSetFilled}
-          skipKeys={new Set(['name', 'species'])}
+          skipKeys={new Set(['name', 'species', 'imageUrl', '_additionalImages'])}
         />
       </div>
     </div>
@@ -371,8 +414,9 @@ export function DeclarativeSchemaSheetCard({
  * @param {object} props.bind — `{ kind: 'character', path: string }`
  * @param {object} props.formCharacter — full form row (`recomputeCharacter` output)
  * @param {(nextCharacter: object) => void} props.setCharacter — same contract as CharacterForm `set`
+ * @param {(url: string, opts?: object) => void} [props.onImageSaved] — threaded from CharacterForm; the `path` from `bind` is injected into opts automatically so nested image saves go to the right sub-object
  */
-export function DeclarativeSchemaEditorCard({ featureName, jsonSchema, bind, formCharacter, setCharacter }) {
+export function DeclarativeSchemaEditorCard({ featureName, jsonSchema, bind, formCharacter, setCharacter, onImageSaved }) {
   const path = bind?.path || 'companion';
   const raw = getBoundObject(formCharacter, path);
   const data =
@@ -419,6 +463,10 @@ export function DeclarativeSchemaEditorCard({ featureName, jsonSchema, bind, for
     setCharacter(nextChar);
   };
 
+  const handleImageSaved = onImageSaved
+    ? (url, opts) => onImageSaved(url, { ...opts, path: bind?.path })
+    : undefined;
+
   return (
     <div className="rounded-lg border border-dh-border bg-dh-canvas/20 p-3 space-y-2">
       <p className="text-[11px] font-semibold text-dh">{featureName}</p>
@@ -428,6 +476,7 @@ export function DeclarativeSchemaEditorCard({ featureName, jsonSchema, bind, for
         mode="editor"
         preview={false}
         onEditorChange={onEditorChange}
+        onImageSaved={handleImageSaved}
         skipKeys={new Set()}
       />
     </div>

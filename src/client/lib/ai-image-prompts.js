@@ -83,6 +83,13 @@ export function buildImagePrompt(formData, collection) {
     if (weaponParts.length) lines.push('', `Wielding: ${weaponParts.join(' and ')}`);
     if (armorName?.trim()) lines.push('', `Wearing: ${stripMd(armorName)}`);
 
+  } else if (collection === 'companion') {
+    const { name, species, attackName, experiences } = formData || {};
+    lines.push(`A dark fantasy TTRPG companion animal portrait of ${stripMd(name) || 'a companion'}${species ? `, a ${stripMd(species)}` : ''}.`);
+    if (attackName?.trim()) lines.push('', `Signature attack: ${stripMd(attackName)}`);
+    const expNames = (experiences || []).map(e => stripMd(e.name)).filter(Boolean);
+    if (expNames.length) lines.push('', `Traits: ${expNames.join(', ')}`);
+
   } else if (collection === 'scenes') {
     const { name, description } = formData || {};
     lines.push(`A dark fantasy TTRPG scene: ${stripMd(name) || 'an encounter'}.`);

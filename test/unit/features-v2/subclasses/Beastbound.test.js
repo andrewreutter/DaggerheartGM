@@ -34,6 +34,30 @@ describe('Beastbound — Companion / training / Loyal Friend (narrative)', () =>
     expect(out.experiences[0].score).toBe(2);
   });
 
+  it('srdifyRangerCompanion passes through imageUrl and _additionalImages', () => {
+    const out = srdifyRangerCompanion({
+      name: 'Fang',
+      species: 'wolf',
+      attackName: 'Bite',
+      experiences: [{ name: 'Track', score: 2 }, { name: 'Hunt', score: 2 }],
+      imageUrl: 'https://example.com/fang.jpg',
+      _additionalImages: ['https://example.com/fang2.jpg'],
+    });
+    expect(out.imageUrl).toBe('https://example.com/fang.jpg');
+    expect(out._additionalImages).toEqual(['https://example.com/fang2.jpg']);
+  });
+
+  it('srdifyRangerCompanion defaults imageUrl to null and _additionalImages to [] when absent', () => {
+    const out = srdifyRangerCompanion({
+      name: 'Fang',
+      species: 'wolf',
+      attackName: 'Bite',
+      experiences: [{ name: 'Track', score: 2 }, { name: 'Hunt', score: 2 }],
+    });
+    expect(out.imageUrl).toBeNull();
+    expect(out._additionalImages).toEqual([]);
+  });
+
   it('Expert Training and Advanced Training are advancement-only text', () => {
     expect(ExpertTraining.hooks).toBeUndefined();
     expect(AdvancedTraining.hooks).toBeUndefined();

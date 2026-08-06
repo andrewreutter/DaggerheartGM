@@ -1372,6 +1372,7 @@ export function CharacterHoverCard({
                   : 'preview'
               }
               gmResourceTrackCheckboxEdits={gmResourceTrackCheckboxEdits}
+              onOpenImageLightbox={onOpenImageLightbox}
             />
             <CharacterAbilityList
               el={displayEl}

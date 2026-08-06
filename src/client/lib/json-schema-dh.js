@@ -37,6 +37,9 @@ export function mapDhSchemaTypesForValidator(node) {
     // Virtual reference field (bridges widthKey/lengthKey/linkedKey sibling properties) —
     // no real data lives at this key, so any object shape validates.
     out.type = 'object';
+  } else if (t === 'imagePortrait') {
+    // Virtual field — data lives as sibling imageUrl / _additionalImages keys; skip strict validation.
+    out.type = 'object';
   }
   for (const k of Object.keys(out)) {
     if (k === 'properties' && out.properties && typeof out.properties === 'object') {

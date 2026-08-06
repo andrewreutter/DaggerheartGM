@@ -1046,6 +1046,7 @@ export function CharacterForm({
             bind={shape.bind}
             formCharacter={displayForm}
             setCharacter={(next) => update(next)}
+            onImageSaved={onImageSaved}
           />
         </FormRow>
       ))}

@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { UnifiedImportModal } from '../components/modals/UnifiedImportModal.jsx';
 import { MapImageQuickPickMenu } from '../components/modals/MapImageQuickPickMenu.jsx';
 import { postImageUpload } from './api.js';
+import { buildAddToItemTargets } from './add-to-item-targets.js';
 
 const UnifiedImportContext = createContext(null);
 
@@ -123,9 +124,14 @@ export function UnifiedImportProvider({
    * Currently open editable character/adversary modal, if any.
    * Stored in a ref so name updates don't cause context re-renders; a boolean state
    * tracks presence for reactive `canMapImagePaste` computation.
-   * Shape: { name: string, onAddImageUrl: (url: string) => void }
+   * Shape: { name: string, onAddImageUrl: (url: string) => void, extraTargets?: { key: string, label: string, onAddImageUrl: (url: string) => void }[] }
+   * `extraTargets` lets the open item expose additional "Add to X" destinations beyond its own
+   * primary image (e.g. a character's Beastbound companion) without this provider knowing
+   * anything about what "companion" means — it just forwards whatever targets are registered.
    */
-  const editableItemRef = useRef(/** @type {{ name: string, onAddImageUrl: (url: string) => void } | null} */ (null));
+  const editableItemRef = useRef(
+    /** @type {{ name: string, onAddImageUrl: (url: string) => void, extraTargets?: { key: string, label: string, onAddImageUrl: (url: string) => void }[] } | null} */ (null),
+  );
   const [hasEditableItem, setHasEditableItem] = useState(false);
 
   const registerEditableItem = useCallback((info) => {
@@ -224,19 +230,31 @@ export function UnifiedImportProvider({
   }), []);
 
   /**
-   * When an editable item modal is open, handler that uploads the file to Storage and sets
-   * the resulting hosted URL on that item's form data via the registered callback.
+   * Uploads a file to Storage (falling back to a data URL when upload fails, e.g. local dev
+   * without Supabase) and hands the resulting URL to a registered target's callback.
    */
-  const onAddToItem = hasEditableItem ? async (file) => {
+  const uploadAndApply = useCallback(async (onAddImageUrl, file) => {
     try {
       const { url } = await postImageUpload(file);
-      editableItemRef.current?.onAddImageUrl(url);
+      onAddImageUrl(url);
     } catch {
-      // Fall back to data URL when upload fails (local dev without Supabase)
       const url = await fileToDataUrl(file);
-      editableItemRef.current?.onAddImageUrl(url);
+      onAddImageUrl(url);
     }
-  } : null;
+  }, [fileToDataUrl]);
+
+  /**
+   * Menu targets for the currently open editable item, if any: the item's own primary image
+   * plus any `extraTargets` it registered (e.g. a character's companion). Recomputed at render
+   * time from the ref so labels stay current without extra re-renders.
+   */
+  const addToItemTargets = hasEditableItem
+    ? buildAddToItemTargets(editableItemRef.current).map((t) => ({
+        key: t.key,
+        label: t.label,
+        onAdd: (file) => uploadAndApply(t.onAddImageUrl, file),
+      }))
+    : [];
 
   return (
     <UnifiedImportContext.Provider value={value}>
@@ -274,8 +292,7 @@ export function UnifiedImportProvider({
           onReplaceMap={hasCurrentMap ? onReplaceMapWithImage : null}
           onNewImageObject={onAddMapImageObject ? (file) => onAddMapImageObject(file, quickPickOpts) : null}
           onImportTools={enabled ? handleQuickPickImportTools : null}
-          onAddToItem={onAddToItem}
-          itemLabel={editableItemRef.current?.name}
+          addToItemTargets={addToItemTargets}
         />
       )}
     </UnifiedImportContext.Provider>

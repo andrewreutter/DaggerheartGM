@@ -16,8 +16,7 @@ import { Image, Map, RefreshCw, Import, X, Loader2, ImagePlus } from 'lucide-rea
  * @param {((file: File) => Promise<void>) | null} props.onReplaceMap — null hides the option
  * @param {((file: File) => Promise<void>) | null} props.onNewImageObject — null hides the option
  * @param {((file?: File) => void) | null} props.onImportTools — null hides the option
- * @param {((file: File) => Promise<void>) | null} props.onAddToItem — "Add image to [Name]"; null hides
- * @param {string | undefined} props.itemLabel — display name for the editable item (e.g. character name)
+ * @param {{ key: string, label: string, onAdd: (file: File) => Promise<void> }[]} [props.addToItemTargets] — one "Add image to [Label]" option per entry; empty/omitted hides the section
  */
 export function MapImageQuickPickMenu({
   open,
@@ -27,8 +26,7 @@ export function MapImageQuickPickMenu({
   onReplaceMap,
   onNewImageObject,
   onImportTools,
-  onAddToItem,
-  itemLabel,
+  addToItemTargets = [],
 }) {
   const [loading, setLoading] = useState(null);
   const [pendingCallback, setPendingCallback] = useState(null);
@@ -87,7 +85,8 @@ export function MapImageQuickPickMenu({
   const isLoading = loading !== null;
 
   const hasMapOptions = !!(onNewMap || onReplaceMap || onNewImageObject);
-  const truncatedLabel = itemLabel && itemLabel.length > 22 ? itemLabel.slice(0, 20) + '…' : (itemLabel || 'this item');
+  const hasAddToItemTargets = addToItemTargets.length > 0;
+  const truncateLabel = (label) => (label && label.length > 22 ? label.slice(0, 20) + '…' : (label || 'this item'));
 
   return createPortal(
     <div
@@ -117,24 +116,29 @@ export function MapImageQuickPickMenu({
           </button>
         </div>
 
-        {/* Add image to current editable item — shown first when an item modal is open */}
-        {onAddToItem && (
-          <button
-            className={btnClass}
-            disabled={isLoading}
-            onClick={() => handleAction('add-to-item', onAddToItem)}
-            title={`Add this image to ${truncatedLabel}`}
-          >
-            {loading === 'add-to-item' ? <Loader2 size={15} className="animate-spin shrink-0" /> : <ImagePlus size={15} className="shrink-0 text-emerald-400" />}
-            <span className="min-w-0">
-              <span className="font-medium">Add to "{truncatedLabel}"</span>
-              <span className="block text-[11px] text-dh-muted leading-tight">Set as image for the open item</span>
-            </span>
-          </button>
-        )}
+        {/* Add image to the open item and/or its extra targets (e.g. a companion) — shown first */}
+        {addToItemTargets.map((target) => {
+          const key = `add-to-item-${target.key}`;
+          const label = truncateLabel(target.label);
+          return (
+            <button
+              key={key}
+              className={btnClass}
+              disabled={isLoading}
+              onClick={() => handleAction(key, target.onAdd)}
+              title={`Add this image to ${label}`}
+            >
+              {loading === key ? <Loader2 size={15} className="animate-spin shrink-0" /> : <ImagePlus size={15} className="shrink-0 text-emerald-400" />}
+              <span className="min-w-0">
+                <span className="font-medium">Add to "{label}"</span>
+                <span className="block text-[11px] text-dh-muted leading-tight">Set as image for {label}</span>
+              </span>
+            </button>
+          );
+        })}
 
         {/* Divider between item and map options */}
-        {onAddToItem && hasMapOptions && (
+        {hasAddToItemTargets && hasMapOptions && (
           <div className="my-0.5 border-t border-dh-border/60" />
         )}
 

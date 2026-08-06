@@ -64,7 +64,7 @@ import { shouldShowImageGenAiUi } from '../lib/ai-ui-visibility.js';
 import { MapAiImageDialog } from './MapAiImageDialog.jsx';
 import Fireworks from 'fireworks-js';
 import { effectiveTokenMapId, DEFAULT_LEGACY_MAP_ID, mapConfigHasImage } from '../lib/map-table-state.js';
-import { buildCharacterTrayTokenEntries } from '../lib/character-tray-tokens.js';
+import { buildCharacterTrayTokenEntries, buildBoardTrayTokenEntries } from '../lib/character-tray-tokens.js';
 import { getMapDimensionsFt as getMapDimensions, MAP_SIZE_FT_MIN, MAP_SIZE_FT_MAX } from '../lib/map-dimensions-ft.js';
 import { getGmTotMEmptyMapHint, getPlayerTotMEmptyMapHint } from '../lib/battle-map-totm-hint.js';
 import { isAdversaryDefeated } from '../lib/helpers.js';
@@ -171,6 +171,29 @@ function resolveTokenSizeSource(element, parentByInstanceId) {
     return parent?.companion ?? null;
   }
   return element;
+}
+
+/**
+ * Resolve the `imageUrl` that should be displayed on a token.
+ * For a Beastbound companion `boardToken`, the URL lives on the parent character's `companion.imageUrl`.
+ */
+function resolveTokenImageUrl(element, parentByInstanceId) {
+  if (element?.elementType === 'boardToken' && element.tokenKind === 'companion') {
+    return parentByInstanceId?.get(element.parentInstanceId)?.companion?.imageUrl ?? null;
+  }
+  return element?.imageUrl ?? null;
+}
+
+/**
+ * Return `element` with `imageUrl` set to the resolved companion portrait when it differs,
+ * preserving object reference equality when nothing changed (keeps token memoization stable).
+ */
+function withResolvedTokenImage(element, parentByInstanceId) {
+  if (!element) return element;
+  const url = resolveTokenImageUrl(element, parentByInstanceId);
+  const current = element.imageUrl ?? null;
+  if (current === (url ?? null)) return element;
+  return { ...element, imageUrl: url ?? undefined };
 }
 
 function isInsideRect(clientX, clientY, rect) {
@@ -1128,7 +1151,8 @@ function tokenElementFieldsEqual(pE, nE) {
     pE.maxArmor === nE.maxArmor &&
     pE.tokenSizeWidth === nE.tokenSizeWidth &&
     pE.tokenSizeLength === nE.tokenSizeLength &&
-    pE.tokenSizeLinked === nE.tokenSizeLinked
+    pE.tokenSizeLinked === nE.tokenSizeLinked &&
+    pE.imageUrl === nE.imageUrl
   );
 }
 
@@ -1309,11 +1333,24 @@ function TokenDetailPanel({
         onPointerDown={e => e.stopPropagation()}
       >
         <div className="flex items-start justify-between gap-2 mb-1">
-          <div className="min-w-0">
-            <div className="font-semibold text-white text-sm truncate">
-              {element.label || element.name || 'Companion'}
+          <div className="flex items-center gap-2 min-w-0">
+            {element.imageUrl && (
+              <button
+                type="button"
+                onClick={() => onOpenImageLightbox?.(element.imageUrl)}
+                className="shrink-0 rounded-full overflow-hidden border border-dh-strong hover:border-white transition-colors focus:outline-none focus:ring-1 focus:ring-white"
+                style={{ width: 32, height: 32 }}
+                title="View portrait"
+              >
+                <img src={element.imageUrl} alt={element.label || element.name || 'Companion'} className="w-full h-full object-cover" draggable={false} />
+              </button>
+            )}
+            <div className="min-w-0">
+              <div className="font-semibold text-white text-sm truncate">
+                {element.label || element.name || 'Companion'}
+              </div>
+              <div className="text-xs text-dh-muted">Companion token</div>
             </div>
-            <div className="text-xs text-dh-muted">Companion token</div>
           </div>
           <div className="flex items-center gap-1 shrink-0">
             {onRemoveFromMap && (
@@ -3314,17 +3351,18 @@ export function BattleMap({
     [characters, isMyCharacter, activeMapIdResolved],
   );
 
+  // Tray: all board tokens (e.g. Beastbound companions) — unplaced first, then dim proxies for
+  // those on the active map, then dim proxies for those on other maps (mirrors charTrayTokens /
+  // buildCharacterTrayTokenEntries, so a placed companion shows grayed-out in the tray exactly
+  // like a placed character does instead of disappearing from it entirely).
   const boardTrayTokens = useMemo(
     () =>
-      boardTokens
-        .filter((el) => el.tokenX == null)
-        .map((el) => ({
-          element: el,
-          instanceNum: null,
-          isMyCharacter: isMyCharacter(parentByInstanceId.get(el.parentInstanceId) || {}),
-          isProxy: false,
-        })),
-    [boardTokens, parentByInstanceId, isMyCharacter],
+      buildBoardTrayTokenEntries(
+        boardTokens,
+        activeMapIdResolved,
+        (el) => isMyCharacter(parentByInstanceId.get(el.parentInstanceId) || {}),
+      ).map((entry) => ({ ...entry, element: withResolvedTokenImage(entry.element, parentByInstanceId) })),
+    [boardTokens, parentByInstanceId, isMyCharacter, activeMapIdResolved],
   );
 
   const charTrayTokensMerged = useMemo(
@@ -3353,7 +3391,7 @@ export function BattleMap({
       boardTokens
         .filter((el) => el.tokenX != null && effectiveTokenMapId(el.mapId) === activeMapIdResolved)
         .map((el) => ({
-          element: el,
+          element: withResolvedTokenImage(el, parentByInstanceId),
           instanceNum: null,
           isMyCharacter: isMyCharacter(parentByInstanceId.get(el.parentInstanceId) || {}),
         })),
@@ -6336,8 +6374,9 @@ export function BattleMap({
 
       {/* Click-to-pin detail panel */}
       {pinnedToken && (() => {
-        const el = activeElements.find(e => e.instanceId === pinnedToken.element.instanceId);
-        if (!el) return null;
+        const elRaw = activeElements.find(e => e.instanceId === pinnedToken.element.instanceId);
+        if (!elRaw) return null;
+        const el = withResolvedTokenImage(elRaw, parentByInstanceId);
         const myChar =
           el.elementType === 'boardToken'
             ? isMyCharacter(parentByInstanceId.get(el.parentInstanceId) || {})
