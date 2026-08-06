@@ -2,8 +2,8 @@ import { useMemo, useState, useEffect, useLayoutEffect, useRef, useCallback } fr
 import { createPortal } from 'react-dom';
 import { useTouchDevice } from '../lib/useTouchDevice.js';
 import { useHoverOverlay } from '../lib/useHoverOverlay.js';
-import { Zap, Trash2, Dices, ChevronDown, ChevronRight, X, Plus, Camera, Swords, AlertTriangle, Tag, Flame, Edit, Users, RefreshCw, ExternalLink, Eye, EyeOff, Circle, Square, CheckSquare, StickyNote, ArrowLeftToLine, Heart } from 'lucide-react';
-import { BattleMap, CHARACTER_TRAY_WIDTH_PX } from './BattleMap.jsx';
+import { Zap, Trash2, Dices, ChevronDown, ChevronRight, X, Plus, Camera, Swords, AlertTriangle, Tag, Flame, Edit, Users, RefreshCw, ExternalLink, Eye, EyeOff, Circle, Square, CheckSquare, StickyNote, Heart } from 'lucide-react';
+import { BattleMap, CHARACTER_TRAY_WIDTH_PX, TokenTrayActionButton } from './BattleMap.jsx';
 import { EncounterAdversaryInstancePlayerSummary } from './EncounterAdversaryMarkedSummary.jsx';
 import { playerEncounterInstanceRowVisible } from '../lib/encounter-adversary-player-summary.js';
 import { PlayerAdversaryTargetAid } from './PlayerAdversaryTargetAid.jsx';
@@ -4814,9 +4814,10 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
   }
 
   const renderPinnedCharacterPanel = useCallback(
-    ({ element, anchorX, anchorY, onClose, onRemoveFromMap }) => {
+    ({ element, anchorX, anchorY, onClose, onRemoveFromMap, onPlaceOnMap }) => {
       const el = activeElements.find((e) => e.instanceId === element.instanceId) || element;
       if (el.elementType !== 'character') return null;
+      const isOnMap = el.tokenX != null && el.tokenY != null;
       const isMyChar = isPlayer && playerEmail != null && el.assignedPlayerEmail === playerEmail;
       const { sheetOwner, allowPlayMechanics } = characterSheetTableInteractionFlags(
         sessionPlayAllowed,
@@ -4869,16 +4870,12 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
             cardRootProps={{}}
             trailingHeaderActions={
               <>
-                {onRemoveFromMap && (
-                  <button
-                    type="button"
-                    onClick={onRemoveFromMap}
-                    className="p-1 rounded text-dh-muted hover:text-amber-400 transition-colors"
-                    title="Remove from map (return to tray)"
-                  >
-                    <ArrowLeftToLine size={13} />
-                  </button>
-                )}
+                <TokenTrayActionButton
+                  elementType={el.elementType}
+                  isOnMap={isOnMap}
+                  onRemoveFromMap={onRemoveFromMap}
+                  onPlaceOnMap={onPlaceOnMap}
+                />
                 <button
                   type="button"
                   onClick={onClose}
@@ -5723,7 +5720,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                     <button
                       onClick={() => setPlayerEmails?.(prev => prev.filter(e => e !== email))}
                       className="text-dh-muted hover:text-red-400 transition-colors shrink-0"
-                    ><X size={11} /></button>
+                    ><Trash2 size={11} /></button>
                   </div>
                 );
               })}
@@ -6384,7 +6381,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                                   className="shrink-0 p-1 rounded text-dh-muted hover:bg-dh-hover hover:text-dh"
                                   aria-label="Remove advantage"
                                 >
-                                  <X size={14} />
+                                  <Trash2 size={14} />
                                 </button>
                               </div>
                             ))}
@@ -6422,7 +6419,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                               className="shrink-0 p-1 rounded text-dh-muted hover:bg-dh-hover hover:text-dh"
                               aria-label="Remove disadvantage"
                             >
-                              <X size={14} />
+                              <Trash2 size={14} />
                             </button>
                           </div>
                         ))}
@@ -6870,7 +6867,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                   onClick={() => removeActiveElement(el.instanceId)}
                   className="shrink-0 self-start text-dh-muted hover:text-red-400 transition-colors p-0.5"
                   title="Remove note"
-                ><X size={12} /></button>
+                ><Trash2 size={12} /></button>
               </div>
             );
           })}
@@ -6910,7 +6907,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                     onClick={() => { removeActiveElement(el.instanceId); trackerOverlay.close(); }}
                     className="hidden group-hover/env:block text-dh-muted hover:text-red-400 transition-colors shrink-0"
                     title="Remove from table"
-                  ><X size={12} /></button>
+                  ><Trash2 size={12} /></button>
                 </div>
               </div>
             );
@@ -7074,7 +7071,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                       }}
                       className="w-4 h-4 rounded bg-dh-raised hover:bg-red-900 text-dh-muted hover:text-red-300 flex items-center justify-center transition-colors leading-none"
                       title={count === 1 ? 'Remove from table' : 'Remove one'}
-                    >{count === 1 ? <X size={9} /> : <span className="text-[10px] font-bold">−</span>}</button>
+                    >{count === 1 ? <Trash2 size={9} /> : <span className="text-[10px] font-bold">−</span>}</button>
                   </div>
                 </div>
                 {/* Difficulty + Damage Thresholds */}
@@ -7121,7 +7118,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                                 onClick={(e) => { e.stopPropagation(); removeActiveElement(inst.instanceId); }}
                                 className="ml-auto hidden group-hover/inst:flex w-4 h-4 rounded bg-dh-raised hover:bg-red-900 text-dh-muted hover:text-red-300 items-center justify-center transition-colors leading-none shrink-0"
                                 title={`Remove #${idx + 1}`}
-                              ><X size={9} /></button>
+                              ><Trash2 size={9} /></button>
                             )}
                           </div>
                         )}

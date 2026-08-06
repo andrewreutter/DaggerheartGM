@@ -1,4 +1,4 @@
-import { X, Dices, Link2, Zap } from 'lucide-react';
+import { X, Dices, Link2, Zap, Trash2 } from 'lucide-react';
 import { stripHtml } from '../lib/helpers.js';
 import { GuideFeatureCard } from './features/GuideFeatureCard.jsx';
 import { normalizePotentialAdversaries } from './forms/EnvironmentForm.jsx';
@@ -426,7 +426,7 @@ export function AdversaryCardContent({
                       className="text-dh-muted hover:text-red-500 flex-shrink-0 mt-0.5"
                       title="Remove this copy"
                     >
-                      <X size={14} />
+                      <Trash2 size={14} />
                     </button>
                   )}
                 </div>

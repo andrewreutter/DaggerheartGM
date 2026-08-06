@@ -1,4 +1,4 @@
-import { User, AlertTriangle, X } from 'lucide-react';
+import { User, AlertTriangle, X, Trash2 } from 'lucide-react';
 import { CheckboxTrack } from './DetailCardContent.jsx';
 import { Tooltip } from './Tooltip.jsx';
 import { effectiveThresholds, getEvasionModifierTotal } from '../lib/helpers.js';
@@ -113,7 +113,7 @@ export function GameTableCharacterListCard({
               className="text-dh-muted hover:text-red-400 transition-colors"
               title="Remove from table"
             >
-              <X size={11} />
+              <Trash2 size={11} />
             </button>
           </div>
         )}

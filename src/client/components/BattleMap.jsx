@@ -32,6 +32,9 @@ import {
   X,
   Map as MapIcon,
   ArrowLeftToLine,
+  ArrowRightToLine,
+  ChevronsLeft,
+  ChevronsRight,
   Pencil,
   Eraser,
   Eye,
@@ -78,6 +81,7 @@ import {
   DEFAULT_TOKEN_FOOTPRINT_FT,
 } from '../lib/map-range.js';
 import { computeTokenRenderPx } from '../lib/token-size.js';
+import { pickRandomPlaceOnMapSpot, pickRandomPlaceOnMapSpots, getTokenTrayDirection } from '../lib/place-token-on-map.js';
 import {
   computeMapDrawCanvasSize,
   DEFAULT_MAP_DRAW_BRUSH_RADIUS_FT,
@@ -948,7 +952,7 @@ function MapConfigToolbar({
               )
             }
           >
-            <X size={11} /> Remove
+            <Trash2 size={11} /> Remove
           </button>
         )}
 
@@ -1341,6 +1345,50 @@ const TrayToken = memo(function TrayTokenRaw({
   );
 }, trayTokenPropsAreEqual);
 
+/**
+ * "Remove from map (return to tray)" / "Place on map" toggle button, shared by
+ * `TokenDetailPanel` (adversaries, companion board tokens) and the character panel in
+ * `GMTableView`. The icon always points toward the token's tray when removing it from the
+ * map (left for characters/companions — left tray; right for adversaries — right tray) and
+ * the opposite direction when placing it (moving away from the tray, onto the map).
+ */
+export function TokenTrayActionButton({
+  elementType,
+  isOnMap,
+  onRemoveFromMap,
+  onPlaceOnMap,
+  size = 13,
+  className,
+}) {
+  const trayDirection = getTokenTrayDirection(elementType);
+  if (isOnMap) {
+    if (!onRemoveFromMap) return null;
+    const Icon = trayDirection === 'right' ? ArrowRightToLine : ArrowLeftToLine;
+    return (
+      <button
+        type="button"
+        onClick={onRemoveFromMap}
+        className={className ?? 'p-1 rounded text-dh-muted hover:text-amber-400 transition-colors'}
+        title="Remove from map (return to tray)"
+      >
+        <Icon size={size} />
+      </button>
+    );
+  }
+  if (!onPlaceOnMap) return null;
+  const Icon = trayDirection === 'right' ? ArrowLeftToLine : ArrowRightToLine;
+  return (
+    <button
+      type="button"
+      onClick={onPlaceOnMap}
+      className={className ?? 'p-1 rounded text-dh-muted hover:text-emerald-400 transition-colors'}
+      title="Place on map"
+    >
+      <Icon size={size} />
+    </button>
+  );
+}
+
 // ─── TokenDetailPanel ────────────────────────────────────────────────────────
 
 function TokenDetailPanel({
@@ -1353,6 +1401,7 @@ function TokenDetailPanel({
   pendingResourceCosts = {},
   lifeSupportSelections = {},
   onRemoveFromMap,
+  onPlaceOnMap,
   onDeleteFromTable,
   onClose,
   anchorX,
@@ -1365,6 +1414,7 @@ function TokenDetailPanel({
 }) {
   const isAdv = element.elementType === 'adversary';
   const isBoard = element.elementType === 'boardToken';
+  const isOnMap = element.tokenX != null && element.tokenY != null;
   const canEdit = !isPlayer || isMyCharacter;
   const canEditAdv = !isPlayer; // only GM edits adversaries
   const applyResource = (upd) => {
@@ -1409,16 +1459,12 @@ function TokenDetailPanel({
             </div>
           </div>
           <div className="flex items-center gap-1 shrink-0">
-            {onRemoveFromMap && (
-              <button
-                type="button"
-                onClick={onRemoveFromMap}
-                className="p-1 rounded text-dh-muted hover:text-amber-400 transition-colors"
-                title="Remove from map (return to tray)"
-              >
-                <ArrowLeftToLine size={13} />
-              </button>
-            )}
+            <TokenTrayActionButton
+              elementType={element.elementType}
+              isOnMap={isOnMap}
+              onRemoveFromMap={onRemoveFromMap}
+              onPlaceOnMap={onPlaceOnMap}
+            />
             <button type="button" onClick={onClose} className="p-1 rounded text-dh-muted hover:text-white transition-colors">
               <X size={13} />
             </button>
@@ -1463,15 +1509,12 @@ function TokenDetailPanel({
           </div>
         </div>
         <div className="flex items-center gap-1 shrink-0">
-          {onRemoveFromMap && (
-            <button
-              onClick={onRemoveFromMap}
-              className="p-1 rounded text-dh-muted hover:text-amber-400 transition-colors"
-              title="Remove from map (return to tray)"
-            >
-              <ArrowLeftToLine size={13} />
-            </button>
-          )}
+          <TokenTrayActionButton
+            elementType={element.elementType}
+            isOnMap={isOnMap}
+            onRemoveFromMap={onRemoveFromMap}
+            onPlaceOnMap={onPlaceOnMap}
+          />
           {isAdv && onDeleteFromTable && (
             <button
               type="button"
@@ -1593,6 +1636,44 @@ function TrayColumn({ tokens, side, isHighlighted, trayRef, tokenSizePx, dragRef
           onPointerUp={onPointerUp}
         />
       ))}
+    </div>
+  );
+}
+
+/**
+ * "Place all on map" / "Return all to tray" bulk-action icon pair, docked at the top of a
+ * tray. Icon direction mirrors `TokenTrayActionButton` — pointing away from the tray (toward
+ * the map) for "place all", toward the tray for "return all" — using double chevrons so the
+ * bulk action is visually distinct from the single-token `ArrowLeftToLine`/`ArrowRightToLine`
+ * buttons. Each button disables itself when it would have no effect.
+ */
+function TrayBulkActionsHeader({ trayDirection, onPlaceAll, canPlaceAll, onReturnAll, canReturnAll }) {
+  const PlaceIcon = trayDirection === 'right' ? ChevronsLeft : ChevronsRight;
+  const ReturnIcon = trayDirection === 'right' ? ChevronsRight : ChevronsLeft;
+  return (
+    <div className="flex items-center justify-center gap-1 p-1 border-b border-dh-border shrink-0">
+      <Tooltip label="Place all on map" className="flex-1 min-w-0">
+        <button
+          type="button"
+          onClick={onPlaceAll}
+          disabled={!canPlaceAll}
+          aria-label="Place all on map"
+          className="w-full flex items-center justify-center py-1 rounded text-dh-muted hover:text-emerald-400 hover:bg-dh-hover transition-colors disabled:opacity-30 disabled:pointer-events-none"
+        >
+          <PlaceIcon size={14} />
+        </button>
+      </Tooltip>
+      <Tooltip label="Return all to tray" className="flex-1 min-w-0">
+        <button
+          type="button"
+          onClick={onReturnAll}
+          disabled={!canReturnAll}
+          aria-label="Return all to tray"
+          className="w-full flex items-center justify-center py-1 rounded text-dh-muted hover:text-amber-400 hover:bg-dh-hover transition-colors disabled:opacity-30 disabled:pointer-events-none"
+        >
+          <ReturnIcon size={14} />
+        </button>
+      </Tooltip>
     </div>
   );
 }
@@ -3168,6 +3249,7 @@ export function BattleMap({
   const centerMapOnPlacedActor = useCallback(
     (element) => {
       if (!canControlMapView) return;
+      if (gmCameraLockedRef.current) return;
       if (mapAiGenPreviewUrlRef.current) return;
       const wrap = scrollContainerRef.current;
       if (!wrap) return;
@@ -3481,6 +3563,142 @@ export function BattleMap({
   const allMapTokens = useMemo(
     () => [...charMapTokens, ...boardMapTokens, ...advMapTokens],
     [charMapTokens, boardMapTokens, advMapTokens],
+  );
+
+  /**
+   * "Place on map" (tray → map): drops a token at a random open spot within the GM/player's
+   * current camera view on the active map, avoiding overlap with already-placed tokens when
+   * an open spot is available (see `pickRandomPlaceOnMapSpot`).
+   */
+  const handlePlaceOnMap = useCallback(
+    (element) => {
+      const footprint = getTokenFootprintFt(resolveTokenSizeSource(element, parentByInstanceId));
+      const viewportFt =
+        pxPerFt > 0 && viewZoom > 0
+          ? {
+              x: viewPanLeft / (viewZoom * pxPerFt),
+              y: viewPanTop / (viewZoom * pxPerFt),
+              width: containerWidth > 0 ? containerWidth / (viewZoom * pxPerFt) : mapWidthFt,
+              height: containerHeight > 0 ? containerHeight / (viewZoom * pxPerFt) : mapHeightFt,
+            }
+          : { x: 0, y: 0, width: mapWidthFt, height: mapHeightFt };
+      const otherTokens = allMapTokens
+        .filter(({ element: e }) => e.instanceId !== element.instanceId)
+        .map(({ element: e }) => ({
+          x: e.tokenX,
+          y: e.tokenY,
+          footprint: getTokenFootprintFt(resolveTokenSizeSource(e, parentByInstanceId)),
+        }));
+      const { x, y } = pickRandomPlaceOnMapSpot({
+        mapWidthFt,
+        mapHeightFt,
+        viewportFt,
+        footprint,
+        otherTokens,
+      });
+      updateActiveElement(element.instanceId, { tokenX: x, tokenY: y, mapId: activeMapIdResolved });
+    },
+    [
+      parentByInstanceId,
+      pxPerFt,
+      viewZoom,
+      viewPanLeft,
+      viewPanTop,
+      containerWidth,
+      containerHeight,
+      mapWidthFt,
+      mapHeightFt,
+      allMapTokens,
+      updateActiveElement,
+      activeMapIdResolved,
+    ],
+  );
+
+  /**
+   * Bulk "place all on map" (tray header button) — places every provided (currently
+   * unplaced) element at a random open spot on the current camera view, avoiding overlap
+   * with already-placed tokens AND with elements placed earlier in this same batch (so a
+   * "place all" doesn't stack several tokens on top of each other).
+   */
+  const handlePlaceAllOnMap = useCallback(
+    (elements) => {
+      if (!elements?.length) return;
+      const viewportFt =
+        pxPerFt > 0 && viewZoom > 0
+          ? {
+              x: viewPanLeft / (viewZoom * pxPerFt),
+              y: viewPanTop / (viewZoom * pxPerFt),
+              width: containerWidth > 0 ? containerWidth / (viewZoom * pxPerFt) : mapWidthFt,
+              height: containerHeight > 0 ? containerHeight / (viewZoom * pxPerFt) : mapHeightFt,
+            }
+          : { x: 0, y: 0, width: mapWidthFt, height: mapHeightFt };
+      const otherTokens = allMapTokens.map(({ element: e }) => ({
+        x: e.tokenX,
+        y: e.tokenY,
+        footprint: getTokenFootprintFt(resolveTokenSizeSource(e, parentByInstanceId)),
+      }));
+      const items = elements.map((element) => ({
+        footprint: getTokenFootprintFt(resolveTokenSizeSource(element, parentByInstanceId)),
+      }));
+      const spots = pickRandomPlaceOnMapSpots({ mapWidthFt, mapHeightFt, viewportFt, items, otherTokens });
+      elements.forEach((element, i) => {
+        updateActiveElement(element.instanceId, { tokenX: spots[i].x, tokenY: spots[i].y, mapId: activeMapIdResolved });
+      });
+    },
+    [
+      pxPerFt,
+      viewZoom,
+      viewPanLeft,
+      viewPanTop,
+      containerWidth,
+      containerHeight,
+      mapWidthFt,
+      mapHeightFt,
+      allMapTokens,
+      parentByInstanceId,
+      updateActiveElement,
+      activeMapIdResolved,
+    ],
+  );
+
+  /** Bulk "return all to tray" (tray header button) — clears position/map for every provided element. */
+  const handleReturnAllToTray = useCallback(
+    (elements) => {
+      if (!elements?.length) return;
+      for (const element of elements) {
+        updateActiveElement(element.instanceId, { tokenX: null, tokenY: null, mapId: null });
+      }
+    },
+    [updateActiveElement],
+  );
+
+  // Left tray (characters + companion board tokens) bulk-action eligibility — mirrors the
+  // per-token `canMoveToken` permission check used by the pinned detail panel (players may
+  // only bulk-move their own characters/companions).
+  const leftTrayMovableElements = useMemo(
+    () => [...characters, ...boardTokens].filter((el) => canDrag(el)),
+    [characters, boardTokens, canDrag],
+  );
+  const leftTrayUnplacedElements = useMemo(
+    () => leftTrayMovableElements.filter((el) => el.tokenX == null),
+    [leftTrayMovableElements],
+  );
+  const leftTrayPlacedOnActiveMapElements = useMemo(
+    () =>
+      leftTrayMovableElements.filter(
+        (el) => el.tokenX != null && effectiveTokenMapId(el.mapId) === activeMapIdResolved,
+      ),
+    [leftTrayMovableElements, activeMapIdResolved],
+  );
+
+  // Right tray (adversaries) is GM-only, so every adversary is bulk-movable.
+  const rightTrayUnplacedElements = useMemo(
+    () => adversaries.filter((el) => el.tokenX == null),
+    [adversaries],
+  );
+  const rightTrayPlacedOnActiveMapElements = useMemo(
+    () => adversaries.filter((el) => el.tokenX != null && effectiveTokenMapId(el.mapId) === activeMapIdResolved),
+    [adversaries, activeMapIdResolved],
   );
 
   const hasPlacedActorsOnMap = useMemo(
@@ -5601,6 +5819,15 @@ export function BattleMap({
             className={`flex flex-col shrink-0 border-r border-dh-border ${highlightLeftTray ? 'bg-amber-900/30' : 'bg-dh-surface/60'}`}
             style={{ width: CHARACTER_TRAY_WIDTH_PX, minHeight: 0 }}
           >
+            {charTrayTokensMerged.length > 0 && (
+              <TrayBulkActionsHeader
+                trayDirection="left"
+                onPlaceAll={() => handlePlaceAllOnMap(leftTrayUnplacedElements)}
+                canPlaceAll={leftTrayUnplacedElements.length > 0}
+                onReturnAll={() => handleReturnAllToTray(leftTrayPlacedOnActiveMapElements)}
+                canReturnAll={leftTrayPlacedOnActiveMapElements.length > 0}
+              />
+            )}
             <div className="flex-1 min-h-0 overflow-hidden">
               <TrayColumn
                 tokens={charTrayTokensMerged}
@@ -6397,18 +6624,35 @@ export function BattleMap({
 
         {/* Right tray — adversaries without position (GM only) */}
         {showRightTray && (
-          <TrayColumn
-            tokens={advTrayTokens}
-            side="right"
-            isHighlighted={highlightRightTray}
-            trayRef={rightTrayRef}
-            tokenSizePx={trayTokenSizePx}
-            dragRef={dragRef}
-            onPointerDown={stableOnPointerDown}
-            onPointerMove={stableOnPointerMove}
-            onPointerUp={stableOnPointerUp}
-            pinnedInstanceId={pinnedToken?.element.instanceId}
-          />
+          <div
+            ref={rightTrayRef}
+            className={`flex flex-col shrink-0 border-l border-dh-border ${highlightRightTray ? 'bg-amber-900/30' : 'bg-dh-surface/60'}`}
+            style={{ width: trayTokenSizePx + 16, minHeight: 0 }}
+          >
+            {advTrayTokens.length > 0 && (
+              <TrayBulkActionsHeader
+                trayDirection="right"
+                onPlaceAll={() => handlePlaceAllOnMap(rightTrayUnplacedElements)}
+                canPlaceAll={rightTrayUnplacedElements.length > 0}
+                onReturnAll={() => handleReturnAllToTray(rightTrayPlacedOnActiveMapElements)}
+                canReturnAll={rightTrayPlacedOnActiveMapElements.length > 0}
+              />
+            )}
+            <div className="flex-1 min-h-0 overflow-hidden">
+              <TrayColumn
+                tokens={advTrayTokens}
+                side="right"
+                isHighlighted={highlightRightTray}
+                trayRef={null}
+                tokenSizePx={trayTokenSizePx}
+                dragRef={dragRef}
+                onPointerDown={stableOnPointerDown}
+                onPointerMove={stableOnPointerMove}
+                onPointerUp={stableOnPointerUp}
+                pinnedInstanceId={pinnedToken?.element.instanceId}
+              />
+            </div>
+          </div>
         )}
 
         {/* Hidden right tray ref for drop detection */}
@@ -6458,7 +6702,7 @@ export function BattleMap({
           el.elementType === 'boardToken'
             ? isMyCharacter(parentByInstanceId.get(el.parentInstanceId) || {})
             : isMyCharacter(el);
-        const canRemove = !isPlayer || myChar;
+        const canMoveToken = !isPlayer || myChar;
         if (el.elementType === 'character' && typeof renderPinnedCharacterPanel === 'function') {
           return renderPinnedCharacterPanel({
             element: el,
@@ -6466,9 +6710,15 @@ export function BattleMap({
             anchorY: pinnedToken.anchorY,
             onClose: () => setPinnedToken(null),
             updateActiveElement,
-            onRemoveFromMap: canRemove
+            onRemoveFromMap: canMoveToken
               ? () => {
                   updateActiveElement(el.instanceId, { tokenX: null, tokenY: null, mapId: null });
+                  setPinnedToken(null);
+                }
+              : undefined,
+            onPlaceOnMap: canMoveToken
+              ? () => {
+                  handlePlaceOnMap(el);
                   setPinnedToken(null);
                 }
               : undefined,
@@ -6485,8 +6735,12 @@ export function BattleMap({
             pendingBanners={pendingBanners}
             pendingResourceCosts={pendingResourceCosts}
             lifeSupportSelections={lifeSupportSelections}
-            onRemoveFromMap={canRemove ? () => {
+            onRemoveFromMap={canMoveToken ? () => {
               updateActiveElement(el.instanceId, { tokenX: null, tokenY: null, mapId: null });
+              setPinnedToken(null);
+            } : undefined}
+            onPlaceOnMap={canMoveToken ? () => {
+              handlePlaceOnMap(el);
               setPinnedToken(null);
             } : undefined}
             onDeleteFromTable={el.elementType === 'adversary' && !isPlayer && onRemoveAdversaryFromTable ? () => {

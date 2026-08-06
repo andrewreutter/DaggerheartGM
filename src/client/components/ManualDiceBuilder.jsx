@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Minus, Plus, Save, X } from 'lucide-react';
+import { Minus, Plus, Save, X, Trash2 } from 'lucide-react';
 import DiceBox from '@3d-dice/dice-box-threejs';
 import { renderColoredDiceGroups, DEFAULT_COLORSET } from '../lib/dice-color-groups.js';
 import { MANUAL_DICE_SIZES, buildManualRollText, buildPreviewGroups } from '../lib/manual-dice-roll-text.js';
@@ -291,7 +291,7 @@ export function ManualDiceBuilder({
               onClick={(e) => handleDeleteSaved(e, saved.id)}
               className="hidden group-hover:flex absolute -top-1.5 -right-1.5 w-3.5 h-3.5 rounded-full bg-dh-raised border border-dh-strong items-center justify-center text-dh-muted hover:text-red-300 hover:bg-red-900 transition-colors"
             >
-              <X size={8} />
+              <Trash2 size={8} />
             </button>
           </div>
         ))}
