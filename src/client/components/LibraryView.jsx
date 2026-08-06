@@ -37,7 +37,9 @@ import { buildLibraryAllApiOpts } from '../lib/library-all-api-params.js';
 import { useLibraryAllSearch } from '../lib/useLibraryAllSearch.js';
 import { useCharacterSrdData } from '../lib/useCharacterSrdData.js';
 import { isOwnItem, needsHodEnrich } from '../lib/constants.js';
-import { enrichItems, enrichSingleItem, loadLibraryAllCounts } from '../lib/api.js';
+import { enrichItems, enrichSingleItem, loadLibraryAllCounts, conceptAiEnabled } from '../lib/api.js';
+import { useAiUiPreference } from '../lib/ai-ui-preference-context.jsx';
+import { shouldShowConceptAiUi } from '../lib/ai-ui-visibility.js';
 import { generateId } from '../lib/helpers.js';
 import { DEFAULT_LIBRARY_TAB } from '../lib/router.js';
 import { buildLibraryBrowsePath, buildLibraryModalPath } from '../lib/library-modal-path.js';
@@ -180,8 +182,17 @@ export function LibraryView({
   myTables = [],
 }) {
   const { srdData: libraryCharacterSrdData } = useCharacterSrdData();
+  const { hideAiUi } = useAiUiPreference();
+  const assistantAvailable = shouldShowConceptAiUi(conceptAiEnabled, hideAiUi);
   const activeTab = route.tab || DEFAULT_LIBRARY_TAB;
   const isAssistantTab = activeTab === 'assistant';
+
+  // Redirect stale deep-links to /library/assistant when AI is disabled.
+  useEffect(() => {
+    if (isAssistantTab && !assistantAvailable) {
+      navigate('/library/all');
+    }
+  }, [isAssistantTab, assistantAvailable, navigate]);
 
   const ownedTablesForPicker = useMemo(() => {
     if (myTables.length > 0) return myTables;
@@ -287,7 +298,15 @@ export function LibraryView({
   });
 
   const search = activeTab === 'all' ? allLibrarySearch : collectionSearch;
-  const semanticFilterActive = isPaginatedTab && !!String(search.filters.semantic || '').trim();
+  const semanticFilterActive = isPaginatedTab && assistantAvailable && !!String(search.filters.semantic || '').trim();
+
+  // Clear any stale persisted semantic filter when AI is disabled so the
+  // "AI-filtered top matches" label can't show from old localStorage state.
+  useEffect(() => {
+    if (!assistantAvailable && search.filters.semantic) {
+      search.setFilter('semantic', '');
+    }
+  }, [assistantAvailable, search.filters.semantic, search.setFilter]);
 
   const filterSig = useMemo(
     () => JSON.stringify(loadAllFiltersFromShared(LIBRARY_FILTERS_PERSIST_KEY, LIBRARY_SEARCH_GLOBAL_KEY, LIBRARY_INCLUDES_GLOBAL_KEY)),
@@ -868,7 +887,7 @@ export function LibraryView({
             filters={search.filters}
             onFilterChange={search.setFilter}
             collection={activeTab === 'all' ? 'library' : activeTab}
-            showSemantic
+            showSemantic={assistantAvailable}
           />
         </div>
       )}
@@ -935,7 +954,7 @@ export function LibraryView({
         {/* Sidebar tabs */}
         <div className="w-64 bg-dh-surface border-r border-dh-border flex flex-col min-h-0 h-full">
           <div className="flex-1 min-h-0 overflow-y-auto">
-            {LIBRARY_NAV_SIDEBAR.map(tab => (
+            {(assistantAvailable ? LIBRARY_NAV_SIDEBAR : LIBRARY_NAV_SIDEBAR.filter(t => t.id !== 'assistant')).map(tab => (
               <Fragment key={tab.id}>
                 {tab.id === 'features' && (
                   <div className="border-t border-dh-border mx-3 my-1" aria-hidden />
@@ -1083,7 +1102,7 @@ export function LibraryView({
                   filters={search.filters}
                   onFilterChange={search.setFilter}
                   suppressSearchInclude
-                  showSemantic
+                  showSemantic={assistantAvailable}
                   showSort
                   viewSlider={{
                   ...(librarySnapWidths.length > 0
@@ -1119,7 +1138,7 @@ export function LibraryView({
                   onFilterChange={search.setFilter}
                   variant="bar"
                   suppressSearchInclude
-                  showSemantic
+                  showSemantic={assistantAvailable}
                   suppressCompetingStructuralAllHighlight
                   showSort
                   viewSlider={{

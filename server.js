@@ -100,6 +100,9 @@ function isQaEmail(email) {
   return QA_EMAILS.includes(email?.toLowerCase());
 }
 
+// Global AI kill switch — set AI_FEATURES_DISABLED=1 to disable all AI surfaces regardless of key presence.
+const AI_FEATURES_DISABLED = process.env.AI_FEATURES_DISABLED === '1';
+
 // --- Supabase Storage client (optional — only when env vars are set) ---
 const supabase = (process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY)
   ? createSupabaseClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
@@ -219,12 +222,12 @@ app.get('/api/config', (req, res) => {
       projectId:  process.env.FIREBASE_PROJECT_ID  || '',
       appId:      process.env.FIREBASE_APP_ID      || '',
     },
-    imageGenEnabled: xaiIsConfigured(),
+    imageGenEnabled: !AI_FEATURES_DISABLED && xaiIsConfigured(),
     supabaseStorageBase: process.env.SUPABASE_URL
       ? `${process.env.SUPABASE_URL}/storage/v1/object/public`
       : null,
     devAgentQueueEnabled: process.env.DEV_AGENT_QUEUE_ENABLED === '1',
-    conceptAiEnabled: !!process.env.OPENAI_API_KEY,
+    conceptAiEnabled: !AI_FEATURES_DISABLED && !!process.env.OPENAI_API_KEY,
   });
 });
 
@@ -1314,7 +1317,7 @@ function parseLibraryAllQuery(req) {
   const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
   const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 20));
   const includeScaledUp = req.query.includeScaledUp === '1';
-  const semantic = typeof req.query.semantic === 'string' ? req.query.semantic.trim() : '';
+  const semantic = (!AI_FEATURES_DISABLED && typeof req.query.semantic === 'string') ? req.query.semantic.trim() : '';
 
   const tiersRaw = parseQueryArray(req.query.tier);
   const tiers = tiersRaw.map(t => parseInt(t, 10)).filter(n => !isNaN(n) && n >= 1 && n <= 12);
@@ -1491,7 +1494,7 @@ app.get('/api/data/:collection', requireAuth, async (req, res) => {
   const includePublic = req.query.includePublic === '1';
   const search = req.query.search || '';
   const includeScaledUp = req.query.includeScaledUp === '1';
-  const semantic = typeof req.query.semantic === 'string' ? req.query.semantic.trim() : '';
+  const semantic = (!AI_FEATURES_DISABLED && typeof req.query.semantic === 'string') ? req.query.semantic.trim() : '';
   const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
   const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 20));
   const sort = req.query.sort || 'popularity';
@@ -1603,7 +1606,7 @@ app.get('/api/data/:collection', requireAuth, async (req, res) => {
 });
 
 app.post('/api/library-ai-answer', requireAuth, async (req, res) => {
-  if (!process.env.OPENAI_API_KEY) {
+  if (AI_FEATURES_DISABLED || !process.env.OPENAI_API_KEY) {
     return res.status(503).json({ error: 'Concept AI is not configured' });
   }
   const question = req.body?.question;
@@ -1861,7 +1864,7 @@ app.post('/api/daggerstack/sync', requireAuth, async (req, res) => {
 
 /** Character draft from a concept (OpenAI tool loop + resolver; levels 1–10). */
 app.post('/api/character-ai-build', requireAuth, async (req, res) => {
-  if (!process.env.OPENAI_API_KEY) {
+  if (AI_FEATURES_DISABLED || !process.env.OPENAI_API_KEY) {
     return res.status(503).json({ error: 'Concept AI is not configured' });
   }
   const capCheck = await checkAiCostCap(req.uid);
@@ -1913,7 +1916,7 @@ function parseConceptAiEnvType(v) {
 
 /** Adversary draft from a concept (OpenAI). Body: concept, tier (1–4), role (ROLES). */
 app.post('/api/adversary-ai-build', requireAuth, async (req, res) => {
-  if (!process.env.OPENAI_API_KEY) {
+  if (AI_FEATURES_DISABLED || !process.env.OPENAI_API_KEY) {
     return res.status(503).json({ error: 'Concept AI is not configured' });
   }
   const capCheck = await checkAiCostCap(req.uid);
@@ -1943,7 +1946,7 @@ app.post('/api/adversary-ai-build', requireAuth, async (req, res) => {
 
 /** Environment draft from a concept (OpenAI). Body: concept, tier (1–4), type (ENV_TYPES). */
 app.post('/api/environment-ai-build', requireAuth, async (req, res) => {
-  if (!process.env.OPENAI_API_KEY) {
+  if (AI_FEATURES_DISABLED || !process.env.OPENAI_API_KEY) {
     return res.status(503).json({ error: 'Concept AI is not configured' });
   }
   const capCheck = await checkAiCostCap(req.uid);
@@ -1973,7 +1976,7 @@ app.post('/api/environment-ai-build', requireAuth, async (req, res) => {
 
 /** Encounter plan from a concept (OpenAI). Body: concept, partySize, partyTier, remainingBattlePoints, includePublic, hasEnvironmentOnTable, tableAdversarySummary */
 app.post('/api/encounter-ai-build', requireAuth, async (req, res) => {
-  if (!process.env.OPENAI_API_KEY) {
+  if (AI_FEATURES_DISABLED || !process.env.OPENAI_API_KEY) {
     return res.status(503).json({ error: 'Concept AI is not configured' });
   }
   const capCheck = await checkAiCostCap(req.uid);
@@ -2138,7 +2141,7 @@ app.post('/api/generate-image', requireAuth, async (req, res) => {
   if (!prompt || typeof prompt !== 'string' || !prompt.trim()) {
     return res.status(400).json({ error: 'prompt is required' });
   }
-  if (!xaiIsConfigured()) {
+  if (AI_FEATURES_DISABLED || !xaiIsConfigured()) {
     return res.status(503).json({ error: 'Image generation is not configured (XAI_API_KEY missing)' });
   }
   const capCheck = await checkAiCostCap(req.uid);
@@ -2180,7 +2183,7 @@ app.post('/api/edit-image', requireAuth, async (req, res) => {
   if (!prompt || typeof prompt !== 'string' || !prompt.trim()) {
     return res.status(400).json({ error: 'prompt is required' });
   }
-  if (!xaiIsConfigured()) {
+  if (AI_FEATURES_DISABLED || !xaiIsConfigured()) {
     return res.status(503).json({ error: 'Image generation is not configured (XAI_API_KEY missing)' });
   }
   const capCheck = await checkAiCostCap(req.uid);

@@ -7,6 +7,7 @@ import { Swords, BookOpen, LayoutDashboard, ChevronDown, LogOut, Upload, Downloa
 import { auth, getAuthToken, CLIENT_ID, loadCollection, loadTableState, resolveItems, saveItem as apiSaveItem, saveImage as apiSaveImage, deleteItem as apiDeleteItem, cloneItemToLibrary, recordPlay, fetchMe, fetchMyRooms, fetchMyTables, createTable, postCharacterUpdate, postAddCharacter, postTableOp, postLifeSupportSelect, postRestMoveSelect, normalizeRoll, conceptAiEnabled, imageGenEnabled, fetchTableBillingStatus, postMapImageFile, postMapImageFileForTable, postMapImageObject } from './lib/api.js';
 import { dataUrlToFile, loadImageNaturalSizeFromUrl } from './lib/map-image-data-url.js';
 import { AiUiPreferenceProvider, useAiUiPreference } from './lib/ai-ui-preference-context.jsx';
+import { shouldShowConceptAiUi } from './lib/ai-ui-visibility.js';
 import { generateId } from './lib/helpers.js';
 import { computeSessionCountdownUpdatesFromRoll } from './lib/session-countdowns.js';
 import { resetOnboardingState } from './lib/onboarding-storage.js';
@@ -62,6 +63,18 @@ function UserMenuAiTurnOn({ onPicked }) {
       </button>
     </>
   );
+}
+
+function NavAssistantBtn({ active, onClick }) {
+  const { hideAiUi } = useAiUiPreference();
+  if (!shouldShowConceptAiUi(conceptAiEnabled, hideAiUi)) return null;
+  return <NavBtn icon={<Bot />} label="Assistant" active={active} onClick={onClick} />;
+}
+
+function LibraryAssistantModalGated(props) {
+  const { hideAiUi } = useAiUiPreference();
+  if (!shouldShowConceptAiUi(conceptAiEnabled, hideAiUi)) return null;
+  return <LibraryAssistantModal {...props} />;
 }
 
 function App() {
@@ -1796,12 +1809,7 @@ function App() {
             <div className="flex items-center gap-2">
               <NavImportBtn />
               <NavBtn icon={<BookOpen />} label="Library" active={route.view === 'library'} onClick={() => navigate(lastLibraryPathRef.current)} />
-              <NavBtn
-                icon={<Bot />}
-                label="Assistant"
-                active={libraryAssistantOpen}
-                onClick={() => setLibraryAssistantOpen(true)}
-              />
+              <NavAssistantBtn active={libraryAssistantOpen} onClick={() => setLibraryAssistantOpen(true)} />
               {myTables.map((t) => (
                 <NavBtn
                   key={t.id}
@@ -2150,7 +2158,7 @@ function App() {
         )}
       </main>
 
-      <LibraryAssistantModal
+      <LibraryAssistantModalGated
         open={libraryAssistantOpen}
         onClose={() => setLibraryAssistantOpen(false)}
         data={data}
