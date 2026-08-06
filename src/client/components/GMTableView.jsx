@@ -552,6 +552,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
   onBattleMapViewportAspectChange,
   onBattleMapViewportCenterChange,
   onAddMapImageObject,
+  onAddMapDrawShape,
   onUpdateMapImageObject,
   onRemoveMapImageObject,
   isAdmin = false,
@@ -6662,6 +6663,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
             onViewportAspectChange={onBattleMapViewportAspectChange}
             onViewportCenterChange={onBattleMapViewportCenterChange}
             onAddMapImageObject={onAddMapImageObject}
+            onAddMapDrawShape={onAddMapDrawShape}
             onUpdateMapImageObject={onUpdateMapImageObject}
             onRemoveMapImageObject={onRemoveMapImageObject}
             onOpenImageLightbox={setLightboxUrl}

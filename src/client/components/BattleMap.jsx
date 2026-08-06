@@ -52,6 +52,7 @@ import {
   Maximize2,
   Lock,
   LockOpen,
+  Hand,
 } from 'lucide-react';
 import { Tooltip } from './Tooltip.jsx';
 import { CheckboxTrack } from './DetailCardContent.jsx';
@@ -88,10 +89,6 @@ import {
   loadDrawDataUrlOntoCanvas,
   clearDrawCanvas,
   strokeDrawSegment,
-  fillDrawRect,
-  fillDrawEllipse,
-  strokeOutlineRect,
-  strokeOutlineEllipse,
   floodEraseConnectedComponent,
   ERASER_DESTINATION_OUT,
   rgbStringFromRgba,
@@ -107,6 +104,12 @@ import {
 } from '../lib/map-image-drop.js';
 import { useUnifiedImport } from '../lib/unified-import-context.jsx';
 import { buildMapStripTileTokenSignature } from '../lib/map-strip-tile-signature.js';
+import {
+  canModifyMapObject,
+  computeCornerAnchor,
+  computeCornerResize,
+  scaleBrushStroke,
+} from '../lib/map-object-transform.js';
 
 const MIN_PX_PER_FT = 33 / 5; // 6.6 px/ft — 5' token ≥ 33px touch target
 const DRAG_THRESHOLD_PX = 8;
@@ -1495,13 +1498,62 @@ function TrayColumn({ tokens, side, isHighlighted, trayRef, tokenSizePx, dragRef
   );
 }
 
-// ─── MapImageObject ──────────────────────────────────────────────────────────
+// ─── Shared map-object primitives (MapImageObject + DrawShapeObject) ────────
+
+/** Shared four-corner resize grip styling. */
+const MAP_OBJECT_CORNER_GRIP_STYLE = {
+  width: 8,
+  height: 8,
+  background: 'rgba(56,189,248,0.9)',
+  border: '1.5px solid white',
+  borderRadius: 2,
+  touchAction: 'none',
+};
+const mapObjectCornerWrapStyle = (corner) => ({
+  position: 'absolute',
+  ...(corner === 'NW' || corner === 'SW' ? { left: -10 } : { right: -10 }),
+  ...(corner === 'NW' || corner === 'NE' ? { top: -10 } : { bottom: -10 }),
+  width: 20,
+  height: 20,
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  cursor: corner === 'NW' ? 'nw-resize' : corner === 'NE' ? 'ne-resize' : corner === 'SW' ? 'sw-resize' : 'se-resize',
+  touchAction: 'none',
+  zIndex: 2,
+});
+
+/**
+ * Small pill (shown next to Delete when a map object is selected) for reassigning which layer
+ * (Map, or a specific camera view on the current map) the object is visible on.
+ */
+function MapObjectLayerControl({ viewId, layerOptions, onChangeViewId }) {
+  if (!layerOptions?.length) return null;
+  return (
+    <select
+      value={viewId ?? ''}
+      onPointerDown={(e) => e.stopPropagation()}
+      onClick={(e) => e.stopPropagation()}
+      onChange={(e) => onChangeViewId(e.target.value || null)}
+      className="rounded border border-dh-strong bg-dh-raised px-1 py-0.5 text-[10px] text-dh-muted hover:text-dh"
+      title="Layer: Map (always visible) or a specific camera view"
+    >
+      <option value="">Map</option>
+      {layerOptions.map((v) => (
+        <option key={v.id} value={v.id}>{v.name || 'View'}</option>
+      ))}
+    </select>
+  );
+}
 
 /**
  * Placeable, resizable image element rendered between the draw-overlay layer and the token layer.
- * Drag the body to move; drag any of the four corner grips (when selected) to resize (aspect-ratio
- * locked, opposite corner anchored). Double-click opens the image in a lightbox.
- * A floating toolbar (shown when selected) provides a Delete action.
+ * Drag the body to move (direct-drag, like tokens); drag any of the four corner grips (when
+ * selected and modifiable) to resize (aspect-ratio locked, opposite corner anchored). Double-click
+ * opens the image in a lightbox. A floating toolbar (shown when selected) provides Layer + Delete.
+ * Read-only to non-creator players (`canModify=false`): renders normally but ignores drag/resize/
+ * delete/eraser-click. While the Eraser tool is active, a plain click deletes the object instead of
+ * toggling selection.
  */
 function MapImageObject({
   element,
@@ -1510,6 +1562,9 @@ function MapImageObject({
   isSelected,
   onSelect,
   onDeselect,
+  canModify = true,
+  isEraserActive = false,
+  layerOptions,
   onUpdateMapImageObject,
   onRemoveMapImageObject,
   onOpenImageLightbox,
@@ -1541,7 +1596,6 @@ function MapImageObject({
       return;
     }
 
-    if (!isSelected) { onSelect(); return; }
     e.currentTarget.setPointerCapture(e.pointerId);
     dragRef.current = {
       startClientX: e.clientX,
@@ -1550,33 +1604,48 @@ function MapImageObject({
       startYFt: element.tokenY ?? 0,
       moved: false,
     };
-  }, [isSelected, onSelect, element.tokenX, element.tokenY, element.imageUrl, onOpenImageLightbox]);
+  }, [element.tokenX, element.tokenY, element.imageUrl, onOpenImageLightbox]);
 
   const onPointerMoveBody = useCallback((e) => {
     if (!dragRef.current) return;
-    const dx = (e.clientX - dragRef.current.startClientX) / (pxPerFt * mapZoom);
-    const dy = (e.clientY - dragRef.current.startClientY) / (pxPerFt * mapZoom);
-    if (Math.abs(e.clientX - dragRef.current.startClientX) > 4 || Math.abs(e.clientY - dragRef.current.startClientY) > 4) {
+    if (
+      Math.abs(e.clientX - dragRef.current.startClientX) > DRAG_THRESHOLD_PX ||
+      Math.abs(e.clientY - dragRef.current.startClientY) > DRAG_THRESHOLD_PX
+    ) {
       dragRef.current.moved = true;
     }
+    if (!canModify) return;
+    const dx = (e.clientX - dragRef.current.startClientX) / (pxPerFt * mapZoom);
+    const dy = (e.clientY - dragRef.current.startClientY) / (pxPerFt * mapZoom);
     setLocalPos({ xFt: dragRef.current.startXFt + dx, yFt: dragRef.current.startYFt + dy });
-  }, [pxPerFt, mapZoom]);
+  }, [pxPerFt, mapZoom, canModify]);
 
   const onPointerUpBody = useCallback((e) => {
     if (!dragRef.current) return;
     const d = dragRef.current;
     dragRef.current = null;
-    if (d.moved && localPos) {
+    try { e.currentTarget.releasePointerCapture(e.pointerId); } catch { /* ignore */ }
+    if (d.moved) {
       // A real drag completed — clear the double-click timer so the next tap starts fresh.
       lastPointerDownTimeRef.current = 0;
-      onUpdateMapImageObject?.(element.instanceId, { tokenX: localPos.xFt, tokenY: localPos.yFt });
+      if (canModify && localPos) {
+        onUpdateMapImageObject?.(element.instanceId, { tokenX: localPos.xFt, tokenY: localPos.yFt });
+      }
+      setLocalPos(null);
+      return;
     }
     setLocalPos(null);
-  }, [localPos, element.instanceId, onUpdateMapImageObject]);
+    // Click (no drag): Eraser tool deletes; otherwise toggle selection.
+    if (isEraserActive && canModify) {
+      onRemoveMapImageObject?.(element.instanceId);
+      return;
+    }
+    if (isSelected) onDeselect?.(); else onSelect?.();
+  }, [localPos, element.instanceId, onUpdateMapImageObject, canModify, isEraserActive, onRemoveMapImageObject, isSelected, onSelect, onDeselect]);
 
-  // Corner resize — supports NW/NE/SW/SE with opposite-corner anchoring.
+  // Corner resize — supports NW/NE/SW/SE with opposite-corner anchoring (aspect-ratio locked).
   const onPointerDownCorner = useCallback((e, corner) => {
-    if (e.button !== 0) return;
+    if (e.button !== 0 || !canModify) return;
     e.stopPropagation();
     e.currentTarget.setPointerCapture(e.pointerId);
     const ratio = element.imageNaturalHeight && element.imageNaturalWidth
@@ -1586,28 +1655,22 @@ function MapImageObject({
     const cy = element.tokenY ?? 0;
     const w = element.widthFt ?? 20;
     const h = element.heightFt ?? w * ratio;
-    // Anchor = the opposite corner's position in feet (stays fixed during resize)
-    const anchorX = corner === 'NW' || corner === 'SW' ? cx + w / 2 : cx - w / 2;
-    const anchorY = corner === 'NW' || corner === 'NE' ? cy + h / 2 : cy - h / 2;
-    resizeRef.current = { corner, startClientX: e.clientX, startWidthFt: w, ratio, anchorX, anchorY };
-  }, [element.tokenX, element.tokenY, element.widthFt, element.heightFt, element.imageNaturalWidth, element.imageNaturalHeight]);
+    const { anchorX, anchorY } = computeCornerAnchor({ corner, cx, cy, widthFt: w, heightFt: h });
+    resizeRef.current = { corner, startClientX: e.clientX, startClientY: e.clientY, startWidthFt: w, startHeightFt: h, ratio, anchorX, anchorY };
+  }, [canModify, element.tokenX, element.tokenY, element.widthFt, element.heightFt, element.imageNaturalWidth, element.imageNaturalHeight]);
 
   const onPointerMoveCorner = useCallback((e) => {
     if (!resizeRef.current) return;
-    const { corner, startClientX, startWidthFt, ratio, anchorX, anchorY } = resizeRef.current;
+    const { corner, startClientX, startClientY, startWidthFt, startHeightFt, ratio, anchorX, anchorY } = resizeRef.current;
     const dxFt = (e.clientX - startClientX) / (pxPerFt * mapZoom);
-    // Left-side corners grow leftward (negative dxFt = larger); right-side grow rightward
-    const newWidthFt = Math.max(2, corner === 'NW' || corner === 'SW' ? startWidthFt - dxFt : startWidthFt + dxFt);
-    const newHeightFt = newWidthFt * ratio;
-    // New center: offset from anchor by half the new size, toward the dragged corner
-    const newXFt = corner === 'NW' || corner === 'SW' ? anchorX - newWidthFt / 2 : anchorX + newWidthFt / 2;
-    const newYFt = corner === 'NW' || corner === 'NE' ? anchorY - newHeightFt / 2 : anchorY + newHeightFt / 2;
-    setLocalResize({ xFt: newXFt, yFt: newYFt, widthFt: newWidthFt, heightFt: newHeightFt });
+    const dyFt = (e.clientY - startClientY) / (pxPerFt * mapZoom);
+    setLocalResize(computeCornerResize({ mode: 'aspectLocked', corner, dxFt, dyFt, anchorX, anchorY, startWidthFt, startHeightFt, ratio, minSizeFt: 2 }));
   }, [pxPerFt, mapZoom]);
 
   const onPointerUpCorner = useCallback((e) => {
     if (!resizeRef.current) return;
     resizeRef.current = null;
+    try { e.currentTarget.releasePointerCapture(e.pointerId); } catch { /* ignore */ }
     if (localResize) {
       onUpdateMapImageObject?.(element.instanceId, {
         tokenX: localResize.xFt,
@@ -1629,30 +1692,6 @@ function MapImageObject({
   const displayLeftPx = displayXFt * pxPerFt - displayWidthPx / 2;
   const displayTopPx = displayYFt * pxPerFt - displayHeightPx / 2;
 
-  // Shared style for all four corner grips (visual size halved from original 16px → 8px;
-  // hit area kept at 20px via padding wrapper for comfortable grab)
-  const cornerGripStyle = {
-    width: 8,
-    height: 8,
-    background: 'rgba(56,189,248,0.9)',
-    border: '1.5px solid white',
-    borderRadius: 2,
-    touchAction: 'none',
-  };
-  const cornerWrapStyle = (corner) => ({
-    position: 'absolute',
-    ...(corner === 'NW' || corner === 'SW' ? { left: -10 } : { right: -10 }),
-    ...(corner === 'NW' || corner === 'NE' ? { top: -10 } : { bottom: -10 }),
-    width: 20,
-    height: 20,
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    cursor: corner === 'NW' ? 'nw-resize' : corner === 'NE' ? 'ne-resize' : corner === 'SW' ? 'sw-resize' : 'se-resize',
-    touchAction: 'none',
-    zIndex: 2,
-  });
-
   return (
     <>
       <div
@@ -1662,7 +1701,7 @@ function MapImageObject({
           top: displayTopPx,
           width: displayWidthPx,
           height: displayHeightPx,
-          cursor: isSelected ? 'grab' : 'pointer',
+          cursor: !canModify ? 'default' : isEraserActive ? 'crosshair' : isSelected ? 'grab' : 'pointer',
           touchAction: 'none',
           userSelect: 'none',
           // z=22 sits above the scribble canvas (z=21) so pointer events reach the image body
@@ -1679,21 +1718,21 @@ function MapImageObject({
           className={`w-full h-full object-contain pointer-events-none select-none ${isSelected ? 'ring-2 ring-sky-400' : ''}`}
           style={{ display: 'block' }}
         />
-        {isSelected && (
+        {isSelected && canModify && (
           <>
             {/* Four corner resize grips — each anchors the opposite corner */}
             {['NW', 'NE', 'SW', 'SE'].map((corner) => (
               <div
                 key={corner}
-                style={cornerWrapStyle(corner)}
+                style={mapObjectCornerWrapStyle(corner)}
                 onPointerDown={(e) => onPointerDownCorner(e, corner)}
                 onPointerMove={onPointerMoveCorner}
                 onPointerUp={onPointerUpCorner}
               >
-                <div style={cornerGripStyle} />
+                <div style={MAP_OBJECT_CORNER_GRIP_STYLE} />
               </div>
             ))}
-            {/* Delete toolbar — top-center */}
+            {/* Layer + Delete toolbar — top-center */}
             <div
               style={{
                 position: 'absolute',
@@ -1702,7 +1741,13 @@ function MapImageObject({
                 transform: 'translateX(-50%)',
                 zIndex: 10,
               }}
+              className="flex items-center gap-1"
             >
+              <MapObjectLayerControl
+                viewId={element.viewId ?? null}
+                layerOptions={layerOptions}
+                onChangeViewId={(viewId) => onUpdateMapImageObject?.(element.instanceId, { viewId })}
+              />
               <button
                 type="button"
                 onPointerDown={(e) => e.stopPropagation()}
@@ -1721,6 +1766,234 @@ function MapImageObject({
   );
 }
 
+/**
+ * Placeable, resizable vector shape (`drawShape`: rect/oval/brush) rendered alongside `MapImageObject`
+ * at the same z-index. Shares the same direct-drag body interaction, corner-resize primitives (`free`
+ * for rect/oval, `uniform` for brush — scales `pointsFt`/`radiusFt` together), Eraser-click-to-delete,
+ * layer control, and creator-or-GM permission gating as `MapImageObject` (see map-object-transform.js).
+ */
+function DrawShapeObject({
+  element,
+  pxPerFt,
+  mapZoom,
+  isSelected,
+  onSelect,
+  onDeselect,
+  canModify = true,
+  isEraserActive = false,
+  layerOptions,
+  onUpdateMapImageObject,
+  onRemoveMapImageObject,
+}) {
+  const dragRef = useRef(null);
+  const resizeRef = useRef(null);
+  const [localPos, setLocalPos] = useState(null); // { xFt, yFt }
+  const [localResize, setLocalResize] = useState(null); // { xFt, yFt, widthFt, heightFt, scaleFactor? }
+
+  const onPointerDownBody = useCallback((e) => {
+    if (e.button !== 0) return;
+    e.stopPropagation();
+    e.preventDefault();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    dragRef.current = {
+      startClientX: e.clientX,
+      startClientY: e.clientY,
+      startXFt: element.tokenX ?? 0,
+      startYFt: element.tokenY ?? 0,
+      moved: false,
+    };
+  }, [element.tokenX, element.tokenY]);
+
+  const onPointerMoveBody = useCallback((e) => {
+    if (!dragRef.current) return;
+    if (
+      Math.abs(e.clientX - dragRef.current.startClientX) > DRAG_THRESHOLD_PX ||
+      Math.abs(e.clientY - dragRef.current.startClientY) > DRAG_THRESHOLD_PX
+    ) {
+      dragRef.current.moved = true;
+    }
+    if (!canModify) return;
+    const dx = (e.clientX - dragRef.current.startClientX) / (pxPerFt * mapZoom);
+    const dy = (e.clientY - dragRef.current.startClientY) / (pxPerFt * mapZoom);
+    setLocalPos({ xFt: dragRef.current.startXFt + dx, yFt: dragRef.current.startYFt + dy });
+  }, [pxPerFt, mapZoom, canModify]);
+
+  const onPointerUpBody = useCallback((e) => {
+    if (!dragRef.current) return;
+    const d = dragRef.current;
+    dragRef.current = null;
+    try { e.currentTarget.releasePointerCapture(e.pointerId); } catch { /* ignore */ }
+    if (d.moved) {
+      if (canModify && localPos) {
+        onUpdateMapImageObject?.(element.instanceId, { tokenX: localPos.xFt, tokenY: localPos.yFt });
+      }
+      setLocalPos(null);
+      return;
+    }
+    setLocalPos(null);
+    if (isEraserActive && canModify) {
+      onRemoveMapImageObject?.(element.instanceId);
+      return;
+    }
+    if (isSelected) onDeselect?.(); else onSelect?.();
+  }, [localPos, element.instanceId, onUpdateMapImageObject, canModify, isEraserActive, onRemoveMapImageObject, isSelected, onSelect, onDeselect]);
+
+  const onPointerDownCorner = useCallback((e, corner) => {
+    if (e.button !== 0 || !canModify) return;
+    e.stopPropagation();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    const cx = element.tokenX ?? 0;
+    const cy = element.tokenY ?? 0;
+    const w = element.widthFt ?? 4;
+    const h = element.heightFt ?? 4;
+    const { anchorX, anchorY } = computeCornerAnchor({ corner, cx, cy, widthFt: w, heightFt: h });
+    resizeRef.current = { corner, startClientX: e.clientX, startClientY: e.clientY, startWidthFt: w, startHeightFt: h, ratio: w ? h / w : 1, anchorX, anchorY };
+  }, [canModify, element.tokenX, element.tokenY, element.widthFt, element.heightFt]);
+
+  const onPointerMoveCorner = useCallback((e) => {
+    if (!resizeRef.current) return;
+    const { corner, startClientX, startClientY, startWidthFt, startHeightFt, ratio, anchorX, anchorY } = resizeRef.current;
+    const dxFt = (e.clientX - startClientX) / (pxPerFt * mapZoom);
+    const dyFt = (e.clientY - startClientY) / (pxPerFt * mapZoom);
+    const mode = element.shapeTool === 'brush' ? 'uniform' : 'free';
+    const next = computeCornerResize({ mode, corner, dxFt, dyFt, anchorX, anchorY, startWidthFt, startHeightFt, ratio, minSizeFt: 1 });
+    setLocalResize(element.shapeTool === 'brush' ? { ...next, scaleFactor: next.widthFt / startWidthFt } : next);
+  }, [pxPerFt, mapZoom, element.shapeTool]);
+
+  const onPointerUpCorner = useCallback((e) => {
+    if (!resizeRef.current) return;
+    resizeRef.current = null;
+    try { e.currentTarget.releasePointerCapture(e.pointerId); } catch { /* ignore */ }
+    if (localResize) {
+      if (element.shapeTool === 'brush' && localResize.scaleFactor != null) {
+        const scaled = scaleBrushStroke(element.pointsFt, element.radiusFt ?? 1, localResize.scaleFactor);
+        onUpdateMapImageObject?.(element.instanceId, {
+          tokenX: localResize.xFt,
+          tokenY: localResize.yFt,
+          widthFt: localResize.widthFt,
+          heightFt: localResize.heightFt,
+          pointsFt: scaled.pointsFt,
+          radiusFt: scaled.radiusFt,
+        });
+      } else {
+        onUpdateMapImageObject?.(element.instanceId, {
+          tokenX: localResize.xFt,
+          tokenY: localResize.yFt,
+          widthFt: localResize.widthFt,
+          heightFt: localResize.heightFt,
+        });
+      }
+    }
+    setLocalResize(null);
+  }, [localResize, element, onUpdateMapImageObject]);
+
+  const displayXFt = localResize ? localResize.xFt : (localPos ? localPos.xFt : (element.tokenX ?? 0));
+  const displayYFt = localResize ? localResize.yFt : (localPos ? localPos.yFt : (element.tokenY ?? 0));
+  const displayWidthFt = localResize ? localResize.widthFt : (element.widthFt ?? 4);
+  const displayHeightFt = localResize ? localResize.heightFt : (element.heightFt ?? 4);
+
+  const displayWidthPx = displayWidthFt * pxPerFt;
+  const displayHeightPx = displayHeightFt * pxPerFt;
+  const displayLeftPx = displayXFt * pxPerFt - displayWidthPx / 2;
+  const displayTopPx = displayYFt * pxPerFt - displayHeightPx / 2;
+
+  const rgba = element.rgba || 'rgba(0,0,0,1)';
+  const isBrush = element.shapeTool === 'brush';
+  const liveScaleFactor = localResize?.scaleFactor ?? 1;
+  const displayPointsFt = isBrush
+    ? (liveScaleFactor === 1 ? (element.pointsFt || []) : scaleBrushStroke(element.pointsFt, element.radiusFt ?? 1, liveScaleFactor).pointsFt)
+    : null;
+  const displayRadiusFt = isBrush ? (element.radiusFt ?? 1) * liveScaleFactor : 0;
+
+  return (
+    <div
+      style={{
+        position: 'absolute',
+        left: displayLeftPx,
+        top: displayTopPx,
+        width: displayWidthPx,
+        height: displayHeightPx,
+        cursor: !canModify ? 'default' : isEraserActive ? 'crosshair' : isSelected ? 'grab' : 'pointer',
+        touchAction: 'none',
+        userSelect: 'none',
+        zIndex: 22,
+      }}
+      onPointerDown={onPointerDownBody}
+      onPointerMove={onPointerMoveBody}
+      onPointerUp={onPointerUpBody}
+    >
+      {isBrush ? (
+        <svg
+          width={displayWidthPx}
+          height={displayHeightPx}
+          className={isSelected ? 'ring-2 ring-sky-400' : ''}
+          style={{ display: 'block', overflow: 'visible' }}
+        >
+          <path
+            d={(displayPointsFt || []).reduce(
+              (acc, p, i) =>
+                `${acc}${i === 0 ? 'M' : 'L'} ${p.x * pxPerFt + displayWidthPx / 2},${p.y * pxPerFt + displayHeightPx / 2} `,
+              '',
+            )}
+            stroke={rgba}
+            strokeWidth={Math.max(1, 2 * displayRadiusFt * pxPerFt)}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            fill="none"
+          />
+        </svg>
+      ) : (
+        <div
+          className={isSelected ? 'ring-2 ring-sky-400' : ''}
+          style={{
+            width: '100%',
+            height: '100%',
+            borderRadius: element.shapeTool === 'oval' ? '50%' : 0,
+            backgroundColor: element.filled ? rgba : 'transparent',
+            border: element.filled ? undefined : `${Math.max(1, 0.15 * pxPerFt)}px solid ${rgba}`,
+            boxSizing: 'border-box',
+          }}
+        />
+      )}
+      {isSelected && canModify && (
+        <>
+          {['NW', 'NE', 'SW', 'SE'].map((corner) => (
+            <div
+              key={corner}
+              style={mapObjectCornerWrapStyle(corner)}
+              onPointerDown={(e) => onPointerDownCorner(e, corner)}
+              onPointerMove={onPointerMoveCorner}
+              onPointerUp={onPointerUpCorner}
+            >
+              <div style={MAP_OBJECT_CORNER_GRIP_STYLE} />
+            </div>
+          ))}
+          <div
+            style={{ position: 'absolute', top: -28, left: '50%', transform: 'translateX(-50%)', zIndex: 10 }}
+            className="flex items-center gap-1"
+          >
+            <MapObjectLayerControl
+              viewId={element.viewId ?? null}
+              layerOptions={layerOptions}
+              onChangeViewId={(viewId) => onUpdateMapImageObject?.(element.instanceId, { viewId })}
+            />
+            <button
+              type="button"
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => { e.stopPropagation(); onRemoveMapImageObject?.(element.instanceId); }}
+              className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-dh-raised border border-dh-strong text-red-400 hover:text-red-300 hover:bg-red-950/40 text-xs shadow-md transition-colors"
+              title="Remove shape from map"
+            >
+              <Trash2 size={11} />
+              Remove
+            </button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 // ─── BattleMap ───────────────────────────────────────────────────────────────
 
 export function BattleMap({
@@ -1735,9 +2008,11 @@ export function BattleMap({
   onMapViewSync,
   /** Uploads file then adds a `mapImage` element (GM: postTableOp; player: postMapImageObject). */
   onAddMapImageObject,
-  /** Updates an existing `mapImage` element (instanceId, updates). */
+  /** GM only: adds a `drawShape` (rect/oval/brush) vector element — no file upload. */
+  onAddMapDrawShape,
+  /** Updates an existing `mapImage`/`drawShape` element (instanceId, updates) — shared by both types. */
   onUpdateMapImageObject,
-  /** Removes a `mapImage` element (instanceId). */
+  /** Removes a `mapImage`/`drawShape` element (instanceId) — shared by both types. */
   onRemoveMapImageObject,
   /** Opens a lightbox with the given image URL (threaded from GMTableView). */
   onOpenImageLightbox,
@@ -2092,8 +2367,14 @@ export function BattleMap({
     const centerYFt = containerHeight > 0 && pxPerFt > 0 && viewZoom > 0
       ? (containerHeight / 2 + viewPanTop) / (viewZoom * pxPerFt)
       : null;
-    openMapImageQuickPick(file, { mapId: activeMapIdResolved, centerXFt, centerYFt });
-  }, [openMapImageQuickPick, containerWidth, containerHeight, viewPanLeft, viewPanTop, viewZoom, pxPerFt, activeMapIdResolved]);
+    openMapImageQuickPick(file, {
+      mapId: activeMapIdResolved,
+      centerXFt,
+      centerYFt,
+      // Lands the image on the GM's current camera-view layer (matches the draw-tool layer rule).
+      viewId: !isPlayer && gmActiveViewId ? gmActiveViewId : null,
+    });
+  }, [openMapImageQuickPick, containerWidth, containerHeight, viewPanLeft, viewPanTop, viewZoom, pxPerFt, activeMapIdResolved, isPlayer, gmActiveViewId]);
 
   // Emit current viewport center to parent whenever pan/zoom/container changes so the parent can
   // cache it for paste/drop image placement (which goes through the global listener and doesn't
@@ -2225,7 +2506,7 @@ export function BattleMap({
   const playerRemoteViewStateCacheRef = useRef(new Map());
   const playerRemoteViewSwitchPendingRef = useRef(false);
   const playerRemoteViewKeyRef = useRef('');
-  const [drawTool, setDrawTool] = useState('scribble');
+  const [drawTool, setDrawTool] = useState('hand');
   const [rectShapeFilled, setRectShapeFilled] = useState(true);
   const [ovalShapeFilled, setOvalShapeFilled] = useState(true);
   const [drawBrushRadiusFt, setDrawBrushRadiusFt] = useState(DEFAULT_MAP_DRAW_BRUSH_RADIUS_FT);
@@ -2268,6 +2549,9 @@ export function BattleMap({
   const mapPinchLastDistanceRef = useRef(0);
   const drawLastPxRef = useRef(null);
   const drawShapeDragRef = useRef(null);
+  /** Brush points (feet, relative to draw canvas) collected while dragging with `drawTool === 'brush'`,
+   *  used to build a vector `drawShape` element on pointer-up instead of committing raster pixels. */
+  const brushStrokeFtRef = useRef(null);
   /** Eraser: click-to-flood vs drag — set on pointer down, cleared when drag starts or up/cancel */
   const drawEraserPendingRef = useRef(null);
   const scribbleCanvasRef = useRef(null);
@@ -2918,11 +3202,43 @@ export function BattleMap({
     () => activeElements.filter((el) => el.elementType === 'boardToken'),
     [activeElements],
   );
-  const mapImages = useMemo(
-    () => activeElements.filter((el) => el.elementType === 'mapImage' && effectiveTokenMapId(el.mapId) === activeMapIdResolved),
-    [activeElements, activeMapIdResolved],
+  /** Layer filter shared by `mapImage` and `drawShape`: Map-layer objects (`viewId == null`) always
+   *  show; a view-scoped object only shows while that specific view is the active layer. */
+  const onMapObjectLayer = useCallback(
+    (el) => el.viewId == null || el.viewId === activeViewIdResolved,
+    [activeViewIdResolved],
   );
-  const [selectedMapImageId, setSelectedMapImageId] = useState(null);
+  const mapImages = useMemo(
+    () =>
+      activeElements.filter(
+        (el) =>
+          el.elementType === 'mapImage' &&
+          effectiveTokenMapId(el.mapId) === activeMapIdResolved &&
+          onMapObjectLayer(el),
+      ),
+    [activeElements, activeMapIdResolved, onMapObjectLayer],
+  );
+  const mapDrawShapes = useMemo(
+    () =>
+      activeElements.filter(
+        (el) =>
+          el.elementType === 'drawShape' &&
+          effectiveTokenMapId(el.mapId) === activeMapIdResolved &&
+          onMapObjectLayer(el),
+      ),
+    [activeElements, activeMapIdResolved, onMapObjectLayer],
+  );
+  /** Layer control options for the current map — passed to both object types' Layer pill. */
+  const mapViewsForCurrentMap = useMemo(
+    () => mapViews.filter((v) => v.mapId === activeMapIdResolved),
+    [mapViews, activeMapIdResolved],
+  );
+  const [selectedMapObjectId, setSelectedMapObjectId] = useState(null);
+  /** Creator-or-GM permission rule shared by `mapImage` and `drawShape` (see map-object-transform.js). */
+  const canModifyMapObjectFn = useCallback(
+    (el) => canModifyMapObject(el, { isPlayer, userUid: user?.uid }),
+    [isPlayer, user?.uid],
+  );
 
   // Build adversary instance numbers (1-based per unique id)
   const instanceNumbers = useMemo(() => {
@@ -3372,7 +3688,7 @@ export function BattleMap({
     const onKey = (e) => {
       if (e.key === 'Escape') {
         drawEraserPendingRef.current = null;
-        setDrawTool('scribble');
+        setDrawTool('hand');
       }
     };
     window.addEventListener('keydown', onKey);
@@ -3517,6 +3833,9 @@ export function BattleMap({
         drawBrushActiveRef.current = true;
         setMapDrawCaptureActive(true);
         drawLastPxRef.current = { x: p.x, y: p.y };
+        const { w: bw, h: bh } = drawSizeRef.current;
+        const startFt = drawPixelToFt(p.x, p.y, mapWidthFt, mapHeightFt, { w: bw, h: bh });
+        brushStrokeFtRef.current = { pointsFt: [startFt], radiusFt: drawBrushRadiusClampedFt };
         ctx.save();
         ctx.globalCompositeOperation = 'source-over';
         ctx.globalAlpha = alphaFromRgbaString(brushRgba);
@@ -3691,12 +4010,15 @@ export function BattleMap({
       const p = clientToDrawPx(e.clientX, e.clientY);
       if (!p) return;
       const last = drawLastPxRef.current;
-      const { w: rw } = drawSizeRef.current;
+      const { w: rw, h: rh } = drawSizeRef.current;
       const rad = Math.max(1, (drawBrushRadiusClampedFt / mapWidthFt) * rw);
       if (last) {
         strokeDrawSegment(ctx, last.x, last.y, p.x, p.y, rad, drawTool, brushRgba);
       }
       drawLastPxRef.current = { x: p.x, y: p.y };
+      if (drawTool === 'brush' && brushStrokeFtRef.current) {
+        brushStrokeFtRef.current.pointsFt.push(drawPixelToFt(p.x, p.y, mapWidthFt, mapHeightFt, { w: rw, h: rh }));
+      }
     },
     [
       isPlayer,
@@ -3705,6 +4027,7 @@ export function BattleMap({
       clampDrawPx,
       drawBrushRadiusClampedFt,
       mapWidthFt,
+      mapHeightFt,
       brushRgba,
       scheduleScribblePaint,
       tableId,
@@ -3774,6 +4097,7 @@ export function BattleMap({
         if (!p0) return;
         const cur = clampDrawPx(p0, w, h);
         try {
+          // Discard the dashed live-preview pixels — the stroke now lives as a separate `drawShape` element.
           ctx.putImageData(shape.snapshot, 0, 0);
         } catch {
           return;
@@ -3782,20 +4106,26 @@ export function BattleMap({
         const x1 = Math.max(shape.startX, cur.x);
         const y0 = Math.min(shape.startY, cur.y);
         const y1 = Math.max(shape.startY, cur.y);
-        const lineW = Math.max(1, 2 * (drawBrushRadiusClampedFt / mapWidthFt) * w);
-        if (shape.filled) {
-          if (shape.tool === 'rect') {
-            fillDrawRect(ctx, x0, y0, x1, y1, 'brush', brushRgba);
-          } else {
-            fillDrawEllipse(ctx, x0, y0, x1, y1, 'brush', brushRgba);
-          }
-        } else if (shape.tool === 'rect') {
-          strokeOutlineRect(ctx, x0, y0, x1, y1, lineW, brushRgba);
-        } else {
-          strokeOutlineEllipse(ctx, x0, y0, x1, y1, lineW, brushRgba);
+        if (x1 - x0 >= 1 && y1 - y0 >= 1 && onAddMapDrawShape) {
+          const f0 = drawPixelToFt(x0, y0, mapWidthFt, mapHeightFt, { w, h });
+          const f1 = drawPixelToFt(x1, y1, mapWidthFt, mapHeightFt, { w, h });
+          const cxFt = (f0.x + f1.x) / 2;
+          const cyFt = (f0.y + f1.y) / 2;
+          onAddMapDrawShape({
+            instanceId: crypto.randomUUID(),
+            elementType: 'drawShape',
+            mapId: activeMapIdResolved,
+            viewId: drawEditContext?.kind === 'view' ? drawEditContext.id : null,
+            createdByUid: user?.uid,
+            tokenX: cxFt,
+            tokenY: cyFt,
+            widthFt: Math.max(Math.abs(f1.x - f0.x), 0.5),
+            heightFt: Math.max(Math.abs(f1.y - f0.y), 0.5),
+            shapeTool: shape.tool,
+            rgba: brushRgba,
+            filled: shape.filled,
+          });
         }
-        const png = c.toDataURL('image/png');
-        await commitOverlayPng(png);
         return;
       }
 
@@ -3808,7 +4138,41 @@ export function BattleMap({
         /* ignore */
       }
       const c = drawPaintRef.current;
-      if (c) {
+      if (drawTool === 'brush') {
+        // Build a vector `drawShape` from the collected stroke points, then discard the raster
+        // preview by reloading the persisted background (the stroke is no longer flattened pixels).
+        const stroke = brushStrokeFtRef.current;
+        brushStrokeFtRef.current = null;
+        if (stroke?.pointsFt?.length && onAddMapDrawShape) {
+          const xs = stroke.pointsFt.map((p) => p.x);
+          const ys = stroke.pointsFt.map((p) => p.y);
+          const r = stroke.radiusFt;
+          const minX = Math.min(...xs) - r;
+          const maxX = Math.max(...xs) + r;
+          const minY = Math.min(...ys) - r;
+          const maxY = Math.max(...ys) + r;
+          const cxFt = (minX + maxX) / 2;
+          const cyFt = (minY + maxY) / 2;
+          onAddMapDrawShape({
+            instanceId: crypto.randomUUID(),
+            elementType: 'drawShape',
+            mapId: activeMapIdResolved,
+            viewId: drawEditContext?.kind === 'view' ? drawEditContext.id : null,
+            createdByUid: user?.uid,
+            tokenX: cxFt,
+            tokenY: cyFt,
+            widthFt: Math.max(maxX - minX, r * 2, 1),
+            heightFt: Math.max(maxY - minY, r * 2, 1),
+            shapeTool: 'brush',
+            rgba: brushRgba,
+            pointsFt: stroke.pointsFt.map((p) => ({ x: p.x - cxFt, y: p.y - cyFt })),
+            radiusFt: r,
+          });
+        }
+        if (c) {
+          void loadDrawDataUrlOntoCanvas(editableDrawSourceUrl, c, drawSizeRef.current);
+        }
+      } else if (c) {
         const png = c.toDataURL('image/png');
         await commitOverlayPng(png);
       }
@@ -3825,8 +4189,15 @@ export function BattleMap({
       drawTool,
       drawBrushRadiusClampedFt,
       mapWidthFt,
+      mapHeightFt,
       isPlayer,
       flushScribbleTailToPeers,
+      onAddMapDrawShape,
+      activeMapIdResolved,
+      drawEditContext,
+      editableDrawSourceUrl,
+      loadDrawDataUrlOntoCanvas,
+      user?.uid,
     ],
   );
 
@@ -3929,17 +4300,59 @@ export function BattleMap({
     }
 
     if (drawBrushActiveRef.current) {
-      const commitStroke = drawTool === 'brush' || drawTool === 'eraser';
       drawBrushActiveRef.current = false;
       drawLastPxRef.current = null;
-      if (commitStroke && drawPaintRef.current) {
+      if (drawTool === 'brush') {
+        const stroke = brushStrokeFtRef.current;
+        brushStrokeFtRef.current = null;
+        if (stroke?.pointsFt?.length && onAddMapDrawShape) {
+          const xs = stroke.pointsFt.map((p) => p.x);
+          const ys = stroke.pointsFt.map((p) => p.y);
+          const r = stroke.radiusFt;
+          const minX = Math.min(...xs) - r;
+          const maxX = Math.max(...xs) + r;
+          const minY = Math.min(...ys) - r;
+          const maxY = Math.max(...ys) + r;
+          const cxFt = (minX + maxX) / 2;
+          const cyFt = (minY + maxY) / 2;
+          onAddMapDrawShape({
+            instanceId: crypto.randomUUID(),
+            elementType: 'drawShape',
+            mapId: activeMapIdResolved,
+            viewId: drawEditContext?.kind === 'view' ? drawEditContext.id : null,
+            createdByUid: user?.uid,
+            tokenX: cxFt,
+            tokenY: cyFt,
+            widthFt: Math.max(maxX - minX, r * 2, 1),
+            heightFt: Math.max(maxY - minY, r * 2, 1),
+            shapeTool: 'brush',
+            rgba: brushRgba,
+            pointsFt: stroke.pointsFt.map((p) => ({ x: p.x - cxFt, y: p.y - cyFt })),
+            radiusFt: r,
+          });
+        }
+        if (drawPaintRef.current) {
+          void loadDrawDataUrlOntoCanvas(editableDrawSourceUrl, drawPaintRef.current, drawSizeRef.current);
+        }
+      } else if (drawTool === 'eraser' && drawPaintRef.current) {
         const png = drawPaintRef.current.toDataURL('image/png');
         void commitOverlayPng(png);
       }
     }
 
     setMapDrawCaptureActive(false);
-  }, [flushScribbleTailToPeers, drawTool, commitOverlayPng]);
+  }, [
+    flushScribbleTailToPeers,
+    drawTool,
+    commitOverlayPng,
+    onAddMapDrawShape,
+    activeMapIdResolved,
+    drawEditContext,
+    user?.uid,
+    brushRgba,
+    editableDrawSourceUrl,
+    loadDrawDataUrlOntoCanvas,
+  ]);
 
   useEffect(() => {
     if (!canControlMapView) return;
@@ -4468,7 +4881,7 @@ export function BattleMap({
     // Only dismiss if clicking directly on the map/scroll container (not a token)
     if (e.target === scrollContainerRef.current || e.target === e.currentTarget) {
       setPinnedToken(null);
-      setSelectedMapImageId(null);
+      setSelectedMapObjectId(null);
     }
   }, []);
 
@@ -5137,6 +5550,20 @@ export function BattleMap({
                           </button>
                         </Tooltip>
                       )}
+                      <Tooltip label="Hand: click and drag existing tokens, images, or shapes. Does not draw.">
+                        <button
+                          type="button"
+                          onClick={() => setDrawTool('hand')}
+                          className={`inline-flex items-center justify-center rounded border p-1.5 ${
+                            drawTool === 'hand'
+                              ? 'border-lime-500/60 bg-lime-950/35 text-lime-100'
+                              : 'border-dh-strong bg-dh-raised/70 text-dh-muted hover:text-dh'
+                          }`}
+                          aria-label="Hand: move existing map objects"
+                        >
+                          <Hand size={15} aria-hidden />
+                        </button>
+                      </Tooltip>
                       <Tooltip label="Scribble: fades over 10 seconds (not saved). Click and drag.">
                         <button
                           type="button"
@@ -5239,7 +5666,8 @@ export function BattleMap({
                     <button
                       type="button"
                       onClick={() => setDrawEyedropperActive((v) => !v)}
-                      className={`inline-flex items-center justify-center rounded border p-1.5 ${
+                      disabled={drawTool === 'hand'}
+                      className={`inline-flex items-center justify-center rounded border p-1.5 disabled:opacity-40 disabled:pointer-events-none ${
                         drawEyedropperActive
                           ? 'border-cyan-500/60 bg-cyan-950/35 text-cyan-100'
                           : 'border-dh-strong bg-dh-raised/70 text-dh-muted hover:text-dh'
@@ -5251,7 +5679,7 @@ export function BattleMap({
                     </button>
                   </Tooltip>
                   <label
-                    className={`inline-flex items-center gap-1.5 ${drawTool === 'eraser' && !isPlayer ? 'text-dh-muted/50' : 'text-dh-muted'}`}
+                    className={`inline-flex items-center gap-1.5 ${(drawTool === 'eraser' || drawTool === 'hand') && !isPlayer ? 'text-dh-muted/50' : 'text-dh-muted'}`}
                     title={
                       drawTool === 'eraser' && !isPlayer
                         ? 'Opacity applies to brush and shapes, not the eraser'
@@ -5269,13 +5697,13 @@ export function BattleMap({
                       onInput={(e) => setDrawOpacity(Number(e.target.value))}
                       onChange={(e) => setDrawOpacity(Number(e.target.value))}
                       className="relative top-0.5 h-1.5 w-20 cursor-pointer appearance-none rounded-full bg-dh-hover accent-cyan-500 disabled:opacity-40"
-                      disabled={drawTool === 'eraser' && !isPlayer}
+                      disabled={(drawTool === 'eraser' || drawTool === 'hand') && !isPlayer}
                     />
                     <span className="inline-block min-w-[5ch] text-end tabular-nums text-dh">
                       {Math.round(drawOpacity * 100)}%
                     </span>
                   </label>
-                  <label className="inline-flex items-center gap-1.5 text-dh-muted">
+                  <label className={`inline-flex items-center gap-1.5 ${drawTool === 'hand' && !isPlayer ? 'text-dh-muted/50' : 'text-dh-muted'}`}>
                     <span className="whitespace-nowrap">Radius</span>
                     <input
                       type="range"
@@ -5285,8 +5713,8 @@ export function BattleMap({
                       value={drawBrushRadiusClampedFt}
                       onPointerDown={() => setBrushPreviewControlsActive(true)}
                       onChange={(e) => setDrawBrushRadiusFt(Number(e.target.value))}
-                      className="relative top-0.5 h-1.5 w-24 cursor-pointer appearance-none rounded-full bg-dh-hover accent-cyan-500"
-                      disabled={drawTool === 'rect' || drawTool === 'oval'}
+                      className="relative top-0.5 h-1.5 w-24 cursor-pointer appearance-none rounded-full bg-dh-hover accent-cyan-500 disabled:opacity-40"
+                      disabled={drawTool === 'rect' || drawTool === 'oval' || (drawTool === 'hand' && !isPlayer)}
                       title={`${MAP_DRAW_BRUSH_RADIUS_FT_MIN}′–${Math.round(drawBrushRadiusMaxFt * 10) / 10}′ (max 20% of visible map height)`}
                     />
                     <span className="tabular-nums text-dh">{drawBrushRadiusClampedFt.toFixed(1)}′</span>
@@ -5591,19 +6019,38 @@ export function BattleMap({
                 </svg>
               )}
 
-              {/* Placed mapImage objects — between draw layer (z=4) and tokens (z=10+) */}
+              {/* Placed mapImage + drawShape objects — between draw layer (z=4) and tokens (z=10+) */}
               {mapImages.map((el) => (
                 <MapImageObject
                   key={el.instanceId}
                   element={el}
                   pxPerFt={pxPerFt}
                   mapZoom={mapZoom}
-                  isSelected={selectedMapImageId === el.instanceId}
-                  onSelect={() => setSelectedMapImageId(el.instanceId)}
-                  onDeselect={() => setSelectedMapImageId(null)}
+                  isSelected={selectedMapObjectId === el.instanceId}
+                  onSelect={() => setSelectedMapObjectId(el.instanceId)}
+                  onDeselect={() => setSelectedMapObjectId(null)}
+                  canModify={canModifyMapObjectFn(el)}
+                  isEraserActive={!isPlayer && drawTool === 'eraser'}
+                  layerOptions={mapViewsForCurrentMap}
                   onUpdateMapImageObject={onUpdateMapImageObject}
                   onRemoveMapImageObject={onRemoveMapImageObject}
                   onOpenImageLightbox={onOpenImageLightbox}
+                />
+              ))}
+              {mapDrawShapes.map((el) => (
+                <DrawShapeObject
+                  key={el.instanceId}
+                  element={el}
+                  pxPerFt={pxPerFt}
+                  mapZoom={mapZoom}
+                  isSelected={selectedMapObjectId === el.instanceId}
+                  onSelect={() => setSelectedMapObjectId(el.instanceId)}
+                  onDeselect={() => setSelectedMapObjectId(null)}
+                  canModify={canModifyMapObjectFn(el)}
+                  isEraserActive={!isPlayer && drawTool === 'eraser'}
+                  layerOptions={mapViewsForCurrentMap}
+                  onUpdateMapImageObject={onUpdateMapImageObject}
+                  onRemoveMapImageObject={onRemoveMapImageObject}
                 />
               ))}
 

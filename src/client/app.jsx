@@ -1597,6 +1597,8 @@ function App() {
       instanceId: generateId(),
       elementType: 'mapImage',
       mapId: opts.mapId ?? null,
+      viewId: opts.viewId ?? null,
+      createdByUid: user?.uid ?? null,
       imageUrl: uploaded.url,
       imageNaturalWidth: width,
       imageNaturalHeight: height,
@@ -1610,7 +1612,13 @@ function App() {
     } else {
       postTableOp({ op: 'add-elements', elements: [el] }, tableId);
     }
-  }, [tableId, effectiveIsPlayer]);
+  }, [tableId, effectiveIsPlayer, user?.uid]);
+
+  /** Add a `drawShape` (rect/oval/brush) vector element on the current map — GM only, no upload. */
+  const sendAddMapDrawShape = useCallback((shape) => {
+    const el = { ...shape, createdByUid: user?.uid ?? null };
+    postTableOp({ op: 'add-elements', elements: [el] }, tableId);
+  }, [tableId, user?.uid]);
 
   const sendUpdateMapImageObject = useCallback((instanceId, updates) => {
     setActiveElements(prev => prev.map(el => el.instanceId === instanceId ? { ...el, ...updates } : el));
@@ -2106,6 +2114,7 @@ function App() {
                 onAddMapWithImage={effectiveIsPlayer ? undefined : sendAddMapWithImage}
                 onReplaceMapWithImage={effectiveIsPlayer ? undefined : sendReplaceMapWithImage}
                 onAddMapImageObject={sendAddMapImageObject}
+                onAddMapDrawShape={effectiveIsPlayer ? undefined : sendAddMapDrawShape}
                 onUpdateMapImageObject={sendUpdateMapImageObject}
                 onRemoveMapImageObject={sendRemoveMapImageObject}
                 onRemoveMap={effectiveIsPlayer ? undefined : sendRemoveMap}
