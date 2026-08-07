@@ -2,7 +2,10 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { act, createElement, useEffect, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
-import { useHoverOverlay } from '../../src/client/lib/useHoverOverlay.js';
+import {
+  DH_OUTSIDE_DISMISS_EXEMPT_ATTR,
+  useHoverOverlay,
+} from '../../src/client/lib/useHoverOverlay.js';
 
 function Harness({ disableDesktopOutsideDismiss }) {
   const o = useHoverOverlay({
@@ -78,5 +81,31 @@ describe('useHoverOverlay', () => {
     expect(
       container.querySelector('[data-testid="open-flag"]')?.getAttribute('data-open'),
     ).toBe('false');
+  });
+
+  it('mousedown inside data-dh-outside-dismiss-exempt portal does not close', async () => {
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(
+        createElement(Harness, { disableDesktopOutsideDismiss: false }),
+      );
+    });
+    const portal = document.createElement('div');
+    portal.setAttribute(DH_OUTSIDE_DISMISS_EXEMPT_ATTR, '');
+    const opt = document.createElement('button');
+    portal.appendChild(opt);
+    document.body.appendChild(portal);
+    try {
+      await act(async () => {
+        opt.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+      });
+      expect(
+        container.querySelector('[data-testid="open-flag"]')?.getAttribute('data-open'),
+      ).toBe('true');
+    } finally {
+      portal.remove();
+    }
   });
 });

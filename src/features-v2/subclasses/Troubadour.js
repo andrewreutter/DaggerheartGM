@@ -45,7 +45,14 @@ export const GiftedPerformer = {
     {
       name: 'Relaxing Song',
       placements: ['card'],
-      frequency: 'longRest',
+      // NOTE: no `frequency` field here — the generic engine tracks per-feature (not
+      // per-chip) "used this cycle" state in `element.featureUsage`, keyed by the
+      // feature's guide key. Gifted Performer has three siblings chips that each need
+      // an *independent* per-long-rest cap (doubled by Virtuoso), so using `frequency`
+      // would make using any one song incorrectly grey out the other two. Each song
+      // tracks its own use count via `table.feature.get/set` (scoped to this feature)
+      // instead; `giftedPerformerUseCap`/`isDisabled` below fully replicate the cap
+      // semantics (including Virtuoso's doubling) without the generic mechanism.
       description: 'You and all allies within Close range clear a Hit Point.',
       isDisabled: (table) => {
         const cap = giftedPerformerUseCap(table);
@@ -75,7 +82,7 @@ export const GiftedPerformer = {
     {
       name: 'Epic Song',
       placements: ['card'],
-      frequency: 'longRest',
+      // See "Relaxing Song" note above — no `frequency` here on purpose.
       description: 'Make a target within Close range temporarily Vulnerable.',
       selectTargets: (table) => adversariesInClose(table),
       isDisabled: (table) => {
@@ -97,7 +104,7 @@ export const GiftedPerformer = {
     {
       name: 'Heartbreaking Song',
       placements: ['card'],
-      frequency: 'longRest',
+      // See "Relaxing Song" note above — no `frequency` here on purpose.
       description: 'You and all allies within Close range gain a Hope.',
       isDisabled: (table) => {
         const cap = giftedPerformerUseCap(table);

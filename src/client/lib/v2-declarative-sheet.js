@@ -257,12 +257,22 @@ export function mergeV2DeclarativeSheetOverlay(recomputed, rawCharacter, srdData
   const v2MajorDelta = Math.max(0, (decl.stats?.majorThreshold ?? baseMajor) - baseMajor);
   const v2SevereDelta = Math.max(0, (decl.stats?.severeThreshold ?? baseSev) - baseSev);
 
-  /** Hope ability (e.g. Druid Evolution) lives in V2 `classes` registry but not in SRD `class_features` — append so GuideFeatureCard + card chips work on the Game Table. */
+  /** Hope ability (e.g. Druid Evolution, Guardian Frontline Tank) lives in V2 `classes` registry but not in SRD `class_features` — append so GuideFeatureCard + card chips work on the Game Table. */
   let activeFeatures = enrichActiveFeaturesWithEngineRows(recomputed.activeFeatures || [], mergedEngineFeatures, charForLoader);
   const hopeName = recomputed.hopeFeature?.name;
   if (hopeName && !activeFeatures.some((a) => a.name === hopeName)) {
     const hopeRow = mergedEngineFeatures.find((f) => f.name === hopeName);
-    if (hopeRow && (hopeRow.chips || hopeRow.hooks)) {
+    // Root hopeCost/onUse synthesize Default Card chips at collect time — they often have
+    // neither an explicit `chips` array nor `hooks` (e.g. Frontline Tank). Still append.
+    const hasSheetCardAction =
+      !!hopeRow &&
+      (!!hopeRow.chips ||
+        !!hopeRow.hooks ||
+        typeof hopeRow.onUse === 'function' ||
+        hopeRow.hopeCost != null ||
+        hopeRow.stressCost != null ||
+        hopeRow.frequency != null);
+    if (hasSheetCardAction) {
       const srdClassObj = srdData.classesById?.[charForLoader.classId];
       activeFeatures = [
         ...activeFeatures,

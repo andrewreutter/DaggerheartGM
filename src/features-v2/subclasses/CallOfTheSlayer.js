@@ -83,6 +83,9 @@ export const Slayer = {
   hooks: {
     /** New session: clear unspent dice from last session and gain 1 Hope per die (idempotent if run twice). */
     onSessionStart(table) {
+      // Session-start table snapshots sometimes omit `table.source` (no `_sourceObject` on the
+      // active feature); skip cleanly rather than throw and break Start Session ack.
+      if (typeof table.source?.get !== 'function' || typeof table.source?.set !== 'function') return;
       const n = table.source.get('slayerDiceCount') ?? 0;
       if (n <= 0) return;
       table.me.gainHope(n);

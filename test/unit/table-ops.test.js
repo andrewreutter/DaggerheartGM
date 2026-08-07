@@ -1530,6 +1530,27 @@ describe('applyV2BannerMutations', () => {
     expect(updates).toEqual([{ instanceId: 'table-ally', updates: { currentStress: 1 } }]);
   });
 
+  it('applies addCondition / removeCondition on banner review chips (e.g. Arcane Charge)', () => {
+    const activeElements = [
+      { instanceId: 'c1', elementType: 'character', conditions: 'Charged' },
+    ];
+    const cleared = applyV2BannerMutations(
+      activeElements,
+      [{ type: 'removeCondition', payload: { instanceId: 'c1', condition: 'Charged' } }],
+      'c1'
+    );
+    expect(cleared.skipped).toHaveLength(0);
+    expect(cleared.updates).toEqual([{ instanceId: 'c1', updates: { conditions: '' } }]);
+
+    const added = applyV2BannerMutations(
+      [{ instanceId: 'c1', elementType: 'character', conditions: '' }],
+      [{ type: 'addCondition', payload: { instanceId: 'c1', condition: 'Charged' } }],
+      'c1'
+    );
+    expect(added.skipped).toHaveLength(0);
+    expect(added.updates).toEqual([{ instanceId: 'c1', updates: { conditions: 'Charged' } }]);
+  });
+
   it('applies move mutation as v2PendingMove on the mover element', () => {
     const activeElements = [{ instanceId: 'adv-1', elementType: 'adversary', name: 'Goblin' }];
     const { updates, skipped } = applyV2BannerMutations(

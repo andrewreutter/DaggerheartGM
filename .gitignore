@@ -157,3 +157,9 @@ supabase/.temp
 
 # Orchestrator state (survives Ctrl+C, gitignored)
 .orchestrator-state.json
+
+# Subclass feature video test suite output (npm run test:subclasses) — most-recent-only, regenerated each run
+test-artifacts/
+
+# Playwright test run output (screenshots/traces on failure, regenerated each run)
+test-results/

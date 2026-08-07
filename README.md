@@ -157,8 +157,14 @@ DaggerheartGM/
 │   │   └── table-ops.test.js
 │   ├── browser/                # Playwright browser/visual regression tests
 │   │   └── smoke.spec.js
+│   ├── browser-subclass/       # Opt-in subclass feature video suite (not part of npm test/CI)
+│   │   └── bard-troubadour.spec.js
 │   ├── helpers/
-│   │   └── auth.js             # Playwright helper: mock Firebase + API for authenticated tests
+│   │   ├── auth.js             # Playwright helper: mock Firebase + API for authenticated tests
+│   │   ├── multi-auth.js       # Multi-actor (GM/Player A/Player B) Playwright helper
+│   │   ├── subclass-video.js   # Subclass video suite recording harness (caption overlay, video retention)
+│   │   └── subclass-cast.js    # Subclass video suite per-class/subclass character data factories
+│   ├── subclass-video-test-plan.md  # Coverage tracker + lessons learned for the subclass video suite
 │   ├── fixtures/               # OCR parse fixture images + expected JSON
 │   └── parse-fixtures.js       # OCR engine accuracy scorecard (run manually)
 ├── .env                        # Local environment variables (never commit)
@@ -487,6 +493,8 @@ npm run test:browser  # Playwright only (starts server on port 3457)
 The Playwright test server runs on port 3457 (`NODE_ENV=test`) with a Firebase auth bypass for `Authorization: Bearer test-token`. The `test/helpers/auth.js` helper sets up all required route mocks in one call for single-actor tests.
 
 **Multi-actor tests** (T12): `test/helpers/multi-auth.js` supports 2+ concurrent authenticated identities hitting the **real** server (no route mocking beyond Firebase CDN + `/api/config`). Uses `Bearer test-token:<uid>:<email>` tokens (multi-identity `requireAuth` extension, active only under `NODE_ENV=test`). `test/browser/action-loop-multi-actor.spec.js` covers M1 (roll SSE propagation + element-update SSE), M3 (rest cycle SSE), and M6 (token-position SSE to multiple clients). Requires a real Postgres (`DATABASE_URL`) for the full suite; basic auth extension tests run without DB.
+
+**Subclass feature video suite** (opt-in, **not** part of `npm test`/`test:browser`/CI): `npm run test:subclasses` runs `test/browser-subclass/*.spec.js` (Playwright project `subclass-videos`), one test per subclass that drives every feature it grants from a real player browser context and records a captioned `.webm` walkthrough to `test-artifacts/subclass-videos/` (gitignored, most-recent-run-only). See `test/subclass-video-test-plan.md` for the coverage tracker and harness usage notes.
 
 **CI**: both suites run automatically on every push and pull request via `.github/workflows/ci.yml` (Node 22 LTS, `npm ci`, `npm run build`, then `npm run test:unit` followed by `npm run test:browser`). No secrets required — Firebase is mocked in tests and the server runs without `DATABASE_URL`.
 

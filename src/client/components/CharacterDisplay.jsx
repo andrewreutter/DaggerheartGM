@@ -2236,7 +2236,15 @@ function CharacterFeatureListContent({
     const hn = resolveHopeFeatureName(el);
     if (!hn) return false;
     const row = (el.activeFeatures || []).find((a) => a.name === hn);
-    return !!(row && Array.isArray(row.chips) && row.chips.length > 0);
+    if (!row) return false;
+    // Explicit chips, or root hopeCost/onUse (Default Card Action — e.g. Frontline Tank).
+    if (Array.isArray(row.chips) && row.chips.length > 0) return true;
+    return (
+      typeof row.onUse === 'function' ||
+      row.hopeCost != null ||
+      row.stressCost != null ||
+      row.frequency != null
+    );
   })();
 
   const hnForHopeSheet = resolveHopeFeatureName(el);
@@ -2315,7 +2323,14 @@ function CharacterFeatureListContent({
           );
 
           if (hopeInteractive) {
-            const hopeFeat = { name: name || 'Hope Ability', description: desc || '' };
+            // Prefer the merged V2 `activeFeatures` hope row so engine flags
+            // (`hostRollMetaFeatureStateActivate`, `_sourceScopeKey`, costs, …) reach
+            // `onFeatureUse` / banner ack — a bare `{ name, description }` drops them.
+            const hopeFeat = {
+              ...(hopeRowForSheet && typeof hopeRowForSheet === 'object' ? hopeRowForSheet : {}),
+              name: name || hopeRowForSheet?.name || 'Hope Ability',
+              description: desc || hopeRowForSheet?.description || '',
+            };
             const handleClick = onFeatureUse
               ? (e) => canUse && onFeatureUse(hopeFeat, null, e)
               : () => canUse && onUseHopeAbility(el.instanceId);

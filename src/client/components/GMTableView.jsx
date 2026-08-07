@@ -142,6 +142,7 @@ import {
 import {
   collectV2ReviewActionChips,
   activateV2ReviewChip,
+  activateV2IntentChipOnUse,
   resolveV2ReviewChipPicker as resolveV2ReviewChipPickerFromBridge,
   getV2ReviewChipDisableHint,
   annotateV2ReviewChipsBannerConsumed,
@@ -1376,6 +1377,13 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     if (v2DamageAck.elementUpdates?.length) {
       sendOp({ op: 'update-elements', updates: v2DamageAck.elementUpdates });
     }
+    // Table-level Fear from V2 reviewAction hooks (e.g. Apex Predator spendFear).
+    if (v2DamageAck.fearDelta && setFearCount) {
+      const delta = Number(v2DamageAck.fearDelta) || 0;
+      if (delta !== 0) {
+        setFearCount((prev) => Math.max(0, Math.min(12, (prev ?? 0) + delta)));
+      }
+    }
     for (const pr of v2DamageAck.postRolls || []) {
       postRoll(pr.rollText, pr.displayName, tableId, pr.rollMeta).catch(err => handleRollTransportError(err));
     }
@@ -1424,7 +1432,8 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
       }
     }
 
-    // Ranger's Focus: on hit, mark target as "Focused by X" and clear previous focus for this Ranger
+    // Ranger's Focus: on hit, mark target as "Focused by X", clear previous focus for this Ranger,
+    // and persist focusTargetInstanceId so V2 chips gated on Focus (Apex/Elusive Predator, etc.) see it.
     const isAdversaryTarget = target.elementType === 'adversary' || target.type === 'adversary';
     let attackerName = null;
     if (roll?._rangerFocusAttempt && roll._attackerInstanceId && isAdversaryTarget) {
@@ -1436,6 +1445,10 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
         }
       });
       updateActiveElement(target.instanceId, { focusedBy: attackerName });
+      updateActiveElement(roll._attackerInstanceId, {
+        focusTargetInstanceId: target.instanceId,
+        focusTargetId: target.instanceId,
+      });
     }
     // Focused-by effect: when the Ranger deals damage to their Focus target, the target marks 1 Stress.
     if (isAdversaryTarget && roll?._attackerInstanceId) {
@@ -4139,6 +4152,48 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
           pending.meta = pendingMeta;
           pending.displayName = displayName;
         }
+        // Run declarative intent `onUse` (e.g. Apex Predator arms featureState) — costs were
+        // already applied above so activateV2IntentChipOnUse skips deductChipCosts.
+        if (srdData && typeof chip.onUse === 'function') {
+          const skeleton =
+            pending.meta?._weaponRangeFt != null || pending.meta?._weaponId != null
+              ? buildV2PreRollWeaponAttackRollSkeleton({
+                  pendingMeta: pending.meta,
+                  pendingRollText: pending.rollText,
+                  characterEl: charEl,
+                })
+              : buildV2PreRollTraitRollSkeleton({
+                  pendingMeta: pending.meta,
+                  pendingRollText: pending.rollText,
+                  characterEl: charEl,
+                });
+          if (skeleton) {
+            const activated = activateV2IntentChipOnUse(chip, skeleton, activeElements, srdData, {
+              fearCount,
+              mapConfig,
+              tableFeatureState,
+            });
+            if (!activated.error && activated.mutations?.length) {
+              const { updates } = applyV2BannerMutations(
+                activeElements,
+                activated.mutations,
+                chip._ownerInstanceId || charEl.instanceId,
+              );
+              if (updates.length) {
+                if (isPlayer) {
+                  // Players can only patch their own character via character-update.
+                  for (const u of updates) {
+                    if (u.instanceId === charEl.instanceId) {
+                      updateActiveElement(u.instanceId, u.updates);
+                    }
+                  }
+                } else {
+                  sendOp({ op: 'update-elements', updates });
+                }
+              }
+            }
+          }
+        }
         const line = chip.label || chip.name || chip._featureName || 'Feature';
         const costBits = [];
         if (chip.hopeCost) costBits.push(`${chip.hopeCost} Hope`);
@@ -6239,7 +6294,9 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                         })
                       : null;
                   const v2Disabled = !!v2Hint;
-                  const label = chip.label ?? chip.name ?? '';
+                  // Prefer explicit chip label/name; fall back to owning feature name so unnamed
+                  // intent chips (e.g. Apex Predator) still have an accessible button name.
+                  const label = chip.label ?? chip.name ?? chip._featureName ?? '';
                   const costParts = [];
                   if (chip.stressCost) costParts.push(`${chip.stressCost} Stress`);
                   if (chip.hopeCost) costParts.push(`${chip.hopeCost} Hope`);

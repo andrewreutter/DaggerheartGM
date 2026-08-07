@@ -1,6 +1,21 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 
 /**
+ * Portaled UI (e.g. `CustomSelect` option lists on `document.body`) that must not count as
+ * “outside” the Game Table character hover sheet. Without this, mousedown on a portaled option
+ * unmounts the sheet before the option’s click/`onChange` runs (Beastform / Evolution, etc.).
+ * Mark the portal root with {@link DH_OUTSIDE_DISMISS_EXEMPT_ATTR}.
+ */
+export const DH_OUTSIDE_DISMISS_EXEMPT_ATTR = 'data-dh-outside-dismiss-exempt';
+export const DH_OUTSIDE_DISMISS_EXEMPT_SELECTOR = `[${DH_OUTSIDE_DISMISS_EXEMPT_ATTR}]`;
+
+function eventIsInsideOutsideDismissExempt(e) {
+  const t = e?.target;
+  if (!t || typeof t.closest !== 'function') return false;
+  return !!t.closest(DH_OUTSIDE_DISMISS_EXEMPT_SELECTOR);
+}
+
+/**
  * Manages a single hover-triggered overlay with:
  *  - Desktop: show on mouseenter (with optional delay), hide on mouseleave (with configurable delay)
  *  - Touch:   show/hide on click (tap-to-toggle); dismiss on tap outside
@@ -19,6 +34,7 @@ import { useState, useRef, useEffect, useCallback } from 'react';
  * toggle or explicit close(); play actions still call dismiss from parents).
  * Optional suppressOutsideDismissRef: when `.current` is true, outside dismiss is skipped (e.g. while
  * a portaled editor is active and targets may be outside the overlay subtree).
+ * Clicks inside {@link DH_OUTSIDE_DISMISS_EXEMPT_SELECTOR} are also ignored (portaled selects).
  *
  *   // On the overlay element:
  *   {overlay.isOpen && <div ref={overlay.overlayRef} {...overlay.overlayHandlers}>...</div>}
@@ -77,6 +93,7 @@ export function useHoverOverlay({
     if (!isTouch || !isOpen) return;
     const handler = (e) => {
       if (suppressOutsideDismissRef?.current) return;
+      if (eventIsInsideOutsideDismissExempt(e)) return;
       const inOverlay  = overlayRef.current  && overlayRef.current.contains(e.target);
       // Use activeTouchTriggerRef (set in onClick) rather than triggerRef (which
       // React overwrites to the last-rendered element when many cards share the hook).
@@ -94,6 +111,7 @@ export function useHoverOverlay({
     if (isTouch || mode !== 'click' || !isOpen || disableDesktopOutsideDismiss) return;
     const handler = (e) => {
       if (suppressOutsideDismissRef?.current) return;
+      if (eventIsInsideOutsideDismissExempt(e)) return;
       const inOverlay = overlayRef.current && overlayRef.current.contains(e.target);
       const inTrigger = activeTouchTriggerRef.current && activeTouchTriggerRef.current.contains(e.target);
       if (!inOverlay && !inTrigger) {

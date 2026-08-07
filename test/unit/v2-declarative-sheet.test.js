@@ -285,6 +285,58 @@ describe('v2-declarative-sheet', () => {
     expect(evo.type).toBe('class');
   });
 
+  it('mergeV2DeclarativeSheetOverlay appends hope features with root hopeCost/onUse (Frontline Tank)', () => {
+    const srdData = {
+      ancestriesById: {},
+      weaponsById: {},
+      armorById: {},
+      classesById: {
+        'srd-cls-guardian': {
+          id: 'srd-cls-guardian',
+          name: 'Guardian',
+          hope_feature: { name: 'Frontline Tank', description: 'Spend 3 Hope to clear 2 Armor Slots.' },
+          domains: [],
+          class_features: [{ name: 'Unstoppable', description: 'Once per long rest…' }],
+        },
+      },
+      subclassesById: {},
+      communitiesById: {},
+    };
+
+    const raw = {
+      instanceId: 'guard-1',
+      classId: 'srd-cls-guardian',
+      level: 1,
+      baseTraits: { agility: 0, strength: 1, finesse: 0, instinct: 0, presence: 0, knowledge: 0 },
+      traits: { agility: 0, strength: 1, finesse: 0, instinct: 0, presence: 0, knowledge: 0 },
+      evasion: 9,
+      armorScore: 3,
+      maxHp: 7,
+      maxStress: 6,
+      maxHope: 6,
+      maxArmor: 3,
+      armorThresholds: { major: 7, severe: 14 },
+      weapons: [],
+      proficiency: 1,
+    };
+
+    const recomputed = {
+      ...raw,
+      tier: 1,
+      class: 'Guardian',
+      hopeFeature: { name: 'Frontline Tank', description: 'Spend 3 Hope to clear 2 Armor Slots.' },
+      classFeatures: [{ name: 'Unstoppable', description: 'Once per long rest…' }],
+      activeFeatures: [{ name: 'Unstoppable', type: 'class', source: 'Guardian', description: 'Once per long rest…' }],
+    };
+
+    const merged = mergeV2DeclarativeSheetOverlay(recomputed, raw, srdData, {});
+    const ft = merged.activeFeatures.find((f) => f.name === 'Frontline Tank');
+    expect(ft).toBeDefined();
+    expect(ft.hopeCost).toBe(3);
+    expect(typeof ft.onUse).toBe('function');
+    expect(ft.type).toBe('class');
+  });
+
   it('mergeV2DeclarativeSheetOverlay does not duplicate Katari Retracting Claws in weapons', () => {
     const srdData = {
       ancestriesById: {

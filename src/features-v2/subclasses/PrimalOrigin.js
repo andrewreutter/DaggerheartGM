@@ -37,7 +37,8 @@ function pendingMagicDamageFromActorToTarget(table) {
       e.type === 'damage' &&
       e.damageType === 'magic' &&
       e.target?.instanceId === tid &&
-      e.source?.instanceId === sid
+      // Prefer source match when hydrated; allow missing source (legacy synthetics) while isActing.
+      (e.source?.instanceId == null || e.source.instanceId === sid)
   );
 }
 

@@ -372,6 +372,7 @@ describe('v2-action-loop-bridge', () => {
       armorThresholds: { major: 3, severe: 6 },
     };
     const roll = {
+      _attackerInstanceId: 'char-a',
       _selectedTargetInstanceId: 'char-t',
       subItems: [{ pre: 'damage ', input: 'd8', result: '3', post: ' phy' }],
       _useArmorByTargetId: { 'char-t': true },
@@ -382,6 +383,7 @@ describe('v2-action-loop-bridge', () => {
     expect(dmg.damageType).toBe('physical');
     expect(dmg.amount).toBe(3);
     expect(dmg.useArmor).toBe(true);
+    expect(dmg.source?.instanceId).toBe('char-a');
     // effectiveThresholds major = 3 + level 1 = 4 → raw 3 is Minor → 1 HP
     expect(hp.amount).toBe(1);
   });

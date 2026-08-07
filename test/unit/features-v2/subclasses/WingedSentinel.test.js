@@ -223,6 +223,12 @@ describe('Winged Sentinel — Power of the Gods', () => {
       })
     );
   });
+
+  it('onSessionStart no-ops when table.source is null (does not throw)', () => {
+    expect(() =>
+      PowerOfTheGods.hooks.onSessionStart({ source: null, me: { name: 'Elyra' } }),
+    ).not.toThrow();
+  });
 });
 
 describe('Winged Sentinel — Wings of Light + Power of the Gods', () => {

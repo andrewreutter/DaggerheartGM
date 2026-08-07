@@ -94,12 +94,20 @@ export function getOrderedGuideFeatureEntries(el, onV2CardChip) {
 
   const hn = resolveHopeFeatureName(el);
   const hopeRow = hn && af.find((a) => a.name === hn);
+  // Include hope rows that expose a Default Card Action (explicit chips, root
+  // hopeCost/onUse/frequency, or hooks) so they appear on the Actions strip.
+  const hopeHasCardAction =
+    !!hopeRow &&
+    ((Array.isArray(hopeRow.chips) && hopeRow.chips.length > 0) ||
+      typeof hopeRow.onUse === 'function' ||
+      hopeRow.hopeCost != null ||
+      hopeRow.stressCost != null ||
+      hopeRow.frequency != null ||
+      !!hopeRow.hooks);
   if (
-    hopeRow &&
+    hopeHasCardAction &&
     !hopeRow.hideFromGuideFeatureList &&
     onV2CardChip &&
-    Array.isArray(hopeRow.chips) &&
-    hopeRow.chips.length > 0 &&
     !(el.classFeatures || []).some((f) => f.name === hn)
   ) {
     out.unshift({ kind: 'guide', row: hopeRow, key: `hope-${hn}` });

@@ -234,6 +234,10 @@ export function buildV2SyntheticActionEffects(roll, activeElements) {
 
   const targetStub = { instanceId: targetId };
   const useArmor = roll._useArmorByTargetId?.[targetId] === true;
+  // Actor source so review predicates like “magic damage you deal” (`e.source?.instanceId`)
+  // match Volatile Magic–style chips that only check the target (isActing already gates actor).
+  const attackerId = roll._attackerInstanceId;
+  const sourceStub = attackerId ? { instanceId: attackerId } : undefined;
 
   const effects = [
     {
@@ -241,6 +245,7 @@ export function buildV2SyntheticActionEffects(roll, activeElements) {
       target: targetStub,
       amount: total,
       damageType,
+      ...(sourceStub ? { source: sourceStub } : {}),
       ...(useArmor ? { useArmor: true } : {}),
     },
     { stat: 'currentHP', target: targetStub, amount: hpLoss },
@@ -970,6 +975,66 @@ export function activateV2ReviewChip(chip, roll, activeElements, srdData, opts =
 }
 
 /**
+ * Run a selected pre-roll **intent** chip's `onUse` (e.g. Apex Predator arms `apexPredatorArmed`)
+ * without re-deducting Hope/Stress — the Before-you-roll Proceed path already applied costs.
+ *
+ * Toggle chips are activated as **on** (selected in the pre-roll panel).
+ *
+ * @param {object} chip
+ * @param {object} roll — synthetic pre-roll skeleton ({@link buildV2PreRollWeaponAttackRollSkeleton})
+ * @param {object[]} activeElements
+ * @param {object} srdData
+ * @param {{ fearCount?: number, mapConfig?: object|null, tableFeatureState?: object }} [opts]
+ * @returns {{ mutations: object[], chipState: object, feature: object|null, error?: string }}
+ */
+export function activateV2IntentChipOnUse(chip, roll, activeElements, srdData, opts = {}) {
+  if (!chip || !roll || !Array.isArray(activeElements) || !srdData) {
+    return { mutations: [], chipState: makeChipState(), feature: null, error: 'bad-args' };
+  }
+
+  const activeForLoader = expandTableCharactersAncestryForV2Loader(activeElements, srdData);
+  const registry = buildV2RegistryWithSrdItems(srdData);
+  const featureOpts = {
+    fearCount: opts.fearCount,
+    mapConfig: opts.mapConfig,
+    tableFeatureState: opts.tableFeatureState,
+  };
+  const features = loadAllV2FeaturesForTable(activeForLoader, registry, featureOpts);
+  const feature = features.find(
+    (f) => f.name === chip._featureName && f._ownerInstanceId === chip._ownerInstanceId
+  );
+  if (!feature) {
+    return { mutations: [], chipState: makeChipState(), feature: null, error: 'feature-not-found' };
+  }
+
+  const actionConfig = buildActionConfigFromRoll(roll, activeElements);
+  if (!actionConfig) {
+    return { mutations: [], chipState: makeChipState(), feature, error: 'no-action-config' };
+  }
+
+  const snapshotOwnerId = chip._crossSheetViewerInstanceId ?? chip._ownerInstanceId;
+  const gameState = {
+    ...buildV2BannerGameState({
+      roll,
+      activeElements,
+      fearCount: opts.fearCount,
+      mapConfig: opts.mapConfig,
+      tableFeatureState: opts.tableFeatureState,
+    }),
+    _ownerInstanceId: snapshotOwnerId,
+    _featureKey: feature.name,
+    _activeFeature: feature,
+    registry,
+  };
+
+  const table = buildTableSnapshot(gameState);
+  const chipState = makeChipState();
+  if (chip.isToggle) chipState._isOn = true;
+  const mutations = activateChip(chip, table, chipState, {});
+  return { mutations, chipState, feature };
+}
+
+/**
  * Build the same `table` snapshot used by {@link activateV2ReviewChip} so UI can evaluate
  * `chip.isSelect(table)` / `chip.selectTargets(table)` before activation.
  *
@@ -1524,7 +1589,13 @@ function tryWaterSplashActionNotification(roll, mutations, activeElements) {
  * }}
  */
 export function runV2DamageAckReviewActionHooks(ctx) {
-  const empty = { elementUpdates: [], postRolls: [], actionNotifications: [], skipped: [] };
+  const empty = {
+    elementUpdates: [],
+    postRolls: [],
+    actionNotifications: [],
+    skipped: [],
+    fearDelta: 0,
+  };
   const { roll, activeElements, srdData, fearCount = 0, mapConfig = null, tableFeatureState, hpApplied } = ctx || {};
   if (hpApplied < 1 || !roll || !Array.isArray(activeElements) || !srdData) return empty;
 
@@ -1552,18 +1623,41 @@ export function runV2DamageAckReviewActionHooks(ctx) {
   const rollDies = raw.filter((m) => m?.type === 'rollDie');
   const nonRoll = raw.filter((m) => m?.type !== 'rollDie');
 
+  // Table-level fear mutations are not element patches — surface as fearDelta for the host.
+  let fearDelta = 0;
+  const nonRollSansFear = [];
+  for (const m of nonRoll) {
+    if (m?.type === 'spendFear') {
+      fearDelta -= Math.max(0, Math.floor(Number(m.payload?.amount) || 0));
+      continue;
+    }
+    if (m?.type === 'gainFear') {
+      fearDelta += Math.max(0, Math.floor(Number(m.payload?.amount) || 0));
+      continue;
+    }
+    nonRollSansFear.push(m);
+  }
+
   const postRolls = [];
   if (rollDies.some((m) => String(m?.payload?.notation || '').toLowerCase() === 'd10')) {
     const pr = buildFireRetaliationPostRoll(roll, activeForLoader);
     if (pr) postRolls.push(pr);
   }
 
-  const { updates, skipped } = applyV2LifecycleMutations(activeForLoader, nonRoll, undefined);
+  // Prefer the acting attacker as setFeatureState owner (e.g. Apex Predator clears armed flag).
+  const ownerId = roll._attackerInstanceId ?? actionConfig.actorInstanceId ?? undefined;
+  const { updates, skipped } = applyV2LifecycleMutations(activeForLoader, nonRollSansFear, ownerId);
   const actionNotifications = [];
   const splash = tryWaterSplashActionNotification(roll, mutations, activeForLoader);
   if (splash) actionNotifications.push(splash);
 
-  return { elementUpdates: updates || [], postRolls, actionNotifications, skipped: skipped || [] };
+  return {
+    elementUpdates: updates || [],
+    postRolls,
+    actionNotifications,
+    skipped: skipped || [],
+    fearDelta,
+  };
 }
 
 /**

@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { ChevronDown } from 'lucide-react';
 import { Tooltip } from '../Tooltip.jsx';
 import { usePortalHoverTooltip, PortalHoverTooltipLayer } from '../../lib/portal-hover-tooltip.jsx';
+import { DH_OUTSIDE_DISMISS_EXEMPT_ATTR } from '../../lib/useHoverOverlay.js';
 
 const DROPDOWN_MAX_HEIGHT = 288;
 const DROPDOWN_GAP = 2;
@@ -174,6 +175,7 @@ export function CustomSelect({ value, onChange, options, getOptionLabel, getOpti
       {open && dropdownPos && createPortal(
         <div
           ref={dropdownRef}
+          {...{ [DH_OUTSIDE_DISMISS_EXEMPT_ATTR]: '' }}
           className={`bg-dh-surface border border-dh-border rounded shadow-xl overflow-y-auto fixed z-[90] ${dropdownClassName}`}
           style={{
             top: dropdownPos.top,

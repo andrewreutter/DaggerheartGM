@@ -78,6 +78,26 @@ describe('getOrderedGuideFeatureEntries', () => {
     const entries = getOrderedGuideFeatureEntries(el, () => true);
     expect(entries.some((e) => e.key === 'hope-Rally')).toBe(false);
   });
+
+  it('unshifts hope rows with root hopeCost/onUse (no explicit chips array)', () => {
+    const el = {
+      classFeatures: [{ name: 'Unstoppable', description: 'x', id: 'c1' }],
+      hopeFeature: { name: 'Frontline Tank', description: 'Spend 3 Hope to clear 2 Armor Slots.' },
+      activeFeatures: [
+        { name: 'Unstoppable', type: 'class', description: 'x' },
+        {
+          name: 'Frontline Tank',
+          type: 'class',
+          hopeCost: 3,
+          onUse() {},
+          description: 'Spend 3 Hope to clear 2 Armor Slots.',
+        },
+      ],
+    };
+    const entries = getOrderedGuideFeatureEntries(el, () => {});
+    expect(entries[0]?.key).toBe('hope-Frontline Tank');
+    expect(entries[0]?.row.hopeCost).toBe(3);
+  });
 });
 
 describe('getOrderedGuideLoadoutEntries / resolveLoadoutAbilityFeatRow', () => {

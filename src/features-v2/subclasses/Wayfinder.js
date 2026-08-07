@@ -79,6 +79,12 @@ export const ApexPredator = {
   name: 'Apex Predator',
   description:
     'Before you make an attack roll against your Focus, you can spend a Hope. On a successful attack, you remove a Fear from the GM Fear pool.',
+  /**
+   * Game Table damage-ack path only runs reviewAction hooks that opt into this flag
+   * (`runV2DamageAckReviewActionHooks`). Without it, `apexPredatorArmed` is set by the
+   * intent chip but Fear is never removed.
+   */
+  runOnReviewActionAfterHpApplied: true,
   chips: [
     when(
       isActing,

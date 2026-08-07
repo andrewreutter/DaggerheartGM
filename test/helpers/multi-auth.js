@@ -32,30 +32,75 @@
  *   });
  */
 
-export const BASE_URL = 'http://localhost:3457';
+import pg from 'pg';
+import { readFileSync, existsSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, resolve } from 'node:path';
+
+const { Pool } = pg;
+
+// `npx playwright test` (unlike the webServer child process, spawned with `node --env-file=.env`)
+// does NOT load `.env` into its own `process.env` — so DATABASE_URL/APP_ID are normally
+// undefined here even though the real server has them. Load just the keys this file needs
+// directly from `.env` (repo root) when missing, so `grantCampaignPassForTable` below can
+// connect to the same Postgres instance the server uses.
+(function loadDotEnvForTestHelperOnly() {
+  const envPath = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '.env');
+  if (!existsSync(envPath)) return;
+  let text;
+  try {
+    text = readFileSync(envPath, 'utf8');
+  } catch {
+    return;
+  }
+  for (let line of text.replace(/^\uFEFF/, '').split(/\r?\n/)) {
+    line = line.trim();
+    if (!line || line.startsWith('#')) continue;
+    if (line.startsWith('export ')) line = line.slice(7).trim();
+    const eq = line.indexOf('=');
+    if (eq === -1) continue;
+    const key = line.slice(0, eq).trim();
+    let val = line.slice(eq + 1).trim();
+    if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+      val = val.slice(1, -1);
+    }
+    // Strip trailing inline comments (e.g. `DATABASE_URL=... # local dev`).
+    val = val.replace(/\s+#.*$/, '').trim();
+    if (key && process.env[key] === undefined) process.env[key] = val;
+  }
+})();
+
+export const BASE_URL = `http://localhost:${Number(process.env.PLAYWRIGHT_TEST_PORT || 3457)}`;
+
+// Optional identity namespace so multiple parallel agents (each with their own
+// PLAYWRIGHT_TEST_PORT + webServer + this same shared DATABASE_URL) don't collide on the
+// fixed test uids/emails below (table ownership, dice_rolls keyed by gm_uid, library
+// character ids, etc.). Unset TEST_ACTOR_NS preserves the original fixed identities exactly,
+// so existing single-namespace suites (test/browser/*) are unaffected.
+const NS = process.env.TEST_ACTOR_NS ? `-${process.env.TEST_ACTOR_NS}` : '';
 
 /** The legacy GM identity — backward-compat with single-actor tests. */
 export const ACTOR_GM = {
-  uid: 'test-user-uid',
-  email: 'test@example.com',
+  uid: `test-user-uid${NS}`,
+  email: `test${NS}@example.com`,
   displayName: 'Test GM',
-  token: 'test-token',
+  token: NS ? `test-token:test-user-uid${NS}:test${NS}@example.com` : 'test-token',
 };
 
 /** First multi-actor player identity. */
 export const ACTOR_PLAYER_A = {
-  uid: 'test-player-a-uid',
-  email: 'player-a@example.com',
+  uid: `test-player-a-uid${NS}`,
+  email: `player-a${NS}@example.com`,
   displayName: 'Player A',
-  token: 'test-token:test-player-a-uid:player-a@example.com',
+  token: `test-token:test-player-a-uid${NS}:player-a${NS}@example.com`,
 };
 
 /** Second multi-actor player identity. */
 export const ACTOR_PLAYER_B = {
-  uid: 'test-player-b-uid',
-  email: 'player-b@example.com',
+  uid: `test-player-b-uid${NS}`,
+  email: `player-b${NS}@example.com`,
   displayName: 'Player B',
-  token: 'test-token:test-player-b-uid:player-b@example.com',
+  token: `test-token:test-player-b-uid${NS}:player-b${NS}@example.com`,
 };
 
 // ---------------------------------------------------------------------------
@@ -291,6 +336,35 @@ export async function setTableTop(tableId, patch) {
   });
   if (!res.ok) throw new Error(`setTableTop failed: ${res.status} — ${await res.text()}`);
   return res.json();
+}
+
+const TEST_APP_ID = process.env.APP_ID || 'daggerheart-gm-tool';
+let _testPgPool = null;
+
+/**
+ * Directly grants a long-lived Campaign Pass to a test table, bypassing Stripe entirely by
+ * writing straight to `table_campaign_passes` (same table `checkTableIsLive` / T21's
+ * session-start billing gate in server.js reads). Needed because the shared `ACTOR_GM`
+ * identity's one-lifetime free trial gets permanently consumed by whichever test table
+ * first starts a session with it — every table created afterward would otherwise see
+ * `checkTableIsLive` return `{ live: false, reason: 'trial_used_on_other_table' }` and 403
+ * on `Start Session`. No-ops when `DATABASE_URL` is unset — matching `POST /api/room/my/op`'s
+ * own behavior in that case (e.g. CI, which runs with an empty `.env` and skips billing
+ * checks entirely).
+ */
+export async function grantCampaignPassForTable(tableId, months = 12) {
+  if (!process.env.DATABASE_URL) return;
+  if (!_testPgPool) {
+    _testPgPool = new Pool({ connectionString: process.env.DATABASE_URL });
+  }
+  const paidThroughAt = new Date(Date.now() + months * 30 * 24 * 60 * 60 * 1000);
+  await _testPgPool.query(
+    `INSERT INTO table_campaign_passes (app_id, table_id, paid_through_at, lifetime_cents_total)
+     VALUES ($1, $2, $3, 0)
+     ON CONFLICT (app_id, table_id)
+     DO UPDATE SET paid_through_at = EXCLUDED.paid_through_at, updated_at = now()`,
+    [TEST_APP_ID, tableId, paidThroughAt],
+  );
 }
 
 /** Fetch the resolved table_state row (as `actor`). Returns the single table row object. */

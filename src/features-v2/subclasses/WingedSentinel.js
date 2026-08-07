@@ -120,7 +120,9 @@ export const PowerOfTheGods = {
     'While flying, you deal an extra 1d12 damage instead of 1d8 from your "Wings of Light" feature.',
   hooks: {
     onSessionStart(table) {
-      table.source.set('powerOfTheGodsMastery', true);
+      // `table.source` can be null when the host snapshot lacks registry/`_sourceScopeKey`
+      // wiring for this row — guard so session-start never throws mid-ack.
+      table.source?.set?.('powerOfTheGodsMastery', true);
     },
   },
 };

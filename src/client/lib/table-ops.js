@@ -1401,6 +1401,31 @@ function runV2BannerMutationLoop(mutations, activeElements, ownerInstanceId, onO
         merge(instanceId, { inventory: inv });
         break;
       }
+      case 'addCondition': {
+        const { instanceId, condition } = payload;
+        const el = getBase(instanceId);
+        if (!el || condition == null || String(condition).trim() === '') {
+          skip();
+          break;
+        }
+        const list = normalizeConditionsToList(el.conditions);
+        const name = String(condition).trim();
+        if (!list.includes(name)) list.push(name);
+        merge(instanceId, { conditions: serializeConditionsList(list) });
+        break;
+      }
+      case 'removeCondition': {
+        const { instanceId, condition } = payload;
+        const el = getBase(instanceId);
+        if (!el || condition == null || String(condition).trim() === '') {
+          skip();
+          break;
+        }
+        const name = String(condition).trim();
+        const next = normalizeConditionsToList(el.conditions).filter((c) => c !== name);
+        merge(instanceId, { conditions: serializeConditionsList(next) });
+        break;
+      }
       default:
         skip();
     }
