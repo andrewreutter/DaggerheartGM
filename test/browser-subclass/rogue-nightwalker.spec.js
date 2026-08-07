@@ -54,7 +54,7 @@ import {
   cancelAllPendingBanners,
   grantCampaignPassForTable,
 } from '../helpers/multi-auth.js';
-import { startSubclassRun } from '../helpers/subclass-video.js';
+import { startSubclassRun, filterSeriousSubclassConsoleErrors } from '../helpers/subclass-video.js';
 import { buildRogueNightwalkerCharacterData } from '../helpers/subclass-cast.js';
 
 test.describe('Subclass video — Rogue / Nightwalker', () => {
@@ -119,11 +119,12 @@ test.describe('Subclass video — Rogue / Nightwalker', () => {
 
   test("Nyx the Nightwalker: Cloaked, Sneak Attack, Rogue's Dodge, and the subclass card chips", async ({ browser }) => {
     const consoleErrors = [];
-    const { gmPage, playerPage, caption, finish, ack } = await startSubclassRun(browser, {
-      className: 'Rogue',
-      subclassName: 'Nightwalker',
-      actors: ['gm', 'playerA'],
-    });
+    const { gmPage, playerPage, caption, finish, ack, holdForDiceTumble, ensureSheetOpen } =
+      await startSubclassRun(browser, {
+        className: 'Rogue',
+        subclassName: 'Nightwalker',
+        actors: ['gm', 'playerA'],
+      });
 
     for (const [tag, p] of [['GM', gmPage], ['A', playerPage]]) {
       p.on('console', (msg) => { if (msg.type() === 'error') consoleErrors.push(`[${tag}] ${msg.text()}`); });
@@ -137,9 +138,6 @@ test.describe('Subclass video — Rogue / Nightwalker', () => {
 
       await expect(gmPage.locator('button', { hasText: 'Add Character' })).toBeVisible({ timeout: 15000 });
       await expect(playerPage.locator('text=Nyx').first()).toBeVisible({ timeout: 15000 });
-
-      // Keep 3D dice on the camera (playerPage) so the screencast captures tumbles.
-      await gmPage.getByLabel('Hide dice').click();
 
       // ---------------------------------------------------------------------
       // Start Session.
@@ -160,9 +158,8 @@ test.describe('Subclass video — Rogue / Nightwalker', () => {
       // suppressed client-side (never a pending banner) — see file header.
       // ---------------------------------------------------------------------
       await caption('PLAYER A', 'Cloaked (on)', 'Toggle card chip — adds the Cloaked condition immediately');
-      await playerNyxCard.click();
       const cloakedToggle = playerPage.getByRole('button', { name: /Cloaked/i }).first();
-      await expect(cloakedToggle).toBeVisible({ timeout: 8000 });
+      await ensureSheetOpen(playerPage, playerNyxCard, cloakedToggle);
       await cloakedToggle.click();
 
       await expect(async () => {
@@ -177,9 +174,9 @@ test.describe('Subclass video — Rogue / Nightwalker', () => {
       // Cloaked) appears on the pending banner.
       // ---------------------------------------------------------------------
       await caption('PLAYER A', 'Attacks with Dagger', 'Targets the Alley Thug (guaranteed hit)');
-      await playerNyxCard.click();
+      // Sidebar cards toggle — do not blind-click (would close the open sheet).
       const daggerCard = playerPage.getByRole('button', { name: /^Dagger\b/i }).first();
-      await expect(daggerCard).toBeVisible({ timeout: 8000 });
+      await ensureSheetOpen(playerPage, playerNyxCard, daggerCard);
       await daggerCard.click();
 
       // In-range weapon attacks with more than one valid target show an in-place
@@ -203,9 +200,10 @@ test.describe('Subclass video — Rogue / Nightwalker', () => {
       await expect(sneakAttackBtn).toBeVisible({ timeout: 8000 });
       await sneakAttackBtn.click();
 
+      await holdForDiceTumble();
       await caption('GM', "Acknowledges Nyx's attack", '');
       const attackBanner = gmPage.locator('.dice-result-banner', { hasText: attackBannerText });
-      await ack(attackBanner);
+      await ack(attackBanner, { holdMs: 0 });
       await expect(attackBanner).not.toBeVisible({ timeout: 5000 });
 
       await expect(async () => {
@@ -217,8 +215,7 @@ test.describe('Subclass video — Rogue / Nightwalker', () => {
       // Cloaked off — SRD auto-clears this on attack; the engine does not automate
       // that (see file header), so demonstrate the manual toggle instead.
       await caption('PLAYER A', 'Cloaked (off)', 'SRD auto-clears on attack — toggled manually here (not automated)');
-      await playerNyxCard.click();
-      await expect(cloakedToggle).toBeVisible({ timeout: 8000 });
+      await ensureSheetOpen(playerPage, playerNyxCard, cloakedToggle);
       await cloakedToggle.click();
 
       await expect(async () => {
@@ -234,12 +231,7 @@ test.describe('Subclass video — Rogue / Nightwalker', () => {
       await caption('PLAYER A', "Rogue's Dodge", 'Actions chip — spends 3 Hope for +2 Evasion until hit or rest');
       await playerPage.keyboard.press('Escape');
       await playerPage.waitForTimeout(150);
-      await playerNyxCard.click();
-      const nyxActionsCard = playerPage
-        .locator('div.rounded-xl')
-        .filter({ has: playerPage.locator('span.uppercase', { hasText: /^Actions$/ }) })
-        .first();
-      await expect(nyxActionsCard).toBeVisible({ timeout: 8000 });
+      const nyxActionsCard = await ensureSheetOpen(playerPage, playerNyxCard);
       const roguesDodgeBtn = nyxActionsCard
         .locator('button.dh-sheet-clickable-chip')
         .filter({ hasText: /Rogue's Dodge/i });
@@ -272,9 +264,8 @@ test.describe('Subclass video — Rogue / Nightwalker', () => {
       // appear earlier in the DOM than the Actions-strip chip.
       // ---------------------------------------------------------------------
       await caption('PLAYER A', 'Shadow Stepper', 'Marks 1 Stress, teleports between shadows, becomes Cloaked');
-      await playerNyxCard.click();
       const shadowStepperBtn = playerPage.getByRole('button', { name: /Shadow Stepper/i }).last();
-      await expect(shadowStepperBtn).toBeVisible({ timeout: 8000 });
+      await ensureSheetOpen(playerPage, playerNyxCard, shadowStepperBtn);
       await shadowStepperBtn.scrollIntoViewIfNeeded();
 
       let stressBeforeStepper;
@@ -298,9 +289,8 @@ test.describe('Subclass video — Rogue / Nightwalker', () => {
       // dice wired and no cost: click and confirm the notification fires.
       // ---------------------------------------------------------------------
       await caption('PLAYER A', 'Dark Cloud', 'Spellcast Roll (15) — narrative only, no dice wired');
-      await playerNyxCard.click();
       const darkCloudBtn = playerPage.getByRole('button', { name: /Dark Cloud/i }).last();
-      await expect(darkCloudBtn).toBeVisible({ timeout: 8000 });
+      await ensureSheetOpen(playerPage, playerNyxCard, darkCloudBtn);
       await darkCloudBtn.click();
       await expect(playerPage.locator('.dice-result-banner', { hasText: 'Dark Cloud' })).toHaveCount(0, { timeout: 6000 });
 
@@ -308,9 +298,8 @@ test.describe('Subclass video — Rogue / Nightwalker', () => {
       // Vanishing Act (Nightwalker Specialization) — 1 Stress, becomes Cloaked.
       // ---------------------------------------------------------------------
       await caption('PLAYER A', 'Vanishing Act', 'Marks 1 Stress to become Cloaked at any time');
-      await playerNyxCard.click();
       const vanishingActBtn = playerPage.getByRole('button', { name: /Vanishing Act/i }).last();
-      await expect(vanishingActBtn).toBeVisible({ timeout: 8000 });
+      await ensureSheetOpen(playerPage, playerNyxCard, vanishingActBtn);
       await vanishingActBtn.scrollIntoViewIfNeeded();
 
       let stressBeforeVanish;
@@ -334,17 +323,16 @@ test.describe('Subclass video — Rogue / Nightwalker', () => {
       // Specialization) — both display-only in this suite (see file header).
       // ---------------------------------------------------------------------
       await caption('PLAYER A', 'Adrenaline', 'Display-only — onReviewAction hook not wired into outgoing attack banners');
-      await playerNyxCard.click();
-      await expect(playerPage.getByText('Adrenaline', { exact: true }).first()).toBeVisible({ timeout: 8000 });
+      const adrenaline = playerPage.getByText('Adrenaline', { exact: true }).first();
+      await ensureSheetOpen(playerPage, playerNyxCard, adrenaline);
+      await expect(adrenaline).toBeVisible({ timeout: 8000 });
 
       await caption('PLAYER A', 'Fleeting Shadow', 'Display-only — passive +1 Evasion, unlocks Very Far for Shadow Stepper');
       await expect(playerPage.getByText('Fleeting Shadow', { exact: true }).first()).toBeVisible({ timeout: 8000 });
 
       await caption('Rogue / Nightwalker', 'Walkthrough complete', 'Cloaked, Sneak Attack, Rogue\u2019s Dodge, and every Nightwalker feature');
 
-      const seriousErrors = consoleErrors.filter(
-        (e) => !/favicon|manifest|WebGL|\[DiceRoller\] init failed|Failed to load resource.*403/i.test(e)
-      );
+      const seriousErrors = filterSeriousSubclassConsoleErrors(consoleErrors);
       expect(seriousErrors, `Unexpected console errors:\n${seriousErrors.join('\n')}`).toEqual([]);
     } finally {
       await finish();

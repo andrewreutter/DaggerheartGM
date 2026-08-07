@@ -48,24 +48,45 @@ it still enables parallel mode. Each worker gets its own GM/player uid namespace
 `TEST_PARALLEL_INDEX` in `test/helpers/multi-auth.js` so pending-banner queues (`dice_rolls`
 keyed by `gm_uid`) do not cross-cancel. Specs still share one test `webServer` on port 3457.
 
-**3D dice in the video:** the `subclass-videos` project runs **headed** (set `SUBCLASS_HEADED=0`
-for headless — WebGL may be blank) with GPU ANGLE flags, patches WebGL
-`preserveDrawingBuffer`, and keeps the dice canvas **visible on the camera** (`playerPage`).
-GM / Player B still click **Hide dice** so Acknowledge is not gated on their local tumble.
-Use harness `ack(banner)` (holds ~2.5s on the camera) instead of clicking Acknowledge directly.
+**Multi-camera stitch:** only the **active stitch camera** has a CDP screencast running
+(switches on `cutTo` / mapped `caption`). Recording every actor page at once wedged headed
+parallel runs (3 workers × 3 screencasts × WebGL). `caption('GM'|…|'PLAYER A'|…|'PLAYER B'|…)`
+auto-cuts when the role maps to an actor; non-actor roles (e.g. `'Bard / Troubadour'`) update
+caption text only. `finish()` concats ordered segment files with system **ffmpeg/ffprobe**
+(required on `PATH`) into one director `.webm`. Hard full-frame cuts only (no PiP). Stop /
+context close / ffmpeg are timeout-bounded so a hung CDP session cannot block the worker forever.
+
+**3D dice + Acknowledge:** only the **active stitch camera** has dice visible (Show); others stay
+Hidden so Acknowledge is not gated on off-camera tumbles. The harness syncs this on every
+`cutTo` / mapped `caption`. **Hold the tumble on the roller before cutting to GM:**
+
+```js
+await holdForDiceTumble();                         // still on Player A/B in the stitch
+await caption('GM', 'Acknowledges the roll', '');  // cuts to GM
+await ack(banner, { holdMs: 0 });
+```
+
+Or `ackAfterHold(banner)` (hold → cut to banner page → ack with `holdMs: 0`). Use
+`ack(banner, { holdMs: 0 })` for Start Session / non-dice banners. Project runs **headed**
+(set `SUBCLASS_HEADED=0` for headless — WebGL may be blank) with GPU ANGLE flags +
+`preserveDrawingBuffer`.
+
+**Workers:** multi-cam × headed Chromium is heavy. Parallel `test:subclasses` may need a lower
+`SUBCLASS_WORKERS` (e.g. 3) or serial runs on smaller machines — measure after a full suite pass
+before changing the npm script default.
 
 Videos land in `test-artifacts/subclass-videos/<class>--<subclass>.webm` (gitignored,
 most-recent-run-only — reruns overwrite in place). Requires **Playwright ≥1.61** (`@playwright/test`
-^1.62.1) for `page.screencast.showActions({ cursor: 'pointer' })`. `npm run dev` (esbuild watch)
-must be producing a current `public/app.js`/`public/styles.css`, or the Playwright `webServer`
-will serve a stale client bundle — `npm run build:js` once if in doubt (the webServer command
-runs `node server.js` directly, it does **not** rebuild).
+^1.62.1) for `page.screencast.showActions({ cursor: 'pointer' })` and system **ffmpeg**.
+`npm run dev` (esbuild watch) must be producing a current `public/app.js`/`public/styles.css`,
+or the Playwright `webServer` will serve a stale client bundle — `npm run build:js` once if in
+doubt (the webServer command runs `node server.js` directly, it does **not** rebuild).
 
 ## Reusable pieces
 
-- **Harness**: `test/helpers/subclass-video.js` — `startSubclassRun(browser, { className, subclassName, actors })` → `{ gmPage, playerPage, playerBPage, caption, ack, holdForDiceTumble, finish }`. `actors` is a subset of `['gm', 'playerA', 'playerB']`; omit `'playerB'` for two-actor (GM + owner) subclasses. Camera recording uses Playwright `page.screencast` with `showActions({ cursor: 'pointer' })` (animated mouse + action titles on the player page; bottom-right so they don’t cover the top-center caption). Prefer `ack(bannerLocator)` / `ack(banner, { holdMs: 0 })` for Start Session.
+- **Harness**: `test/helpers/subclass-video.js` — `startSubclassRun(browser, { className, subclassName, actors })` → `{ gmPage, playerPage, playerBPage, cutTo, caption, ack, ackAfterHold, holdForDiceTumble, ensureSheetOpen, finish }`. `actors` is a subset of `['gm', 'playerA', 'playerB']`; omit `'playerB'` for two-actor (GM + owner) subclasses. Records a screencast on the **active** actor page only (`showActions` cursor overlays, bottom-right); `caption(role, …)` sets the overlay on all pages and cuts when `role` maps to an actor. Stitch helper: `test/helpers/subclass-video-stitch.js` (`stitchOrderedSegmentFiles` + legacy multi-input trim stitch; unit-tested).
 - **Character builders**: `test/helpers/subclass-cast.js` — shared factories (`buildAllyCharacterData`, Troubadour, Nightwalker) plus per-class siblings when concurrent agents need isolation (`subclass-cast-druid.js`, `subclass-cast-bard.js`, `subclass-cast-ranger.js`, …). Keep the same shape as `buildBardTroubadourCharacterData` (see below).
-- **Table/auth plumbing**: `test/helpers/multi-auth.js` — `ACTOR_GM/PLAYER_A/PLAYER_B`, `createTestTable`, `invitePlayers`, `createLibraryCharacter`/`deleteLibraryCharacter`, `addElementsToTable`, `getTableState`, `cancelAllPendingBanners`, `deleteTestTable`, and **`grantCampaignPassForTable(tableId)`** (see Gotchas below — call this in every spec's `beforeAll`).
+- **Table/auth plumbing**: `test/helpers/multi-auth.js` — `ACTOR_GM/PLAYER_A/PLAYER_B`, `createTestTable`, `invitePlayers`, `createLibraryCharacter`/`deleteLibraryCharacter`, `addElementsToTable`, `getTableState`, `cancelAllPendingBanners`, `deleteTestTable`, and **`grantCampaignPassForTable(tableId)`** (see Gotchas below — call this in every spec's `beforeAll`). Playwright **`globalSetup`** (`test/playwright-global-setup.js` → `cleanupOrphanedTestTables` in `test/helpers/cleanup-test-tables.js`) deletes any leftover `table_state` rows owned by `test-user-uid` / `test-user-uid-*` before the suite starts, so a crashed prior run cannot leave nav tabs like **"T12 Test Table"** in subclass video screencasts.
 
 ## Lessons learned from the Bard/Troubadour pilot (read before writing a new spec)
 
@@ -128,13 +149,12 @@ runs `node server.js` directly, it does **not** rebuild).
    elements. Prefer `.first()` for distinct labels; when the Features expand header and the
    Actions-strip chip share the same name+frequency (chips hidden via `hideV2CardChips`), use
    `.last()` so the Actions chip wins (later in DOM) — see Warrior `frequencyChipButton`.
-7. **GM must drive any card chip that mutates an instance other than the owner's own** (allies,
-   adversaries). `runV2OwnedCardChipTableAction` (player path, via `postCharacterUpdate` +
-   `mergeUpdatesForInstance` in `src/client/lib/v2-merge-element-updates.js`) silently drops
-   mutations targeting any instance other than the acting player's own character. Open the
-   owner's sheet from the **GM** page (off-camera; the effects still propagate live to the camera
-   page via SSE) for chips like Bard's Relaxing/Epic/Heartbreaking Song or Make a Scene; only run
-   chips that affect solely the owner's own instance/featureState from the player camera page.
+7. **Prefer Player A for owned card chips** (including those that mutate allies/adversaries —
+   Make a Scene, Gifted Performer songs, Rousing Speech, Warden's Protection, etc.). Assigned
+   players persist via `POST /api/room/:tableId/v2-owned-card-chip` (server recomputes + full
+   `update-elements`). GM still owns Start Session, adversary attacks, and banner Acknowledge.
+   (Legacy note: an older player path used `postCharacterUpdate` + `mergeUpdatesForInstance` and
+   silently dropped non-owner patches — that gap is closed.)
 8. **Every trait/weapon roll click routes through a "Before you roll" confirmation panel first**
    (`_intentPanelForActionRoll: true` is set unconditionally by `CharacterHoverCard.jsx` for
    trait and weapon rolls) — after clicking a trait/weapon chip, `expect(page.getByText('Before you

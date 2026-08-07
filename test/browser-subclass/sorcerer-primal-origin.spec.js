@@ -3,21 +3,24 @@
  *
  * Walks through Manipulate Magic, Enchanted Aid, Arcane Charge plus inherited Sorcerer
  * class features (Arcane Sense, Minor Illusion, Channel Raw Power, Volatile Magic).
+ * Player-capable initiations (sheet, intents, review chips, weapon/spellcast rolls) are
+ * Player A; GM handles Start Session and banner Acknowledge.
  *
  * Coverage notes:
  *  - **Arcane Sense** — narrative Display: caption + assert card renders.
  *  - **Minor Illusion** — synthesized card chip (`onUse` → actionLoop).
  *  - **Channel Raw Power** — caption + assert card (Actions isSelect loadout path flaky here).
- *  - **Arcane Charge (card)** — Player A spends 2 Hope to become Charged; discharge
- *    (+10 damage) is GM-driven on the Dualstaff banner (`removeCondition` is skipped on the
- *    player review-chip apply path).
+ *  - **Arcane Charge (card)** — Player A spends 2 Hope to become Charged; Player A also
+ *    discharges (+10 damage) via the Dualstaff banner review chip (player `v2-review-chip`
+ *    path applies `removeCondition` + `addDamage` follow-up).
  *  - **Manipulate Magic** — Dualstaff's `"mag"` damage does **not** match
  *    `weaponDealsMagicDamage` (`/magic/i` or Otherworldly); intent is exercised on a
  *    Spellcast Roll instead (`action.type === 'spellcast'`). Extend-reach / extra-target
  *    paths are GM-adjudicated `actionLoop`s — captioned, not mechanically asserted.
  *  - **Enchanted Aid** — Tag Team Spellcast help + once/rest Duality swap. Tag Team is not
  *    driven by this suite's UI helpers; caption + assert the feature card renders.
- *  - **Volatile Magic** — same Dualstaff magic-damage `reviewAction` as Elemental Origin.
+ *  - **Volatile Magic** — Player A `reviewAction` on Dualstaff magic damage (same as
+ *    Elemental Origin); GM only acknowledges the banner.
  *
  * Ally-damage intervention: Primal Origin has none (Arcane Charge reacts to *self* taking
  * magic damage; Enchanted Aid is Tag Team help). Two actors (GM + Player A) are sufficient.
@@ -38,7 +41,7 @@ import {
   cancelAllPendingBanners,
   grantCampaignPassForTable,
 } from '../helpers/multi-auth.js';
-import { startSubclassRun } from '../helpers/subclass-video.js';
+import { startSubclassRun, filterSeriousSubclassConsoleErrors } from '../helpers/subclass-video.js';
 import { buildSorcererPrimalOriginCharacterData } from '../helpers/subclass-cast-sorcerer.js';
 
 test.describe('Subclass video — Sorcerer / Primal Origin', () => {
@@ -116,7 +119,7 @@ test.describe('Subclass video — Sorcerer / Primal Origin', () => {
     browser,
   }) => {
     const consoleErrors = [];
-    const { gmPage, playerPage, caption, finish, ack } = await startSubclassRun(browser, {
+    const { gmPage, playerPage, caption, finish, ack, holdForDiceTumble } = await startSubclassRun(browser, {
       className: 'Sorcerer',
       subclassName: 'Primal Origin',
       actors: ['gm', 'playerA'],
@@ -139,9 +142,6 @@ test.describe('Subclass video — Sorcerer / Primal Origin', () => {
 
       await expect(gmPage.locator('button', { hasText: 'Add Character' })).toBeVisible({ timeout: 15000 });
       await expect(playerPage.locator('text=Vex').first()).toBeVisible({ timeout: 15000 });
-
-      // Keep 3D dice on the camera (playerPage) so the screencast captures tumbles.
-      await gmPage.getByLabel('Hide dice').click();
 
       await caption('GM', 'Start Session', '');
       await gmPage.getByRole('button', { name: '▶ Session' }).click();
@@ -195,7 +195,7 @@ test.describe('Subclass video — Sorcerer / Primal Origin', () => {
       // ---------------------------------------------------------------------
       await caption('PLAYER A', 'Arcane Charge', 'Spend 2 Hope to become Charged');
       const actionsForCharge = playerPage
-        .locator('div.rounded-xl')
+        .locator('div.rounded-xl.bg-gradient-to-b')
         .filter({ has: playerPage.locator('span.uppercase', { hasText: /^Actions$/ }) })
         .first();
       await ensureVexSheet(actionsForCharge);
@@ -245,6 +245,7 @@ test.describe('Subclass video — Sorcerer / Primal Origin', () => {
         });
       }
 
+      await holdForDiceTumble();
       await caption('GM', 'Acknowledges Spellcast (Manipulate Magic)', '');
       const spellBanner = gmPage.locator('.dice-result-banner').filter({ hasText: /Spellcast|Instinct/i }).first();
       // Fall back to first pending banner if title text varies.
@@ -252,7 +253,7 @@ test.describe('Subclass video — Sorcerer / Primal Origin', () => {
         (await spellBanner.isVisible({ timeout: 2000 }).catch(() => false))
           ? spellBanner
           : gmPage.locator('.dice-result-banner').first();
-      await ack(ackBanner);
+      await ack(ackBanner, { holdMs: 0 });
       await expect(ackBanner).not.toBeVisible({ timeout: 5000 });
 
       // Stress spend is applied on intent activation; player path can race with banner ack.
@@ -266,7 +267,7 @@ test.describe('Subclass video — Sorcerer / Primal Origin', () => {
       // ---------------------------------------------------------------------
       // Arcane Charge discharge — Dualstaff attack while Charged → +10 damage.
       // ---------------------------------------------------------------------
-      await caption('PLAYER A', 'Arcane Charge (discharge)', 'Clear Charged → +10 to magic damage');
+      await caption('PLAYER A', 'Dualstaff attack', 'While Charged — discharge + Volatile Magic on the banner');
       const dualstaffCard = playerPage.getByRole('button', { name: /^Dualstaff\b/i }).first();
       await ensureVexSheet(dualstaffCard);
       await dualstaffCard.click();
@@ -286,33 +287,33 @@ test.describe('Subclass video — Sorcerer / Primal Origin', () => {
         });
       }
 
-      // Discharge + Volatile Magic from the GM banner: player review-chip apply skips
-      // `removeCondition` (and `rerollDie`), so Charged would stick if Player A clicks.
-      await caption('GM', 'Arcane Charge (discharge)', 'Clear Charged → +10 magic damage (GM review chip)');
+      // Player A owns discharge + Volatile Magic review chips; GM only acks / applies damage.
+      await caption('PLAYER A', 'Arcane Charge (discharge)', 'Clear Charged → +10 magic damage');
+      const playerAttackBanner = playerPage.locator('.dice-result-banner', { hasText: attackBannerText });
+      const dmg10 = playerAttackBanner.getByRole('button', { name: /\+10 to damage/i }).first();
+      await expect(dmg10).toBeVisible({ timeout: 8000 });
+      await dmg10.click();
+      const confirmDmg = playerPage.getByRole('button', { name: /^Confirm$/i }).first();
+      if (await confirmDmg.isVisible({ timeout: 1500 }).catch(() => false)) {
+        await confirmDmg.click();
+      }
+
+      const volatileBtn = playerPage.getByRole('button', { name: /Volatile Magic/i }).first();
+      if (await volatileBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
+        await caption('PLAYER A', 'Volatile Magic', 'Spend 3 Hope to reroll magic damage dice');
+        await volatileBtn.click();
+      } else {
+        await caption('PLAYER A', 'Volatile Magic', 'Skipped — Hope below 3 after Arcane Charge spend');
+      }
+
+      await holdForDiceTumble();
+      await caption('GM', "Acknowledges Vex's Dualstaff attack", '');
       const attackBanner = gmPage.locator('.dice-result-banner', { hasText: attackBannerText });
       const thugChip = attackBanner.getByRole('button', { name: /Alley Thug/i }).first();
       if (await thugChip.isVisible({ timeout: 2000 }).catch(() => false)) {
         await thugChip.click();
       }
-
-      const dmg10 = attackBanner.getByRole('button', { name: /\+10 to damage/i }).first();
-      await expect(dmg10).toBeVisible({ timeout: 8000 });
-      await dmg10.click();
-      const confirmDmg = gmPage.getByRole('button', { name: /^Confirm$/i }).first();
-      if (await confirmDmg.isVisible({ timeout: 1500 }).catch(() => false)) {
-        await confirmDmg.click();
-      }
-
-      const volatileBtn = attackBanner.getByRole('button', { name: /Volatile Magic/i }).first();
-      if (await volatileBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
-        await caption('GM', 'Volatile Magic', 'Spend 3 Hope to reroll magic damage dice');
-        await volatileBtn.click();
-      } else {
-        await caption('GM', 'Volatile Magic', 'Skipped — Hope below 3 after Arcane Charge spend');
-      }
-
-      await caption('GM', "Acknowledges Vex's Dualstaff attack", '');
-      await ack(attackBanner);
+      await ack(attackBanner, { holdMs: 0 });
       await expect(attackBanner).not.toBeVisible({ timeout: 5000 });
 
       await expect(async () => {
@@ -339,9 +340,7 @@ test.describe('Subclass video — Sorcerer / Primal Origin', () => {
         'Manipulate Magic, Arcane Charge, Enchanted Aid + Sorcerer class features'
       );
 
-      const seriousErrors = consoleErrors.filter(
-        (e) => !/favicon|manifest|WebGL|\[DiceRoller\] init failed|Failed to load resource.*403/i.test(e)
-      );
+      const seriousErrors = filterSeriousSubclassConsoleErrors(consoleErrors);
       expect(seriousErrors, `Unexpected console errors:\n${seriousErrors.join('\n')}`).toEqual([]);
     } finally {
       await finish();

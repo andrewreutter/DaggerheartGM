@@ -1540,7 +1540,6 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
         activeElementsForV2Snapshots: activeElements,
         tableId,
         onActionLoopNotification: handleActionNotification,
-        isPlayer: isPlayerSession,
       });
     },
     [srdData, pendingBanners, activeElements, fearCount, mapConfig, tableFeatureState, tableId]

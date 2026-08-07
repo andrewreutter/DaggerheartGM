@@ -2,8 +2,7 @@
  * Shared Game Table path for V2 card chips (hover sheet + character panel).
  */
 
-import { postActionNotification, postCharacterUpdate, postLifeSupportSelect, postTableOp } from './api.js';
-import { mergeUpdatesForInstance } from './v2-merge-element-updates.js';
+import { postActionNotification, postLifeSupportSelect, postTableOp, postV2OwnedCardChip } from './api.js';
 import { buildActionForFeatureUse } from './feature-actions.js';
 import { activateV2OwnedCardChip } from './v2-cross-sheet-lifecycle.js';
 import { applyV2LifecycleMutations } from './table-ops.js';
@@ -14,9 +13,12 @@ import { v2RollDieExtrasFromActionLoopPayload } from './v2-action-notification-d
 export { mergeUpdatesForInstance } from './v2-merge-element-updates.js';
 
 /**
- * Apply engine mutations from a successful {@link activateV2OwnedCardChip} result (post `postTableOp` + optional action-loop banners).
+ * Apply engine mutations from a successful {@link activateV2OwnedCardChip} result (GM
+ * `postTableOp` + optional action-loop banners). Assigned players must use
+ * {@link runV2OwnedCardChipTableAction} → {@link postV2OwnedCardChip} so multi-instance
+ * updates are applied server-side.
+ *
  * @param {(p: { rollText: string, displayName: string, rollMeta: object }) => void} [onSheetActionRoll] — one callback per **`sheetActionRoll`** mutation from feature **`onUse`** calling **`table.sheet.actionRoll`** (`src/features-v2/engine/table.js`).
- * @param {boolean} [isPlayer] — when true, apply only patches for `el.instanceId` via {@link postCharacterUpdate} (assigned player sheet).
  * @returns {boolean} — false if the result was an error path
  */
 export function applyV2OwnedCardChipEngineResultToTable({
@@ -28,7 +30,6 @@ export function applyV2OwnedCardChipEngineResultToTable({
   tableId,
   onActionLoopNotification,
   onSheetActionRoll,
-  isPlayer = false,
 }) {
   const { mutations, error, engineChip } = result;
   if (
@@ -64,14 +65,7 @@ export function applyV2OwnedCardChipEngineResultToTable({
     }
   }
   if (updates.length > 0) {
-    if (isPlayer && tableId) {
-      const patch = mergeUpdatesForInstance(updates, el.instanceId);
-      if (Object.keys(patch).length > 0) {
-        postCharacterUpdate(tableId, el.instanceId, patch).catch(() => {});
-      }
-    } else {
-      postTableOp({ op: 'update-elements', updates }, tableId);
-    }
+    postTableOp({ op: 'update-elements', updates }, tableId);
   }
   for (const p of actionLoopNotifications) {
     const baseDesc = p.description || '';
@@ -155,7 +149,6 @@ export async function applyDeferredV2ToggleOnAckFromRoll({
     activeElementsForV2Snapshots,
     tableId,
     onActionLoopNotification,
-    isPlayer: false,
   });
 }
 
@@ -176,7 +169,7 @@ export async function applyDeferredV2ToggleOnAckFromRoll({
  * @param {(n: object) => void} [args.onActionLoopNotification] — e.g. GMTableView handleActionNotification
  * @param {(rollText: string, displayName: string, rollMeta: object, ctx: { characterEl: object }) => void} [args.onRoll] — VTT dice; also receives **`sheetActionRoll`** payloads from **`table.sheet.actionRoll`**
  * @param {object} [args.placementShape] — same **`shape`** object reference as **`cards[].shape`** when chips use **`placements: [shape]`** (`collectChipsForShapePlacement` in `chip-system.js`)
- * @param {boolean} [args.isPlayer] — use {@link postCharacterUpdate} instead of {@link postTableOp}
+ * @param {boolean} [args.isPlayer] — assigned player: {@link postV2OwnedCardChip} (server full `update-elements`); GM: local activate + {@link postTableOp}
  */
 export async function runV2OwnedCardChipTableAction({
   featRow,
@@ -261,6 +254,40 @@ export async function runV2OwnedCardChipTableAction({
     }
     return;
   }
+  if (
+    result.error === 'disabled' ||
+    result.error === 'unaffordable' ||
+    result.error === 'no-matching-chip' ||
+    result.error === 'no-feature' ||
+    result.error === 'needs-selection' ||
+    result.error === 'bad-args'
+  ) {
+    return;
+  }
+
+  // Assigned players: server recomputes + full multi-instance update-elements (ally/adversary patches).
+  if (isPlayer && tableId) {
+    const chipLabel =
+      typeof result.engineChip?.name === 'string' && result.engineChip.name
+        ? result.engineChip.name
+        : typeof chip?.name === 'string' && chip.name
+          ? chip.name
+          : featRow.name;
+    try {
+      await postV2OwnedCardChip(tableId, {
+        ownerInstanceId: el.instanceId,
+        featureName: featRow.name,
+        chipName: chipLabel,
+        selectOpts: selectOpts || {},
+        passedFeatureKey,
+        preferShapePlacement: !!placementShape,
+      });
+    } catch (err) {
+      console.error(err);
+    }
+    return;
+  }
+
   const onSheetActionRoll =
     typeof onRoll === 'function'
       ? (p) =>
@@ -277,6 +304,5 @@ export async function runV2OwnedCardChipTableAction({
     tableId,
     onActionLoopNotification,
     onSheetActionRoll,
-    isPlayer,
   });
 }

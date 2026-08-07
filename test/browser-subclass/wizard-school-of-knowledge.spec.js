@@ -42,7 +42,7 @@ import {
   grantCampaignPassForTable,
   gmRoll,
 } from '../helpers/multi-auth.js';
-import { startSubclassRun } from '../helpers/subclass-video.js';
+import { startSubclassRun, filterSeriousSubclassConsoleErrors } from '../helpers/subclass-video.js';
 import { buildWizardSchoolOfKnowledgeCharacterData } from '../helpers/subclass-cast-wizard.js';
 
 test.describe('Subclass video — Wizard / School of Knowledge', () => {
@@ -113,7 +113,7 @@ test.describe('Subclass video — Wizard / School of Knowledge', () => {
     browser,
   }) => {
     const consoleErrors = [];
-    const { gmPage, playerPage, caption, finish, ack } = await startSubclassRun(browser, {
+    const { gmPage, playerPage, caption, finish, ack, holdForDiceTumble } = await startSubclassRun(browser, {
       className: 'Wizard',
       subclassName: 'School of Knowledge',
       actors: ['gm', 'playerA'],
@@ -136,9 +136,6 @@ test.describe('Subclass video — Wizard / School of Knowledge', () => {
 
       await expect(gmPage.locator('button', { hasText: 'Add Character' })).toBeVisible({ timeout: 15000 });
       await expect(playerPage.locator('text=Quill').first()).toBeVisible({ timeout: 15000 });
-
-      // Keep 3D dice on the camera (playerPage) so the screencast captures tumbles.
-      await gmPage.getByLabel('Hide dice').click();
 
       await caption('GM', 'Start Session', '');
       await gmPage.getByRole('button', { name: '▶ Session' }).click();
@@ -223,9 +220,10 @@ test.describe('Subclass video — Wizard / School of Knowledge', () => {
         playerPage.locator('.dice-result-banner', { hasText: traitBannerText }).getByText(/Arcane Theory/i).first()
       ).toBeVisible({ timeout: 8000 });
 
+      await holdForDiceTumble();
       await caption('GM', "Acknowledges Quill's Knowledge roll", '');
       const traitBanner = gmPage.locator('.dice-result-banner', { hasText: traitBannerText }).first();
-      await ack(traitBanner);
+      await ack(traitBanner, { holdMs: 0 });
       await expect(traitBanner).not.toBeVisible({ timeout: 5000 });
 
       // ---------------------------------------------------------------------
@@ -289,6 +287,7 @@ test.describe('Subclass video — Wizard / School of Knowledge', () => {
       }).toPass({ timeout: 10000 });
 
       const nttBanner = gmPage.locator('.dice-result-banner').filter({ hasText: /Alley Thug|Quill/i }).first();
+      await holdForDiceTumble();
       await caption('GM', 'Acknowledges the (re)rolled attack', '3 Hope spent from Quill');
       if (await nttBanner.getByRole('button', { name: 'Acknowledge' }).first().isVisible({ timeout: 3000 }).catch(() => false)) {
         // Select Quill as damage target if the banner requires it.
@@ -296,7 +295,7 @@ test.describe('Subclass video — Wizard / School of Knowledge', () => {
         if (await quillTarget.isVisible({ timeout: 1500 }).catch(() => false)) {
           await quillTarget.click();
         }
-        await ack(nttBanner);
+        await ack(nttBanner, { holdMs: 0 });
       }
 
       await expect(async () => {
@@ -311,9 +310,7 @@ test.describe('Subclass video — Wizard / School of Knowledge', () => {
         'Adept, Perfect Recall, Not This Time, and Knowledge narrative features'
       );
 
-      const seriousErrors = consoleErrors.filter(
-        (e) => !/favicon|manifest|WebGL|\[DiceRoller\] init failed|Failed to load resource.*403/i.test(e)
-      );
+      const seriousErrors = filterSeriousSubclassConsoleErrors(consoleErrors);
       expect(seriousErrors, `Unexpected console errors:\n${seriousErrors.join('\n')}`).toEqual([]);
     } finally {
       await finish();

@@ -32,18 +32,8 @@ import {
   grantCampaignPassForTable,
   BASE_URL,
 } from '../helpers/multi-auth.js';
-import { startSubclassRun } from '../helpers/subclass-video.js';
+import { startSubclassRun, filterSeriousSubclassConsoleErrors } from '../helpers/subclass-video.js';
 import { buildRangerWayfinderCharacterData } from '../helpers/subclass-cast-ranger.js';
-
-/** Click-to-pin sheets toggle closed if already open — ensure a marker is visible. */
-async function ensureSheetOpen(page, card, marker) {
-  if (await marker.isVisible({ timeout: 400 }).catch(() => false)) return;
-  await card.click();
-  if (!(await marker.isVisible({ timeout: 2000 }).catch(() => false))) {
-    await card.click();
-  }
-  await expect(marker).toBeVisible({ timeout: 8000 });
-}
 
 async function setFearCount(tableId, fearCount) {
   const res = await fetch(`${BASE_URL}/api/room/my/op`, {
@@ -156,7 +146,17 @@ test.describe('Subclass video — Ranger / Wayfinder', () => {
     browser,
   }) => {
     const consoleErrors = [];
-    const { gmPage, playerPage, caption, finish, ack } = await startSubclassRun(browser, {
+    const {
+      gmPage,
+      playerPage,
+      caption,
+      finish,
+      ack,
+      holdForDiceTumble,
+      ensureSheetOpen,
+      selectBannerDamageTarget,
+      dismissBannerTargetMenu,
+    } = await startSubclassRun(browser, {
       className: 'Ranger',
       subclassName: 'Wayfinder',
       actors: ['gm', 'playerA'],
@@ -179,9 +179,6 @@ test.describe('Subclass video — Ranger / Wayfinder', () => {
 
       await expect(gmPage.locator('button', { hasText: 'Add Character' })).toBeVisible({ timeout: 15000 });
       await expect(playerPage.locator('text=Ashra').first()).toBeVisible({ timeout: 15000 });
-
-      // Keep 3D dice on the camera (playerPage) so the screencast captures tumbles.
-      await gmPage.getByLabel('Hide dice').click();
 
       await caption('GM', 'Start Session', '');
       await gmPage.getByRole('button', { name: '▶ Session' }).click();
@@ -233,14 +230,13 @@ test.describe('Subclass video — Ranger / Wayfinder', () => {
       }
 
       const focusBannerPlayer = playerPage.locator('.dice-result-banner', { hasText: focusAttackText });
-      const preyChip = focusBannerPlayer.getByRole('button', { name: /Stalked Prey/i }).first();
-      if (await preyChip.isVisible({ timeout: 3000 }).catch(() => false)) {
-        await preyChip.click();
-      }
+      await selectBannerDamageTarget(playerPage, focusBannerPlayer, /Stalked Prey/i);
 
+      await holdForDiceTumble();
       await caption('GM', "Acknowledges Ranger's Focus attack", '');
       const focusBannerGm = gmPage.locator('.dice-result-banner', { hasText: focusAttackText });
-      await ack(focusBannerGm);
+      await selectBannerDamageTarget(gmPage, focusBannerGm, /Stalked Prey/i);
+      await ack(focusBannerGm, { holdMs: 0 });
       await expect(focusBannerGm).not.toBeVisible({ timeout: 5000 });
 
       await expect(async () => {
@@ -274,14 +270,12 @@ test.describe('Subclass video — Ranger / Wayfinder', () => {
       }
 
       const apexBannerPlayer = playerPage.locator('.dice-result-banner', { hasText: apexAttackText });
-      const apexPreyChip = apexBannerPlayer.getByRole('button', { name: /Stalked Prey/i }).first();
-      if (await apexPreyChip.isVisible({ timeout: 3000 }).catch(() => false)) {
-        await apexPreyChip.click();
-      }
+      await selectBannerDamageTarget(playerPage, apexBannerPlayer, /Stalked Prey/i);
 
       await caption('PLAYER A', 'Ruthless Predator', 'Mark 1 Stress for +1 damage on this roll');
       const ruthlessBtn = apexBannerPlayer.getByRole('button', { name: /Ruthless Predator/i }).first();
       await expect(ruthlessBtn).toBeVisible({ timeout: 8000 });
+      await dismissBannerTargetMenu(playerPage);
       await ruthlessBtn.click();
 
       // Ruthless stressCost applies on chip Activate; Apex intent spent 1 Hope (Hope-result
@@ -293,6 +287,7 @@ test.describe('Subclass video — Ranger / Wayfinder', () => {
         expect(ashraEl?.hope ?? 6).toBeLessThan(6);
       }).toPass({ timeout: 8000 });
 
+      await holdForDiceTumble();
       await caption('GM', 'Acknowledges Apex + Ruthless attack', 'On hit Apex removes 1 Fear (net may cancel a Fear-result +1)');
       const fearBeforeAck = await getTableState(tableId).then(
         (s) => s.fearCount ?? s.data?.fearCount ?? 0,
@@ -300,7 +295,7 @@ test.describe('Subclass video — Ranger / Wayfinder', () => {
       const apexBannerGm = gmPage.locator('.dice-result-banner', { hasText: apexAttackText });
       const bannerText = (await apexBannerGm.textContent().catch(() => '')) || '';
       const bannerHasFear = /with Fear/i.test(bannerText);
-      await ack(apexBannerGm);
+      await ack(apexBannerGm, { holdMs: 0 });
       await expect(apexBannerGm).not.toBeVisible({ timeout: 5000 });
 
       await expect(async () => {
@@ -331,10 +326,7 @@ test.describe('Subclass video — Ranger / Wayfinder', () => {
       }
 
       const holdBannerPlayer = playerPage.locator('.dice-result-banner', { hasText: holdAttackText });
-      const primaryChip = holdBannerPlayer.getByRole('button', { name: /Stalked Prey/i }).first();
-      if (await primaryChip.isVisible({ timeout: 3000 }).catch(() => false)) {
-        await primaryChip.click();
-      }
+      await selectBannerDamageTarget(playerPage, holdBannerPlayer, /Stalked Prey/i);
 
       const holdGroup = holdBannerPlayer.getByRole('group', { name: /Hold Them Off/i });
       await expect(holdGroup).toBeVisible({ timeout: 8000 });
@@ -351,10 +343,11 @@ test.describe('Subclass video — Ranger / Wayfinder', () => {
         expect(ashraEl?.hope ?? 6).toBeLessThanOrEqual(2);
       }).toPass({ timeout: 10000 });
 
+      await holdForDiceTumble();
       await caption('GM', 'Acknowledges Hold Them Off attack', 'Hope spent; extra-target HP apply is a known gap');
       const holdBannerGm = gmPage.locator('.dice-result-banner', { hasText: /Ashra Dagger|Hold Them Off/i }).first();
       await expect(holdBannerGm).toBeVisible({ timeout: 8000 });
-      await ack(holdBannerGm);
+      await ack(holdBannerGm, { holdMs: 0 });
       await expect(holdBannerGm).not.toBeVisible({ timeout: 8000 });
 
       await caption(
@@ -363,9 +356,7 @@ test.describe('Subclass video — Ranger / Wayfinder', () => {
         'Path Forward, Focus, Apex/Ruthless Predator, Hold Them Off',
       );
 
-      const seriousErrors = consoleErrors.filter(
-        (e) => !/favicon|manifest|WebGL|\[DiceRoller\] init failed|Failed to load resource.*403/i.test(e),
-      );
+      const seriousErrors = filterSeriousSubclassConsoleErrors(consoleErrors);
       expect(seriousErrors, `Unexpected console errors:\n${seriousErrors.join('\n')}`).toEqual([]);
     } finally {
       await finish();

@@ -2,8 +2,9 @@
  * Subclass feature video — Sorcerer / Elemental Origin.
  *
  * Walks through Elementalist, Natural Evasion, Transcendence plus inherited Sorcerer
- * class features (Arcane Sense, Minor Illusion, Channel Raw Power, Volatile Magic),
- * driven from Player A's camera with the GM acknowledging banners.
+ * class features (Arcane Sense, Minor Illusion, Channel Raw Power, Volatile Magic).
+ * Player-capable initiations (sheet, intents, review chips, weapon rolls) are Player A;
+ * GM handles Start Session, adversary attacks, and banner Acknowledge.
  *
  * Coverage notes:
  *  - **Arcane Sense** — narrative-only (Display): caption + assert the feature card renders.
@@ -44,7 +45,7 @@ import {
   grantCampaignPassForTable,
   gmRoll,
 } from '../helpers/multi-auth.js';
-import { startSubclassRun } from '../helpers/subclass-video.js';
+import { startSubclassRun, filterSeriousSubclassConsoleErrors } from '../helpers/subclass-video.js';
 import { buildSorcererElementalOriginCharacterData } from '../helpers/subclass-cast-sorcerer.js';
 
 test.describe('Subclass video — Sorcerer / Elemental Origin', () => {
@@ -127,7 +128,16 @@ test.describe('Subclass video — Sorcerer / Elemental Origin', () => {
     browser,
   }) => {
     const consoleErrors = [];
-    const { gmPage, playerPage, caption, finish, ack } = await startSubclassRun(browser, {
+    const {
+      gmPage,
+      playerPage,
+      caption,
+      finish,
+      ack,
+      holdForDiceTumble,
+      selectBannerDamageTarget,
+      dismissBannerTargetMenu,
+    } = await startSubclassRun(browser, {
       className: 'Sorcerer',
       subclassName: 'Elemental Origin',
       actors: ['gm', 'playerA'],
@@ -150,9 +160,6 @@ test.describe('Subclass video — Sorcerer / Elemental Origin', () => {
 
       await expect(gmPage.locator('button', { hasText: 'Add Character' })).toBeVisible({ timeout: 15000 });
       await expect(playerPage.locator('text=Pyra').first()).toBeVisible({ timeout: 15000 });
-
-      // Keep 3D dice on the camera (playerPage) so the screencast captures tumbles.
-      await gmPage.getByLabel('Hide dice').click();
 
       await caption('GM', 'Start Session', '');
       await gmPage.getByRole('button', { name: '▶ Session' }).click();
@@ -237,6 +244,7 @@ test.describe('Subclass video — Sorcerer / Elemental Origin', () => {
       await expect(volatileBtn).toBeVisible({ timeout: 8000 });
       await volatileBtn.click();
 
+      await holdForDiceTumble();
       await caption('GM', "Acknowledges Pyra's Dualstaff attack", '');
       const attackBanner = gmPage.locator('.dice-result-banner', { hasText: attackBannerText });
       // Select target chip if Acknowledge is gated.
@@ -244,7 +252,7 @@ test.describe('Subclass video — Sorcerer / Elemental Origin', () => {
       if (await thugChip.isVisible({ timeout: 2000 }).catch(() => false)) {
         await thugChip.click();
       }
-      await ack(attackBanner);
+      await ack(attackBanner, { holdMs: 0 });
       await expect(attackBanner).not.toBeVisible({ timeout: 5000 });
 
       await expect(async () => {
@@ -271,24 +279,34 @@ test.describe('Subclass video — Sorcerer / Elemental Origin', () => {
       }
 
       await caption('PLAYER A', 'Natural Evasion', 'Mark 1 Stress, roll d6, add to Evasion vs this attack');
-      const naturalEvasionBtn = playerPage.getByRole('button', { name: /Natural Evasion/i }).first();
+      // Pinned sheet / choose-target portal intercept banner chip clicks (lessons 13 / Wayfinder).
+      await playerPage.keyboard.press('Escape');
+      await playerPage.waitForTimeout(150);
+      const thugBannerPlayer = playerPage.locator('.dice-result-banner', { hasText: 'Alley Thug Claw' });
+      await selectBannerDamageTarget(playerPage, thugBannerPlayer, /Pyra/i);
+      await dismissBannerTargetMenu(playerPage);
+      const naturalEvasionBtn = thugBannerPlayer.getByRole('button', { name: /Natural Evasion/i }).first();
       await expect(naturalEvasionBtn).toBeVisible({ timeout: 8000 });
+      await expect(naturalEvasionBtn).toBeEnabled({ timeout: 8000 });
       await naturalEvasionBtn.click();
+      // Player locally marks the chip consumed only after a successful v2-review-chip response.
+      await expect(thugBannerPlayer.getByRole('status').filter({ hasText: /Natural Evasion/i })).toBeVisible({
+        timeout: 8000,
+      });
 
       await expect(async () => {
         const state = await getTableState(tableId);
         const pyraEl = (state.elements || []).find((e) => e.instanceId === pyraInstanceId);
         // Started at currentStress 2; Natural Evasion marks +1.
         expect(pyraEl?.currentStress).toBeGreaterThanOrEqual(3);
-      }).toPass({ timeout: 8000 });
+      }).toPass({ timeout: 10000 });
 
+      await holdForDiceTumble();
       await caption('GM', 'Acknowledges Alley Thug attack', '');
       const thugBanner = gmPage.locator('.dice-result-banner', { hasText: 'Alley Thug Claw' });
-      const pyraTargetChip = thugBanner.getByRole('button', { name: /Pyra/i }).first();
-      if (await pyraTargetChip.isVisible({ timeout: 2000 }).catch(() => false)) {
-        await pyraTargetChip.click();
-      }
-      await ack(thugBanner);
+      await selectBannerDamageTarget(gmPage, thugBanner, /Pyra/i);
+      await dismissBannerTargetMenu(gmPage);
+      await ack(thugBanner, { holdMs: 0 });
       await expect(thugBanner).not.toBeVisible({ timeout: 5000 });
 
       // ---------------------------------------------------------------------
@@ -307,9 +325,7 @@ test.describe('Subclass video — Sorcerer / Elemental Origin', () => {
         'Elementalist, Natural Evasion, Transcendence + Sorcerer class features'
       );
 
-      const seriousErrors = consoleErrors.filter(
-        (e) => !/favicon|manifest|WebGL|\[DiceRoller\] init failed|Failed to load resource.*403/i.test(e)
-      );
+      const seriousErrors = filterSeriousSubclassConsoleErrors(consoleErrors);
       expect(seriousErrors, `Unexpected console errors:\n${seriousErrors.join('\n')}`).toEqual([]);
     } finally {
       await finish();

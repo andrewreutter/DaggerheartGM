@@ -947,6 +947,33 @@ export const postV2CrossSheetChip = async (tableId, body) => {
 };
 
 /**
+ * Player: activate a V2 owned card chip on the assigned character (Guide / hover sheet).
+ * Server recomputes mutations and applies full multi-instance `update-elements` — same as GM
+ * `postTableOp` (ally/adversary patches are not dropped).
+ * Body: { ownerInstanceId, featureName, chipName, selectOpts?, passedFeatureKey?, preferShapePlacement? }.
+ */
+export const postV2OwnedCardChip = async (tableId, body) => {
+  const token = await getAuthToken();
+  if (!token) throw new Error('Not signed in');
+  const res = await fetch(`/api/room/${tableId}/v2-owned-card-chip`, {
+    method: 'POST',
+    headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const errBody = await res.json().catch(() => ({}));
+    const err = new Error(errBody.error || `HTTP ${res.status}`);
+    if (errBody.deferToBannerAck) {
+      err.deferToBannerAck = true;
+      err.engineChipName = errBody.engineChipName;
+      err.deferredToggleNextIsOn = errBody.deferredToggleNextIsOn;
+    }
+    throw err;
+  }
+  return res.json();
+};
+
+/**
  * Player: apply a V2 review banner chip (same engine as GM `handleV2ReviewChip`).
  * Body: { viewerInstanceId, bannerId, activationKey, selectOpts? }.
  */

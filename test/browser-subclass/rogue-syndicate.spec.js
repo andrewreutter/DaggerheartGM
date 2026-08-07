@@ -41,7 +41,7 @@ import {
   cancelAllPendingBanners,
   grantCampaignPassForTable,
 } from '../helpers/multi-auth.js';
-import { startSubclassRun } from '../helpers/subclass-video.js';
+import { startSubclassRun, filterSeriousSubclassConsoleErrors } from '../helpers/subclass-video.js';
 import { buildRogueSyndicateCharacterData } from '../helpers/subclass-cast-rogue-syndicate.js';
 
 test.describe('Subclass video — Rogue / Syndicate', () => {
@@ -104,11 +104,12 @@ test.describe('Subclass video — Rogue / Syndicate', () => {
 
   test('Vex the Syndicate: Cloaked, Sneak Attack, Rogue\'s Dodge, and Contacts Everywhere', async ({ browser }) => {
     const consoleErrors = [];
-    const { gmPage, playerPage, caption, finish, ack } = await startSubclassRun(browser, {
-      className: 'Rogue',
-      subclassName: 'Syndicate',
-      actors: ['gm', 'playerA'],
-    });
+    const { gmPage, playerPage, caption, finish, ack, holdForDiceTumble, ensureSheetOpen } =
+      await startSubclassRun(browser, {
+        className: 'Rogue',
+        subclassName: 'Syndicate',
+        actors: ['gm', 'playerA'],
+      });
 
     for (const [tag, p] of [['GM', gmPage], ['A', playerPage]]) {
       p.on('console', (msg) => { if (msg.type() === 'error') consoleErrors.push(`[${tag}] ${msg.text()}`); });
@@ -122,9 +123,6 @@ test.describe('Subclass video — Rogue / Syndicate', () => {
 
       await expect(gmPage.locator('button', { hasText: 'Add Character' })).toBeVisible({ timeout: 15000 });
       await expect(playerPage.locator('text=Vex').first()).toBeVisible({ timeout: 15000 });
-
-      // Keep 3D dice on the camera (playerPage) so the screencast captures tumbles.
-      await gmPage.getByLabel('Hide dice').click();
 
       // ---------------------------------------------------------------------
       // Start Session.
@@ -142,9 +140,8 @@ test.describe('Subclass video — Rogue / Syndicate', () => {
       // Cloaked (Rogue class feature) — toggle on.
       // ---------------------------------------------------------------------
       await caption('PLAYER A', 'Cloaked (on)', 'Toggle card chip — adds the Cloaked condition immediately');
-      await playerVexCard.click();
       const cloakedToggle = playerPage.getByRole('button', { name: /Cloaked/i }).first();
-      await expect(cloakedToggle).toBeVisible({ timeout: 8000 });
+      await ensureSheetOpen(playerPage, playerVexCard, cloakedToggle);
       await cloakedToggle.click();
 
       await expect(async () => {
@@ -157,9 +154,9 @@ test.describe('Subclass video — Rogue / Syndicate', () => {
       // Weapon attack → Sneak Attack review chip.
       // ---------------------------------------------------------------------
       await caption('PLAYER A', 'Attacks with Dagger', 'Targets the Alley Thug (guaranteed hit)');
-      await playerVexCard.click();
+      // Sidebar cards toggle — do not blind-click (would close the open sheet).
       const daggerCard = playerPage.getByRole('button', { name: /^Dagger\b/i }).first();
-      await expect(daggerCard).toBeVisible({ timeout: 8000 });
+      await ensureSheetOpen(playerPage, playerVexCard, daggerCard);
       await daggerCard.click();
 
       const chooseTargetText = playerPage.getByText('Choose target');
@@ -180,9 +177,10 @@ test.describe('Subclass video — Rogue / Syndicate', () => {
       await expect(sneakAttackBtn).toBeVisible({ timeout: 8000 });
       await sneakAttackBtn.click();
 
+      await holdForDiceTumble();
       await caption('GM', "Acknowledges Vex's attack", '');
       const attackBanner = gmPage.locator('.dice-result-banner', { hasText: attackBannerText });
-      await ack(attackBanner);
+      await ack(attackBanner, { holdMs: 0 });
       await expect(attackBanner).not.toBeVisible({ timeout: 5000 });
 
       await expect(async () => {
@@ -192,8 +190,7 @@ test.describe('Subclass video — Rogue / Syndicate', () => {
       }).toPass({ timeout: 8000 });
 
       await caption('PLAYER A', 'Cloaked (off)', 'SRD auto-clears on attack — toggled manually here (not automated)');
-      await playerVexCard.click();
-      await expect(cloakedToggle).toBeVisible({ timeout: 8000 });
+      await ensureSheetOpen(playerPage, playerVexCard, cloakedToggle);
       await cloakedToggle.click();
 
       await expect(async () => {
@@ -208,12 +205,7 @@ test.describe('Subclass video — Rogue / Syndicate', () => {
       await caption('PLAYER A', "Rogue's Dodge", 'Actions chip — spends 3 Hope for +2 Evasion until hit or rest');
       await playerPage.keyboard.press('Escape');
       await playerPage.waitForTimeout(150);
-      await playerVexCard.click();
-      const vexActionsCard = playerPage
-        .locator('div.rounded-xl')
-        .filter({ has: playerPage.locator('span.uppercase', { hasText: /^Actions$/ }) })
-        .first();
-      await expect(vexActionsCard).toBeVisible({ timeout: 8000 });
+      const vexActionsCard = await ensureSheetOpen(playerPage, playerVexCard);
       const roguesDodgeBtn = vexActionsCard
         .locator('button.dh-sheet-clickable-chip')
         .filter({ hasText: /Rogue's Dodge/i });
@@ -245,8 +237,9 @@ test.describe('Subclass video — Rogue / Syndicate', () => {
       // the hover sheet closed — see subclass-video-test-plan.md lesson 5).
       // ---------------------------------------------------------------------
       await caption('PLAYER A', 'Well-Connected', 'Narrative-only — name a local contact when you arrive in town');
-      await playerVexCard.click();
-      await expect(playerPage.getByText('Well-Connected', { exact: true }).first()).toBeVisible({ timeout: 8000 });
+      const wellConnected = playerPage.getByText('Well-Connected', { exact: true }).first();
+      await ensureSheetOpen(playerPage, playerVexCard, wellConnected);
+      await expect(wellConnected).toBeVisible({ timeout: 8000 });
 
       await caption('PLAYER A', 'Reliable Backup', 'Mastery — 3× Contacts Everywhere + shielding / d20 Hope options');
       await expect(playerPage.getByText('Reliable Backup', { exact: true }).first()).toBeVisible({ timeout: 8000 });
@@ -280,9 +273,7 @@ test.describe('Subclass video — Rogue / Syndicate', () => {
 
       await caption('Rogue / Syndicate', 'Walkthrough complete', 'Cloaked, Sneak Attack, Rogue\u2019s Dodge, Contacts Everywhere + mastery');
 
-      const seriousErrors = consoleErrors.filter(
-        (e) => !/favicon|manifest|WebGL|\[DiceRoller\] init failed|Failed to load resource.*403/i.test(e)
-      );
+      const seriousErrors = filterSeriousSubclassConsoleErrors(consoleErrors);
       expect(seriousErrors, `Unexpected console errors:\n${seriousErrors.join('\n')}`).toEqual([]);
     } finally {
       await finish();

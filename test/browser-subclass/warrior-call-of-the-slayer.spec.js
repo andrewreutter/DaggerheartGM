@@ -8,12 +8,12 @@
  * Coverage notes:
  *  - **Slayer** — after Start Session, seed `featureState.CallOfTheSlayer.slayerDiceCount`
  *    so spend chips are available without relying on a Hope-dominating roll. Optionally
- *    banks a die when the reviewAction chip appears; spends via the intent select chip
- *    on a Broadsword attack.
+ *    banks a die when the reviewAction chip appears; Player A spends via the damage-roll
+ *    isSelect chip on a Broadsword attack.
  *  - **Weapon Specialist** — on a successful primary-weapon attack with a secondary that
- *    has a leading damage die, spend 1 Hope to add that die (reviewAction chip).
- *  - **Martial Preparation** — long-rest card chip posts an informational action-loop
- *    (suppressed banner → Action Log).
+ *    has a leading damage die, Player A spends 1 Hope to add that die (reviewAction chip).
+ *  - **Martial Preparation** — long-rest card chip (Player A) posts an informational
+ *    action-loop (suppressed banner → Action Log).
  *  - **Attack of Opportunity** — same GM token-drag pattern as Call of the Brave.
  */
 
@@ -33,7 +33,7 @@ import {
   cancelAllPendingBanners,
   grantCampaignPassForTable,
 } from '../helpers/multi-auth.js';
-import { startSubclassRun } from '../helpers/subclass-video.js';
+import { startSubclassRun, filterSeriousSubclassConsoleErrors } from '../helpers/subclass-video.js';
 import { buildWarriorCallOfTheSlayerCharacterData } from '../helpers/subclass-cast-warrior.js';
 
 const CHAR_NAME = 'Rex';
@@ -137,7 +137,7 @@ test.describe('Subclass video — Warrior / Call of the Slayer', () => {
     browser,
   }) => {
     const consoleErrors = [];
-    const { gmPage, playerPage, caption, finish, ack } = await startSubclassRun(browser, {
+    const { gmPage, playerPage, caption, finish, ack, holdForDiceTumble } = await startSubclassRun(browser, {
       className: 'Warrior',
       subclassName: 'Call of the Slayer',
       actors: ['gm', 'playerA'],
@@ -160,9 +160,6 @@ test.describe('Subclass video — Warrior / Call of the Slayer', () => {
 
       await expect(gmPage.locator('button', { hasText: 'Add Character' })).toBeVisible({ timeout: 15000 });
       await expect(playerPage.locator(`text=${CHAR_NAME}`).first()).toBeVisible({ timeout: 15000 });
-
-      // Keep 3D dice on the camera (playerPage) so the screencast captures tumbles.
-      await gmPage.getByLabel('Hide dice').click();
 
       await caption('GM', 'Start Session', 'Slayer onSessionStart would clear leftover dice from a prior session');
       await gmPage.getByRole('button', { name: '▶ Session' }).click();
@@ -190,7 +187,7 @@ test.describe('Subclass video — Warrior / Call of the Slayer', () => {
       await caption('PLAYER A', 'No Mercy', 'Actions chip — 3 Hope applies immediately');
       await openCharSheet(playerPage, playerCharCard);
       const slayerActionsCard = playerPage
-        .locator('div.rounded-xl')
+        .locator('div.rounded-xl.bg-gradient-to-b')
         .filter({ has: playerPage.locator('span.uppercase', { hasText: /^Actions$/ }) })
         .first();
       await expect(slayerActionsCard).toBeVisible({ timeout: 8000 });
@@ -268,28 +265,29 @@ test.describe('Subclass video — Warrior / Call of the Slayer', () => {
         await bankBtn.click();
       }
 
-      // Slayer spend uses `table.rollDie` — player review-chip path skips `rollDie`
-      // mutations; GM must activate the isSelect option on the shared banner.
-      await caption('GM', 'Slayer (spend on damage roll)', 'Spend 1 seeded Slayer die into the damage pool');
-      const spendOneDmg = gmPage.getByRole('button', { name: /Spend 1 Slayer/i }).first();
+      // Slayer spend: engine `rollDie` is audit-only; damage lands via addRollStatic →
+      // postBannerAddDamage (player `postPlayerV2ReviewChip` applies the same follow-ups).
+      await caption('PLAYER A', 'Slayer (spend on damage roll)', 'Spend 1 seeded Slayer die into the damage pool');
+      const spendOneDmg = playerPage.getByRole('button', { name: /Spend 1 Slayer/i }).first();
       await expect(spendOneDmg).toBeVisible({ timeout: 8000 });
       await spendOneDmg.click();
 
-      const specialistBtn = gmPage.getByRole('button', { name: /Weapon Specialist/i }).first();
+      const specialistBtn = playerPage.getByRole('button', { name: /Weapon Specialist/i }).first();
       if (await specialistBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
-        await caption('GM', 'Weapon Specialist', 'Spend 1 Hope — add Shortsword damage die to this hit');
+        await caption('PLAYER A', 'Weapon Specialist', 'Spend 1 Hope — add Shortsword damage die to this hit');
         await specialistBtn.click();
       } else {
-        await caption('GM', 'Weapon Specialist', 'Chip not on banner — sheet assert later');
+        await caption('PLAYER A', 'Weapon Specialist', 'Chip not on banner — sheet assert later');
       }
 
+      await holdForDiceTumble();
       await caption('GM', "Acknowledges Rex's attack", '');
       const attackBanner = gmPage.locator('.dice-result-banner', { hasText: attackBannerText });
       const targetChip = attackBanner.getByRole('button', { name: new RegExp(ADV_NAME, 'i') }).first();
       if (await targetChip.isVisible({ timeout: 2000 }).catch(() => false)) {
         await targetChip.click();
       }
-      await ack(attackBanner);
+      await ack(attackBanner, { holdMs: 0 });
       await expect(attackBanner).not.toBeVisible({ timeout: 5000 });
 
       await expect(async () => {
@@ -300,16 +298,15 @@ test.describe('Subclass video — Warrior / Call of the Slayer', () => {
       }).toPass({ timeout: 8000 });
 
       // ---------------------------------------------------------------------
-      // Martial Preparation — card chip → Action Log narration.
+      // Martial Preparation — card chip → Action Log narration (Player A).
       // ---------------------------------------------------------------------
       await caption(
-        'GM',
+        'PLAYER A',
         'Martial Preparation',
         'Long-rest training move — party gains Slayer Dice (GM distributes)'
       );
-      const gmCharCard = gmPage.locator('div.group\\/char', { hasText: CHAR_NAME });
-      await openCharSheet(gmPage, gmCharCard);
-      const martialBtn = frequencyChipButton(gmPage, 'Martial Preparation');
+      await openCharSheet(playerPage, playerCharCard);
+      const martialBtn = frequencyChipButton(playerPage, 'Martial Preparation');
       await expect(martialBtn).toBeVisible({ timeout: 8000 });
       await martialBtn.click();
       await expect(playerPage.getByText(/Martial Preparation/i).first()).toBeVisible({ timeout: 8000 });
@@ -345,9 +342,7 @@ test.describe('Subclass video — Warrior / Call of the Slayer', () => {
         'Slayer, Weapon Specialist, Martial Preparation, No Mercy, Attack of Opportunity'
       );
 
-      const seriousErrors = consoleErrors.filter(
-        (e) => !/favicon|manifest|WebGL|\[DiceRoller\] init failed|Failed to load resource.*403/i.test(e)
-      );
+      const seriousErrors = filterSeriousSubclassConsoleErrors(consoleErrors);
       expect(seriousErrors, `Unexpected console errors:\n${seriousErrors.join('\n')}`).toEqual([]);
     } finally {
       await finish();

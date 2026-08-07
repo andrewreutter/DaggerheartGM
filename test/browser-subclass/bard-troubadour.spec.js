@@ -7,13 +7,12 @@
  * See .cursor/plans/subclass_feature_video_suite_7ff124eb.plan.md for the harness design.
  *
  * Multi-user coverage exercised here (per the plan's "Bard/Troubadour + Wordsmith" row):
- *  - GM-driven Gifted Performer songs (Relaxing / Epic / Heartbreaking) — these mutate
- *    OTHER characters/adversaries, so they are run from the GM's client (`postTableOp`
- *    applies multi-instance mutations); a player-owned card chip would have those
- *    mutations silently dropped by `mergeUpdatesForInstance` (see
- *    src/client/lib/v2-merge-element-updates.js).
- *  - Player A (the Troubadour) runs "Grant Rally Dice" and "Spend Rally Die — Clear
- *    Stress" on their own sheet — both only mutate the Bard's own instance/featureState.
+ *  - Player A (the Troubadour) runs Make a Scene and Gifted Performer songs (Relaxing /
+ *    Epic / Heartbreaking) — these mutate OTHER characters/adversaries via
+ *    `POST /api/room/:tableId/v2-owned-card-chip` (lesson 7: prefer Player A for
+ *    multi-instance owned card chips).
+ *  - Player A also runs "Grant Rally Dice" and "Spend Rally Die — Clear Stress" on
+ *    their own sheet.
  *  - Player B rolls a trait (real action roll banner) and spends the granted Rally Die
  *    on it via the "Spend Rally Die — Action" `reviewAction` chip (cross-player, mid-
  *    banner — same pattern as M2 in test/browser/action-loop-multi-actor.spec.js).
@@ -41,7 +40,7 @@ import {
   cancelAllPendingBanners,
   grantCampaignPassForTable,
 } from '../helpers/multi-auth.js';
-import { startSubclassRun } from '../helpers/subclass-video.js';
+import { startSubclassRun, filterSeriousSubclassConsoleErrors } from '../helpers/subclass-video.js';
 import { buildBardTroubadourCharacterData, buildAllyCharacterData } from '../helpers/subclass-cast.js';
 
 test.describe('Subclass video — Bard / Troubadour', () => {
@@ -126,11 +125,12 @@ test.describe('Subclass video — Bard / Troubadour', () => {
 
   test('Brix the Troubadour: Gifted Performer, Maestro, Virtuoso, and Rally', async ({ browser }) => {
     const consoleErrors = [];
-    const { gmPage, playerPage, playerBPage, caption, finish, ack } = await startSubclassRun(browser, {
-      className: 'Bard',
-      subclassName: 'Troubadour',
-      actors: ['gm', 'playerA', 'playerB'],
-    });
+    const { gmPage, playerPage, playerBPage, caption, finish, ack, holdForDiceTumble, ensureSheetOpen } =
+      await startSubclassRun(browser, {
+        className: 'Bard',
+        subclassName: 'Troubadour',
+        actors: ['gm', 'playerA', 'playerB'],
+      });
 
     for (const [tag, p] of [['GM', gmPage], ['A', playerPage], ['B', playerBPage]]) {
       p.on('console', (msg) => { if (msg.type() === 'error') consoleErrors.push(`[${tag}] ${msg.text()}`); });
@@ -147,12 +147,6 @@ test.describe('Subclass video — Bard / Troubadour', () => {
       await expect(playerPage.locator('text=Brix').first()).toBeVisible({ timeout: 15000 });
       await expect(playerBPage.locator('text=Reya').first()).toBeVisible({ timeout: 15000 });
 
-      // Keep 3D dice on the camera (playerPage) so the screencast captures tumbles.
-      // Hide on other clients so GM Acknowledge isn't gated on their local animation.
-      for (const p of [gmPage, playerBPage]) {
-        await p.getByLabel('Hide dice').click();
-      }
-
       // ---------------------------------------------------------------------
       // Start Session — fires onSessionStart hooks: Virtuoso doubles Gifted
       // Performer's per-long-rest cap; Maestro arms `maestroRallyChoices`.
@@ -165,27 +159,21 @@ test.describe('Subclass video — Bard / Troubadour', () => {
       await expect(startBanner).not.toBeVisible({ timeout: 5000 });
 
       // ---------------------------------------------------------------------
-      // GM opens Brix's sheet to run the Gifted Performer / Make a Scene cards —
-      // these mutate the ally and the adversary, so they must go through the GM's
-      // `postTableOp` path, not a player-owned card chip (see file header).
-      // NOTE: the character hover sheet auto-dismisses after every action/roll
-      // (`dismissAllHoverCards`, GMTableView.jsx), so it is re-opened before each
-      // of the following card interactions. The sidebar card root has a stable
-      // `group/char` class (GameTableCharacterListCard) — scoping the click to it
-      // (rather than a bare `text=Brix` substring match) avoids accidentally
-      // matching "Brix" text elsewhere on the page (Action Log entries, banner
-      // titles, the open sheet's own header), which would silently no-op instead
-      // of (re)opening the sidebar sheet.
+      // Player A opens Brix's sheet for Make a Scene / Gifted Performer songs —
+      // multi-instance mutations apply via `POST .../v2-owned-card-chip` (lesson 7).
+      // Sidebar cards *toggle* — owned card chips often leave the sheet open, so use
+      // ensureSheetOpen (not a blind re-click). Scope clicks to `group/char` so
+      // Action Log / banner "Brix" text does not steal the click.
       // ---------------------------------------------------------------------
-      const gmBrixCard = gmPage.locator('div.group\\/char', { hasText: 'Brix' });
+      const playerABrixCard = playerPage.locator('div.group\\/char', { hasText: 'Brix' });
 
       // Make a Scene (Bard base feature): spend 3 Hope to Distract the Goblin.
-      await caption('GM', 'Make a Scene', 'Spends 3 Hope — the Goblin becomes Distracted (-2 Difficulty)');
-      await gmBrixCard.click();
-      const makeASceneGroup = gmPage.getByRole('group', { name: /Make a Scene targets/i });
+      await caption('PLAYER A', 'Make a Scene', 'Spends 3 Hope — the Goblin becomes Distracted (-2 Difficulty)');
+      const actionsMake = await ensureSheetOpen(playerPage, playerABrixCard);
+      const makeASceneGroup = actionsMake.getByRole('group', { name: /Make a Scene targets/i });
       await expect(makeASceneGroup).toBeVisible({ timeout: 8000 });
       await makeASceneGroup.getByRole('button', { name: /Snarling Goblin/i }).click();
-      await expect(gmPage.locator('.dice-result-banner', { hasText: 'Make a Scene' })).toHaveCount(0, { timeout: 6000 });
+      await expect(playerPage.locator('.dice-result-banner', { hasText: 'Make a Scene' })).toHaveCount(0, { timeout: 6000 });
 
       await expect(async () => {
         const state = await getTableState(tableId);
@@ -194,20 +182,21 @@ test.describe('Subclass video — Bard / Troubadour', () => {
       }).toPass({ timeout: 8000 });
 
       // Relaxing Song, used twice — Virtuoso doubles the per-long-rest cap from 1 to 2.
-      await caption('GM', 'Relaxing Song (1st use)', 'Clears 1 HP for Brix and Reya (Close range)');
-      await gmBrixCard.click();
-      // Card chip buttons render with a trailing frequency badge (e.g. "Relaxing Song ○ long"),
-      // so the accessible name isn't an exact match — use a substring regex, not anchored.
-      const relaxingBtn = gmPage.getByRole('button', { name: /Relaxing Song/i }).first();
+      await caption('PLAYER A', 'Relaxing Song (1st use)', 'Clears 1 HP for Brix and Reya (Close range)');
+      const actionsRelax1 = await ensureSheetOpen(playerPage, playerABrixCard);
+      // Chip labels ≠ feature name (Gifted Performer), so page-wide match is safe; still
+      // scope to Actions so Features expand headers cannot steal the click.
+      const relaxingBtn = actionsRelax1.getByRole('button', { name: /Relaxing Song/i });
       await expect(relaxingBtn).toBeVisible({ timeout: 8000 });
       await relaxingBtn.click();
-      await expect(gmPage.locator('.dice-result-banner', { hasText: 'Relaxing Song' })).toHaveCount(0, { timeout: 6000 });
+      await expect(playerPage.locator('.dice-result-banner', { hasText: 'Relaxing Song' })).toHaveCount(0, { timeout: 6000 });
 
-      await caption('GM', 'Relaxing Song (2nd use)', 'Virtuoso: twice per long rest instead of once');
-      await gmBrixCard.click();
-      await expect(relaxingBtn).toBeVisible({ timeout: 8000 });
-      await relaxingBtn.click();
-      await expect(gmPage.locator('.dice-result-banner', { hasText: 'Relaxing Song' })).toHaveCount(0, { timeout: 6000 });
+      await caption('PLAYER A', 'Relaxing Song (2nd use)', 'Virtuoso: twice per long rest instead of once');
+      const actionsRelax2 = await ensureSheetOpen(playerPage, playerABrixCard);
+      const relaxingBtn2 = actionsRelax2.getByRole('button', { name: /Relaxing Song/i });
+      await expect(relaxingBtn2).toBeVisible({ timeout: 8000 });
+      await relaxingBtn2.click();
+      await expect(playerPage.locator('.dice-result-banner', { hasText: 'Relaxing Song' })).toHaveCount(0, { timeout: 6000 });
 
       await expect(async () => {
         const state = await getTableState(tableId);
@@ -220,12 +209,12 @@ test.describe('Subclass video — Bard / Troubadour', () => {
       }).toPass({ timeout: 8000 });
 
       // Epic Song: make the Goblin Vulnerable.
-      await caption('GM', 'Epic Song', 'Applies Vulnerable to a target within Close range');
-      await gmBrixCard.click();
-      const epicSongGroup = gmPage.getByRole('group', { name: /Epic Song targets/i });
+      await caption('PLAYER A', 'Epic Song', 'Applies Vulnerable to a target within Close range');
+      const actionsEpic = await ensureSheetOpen(playerPage, playerABrixCard);
+      const epicSongGroup = actionsEpic.getByRole('group', { name: /Epic Song targets/i });
       await expect(epicSongGroup).toBeVisible({ timeout: 8000 });
       await epicSongGroup.getByRole('button', { name: /Snarling Goblin/i }).click();
-      await expect(gmPage.locator('.dice-result-banner', { hasText: 'Epic Song' })).toHaveCount(0, { timeout: 6000 });
+      await expect(playerPage.locator('.dice-result-banner', { hasText: 'Epic Song' })).toHaveCount(0, { timeout: 6000 });
 
       await expect(async () => {
         const state = await getTableState(tableId);
@@ -234,12 +223,12 @@ test.describe('Subclass video — Bard / Troubadour', () => {
       }).toPass({ timeout: 8000 });
 
       // Heartbreaking Song: Brix and Reya each gain 1 Hope.
-      await caption('GM', 'Heartbreaking Song', 'Brix and Reya gain 1 Hope');
-      await gmBrixCard.click();
-      const heartbreakingBtn = gmPage.getByRole('button', { name: /Heartbreaking Song/i }).first();
+      await caption('PLAYER A', 'Heartbreaking Song', 'Brix and Reya gain 1 Hope');
+      const actionsHeart = await ensureSheetOpen(playerPage, playerABrixCard);
+      const heartbreakingBtn = actionsHeart.getByRole('button', { name: /Heartbreaking Song/i });
       await expect(heartbreakingBtn).toBeVisible({ timeout: 8000 });
       await heartbreakingBtn.click();
-      await expect(gmPage.locator('.dice-result-banner', { hasText: 'Heartbreaking Song' })).toHaveCount(0, { timeout: 6000 });
+      await expect(playerPage.locator('.dice-result-banner', { hasText: 'Heartbreaking Song' })).toHaveCount(0, { timeout: 6000 });
 
       await expect(async () => {
         const state = await getTableState(tableId);
@@ -251,13 +240,11 @@ test.describe('Subclass video — Bard / Troubadour', () => {
 
       // ---------------------------------------------------------------------
       // Player A (Brix) grants Rally Dice, then spends their own die to clear Stress.
-      // (Sheet is re-opened before each card interaction — see note above.)
       // ---------------------------------------------------------------------
-      const playerABrixCard = playerPage.locator('div.group\\/char', { hasText: 'Brix' });
-
       await caption('PLAYER A', 'Grant Rally Dice', 'Once per session — gives Brix and Reya a Rally Die each');
-      await playerABrixCard.click();
-      const grantBtn = playerPage.getByRole('button', { name: /Grant Rally Dice/i }).first();
+      const actionsGrant = await ensureSheetOpen(playerPage, playerABrixCard);
+      // Rally chips can render twice in the Actions strip (guide + modifier row) — use .first().
+      const grantBtn = actionsGrant.getByRole('button', { name: /Grant Rally Dice/i }).first();
       await expect(grantBtn).toBeVisible({ timeout: 8000 });
       await grantBtn.click();
 
@@ -268,8 +255,10 @@ test.describe('Subclass video — Bard / Troubadour', () => {
       }).toPass({ timeout: 8000 });
 
       await caption('PLAYER A', 'Spend Rally Die — Clear Stress', 'Rolls the die and clears Stress equal to the result');
-      await playerABrixCard.click();
-      const clearStressBtn = playerPage.getByRole('button', { name: /Spend Rally Die — Clear Stress/i }).first();
+      const actionsClear = await ensureSheetOpen(playerPage, playerABrixCard);
+      const clearStressBtn = actionsClear
+        .getByRole('button', { name: /Spend Rally Die — Clear Stress/i })
+        .first();
       await expect(clearStressBtn).toBeVisible({ timeout: 8000 });
       await clearStressBtn.click();
 
@@ -277,9 +266,10 @@ test.describe('Subclass video — Bard / Troubadour', () => {
       for (const p of [gmPage, playerPage, playerBPage]) {
         await expect(p.locator('.dice-result-banner', { hasText: rallyStressBannerText })).toBeVisible({ timeout: 8000 });
       }
+      await holdForDiceTumble();
       await caption('GM', 'Acknowledges the Rally Die roll', '');
       const rallyStressBanner = gmPage.locator('.dice-result-banner', { hasText: rallyStressBannerText });
-      await ack(rallyStressBanner);
+      await ack(rallyStressBanner, { holdMs: 0 });
       await expect(rallyStressBanner).not.toBeVisible({ timeout: 5000 });
 
       await expect(async () => {
@@ -296,12 +286,13 @@ test.describe('Subclass video — Bard / Troubadour', () => {
       const playerBReyaCard = playerBPage.locator('div.group\\/char', { hasText: 'Reya' });
 
       await caption('PLAYER B', 'Opens own sheet, rolls Agility', 'Triggers an action roll banner');
-      await playerBReyaCard.click();
       // The sheet has two "Roll Agility"-titled controls: the main Traits grid chip (action
       // roll) and a "Reaction Rolls" grid cell at the bottom of the Defense card — both share
       // the same `title` attribute. The main chip's accessible name includes its verb hint
       // (`TRAIT_VERBS.agility`, CharacterDisplay.jsx) so it can be targeted unambiguously.
-      await playerBPage.getByRole('button', { name: /Agility.*Sprint/i }).click();
+      const agilityBtn = playerBPage.getByRole('button', { name: /Agility.*Sprint/i });
+      await ensureSheetOpen(playerBPage, playerBReyaCard, agilityBtn);
+      await agilityBtn.click();
 
       // Every trait roll routes through a "Before you roll" confirmation panel
       // (`_intentPanelForActionRoll`, CharacterHoverCard.jsx) — Proceed to actually post it.
@@ -318,9 +309,10 @@ test.describe('Subclass video — Bard / Troubadour', () => {
       await expect(spendActionBtn).toBeVisible({ timeout: 8000 });
       await spendActionBtn.click();
 
+      await holdForDiceTumble();
       await caption('GM', 'Acknowledges Reya’s roll', '');
       const bBanner = gmPage.locator('.dice-result-banner', { hasText: bBannerText });
-      await ack(bBanner);
+      await ack(bBanner, { holdMs: 0 });
       await expect(bBanner).not.toBeVisible({ timeout: 5000 });
 
       // ---------------------------------------------------------------------
@@ -334,16 +326,14 @@ test.describe('Subclass video — Bard / Troubadour', () => {
         'Maestro — after Rally',
         'Cross-sheet chip from Brix’s Troubadour feature (choice UI not yet wired for cross-sheet chips)'
       );
-      // Own action rolls also dismiss the local hover card (see note above) — reopen it.
-      await playerBReyaCard.click();
+      // Own action rolls dismiss the local hover card — reopen without toggling closed.
       const maestroChip = playerBPage.getByText(/Maestro — after Rally/i).first();
+      await ensureSheetOpen(playerBPage, playerBReyaCard, maestroChip);
       await expect(maestroChip).toBeVisible({ timeout: 8000 });
 
       await caption('Bard / Troubadour', 'Walkthrough complete', 'Gifted Performer, Maestro, Virtuoso, and Rally');
 
-      const seriousErrors = consoleErrors.filter(
-        (e) => !/favicon|manifest|WebGL|\[DiceRoller\] init failed|Failed to load resource.*403/i.test(e)
-      );
+      const seriousErrors = filterSeriousSubclassConsoleErrors(consoleErrors);
       expect(seriousErrors, `Unexpected console errors:\n${seriousErrors.join('\n')}`).toEqual([]);
     } finally {
       await finish();

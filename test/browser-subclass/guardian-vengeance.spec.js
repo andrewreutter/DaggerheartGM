@@ -34,7 +34,7 @@ import {
   cancelAllPendingBanners,
   grantCampaignPassForTable,
 } from '../helpers/multi-auth.js';
-import { startSubclassRun } from '../helpers/subclass-video.js';
+import { startSubclassRun, filterSeriousSubclassConsoleErrors } from '../helpers/subclass-video.js';
 import { buildGuardianVengeanceCharacterData, buildAllyCharacterData } from '../helpers/subclass-cast.js';
 
 async function gmAdversaryAttack(tableId, { advInstanceId, targetInstanceId, displayName }) {
@@ -125,7 +125,7 @@ test.describe('Subclass video — Guardian / Vengeance', () => {
 
   test('Voss the Vengeance: Revenge, Nemesis, Act of Reprisal, and Guardian class features', async ({ browser }) => {
     const consoleErrors = [];
-    const { gmPage, playerPage, playerBPage, caption, finish, ack } = await startSubclassRun(browser, {
+    const { gmPage, playerPage, playerBPage, caption, finish, ack, holdForDiceTumble } = await startSubclassRun(browser, {
       className: 'Guardian',
       subclassName: 'Vengeance',
       actors: ['gm', 'playerA', 'playerB'],
@@ -146,11 +146,6 @@ test.describe('Subclass video — Guardian / Vengeance', () => {
       await expect(playerPage.locator('text=Voss').first()).toBeVisible({ timeout: 15000 });
       await expect(playerBPage.locator('text=Reya').first()).toBeVisible({ timeout: 15000 });
 
-      // Keep 3D dice on the camera (playerPage) so the screencast captures tumbles.
-      for (const p of [gmPage, playerBPage]) {
-        await p.getByLabel('Hide dice').click();
-      }
-
       await caption('GM', 'Start Session', '');
       await gmPage.getByRole('button', { name: '▶ Session' }).click();
       const startBanner = gmPage.locator('.dice-result-banner', { hasText: 'Start Session' });
@@ -162,7 +157,6 @@ test.describe('Subclass video — Guardian / Vengeance', () => {
       await cancelAllPendingBanners();
 
       const playerVossCard = playerPage.locator('div.group\\/char', { hasText: 'Voss' });
-      const gmVossCard = gmPage.locator('div.group\\/char', { hasText: 'Voss' });
 
       async function openVossSheet() {
         await playerPage.keyboard.press('Escape');
@@ -170,13 +164,11 @@ test.describe('Subclass video — Guardian / Vengeance', () => {
         await playerVossCard.click();
       }
 
-      async function clickGmVossActionsChip(nameRe) {
-        await gmPage.keyboard.press('Escape');
-        await gmPage.waitForTimeout(150);
-        await gmVossCard.click();
-        const actionsCard = gmPage
-          .locator('div.rounded-xl')
-          .filter({ has: gmPage.locator('span.uppercase', { hasText: /^Actions$/ }) })
+      async function clickPlayerVossActionsChip(nameRe) {
+        await openVossSheet();
+        const actionsCard = playerPage
+          .locator('div.rounded-xl.bg-gradient-to-b')
+          .filter({ has: playerPage.locator('span.uppercase', { hasText: /^Actions$/ }) })
           .first();
         await expect(actionsCard).toBeVisible({ timeout: 8000 });
         const btn = actionsCard.locator('button.dh-sheet-clickable-chip').filter({ hasText: nameRe });
@@ -195,9 +187,9 @@ test.describe('Subclass video — Guardian / Vengeance', () => {
       // ---------------------------------------------------------------------
       // Frontline Tank — V2 Actions chip (not amber Hope card; see plan lesson 15).
       // ---------------------------------------------------------------------
-      await caption('GM', 'Frontline Tank', 'Actions chip — spends 3 Hope, clears 2 Armor');
+      await caption('PLAYER A', 'Frontline Tank', 'Actions chip — spends 3 Hope, clears 2 Armor');
       await updateElement(tableId, vossInstanceId, { currentArmor: 2 });
-      await clickGmVossActionsChip(/Frontline Tank/i);
+      await clickPlayerVossActionsChip(/Frontline Tank/i);
       await expect(async () => {
         const state = await getTableState(tableId);
         const voss = (state.elements || []).find((e) => e.instanceId === vossInstanceId);
@@ -205,19 +197,20 @@ test.describe('Subclass video — Guardian / Vengeance', () => {
         expect(voss?.currentArmor).toBe(0);
       }).toPass({ timeout: 8000 });
 
-      await gmPage.keyboard.press('Escape');
+      await playerPage.keyboard.press('Escape');
       const frontlineBanner = gmPage
         .locator('.dice-result-banner')
         .filter({ hasText: /Voss/i })
         .filter({ hasText: 'Frontline Tank' });
       if (await frontlineBanner.first().isVisible().catch(() => false)) {
+        await holdForDiceTumble();
         await caption('GM', 'Acknowledges Frontline Tank', 'Dismisses action notice');
-        await ack(frontlineBanner.first(), { force: true });
+        await ack(frontlineBanner.first(), { force: true, holdMs: 0 });
         await expect(frontlineBanner.first()).not.toBeVisible({ timeout: 5000 });
       }
 
       await caption('PLAYER A', 'Unstoppable', 'Once per long rest');
-      await clickGmVossActionsChip(/Unstoppable/i);
+      await clickPlayerVossActionsChip(/Unstoppable/i);
       await expect(async () => {
         const state = await getTableState(tableId);
         const voss = (state.elements || []).find((e) => e.instanceId === vossInstanceId);
@@ -282,7 +275,7 @@ test.describe('Subclass video — Guardian / Vengeance', () => {
       await openVossSheet();
       // Card `selectTargets` bank in the Actions strip: aria-label `${chip.name} targets`.
       const actionsCard = playerPage
-        .locator('div.rounded-xl')
+        .locator('div.rounded-xl.bg-gradient-to-b')
         .filter({ has: playerPage.locator('span.uppercase', { hasText: /^Actions$/ }) })
         .first();
       const prioritizeGroup = actionsCard.getByRole('group', { name: /Prioritize targets/i });
@@ -328,6 +321,7 @@ test.describe('Subclass video — Guardian / Vengeance', () => {
       await expect(swapBtn).toBeVisible({ timeout: 8000 });
       await swapBtn.click();
 
+      await holdForDiceTumble();
       await caption('GM', "Acknowledges Voss's attack", '');
       const attackBanner = gmPage.locator('.dice-result-banner', { hasText: attackBannerText });
       // Select the adversary target chip if Acknowledge is gated on a damage target.
@@ -335,14 +329,12 @@ test.describe('Subclass video — Guardian / Vengeance', () => {
       if (await cutthroatTarget.isVisible({ timeout: 2000 }).catch(() => false)) {
         await cutthroatTarget.click();
       }
-      await ack(attackBanner);
+      await ack(attackBanner, { holdMs: 0 });
       await expect(attackBanner).not.toBeVisible({ timeout: 5000 });
 
       await caption('Guardian / Vengeance', 'Walkthrough complete', 'Revenge, Nemesis, Act of Reprisal, Frontline Tank, Unstoppable');
 
-      const seriousErrors = consoleErrors.filter(
-        (e) => !/favicon|manifest|WebGL|\[DiceRoller\] init failed|Failed to load resource.*403/i.test(e)
-      );
+      const seriousErrors = filterSeriousSubclassConsoleErrors(consoleErrors);
       expect(seriousErrors, `Unexpected console errors:\n${seriousErrors.join('\n')}`).toEqual([]);
     } finally {
       await finish();

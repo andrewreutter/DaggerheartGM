@@ -16,6 +16,9 @@ const SUBCLASS_WORKERS = Math.max(1, Number(process.env.SUBCLASS_WORKERS || 3) |
 const SUBCLASS_HEADED = process.env.SUBCLASS_HEADED !== '0';
 
 export default defineConfig({
+  // Purge leftover multi-actor / subclass `table_state` rows for test GM uids
+  // before webServer starts (DB-only; see test/playwright-global-setup.js).
+  globalSetup: './test/playwright-global-setup.js',
   use: {
     baseURL: `http://localhost:${PORT}`,
     headless: true,
@@ -37,12 +40,16 @@ export default defineConfig({
       name: 'subclass-videos',
       testDir: 'test/browser-subclass',
       // Multi-actor walkthroughs with deliberate caption pauses run much longer than the
-      // regression suite's per-test default. Dice-tumble holds add a bit more.
-      timeout: 240000,
+      // regression suite's per-test default. Headed + parallel GPU contention needs more
+      // headroom than a single headless authoring run.
+      timeout: SUBCLASS_HEADED && SUBCLASS_PARALLEL ? 480000 : 300000,
       // One file per subclass — run files across workers when SUBCLASS_PARALLEL is set.
       fullyParallel: true,
       use: {
         headless: !SUBCLASS_HEADED,
+        // Fail stuck clicks/expects in ~20s instead of burning the whole test timeout
+        // when a banner overlay / wedged WebGL canvas blocks actionability.
+        actionTimeout: 20000,
         launchOptions: {
           args: [
             '--enable-webgl',

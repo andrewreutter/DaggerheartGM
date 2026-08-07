@@ -43,7 +43,9 @@ import { createClient as createSupabaseClient } from '@supabase/supabase-js';
 import { CHARACTER_RUNTIME_KEYS, applyTableOp } from './src/client/lib/table-ops.js';
 import { gateTableOpForPrepMode, isTablePlayAllowed } from './src/client/lib/table-session-gate.js';
 import { v2RollDieExtrasFromActionLoopPayload } from './src/client/lib/v2-action-notification-dice.js';
+import { withActionBannerSuppression } from './src/client/lib/action-notification-banner.js';
 import { computePlayerV2CrossSheetChipApply } from './src/server/v2-player-cross-sheet-chip.js';
+import { computePlayerV2OwnedCardChipApply } from './src/server/v2-player-owned-card-chip.js';
 import { computePlayerV2ReviewChipApply, loadSrdDataForV2Engine } from './src/server/v2-player-review-chip.js';
 import { buildCharacterAiFromConcept } from './src/llm-character-builder.js';
 import { buildAdversaryAiFromConcept } from './src/llm-adversary-builder.js';
@@ -926,6 +928,36 @@ async function notifyCharacterTableRoomsForUid(uid) {
       subscriptionManager.notifyChange('table_state', tableId);
     }
   }
+}
+
+/**
+ * Build an action-notification payload from a V2 `actionLoop` lifecycle notification.
+ * Applies the same informational-banner suppression as GM/player clients
+ * (`withActionBannerSuppression`) so card-chip narrations (Cloaked, Make a Scene, songs)
+ * land in the Action Log as `acknowledged` instead of blocking the table as pending banners.
+ */
+function buildV2ActionLoopRollPayload(p, { initiatorUid } = {}) {
+  const baseDesc = p.description || '';
+  const actionText =
+    p.affectedSummary && String(p.affectedSummary).trim()
+      ? `${baseDesc}\n${p.affectedSummary}`
+      : baseDesc;
+  return withActionBannerSuppression(
+    {
+      _action: true,
+      rollUser: p.rollUser || 'Table',
+      actionName: p.title,
+      actionText,
+      _v2ActionLoop: true,
+      _reactorInstanceId: p.instanceId,
+      ...v2RollDieExtrasFromActionLoopPayload(p),
+      ...(Array.isArray(p.affectedNames) && p.affectedNames.length > 0
+        ? { _affectedNames: p.affectedNames, _affectedInstanceIds: p.affectedInstanceIds }
+        : {}),
+      ...(initiatorUid != null ? { _initiatorUid: initiatorUid } : {}),
+    },
+    { actionAdversaryTargets: [] }
+  );
 }
 
 async function appendRollLog(gmUid, rollData) {
@@ -4177,25 +4209,7 @@ app.post('/api/room/:tableId/v2-cross-sheet-chip', requireAuth, async (req, res)
       await applyOpToTableState(tableId, { op: 'update-elements', updates });
     }
     for (const p of actionLoopNotifications) {
-      const baseDesc = p.description || '';
-      const actionText =
-        p.affectedSummary && String(p.affectedSummary).trim()
-          ? `${baseDesc}\n${p.affectedSummary}`
-          : baseDesc;
-      const payload = {
-        _action: true,
-        rollUser: p.rollUser || 'Table',
-        actionName: p.title,
-        actionText,
-        _v2ActionLoop: true,
-        _reactorInstanceId: p.instanceId,
-        ...v2RollDieExtrasFromActionLoopPayload(p),
-        ...(Array.isArray(p.affectedNames) && p.affectedNames.length > 0
-          ? { _affectedNames: p.affectedNames, _affectedInstanceIds: p.affectedInstanceIds }
-          : {}),
-        _initiatorUid: req.uid,
-      };
-      await appendRollLog(gmUid, payload);
+      await appendRollLog(gmUid, buildV2ActionLoopRollPayload(p, { initiatorUid: req.uid }));
     }
     // Persist physical dice rolls queued by `table.sheet.rollThenResume` / `actionRoll` as real
     // pending banners so the GM sees an animated dice roll and can acknowledge the result.
@@ -4212,6 +4226,84 @@ app.post('/api/room/:tableId/v2-cross-sheet-chip', requireAuth, async (req, res)
       return res.status(400).json({ error: err.message || 'Bad request' });
     }
     console.error('POST /api/room/:tableId/v2-cross-sheet-chip error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// POST /api/room/:tableId/v2-owned-card-chip — Player activates a V2 owned card chip on their assigned character.
+// Server recomputes mutations and applies full multi-instance update-elements (same as GM postTableOp).
+app.post('/api/room/:tableId/v2-owned-card-chip', requireAuth, async (req, res) => {
+  const ctx = await resolveTableAccess(APP_ID, req.params.tableId, req);
+  if (ctx.error) return res.status(ctx.error).json({ error: ctx.message });
+  const { tableId, gmUid, tableState } = ctx;
+  if (req.uid === gmUid) {
+    return res.status(400).json({ error: 'GM clients use postTableOp' });
+  }
+  const {
+    ownerInstanceId,
+    featureName,
+    chipName,
+    selectOpts,
+    passedFeatureKey,
+    preferShapePlacement,
+  } = req.body || {};
+  try {
+    const rawElements = tableState.elements || [];
+    const activeElements = await resolveCharacterElements(rawElements);
+    const ownerEl = activeElements.find(
+      (e) => e.elementType === 'character' && e.instanceId === ownerInstanceId
+    );
+    if (!ownerEl) return res.status(404).json({ error: 'Character not found' });
+    const assignedByUid = ownerEl.assignedPlayerUid === req.uid;
+    const assignedByEmail =
+      !!req.email &&
+      (ownerEl.assignedPlayerEmail || '').toLowerCase() === req.email.toLowerCase();
+    if (!assignedByUid && !assignedByEmail) {
+      return res.status(403).json({ error: 'Not assigned to this character' });
+    }
+
+    const computed = computePlayerV2OwnedCardChipApply({
+      activeElements,
+      tableState,
+      ownerInstanceId,
+      featureName,
+      chipName,
+      selectOpts,
+      passedFeatureKey,
+      preferShapePlacement: !!preferShapePlacement,
+    });
+    if (!computed.ok) {
+      return res.status(computed.status).json({
+        error: computed.error,
+        ...(computed.deferToBannerAck
+          ? {
+              deferToBannerAck: true,
+              engineChipName: computed.engineChipName,
+              deferredToggleNextIsOn: computed.deferredToggleNextIsOn,
+            }
+          : {}),
+      });
+    }
+    const { updates, actionLoopNotifications, sheetActionRolls } = computed;
+    if (updates.length > 0) {
+      await applyOpToTableState(tableId, { op: 'update-elements', updates });
+    }
+    for (const p of actionLoopNotifications) {
+      await appendRollLog(gmUid, buildV2ActionLoopRollPayload(p, { initiatorUid: req.uid }));
+    }
+    for (const p of sheetActionRolls || []) {
+      const rollData = buildRollData(p.rollText, p.displayName || '', req.uid, {
+        ...(p.rollMeta && typeof p.rollMeta === 'object' ? p.rollMeta : {}),
+        _initiatorUid: req.uid,
+      });
+      if (rollData) await appendRollLog(gmUid, rollData);
+    }
+    res.json({ ok: true });
+  } catch (err) {
+    if (err?.statusCode === 400) {
+      return res.status(400).json({ error: err.message || 'Bad request' });
+    }
+    console.error('POST /api/room/:tableId/v2-owned-card-chip error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 });

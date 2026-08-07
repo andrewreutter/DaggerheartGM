@@ -27,7 +27,7 @@ import {
   cancelAllPendingBanners,
   grantCampaignPassForTable,
 } from '../helpers/multi-auth.js';
-import { startSubclassRun } from '../helpers/subclass-video.js';
+import { startSubclassRun, filterSeriousSubclassConsoleErrors } from '../helpers/subclass-video.js';
 import {
   buildSeraphWingedSentinelCharacterData,
   buildAllyCharacterData,
@@ -128,11 +128,12 @@ test.describe('Subclass video — Seraph / Winged Sentinel', () => {
   }) => {
     test.setTimeout(300_000);
     const consoleErrors = [];
-    const { gmPage, playerPage, playerBPage, caption, finish, ack } = await startSubclassRun(browser, {
-      className: 'Seraph',
-      subclassName: 'Winged Sentinel',
-      actors: ['gm', 'playerA', 'playerB'],
-    });
+    const { gmPage, playerPage, playerBPage, caption, finish, ack, holdForDiceTumble, ensureSheetOpen } =
+      await startSubclassRun(browser, {
+        className: 'Seraph',
+        subclassName: 'Winged Sentinel',
+        actors: ['gm', 'playerA', 'playerB'],
+      });
 
     for (const [tag, p] of [
       ['GM', gmPage],
@@ -157,11 +158,6 @@ test.describe('Subclass video — Seraph / Winged Sentinel', () => {
       await expect(playerPage.locator('text=Elyra').first()).toBeVisible({ timeout: 15000 });
       await expect(playerBPage.locator('text=Reya').first()).toBeVisible({ timeout: 15000 });
 
-      // Keep 3D dice on the camera (playerPage) so the screencast captures tumbles.
-      for (const p of [gmPage, playerBPage]) {
-        await p.getByLabel('Hide dice').click();
-      }
-
       // ---------------------------------------------------------------------
       // Start Session → Prayer Dice + Power of the Gods mastery flag
       // ---------------------------------------------------------------------
@@ -181,8 +177,9 @@ test.describe('Subclass video — Seraph / Winged Sentinel', () => {
         hasText: 'Elyra — Prayer Dice',
       });
       await expect(prayerDiceBanner).toBeVisible({ timeout: 8000 });
-      await ack(prayerDiceBanner, { force: true });
-      await expect(prayerDiceBanner).not.toBeVisible({ timeout: 5000 });
+      await holdForDiceTumble();
+      await ack(prayerDiceBanner, { force: true, holdMs: 0 });
+      await expect(prayerDiceBanner).not.toBeVisible({ timeout: 8000 });
 
       await expect(async () => {
         const state = await getTableState(tableId);
@@ -201,34 +198,33 @@ test.describe('Subclass video — Seraph / Winged Sentinel', () => {
         'Subclass features on sheet',
         'Wings of Light, Ethereal Visage, Ascendant (+4 Severe), Power of the Gods',
       );
-      await playerElyraCard.click();
-      await expect(playerPage.getByText('Wings of Light', { exact: true }).first()).toBeVisible({
-        timeout: 8000,
-      });
-      await expect(playerPage.getByText('Ascendant', { exact: true }).first()).toBeVisible({
-        timeout: 8000,
-      });
-      await expect(playerPage.getByText('Ethereal Visage', { exact: true }).first()).toBeVisible({
-        timeout: 8000,
-      });
-      await expect(playerPage.getByText('Power of the Gods', { exact: true }).first()).toBeVisible({
-        timeout: 8000,
-      });
+      // Open via Actions strip (not feature-name markers — caption overlay repeats those names).
+      await ensureSheetOpen(playerPage, playerElyraCard);
+      const featuresCard = playerPage
+        .locator('div.rounded-xl.bg-gradient-to-b')
+        .filter({ has: playerPage.locator('span.uppercase', { hasText: /^Features$/ }) })
+        .first();
+      await expect(featuresCard).toBeVisible({ timeout: 8000 });
+      for (const name of ['Wings of Light', 'Ascendant', 'Ethereal Visage', 'Power of the Gods']) {
+        const feat = featuresCard.getByText(name, { exact: true }).first();
+        await feat.scrollIntoViewIfNeeded();
+        await expect(feat).toBeVisible({ timeout: 8000 });
+      }
 
       // ---------------------------------------------------------------------
       // Wings of Light — Flying toggle
       // ---------------------------------------------------------------------
       await caption('PLAYER A', 'Wings of Light — Flying', 'Toggle on (fly)');
-      await playerElyraCard.click();
       const flyingToggle = playerPage.getByRole('button', { name: /^Flying\b/i }).first();
-      await expect(flyingToggle).toBeVisible({ timeout: 8000 });
+      await ensureSheetOpen(playerPage, playerElyraCard, flyingToggle);
       await flyingToggle.click();
 
       // Flying may be immediate or deferred-to-ack depending on host wiring; handle both.
       const flyingBanner = gmPage.locator('.dice-result-banner', { hasText: /Wings of Light|Flying/i });
       if (await flyingBanner.isVisible({ timeout: 3000 }).catch(() => false)) {
+        await holdForDiceTumble();
         await caption('GM', 'Acknowledges Flying toggle', '');
-        await ack(flyingBanner);
+        await ack(flyingBanner, { holdMs: 0 });
         await expect(flyingBanner).not.toBeVisible({ timeout: 5000 });
       }
 
@@ -236,9 +232,8 @@ test.describe('Subclass video — Seraph / Winged Sentinel', () => {
       // Pick up and carry (Stress) — only available while flying
       // ---------------------------------------------------------------------
       await caption('PLAYER A', 'Pick up and carry', 'Mark 1 Stress while flying');
-      await playerElyraCard.click();
       const carryBtn = playerPage.getByRole('button', { name: /Pick up and carry/i }).first();
-      await expect(carryBtn).toBeVisible({ timeout: 8000 });
+      await ensureSheetOpen(playerPage, playerElyraCard, carryBtn);
       const stressBefore = (
         await getTableState(tableId)
       ).elements?.find((e) => e.instanceId === seraphInstanceId)?.currentStress;
@@ -259,9 +254,9 @@ test.describe('Subclass video — Seraph / Winged Sentinel', () => {
         'Attack while flying',
         'Wings of Light — extra damage (Hope for d12 via Power of the Gods)',
       );
-      await playerElyraCard.click();
+      // Sidebar cards toggle — do not blind-click after Carry left the sheet open.
       const broadsword = playerPage.getByRole('button', { name: /Broadsword/i }).first();
-      await expect(broadsword).toBeVisible({ timeout: 8000 });
+      await ensureSheetOpen(playerPage, playerElyraCard, broadsword);
       await broadsword.click();
 
       if (await playerPage.getByText('Choose target').isVisible({ timeout: 3000 }).catch(() => false)) {
@@ -289,22 +284,21 @@ test.describe('Subclass video — Seraph / Winged Sentinel', () => {
         );
       }
 
+      await holdForDiceTumble();
       await caption('GM', 'Acknowledges Broadsword attack', '');
       await gmPage.keyboard.press('Escape');
       const attackBanner = gmPage.locator('.dice-result-banner', { hasText: attackBannerText });
-      await ack(attackBanner, { force: true });
+      await ack(attackBanner, { force: true, holdMs: 0 });
       await expect(attackBanner).not.toBeVisible({ timeout: 5000 });
 
       // ---------------------------------------------------------------------
-      // Life Support (GM) — ally heal (deferred banner; ally must be selected on banner)
+      // Life Support (Player A initiates; GM ack applies Hope + ally heal)
       // ---------------------------------------------------------------------
-      const gmElyraCard = gmPage.locator('div.group\\/char', { hasText: 'Elyra' });
-      await caption('GM', 'Life Support', 'Spend 3 Hope — clear 1 HP on Reya');
-      await gmElyraCard.click();
-      const lifeSupportGroup = gmPage.getByRole('group', { name: /Life Support targets/i });
-      await expect(lifeSupportGroup).toBeVisible({ timeout: 8000 });
+      await caption('PLAYER A', 'Life Support', 'Spend 3 Hope — clear 1 HP on Reya');
+      const lifeSupportGroup = playerPage.getByRole('group', { name: /Life Support targets/i });
+      await ensureSheetOpen(playerPage, playerElyraCard, lifeSupportGroup);
       await lifeSupportGroup.getByRole('button', { name: /Reya/i }).click();
-      await gmPage.keyboard.press('Escape');
+      await playerPage.keyboard.press('Escape');
       const lifeSupportBanner = gmPage.locator('.dice-result-banner', { hasText: 'Life Support' });
       await expect(lifeSupportBanner).toBeVisible({ timeout: 8000 });
       const lifeSupportAck = lifeSupportBanner.getByRole('button', { name: 'Acknowledge' });
@@ -314,7 +308,9 @@ test.describe('Subclass video — Seraph / Winged Sentinel', () => {
         await lifeSupportBanner.getByRole('button', { name: /Reya/i }).click();
       }
       await expect(lifeSupportAck).toBeEnabled({ timeout: 8000 });
-      await ack(lifeSupportBanner, { force: true });
+      await holdForDiceTumble();
+      await caption('GM', 'Acknowledges Life Support', 'Hope spend + ally heal apply on ack');
+      await ack(lifeSupportBanner, { force: true, holdMs: 0 });
       await expect(lifeSupportBanner).not.toBeVisible({ timeout: 8000 });
 
       // ---------------------------------------------------------------------
@@ -325,10 +321,11 @@ test.describe('Subclass video — Seraph / Winged Sentinel', () => {
         'Ethereal Visage — Presence',
         'While flying: advantage on Presence rolls',
       );
-      await playerElyraCard.click();
       // Main Traits grid chip includes TRAIT_VERBS.presence (Charm/Perform/Deceive) —
       // disambiguates from the Defense card's Reaction Rolls grid (same "Presence" title).
-      await playerPage.getByRole('button', { name: /Presence.*Charm/i }).click();
+      const presenceBtn = playerPage.getByRole('button', { name: /Presence.*Charm/i });
+      await ensureSheetOpen(playerPage, playerElyraCard, presenceBtn);
+      await presenceBtn.click();
       await expect(playerPage.getByText('Before you roll')).toBeVisible({ timeout: 8000 });
       await playerPage.getByRole('button', { name: 'Proceed' }).click();
 
@@ -347,12 +344,13 @@ test.describe('Subclass video — Seraph / Winged Sentinel', () => {
         await fearChip.click();
       }
 
+      await holdForDiceTumble();
       await caption('GM', 'Acknowledges Presence roll', '');
       // Pinned character sheet (z-[55]) intercepts banner Acknowledge — dismiss first.
       await gmPage.keyboard.press('Escape');
       await playerPage.keyboard.press('Escape');
       const presenceBanner = gmPage.locator('.dice-result-banner', { hasText: presenceBannerText });
-      await ack(presenceBanner, { force: true });
+      await ack(presenceBanner, { force: true, holdMs: 0 });
       await expect(presenceBanner).not.toBeVisible({ timeout: 5000 });
 
       // ---------------------------------------------------------------------
@@ -382,10 +380,11 @@ test.describe('Subclass video — Seraph / Winged Sentinel', () => {
       await expect(prayerDieOption).toBeVisible({ timeout: 8000 });
       await prayerDieOption.click();
 
+      await holdForDiceTumble();
       await caption('GM', "Acknowledges Reya’s roll", '');
       await gmPage.keyboard.press('Escape');
       const bBanner = gmPage.locator('.dice-result-banner', { hasText: bBannerText });
-      await ack(bBanner, { force: true });
+      await ack(bBanner, { force: true, holdMs: 0 });
       await expect(bBanner).not.toBeVisible({ timeout: 5000 });
 
       await caption(
@@ -394,12 +393,7 @@ test.describe('Subclass video — Seraph / Winged Sentinel', () => {
         'Prayer Dice resume, Wings of Light, Life Support, M2 Prayer Die spend',
       );
 
-      const seriousErrors = consoleErrors.filter(
-        (e) =>
-          !/favicon|manifest|WebGL|\[DiceRoller\] init failed|Failed to load resource.*(403|404)|source\.set|reading 'set'|billing.*session-start/i.test(
-            e,
-          ),
-      );
+      const seriousErrors = filterSeriousSubclassConsoleErrors(consoleErrors);
       expect(seriousErrors, `Unexpected console errors:\n${seriousErrors.join('\n')}`).toEqual([]);
     } finally {
       await finish();

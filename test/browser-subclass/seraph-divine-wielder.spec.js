@@ -12,8 +12,8 @@
  *    (M2 pattern from test/browser/action-loop-multi-actor.spec.js).
  *
  * Notes:
- *  - Life Support mutates an ally → driven from the GM page (`postTableOp`);
- *    player-owned chips silently drop cross-instance mutations.
+ *  - Life Support: Player A initiates the card chip (posts deferred action banner +
+ *    `life-support-select`); GM acknowledges so Hope spend + ally heal apply.
  *  - Sparing Touch: display-only in this suite — Actions strip `isSelect` returns
  *    before `selectTargets`, so the heal cannot be activated from the chip UI yet.
  *  - Devout (tier 3+) also has `onSessionStart` that silently rolls (n+1)d4 drop
@@ -42,7 +42,7 @@ import {
   grantCampaignPassForTable,
   playerRoll,
 } from '../helpers/multi-auth.js';
-import { startSubclassRun } from '../helpers/subclass-video.js';
+import { startSubclassRun, filterSeriousSubclassConsoleErrors } from '../helpers/subclass-video.js';
 import {
   buildSeraphDivineWielderCharacterData,
   buildAllyCharacterData,
@@ -146,11 +146,12 @@ test.describe('Subclass video — Seraph / Divine Wielder', () => {
   }) => {
     test.setTimeout(300_000);
     const consoleErrors = [];
-    const { gmPage, playerPage, playerBPage, caption, finish, ack } = await startSubclassRun(browser, {
-      className: 'Seraph',
-      subclassName: 'Divine Wielder',
-      actors: ['gm', 'playerA', 'playerB'],
-    });
+    const { gmPage, playerPage, playerBPage, caption, finish, ack, holdForDiceTumble, ensureSheetOpen } =
+      await startSubclassRun(browser, {
+        className: 'Seraph',
+        subclassName: 'Divine Wielder',
+        actors: ['gm', 'playerA', 'playerB'],
+      });
 
     for (const [tag, p] of [
       ['GM', gmPage],
@@ -174,11 +175,6 @@ test.describe('Subclass video — Seraph / Divine Wielder', () => {
       });
       await expect(playerPage.locator('text=Kael').first()).toBeVisible({ timeout: 15000 });
       await expect(playerBPage.locator('text=Reya').first()).toBeVisible({ timeout: 15000 });
-
-      // Keep 3D dice on the camera (playerPage) so the screencast captures tumbles.
-      for (const p of [gmPage, playerBPage]) {
-        await p.getByLabel('Hide dice').click();
-      }
 
       // ---------------------------------------------------------------------
       // Start Session → Prayer Dice physical-roll resume
@@ -204,8 +200,10 @@ test.describe('Subclass video — Seraph / Divine Wielder', () => {
           timeout: 8000,
         });
       }
-      await ack(prayerDiceBanner, { force: true });
-      await expect(prayerDiceBanner).not.toBeVisible({ timeout: 5000 });
+      // Hold tumble on GM, then ack (helper force-resolves if pointer-events:none still blocks Ack).
+      await holdForDiceTumble();
+      await ack(prayerDiceBanner, { force: true, holdMs: 0 });
+      await expect(prayerDiceBanner).not.toBeVisible({ timeout: 8000 });
 
       await expect(async () => {
         const state = await getTableState(tableId);
@@ -219,8 +217,9 @@ test.describe('Subclass video — Seraph / Divine Wielder', () => {
       // ---------------------------------------------------------------------
       const playerKaelCard = playerPage.locator('div.group\\/char', { hasText: 'Kael' });
       await caption('PLAYER A', 'Subclass features on sheet', 'Spirit Weapon, Sparing Touch, Devout, Sacred Resonance');
-      await playerKaelCard.click();
-      await expect(playerPage.getByText('Spirit Weapon', { exact: true }).first()).toBeVisible({
+      const spiritWeapon = playerPage.getByText('Spirit Weapon', { exact: true }).first();
+      await ensureSheetOpen(playerPage, playerKaelCard, spiritWeapon);
+      await expect(spiritWeapon).toBeVisible({
         timeout: 8000,
       });
       await expect(playerPage.getByText('Devout', { exact: true }).first()).toBeVisible({
@@ -238,11 +237,11 @@ test.describe('Subclass video — Seraph / Divine Wielder', () => {
         'Spirit Weapon — Broadsword',
         'Sheet shows Range: melee → close; attacking Cultist Thug in Melee',
       );
-      await playerKaelCard.click();
       // WeaponCard only gets role=button when in-range; Game Table may also hide
       // out-of-range weapons entirely (`filterOutDisabledWeapons`). Prefer the UI
       // path; fall back to a real playerRoll so the rest of the walkthrough can run.
       const broadsword = playerPage.getByRole('button', { name: /Broadsword/i }).first();
+      await ensureSheetOpen(playerPage, playerKaelCard, playerPage.getByText(/Broadsword/i).first());
       const canClickWeapon = await broadsword.isVisible({ timeout: 4000 }).catch(() => false);
       const attackBannerText = 'Kael Broadsword';
       if (canClickWeapon) {
@@ -280,6 +279,7 @@ test.describe('Subclass video — Seraph / Divine Wielder', () => {
         });
       }
 
+      await holdForDiceTumble();
       await caption(
         'GM',
         'Acknowledges Broadsword attack',
@@ -292,23 +292,25 @@ test.describe('Subclass video — Seraph / Divine Wielder', () => {
       if (await cultistChip.isVisible({ timeout: 2000 }).catch(() => false)) {
         await cultistChip.click();
       }
-      await ack(attackBanner, { force: true });
+      await ack(attackBanner, { force: true, holdMs: 0 });
       await expect(attackBanner).not.toBeVisible({ timeout: 8000 });
 
       // ---------------------------------------------------------------------
-      // Life Support (GM) — heals Reya 1 HP for 3 Hope (mutates ally)
+      // Life Support (Player A initiates; GM ack applies Hope + ally heal)
       // ---------------------------------------------------------------------
-      const gmKaelCard = gmPage.locator('div.group\\/char', { hasText: 'Kael' });
-      await caption('GM', 'Life Support', 'Spend 3 Hope — clear 1 HP on Reya (Close range)');
-      await gmKaelCard.click();
-      const lifeSupportGroup = gmPage.getByRole('group', { name: /Life Support targets/i });
-      await expect(lifeSupportGroup).toBeVisible({ timeout: 8000 });
+      await caption(
+        'PLAYER A',
+        'Life Support',
+        'Spend 3 Hope — clear 1 HP on Reya (Close range)',
+      );
+      const lifeSupportGroup = playerPage.getByRole('group', { name: /Life Support targets/i });
+      await ensureSheetOpen(playerPage, playerKaelCard, lifeSupportGroup);
       await lifeSupportGroup.getByRole('button', { name: /Reya/i }).click();
 
       // Deferred card chip → action banner. Sheet select posts `life-support-select`;
       // do NOT re-click Reya on the banner (toggle would deselect). Dismiss hover sheet
       // so it cannot intercept banner Acknowledge (z-[55] overlay).
-      await gmPage.keyboard.press('Escape');
+      await playerPage.keyboard.press('Escape');
       const lifeSupportBanner = gmPage.locator('.dice-result-banner', { hasText: 'Life Support' });
       await expect(lifeSupportBanner).toBeVisible({ timeout: 8000 });
       const lifeSupportAck = lifeSupportBanner.getByRole('button', { name: 'Acknowledge' });
@@ -316,8 +318,9 @@ test.describe('Subclass video — Seraph / Divine Wielder', () => {
         await lifeSupportBanner.getByRole('button', { name: /Reya/i }).click();
       }
       await expect(lifeSupportAck).toBeEnabled({ timeout: 8000 });
+      await holdForDiceTumble();
       await caption('GM', 'Acknowledges Life Support', 'Hope spend + ally heal apply on ack');
-      await ack(lifeSupportBanner, { force: true });
+      await ack(lifeSupportBanner, { force: true, holdMs: 0 });
       await expect(lifeSupportBanner).not.toBeVisible({ timeout: 8000 });
 
       await expect(async () => {
@@ -336,12 +339,12 @@ test.describe('Subclass video — Seraph / Divine Wielder', () => {
       // selectedTargetIds. Assert the chip UI; do not require a heal.
       // ---------------------------------------------------------------------
       await caption(
-        'GM',
+        'PLAYER A',
         'Sparing Touch',
         'Chip renders (Devout: 2 uses/long rest) — target select not wired with isSelect yet',
       );
-      await gmKaelCard.click();
-      const sparingTouchGroup = gmPage.getByRole('group', { name: /Sparing Touch/i });
+      const sparingTouchGroup = playerPage.getByRole('group', { name: /Sparing Touch/i });
+      await ensureSheetOpen(playerPage, playerKaelCard, sparingTouchGroup);
       await expect(sparingTouchGroup).toBeVisible({ timeout: 8000 });
       await expect(
         sparingTouchGroup.getByRole('button', { name: /Clear 2 Hit Points/i }),
@@ -349,7 +352,7 @@ test.describe('Subclass video — Seraph / Divine Wielder', () => {
       await expect(
         sparingTouchGroup.getByRole('button', { name: /Clear 2 Stress/i }),
       ).toBeVisible({ timeout: 4000 });
-      await gmPage.keyboard.press('Escape');
+      await playerPage.keyboard.press('Escape');
 
       // ---------------------------------------------------------------------
       // M2: Player B rolls → Player A (owner) spends Prayer Die on that banner
@@ -386,10 +389,11 @@ test.describe('Subclass video — Seraph / Divine Wielder', () => {
         expect(Array.isArray(pool)).toBe(true);
       }).toPass({ timeout: 8000 });
 
+      await holdForDiceTumble();
       await caption('GM', "Acknowledges Reya’s roll", '');
       await gmPage.keyboard.press('Escape');
       const bBanner = gmPage.locator('.dice-result-banner', { hasText: bBannerText });
-      await ack(bBanner, { force: true });
+      await ack(bBanner, { force: true, holdMs: 0 });
       await expect(bBanner).not.toBeVisible({ timeout: 5000 });
 
       await caption(
@@ -398,12 +402,7 @@ test.describe('Subclass video — Seraph / Divine Wielder', () => {
         'Prayer Dice resume, Life Support, Sparing Touch, Spirit Weapon, M2 Prayer Die spend',
       );
 
-      const seriousErrors = consoleErrors.filter(
-        (e) =>
-          !/favicon|manifest|WebGL|\[DiceRoller\] init failed|Failed to load resource.*(403|404)|source\.set|reading 'set'/i.test(
-            e,
-          ),
-      );
+      const seriousErrors = filterSeriousSubclassConsoleErrors(consoleErrors);
       expect(seriousErrors, `Unexpected console errors:\n${seriousErrors.join('\n')}`).toEqual([]);
     } finally {
       await finish();

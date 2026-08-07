@@ -7,9 +7,9 @@
  * See .cursor/plans/subclass_feature_video_suite_7ff124eb.plan.md for the harness design.
  *
  * Multi-user coverage (per the plan's "Bard/Troubadour + Wordsmith" row):
- *  - GM-driven Make a Scene / Rousing Speech — these mutate OTHER characters/adversaries,
- *    so they run from the GM client (`postTableOp`); a player-owned card chip would have
- *    those mutations silently dropped by `mergeUpdatesForInstance`.
+ *  - Player A runs Make a Scene / Rousing Speech — multi-instance mutations apply via
+ *    `POST /api/room/:tableId/v2-owned-card-chip` (lesson 7: prefer Player A for owned
+ *    card chips that mutate allies/adversaries).
  *  - Player A grants Rally Dice (Epic Poetry → d10) and spends their own die to clear Stress.
  *  - Player B rolls a trait and spends the granted Rally Die via the cross-sheet
  *    "Spend Rally Die — Action" `reviewAction` chip (M2 pattern).
@@ -34,7 +34,7 @@ import {
   cancelAllPendingBanners,
   grantCampaignPassForTable,
 } from '../helpers/multi-auth.js';
-import { startSubclassRun } from '../helpers/subclass-video.js';
+import { startSubclassRun, filterSeriousSubclassConsoleErrors } from '../helpers/subclass-video.js';
 import { buildBardWordsmithCharacterData, buildAllyCharacterData } from '../helpers/subclass-cast.js';
 
 test.describe('Subclass video — Bard / Wordsmith', () => {
@@ -113,11 +113,12 @@ test.describe('Subclass video — Bard / Wordsmith', () => {
 
   test('Callie the Wordsmith: Rousing Speech, Heart of a Poet, Eloquent, Epic Poetry, and Rally', async ({ browser }) => {
     const consoleErrors = [];
-    const { gmPage, playerPage, playerBPage, caption, finish, ack } = await startSubclassRun(browser, {
-      className: 'Bard',
-      subclassName: 'Wordsmith',
-      actors: ['gm', 'playerA', 'playerB'],
-    });
+    const { gmPage, playerPage, playerBPage, caption, finish, ack, holdForDiceTumble, ensureSheetOpen } =
+      await startSubclassRun(browser, {
+        className: 'Bard',
+        subclassName: 'Wordsmith',
+        actors: ['gm', 'playerA', 'playerB'],
+      });
 
     for (const [tag, p] of [['GM', gmPage], ['A', playerPage], ['B', playerBPage]]) {
       p.on('console', (msg) => { if (msg.type() === 'error') consoleErrors.push(`[${tag}] ${msg.text()}`); });
@@ -134,11 +135,6 @@ test.describe('Subclass video — Bard / Wordsmith', () => {
       await expect(playerPage.locator('text=Callie').first()).toBeVisible({ timeout: 15000 });
       await expect(playerBPage.locator('text=Reya').first()).toBeVisible({ timeout: 15000 });
 
-      // Keep 3D dice on the camera (playerPage) so the screencast captures tumbles.
-      for (const p of [gmPage, playerBPage]) {
-        await p.getByLabel('Hide dice').click();
-      }
-
       // ---------------------------------------------------------------------
       // Start Session
       // ---------------------------------------------------------------------
@@ -149,15 +145,19 @@ test.describe('Subclass video — Bard / Wordsmith', () => {
       await ack(startBanner, { holdMs: 0 });
       await expect(startBanner).not.toBeVisible({ timeout: 5000 });
 
-      const gmCallieCard = gmPage.locator('div.group\\/char', { hasText: 'Callie' });
+      // ---------------------------------------------------------------------
+      // Player A — Make a Scene / Rousing Speech (multi-instance via v2-owned-card-chip)
+      // ---------------------------------------------------------------------
+      const playerACallieCard = playerPage.locator('div.group\\/char', { hasText: 'Callie' });
 
       // Make a Scene (Bard base): spend 3 Hope to Distract the Goblin.
-      await caption('GM', 'Make a Scene', 'Spends 3 Hope — the Goblin becomes Distracted (-2 Difficulty)');
-      await gmCallieCard.click();
-      const makeASceneGroup = gmPage.getByRole('group', { name: /Make a Scene targets/i });
+      // Sidebar cards toggle — ensureSheetOpen avoids closing an already-open sheet.
+      await caption('PLAYER A', 'Make a Scene', 'Spends 3 Hope — the Goblin becomes Distracted (-2 Difficulty)');
+      const actionsMake = await ensureSheetOpen(playerPage, playerACallieCard);
+      const makeASceneGroup = actionsMake.getByRole('group', { name: /Make a Scene targets/i });
       await expect(makeASceneGroup).toBeVisible({ timeout: 8000 });
       await makeASceneGroup.getByRole('button', { name: /Snarling Goblin/i }).click();
-      await expect(gmPage.locator('.dice-result-banner', { hasText: 'Make a Scene' })).toHaveCount(0, { timeout: 6000 });
+      await expect(playerPage.locator('.dice-result-banner', { hasText: 'Make a Scene' })).toHaveCount(0, { timeout: 6000 });
 
       await expect(async () => {
         const state = await getTableState(tableId);
@@ -165,23 +165,17 @@ test.describe('Subclass video — Bard / Wordsmith', () => {
         expect(bardEl?.hope).toBe(1);
       }).toPass({ timeout: 8000 });
 
-      // Rousing Speech — clears 2 Stress on allies within Far (mutates ally → GM path).
+      // Rousing Speech — clears 2 Stress on allies within Far.
       // Do NOT use a page-wide /Rousing Speech/i button match: the Features-list expand
       // control for the same-named feature also includes the "long" frequency badge in its
       // accessible name, so `.first()` silently expands the card instead of activating the
-      // Actions-strip chip (Troubadour songs avoid this because chip labels ≠ feature name).
-      await caption('GM', 'Rousing Speech', 'Allies within Far clear 2 Stress (once per long rest)');
-      await gmCallieCard.click();
-      const callieSheet = gmPage
-        .locator('div.bg-dh-surface.border.rounded-xl.shadow-2xl')
-        .filter({ hasText: 'Callie' })
-        .first();
-      await expect(callieSheet).toBeVisible({ timeout: 8000 });
-      const actionsCard = callieSheet
-        .locator('div.rounded-xl')
-        .filter({ has: gmPage.locator('span.uppercase', { hasText: /^Actions$/ }) })
-        .first();
-      const rousingBtn = actionsCard.getByRole('button', { name: /Rousing Speech/i });
+      // Actions-strip chip.
+      await caption('PLAYER A', 'Rousing Speech', 'Allies within Far clear 2 Stress (once per long rest)');
+      const actionsRousing = await ensureSheetOpen(playerPage, playerACallieCard);
+      // Prefer the Actions strip chip class (lesson 15) — not Features expand headers.
+      const rousingBtn = actionsRousing
+        .locator('button.dh-sheet-clickable-chip')
+        .filter({ hasText: /Rousing Speech/i });
       await expect(rousingBtn).toBeVisible({ timeout: 8000 });
       await expect(rousingBtn).toBeEnabled({ timeout: 8000 });
       await rousingBtn.click();
@@ -195,11 +189,10 @@ test.describe('Subclass video — Bard / Wordsmith', () => {
       // ---------------------------------------------------------------------
       // Player A — Heart of a Poet (Presence action roll + reviewAction d4)
       // ---------------------------------------------------------------------
-      const playerACallieCard = playerPage.locator('div.group\\/char', { hasText: 'Callie' });
-
       await caption('PLAYER A', 'Heart of a Poet', 'Rolls Presence, then spends 1 Hope to add a d4');
-      await playerACallieCard.click();
-      await playerPage.getByRole('button', { name: /Presence.*Charm/i }).click();
+      const presenceBtn = playerPage.getByRole('button', { name: /Presence.*Charm/i });
+      await ensureSheetOpen(playerPage, playerACallieCard, presenceBtn);
+      await presenceBtn.click();
       await expect(playerPage.getByText('Before you roll')).toBeVisible({ timeout: 8000 });
       await playerPage.getByRole('button', { name: 'Proceed' }).click();
 
@@ -218,17 +211,18 @@ test.describe('Subclass video — Bard / Wordsmith', () => {
         expect(bardEl?.hope).toBe(0);
       }).toPass({ timeout: 8000 });
 
+      await holdForDiceTumble();
       await caption('GM', 'Acknowledges Presence roll', 'Heart of a Poet d4 applied');
       const presenceBanner = gmPage.locator('.dice-result-banner', { hasText: presenceBannerText });
-      await ack(presenceBanner);
+      await ack(presenceBanner, { holdMs: 0 });
       await expect(presenceBanner).not.toBeVisible({ timeout: 5000 });
 
       // ---------------------------------------------------------------------
       // Eloquent — isSelect card chip (actionLoop only; no GM Acknowledge)
       // ---------------------------------------------------------------------
       await caption('PLAYER A', 'Eloquent', 'Once per session — choose a benefit for an ally');
-      await playerACallieCard.click();
-      const eloquentGroup = playerPage.getByRole('group', { name: /Eloquent/i });
+      const actionsEloquent = await ensureSheetOpen(playerPage, playerACallieCard);
+      const eloquentGroup = actionsEloquent.getByRole('group', { name: /Eloquent/i });
       await expect(eloquentGroup).toBeVisible({ timeout: 8000 });
       await eloquentGroup.getByRole('button', { name: /Find a mundane object/i }).click();
 
@@ -239,8 +233,9 @@ test.describe('Subclass video — Bard / Wordsmith', () => {
       // Rally + Epic Poetry d10 die size
       // ---------------------------------------------------------------------
       await caption('PLAYER A', 'Grant Rally Dice', 'Epic Poetry: Rally Die is a d10 (not d6/d8)');
-      await playerACallieCard.click();
-      const grantBtn = playerPage.getByRole('button', { name: /Grant Rally Dice/i }).first();
+      const actionsGrant = await ensureSheetOpen(playerPage, playerACallieCard);
+      // Rally chips can render twice in the Actions strip (guide + modifier row) — use .first().
+      const grantBtn = actionsGrant.getByRole('button', { name: /Grant Rally Dice/i }).first();
       await expect(grantBtn).toBeVisible({ timeout: 8000 });
       await grantBtn.click();
 
@@ -253,8 +248,10 @@ test.describe('Subclass video — Bard / Wordsmith', () => {
       }).toPass({ timeout: 8000 });
 
       await caption('PLAYER A', 'Spend Rally Die — Clear Stress', 'Rolls the d10 and clears Stress equal to the result');
-      await playerACallieCard.click();
-      const clearStressBtn = playerPage.getByRole('button', { name: /Spend Rally Die — Clear Stress/i }).first();
+      const actionsClear = await ensureSheetOpen(playerPage, playerACallieCard);
+      const clearStressBtn = actionsClear
+        .getByRole('button', { name: /Spend Rally Die — Clear Stress/i })
+        .first();
       await expect(clearStressBtn).toBeVisible({ timeout: 8000 });
       await clearStressBtn.click();
 
@@ -262,9 +259,10 @@ test.describe('Subclass video — Bard / Wordsmith', () => {
       for (const p of [gmPage, playerPage, playerBPage]) {
         await expect(p.locator('.dice-result-banner', { hasText: rallyStressBannerText })).toBeVisible({ timeout: 8000 });
       }
+      await holdForDiceTumble();
       await caption('GM', 'Acknowledges the Rally Die roll', '');
       const rallyStressBanner = gmPage.locator('.dice-result-banner', { hasText: rallyStressBannerText });
-      await ack(rallyStressBanner);
+      await ack(rallyStressBanner, { holdMs: 0 });
       await expect(rallyStressBanner).not.toBeVisible({ timeout: 5000 });
 
       await expect(async () => {
@@ -279,8 +277,9 @@ test.describe('Subclass video — Bard / Wordsmith', () => {
       const playerBReyaCard = playerBPage.locator('div.group\\/char', { hasText: 'Reya' });
 
       await caption('PLAYER B', 'Opens own sheet, rolls Agility', 'Triggers an action roll banner');
-      await playerBReyaCard.click();
-      await playerBPage.getByRole('button', { name: /Agility.*Sprint/i }).click();
+      const agilityBtn = playerBPage.getByRole('button', { name: /Agility.*Sprint/i });
+      await ensureSheetOpen(playerBPage, playerBReyaCard, agilityBtn);
+      await agilityBtn.click();
       await expect(playerBPage.getByText('Before you roll')).toBeVisible({ timeout: 8000 });
       await playerBPage.getByRole('button', { name: 'Proceed' }).click();
 
@@ -294,9 +293,10 @@ test.describe('Subclass video — Bard / Wordsmith', () => {
       await expect(spendActionBtn).toBeVisible({ timeout: 8000 });
       await spendActionBtn.click();
 
+      await holdForDiceTumble();
       await caption('GM', 'Acknowledges Reya’s roll', '');
       const bBanner = gmPage.locator('.dice-result-banner', { hasText: bBannerText });
-      await ack(bBanner);
+      await ack(bBanner, { holdMs: 0 });
       await expect(bBanner).not.toBeVisible({ timeout: 5000 });
 
       // ---------------------------------------------------------------------
@@ -307,14 +307,13 @@ test.describe('Subclass video — Bard / Wordsmith', () => {
         'Epic Poetry',
         'Sheet feature + d10 Rally already verified; Tag Team advantage chip needs Game Table Tag Team rolls (not wired yet)'
       );
-      await playerACallieCard.click();
-      await expect(playerPage.getByText(/Epic Poetry/i).first()).toBeVisible({ timeout: 8000 });
+      const epicPoetry = playerPage.getByText(/Epic Poetry/i).first();
+      await ensureSheetOpen(playerPage, playerACallieCard, epicPoetry);
+      await expect(epicPoetry).toBeVisible({ timeout: 8000 });
 
       await caption('Bard / Wordsmith', 'Walkthrough complete', 'Rousing Speech, Heart of a Poet, Eloquent, Epic Poetry, Rally');
 
-      const seriousErrors = consoleErrors.filter(
-        (e) => !/favicon|manifest|WebGL|\[DiceRoller\] init failed|Failed to load resource.*403/i.test(e)
-      );
+      const seriousErrors = filterSeriousSubclassConsoleErrors(consoleErrors);
       expect(seriousErrors, `Unexpected console errors:\n${seriousErrors.join('\n')}`).toEqual([]);
     } finally {
       await finish();

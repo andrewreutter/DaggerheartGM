@@ -32,7 +32,7 @@ import {
   grantCampaignPassForTable,
   gmRoll,
 } from '../helpers/multi-auth.js';
-import { startSubclassRun } from '../helpers/subclass-video.js';
+import { startSubclassRun, filterSeriousSubclassConsoleErrors } from '../helpers/subclass-video.js';
 import { buildWizardSchoolOfWarCharacterData } from '../helpers/subclass-cast-wizard.js';
 
 test.describe('Subclass video — Wizard / School of War', () => {
@@ -102,7 +102,7 @@ test.describe('Subclass video — Wizard / School of War', () => {
     browser,
   }) => {
     const consoleErrors = [];
-    const { gmPage, playerPage, caption, finish, ack } = await startSubclassRun(browser, {
+    const { gmPage, playerPage, caption, finish, ack, holdForDiceTumble } = await startSubclassRun(browser, {
       className: 'Wizard',
       subclassName: 'School of War',
       actors: ['gm', 'playerA'],
@@ -125,9 +125,6 @@ test.describe('Subclass video — Wizard / School of War', () => {
 
       await expect(gmPage.locator('button', { hasText: 'Add Character' })).toBeVisible({ timeout: 15000 });
       await expect(playerPage.locator('text=Hex').first()).toBeVisible({ timeout: 15000 });
-
-      // Keep 3D dice on the camera (playerPage) so the screencast captures tumbles.
-      await gmPage.getByLabel('Hide dice').click();
 
       await caption('GM', 'Start Session', '');
       await gmPage.getByRole('button', { name: '▶ Session' }).click();
@@ -237,13 +234,14 @@ test.describe('Subclass video — Wizard / School of War', () => {
         expect(hexEl?.currentStress).toBeGreaterThanOrEqual(2);
       }).toPass({ timeout: 10000 });
 
+      await holdForDiceTumble();
       await caption('GM', "Acknowledges Hex's attack", 'Applies weapon damage + Thrive bonus HP');
       const attackBanner = gmPage.locator('.dice-result-banner', { hasText: attackBannerText });
       const thugChip = attackBanner.getByRole('button', { name: /Alley Thug/i }).first();
       if (await thugChip.isVisible({ timeout: 2000 }).catch(() => false)) {
         await thugChip.click();
       }
-      await ack(attackBanner);
+      await ack(attackBanner, { holdMs: 0 });
       await expect(attackBanner).not.toBeVisible({ timeout: 5000 });
 
       await expect(async () => {
@@ -296,6 +294,7 @@ test.describe('Subclass video — Wizard / School of War', () => {
       }).toPass({ timeout: 10000 });
 
       const nttBanner = gmPage.locator('.dice-result-banner').filter({ hasText: /Alley Thug|Hex/i }).first();
+      await holdForDiceTumble();
       await caption('GM', 'Acknowledges the (re)rolled attack', '3 Hope spent from Hex');
       if (
         await nttBanner
@@ -308,7 +307,7 @@ test.describe('Subclass video — Wizard / School of War', () => {
         if (await hexTarget.isVisible({ timeout: 1500 }).catch(() => false)) {
           await hexTarget.click();
         }
-        await ack(nttBanner);
+        await ack(nttBanner, { holdMs: 0 });
       }
 
       await expect(async () => {
@@ -323,9 +322,7 @@ test.describe('Subclass video — Wizard / School of War', () => {
         'Thrive in Chaos, Conjure Shield, Not This Time, and War passives'
       );
 
-      const seriousErrors = consoleErrors.filter(
-        (e) => !/favicon|manifest|WebGL|\[DiceRoller\] init failed|Failed to load resource.*403/i.test(e)
-      );
+      const seriousErrors = filterSeriousSubclassConsoleErrors(consoleErrors);
       expect(seriousErrors, `Unexpected console errors:\n${seriousErrors.join('\n')}`).toEqual([]);
     } finally {
       await finish();

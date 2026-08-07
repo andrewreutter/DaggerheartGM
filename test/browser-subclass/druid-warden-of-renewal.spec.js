@@ -13,8 +13,9 @@
  *    ally-damage step.
  *  - **Clarity of Nature** — card chip posts an actionLoop notification (no dice); no GM Ack.
  *  - **Regeneration** — player regenerates self (own instance); clears 1d4 HP.
- *  - **Warden's Protection** — mutates the ally, so it runs from the **GM** sheet (player
- *    `postCharacterUpdate` drops cross-instance mutations — see Troubadour pilot lesson 7).
+ *  - **Warden's Protection** — mutates the ally; Player A activates it via
+ *    `POST /api/room/:tableId/v2-owned-card-chip` (lesson 7: prefer Player A for
+ *    multi-instance owned card chips).
  *  - **Defender** — reviewAction chip on an adversary attack banner against Player B while
  *    Reed is in Beastform; Player A activates it (stress 1, reduce ally pending HP by 1).
  */
@@ -36,7 +37,7 @@ import {
   grantCampaignPassForTable,
   gmRoll,
 } from '../helpers/multi-auth.js';
-import { startSubclassRun } from '../helpers/subclass-video.js';
+import { startSubclassRun, filterSeriousSubclassConsoleErrors } from '../helpers/subclass-video.js';
 import { buildDruidWardenOfRenewalCharacterData } from '../helpers/subclass-cast-druid.js';
 import { buildAllyCharacterData } from '../helpers/subclass-cast.js';
 
@@ -128,11 +129,12 @@ test.describe('Subclass video — Druid / Warden of Renewal', () => {
 
   test("Reed the Warden of Renewal: Clarity, Regeneration, Protection, Defender", async ({ browser }) => {
     const consoleErrors = [];
-    const { gmPage, playerPage, playerBPage, caption, finish, ack } = await startSubclassRun(browser, {
-      className: 'Druid',
-      subclassName: 'Warden of Renewal',
-      actors: ['gm', 'playerA', 'playerB'],
-    });
+    const { gmPage, playerPage, playerBPage, caption, finish, ack, holdForDiceTumble, ensureSheetOpen } =
+      await startSubclassRun(browser, {
+        className: 'Druid',
+        subclassName: 'Warden of Renewal',
+        actors: ['gm', 'playerA', 'playerB'],
+      });
 
     for (const [tag, p] of [
       ['GM', gmPage],
@@ -155,11 +157,6 @@ test.describe('Subclass video — Druid / Warden of Renewal', () => {
       await expect(playerPage.locator('text=Reed').first()).toBeVisible({ timeout: 15000 });
       await expect(playerBPage.locator('text=Moss').first()).toBeVisible({ timeout: 15000 });
 
-      // Keep 3D dice on the camera (playerPage) so the screencast captures tumbles.
-      for (const p of [gmPage, playerBPage]) {
-        await p.getByLabel('Hide dice').click();
-      }
-
       await caption('GM', 'Start Session', '');
       await gmPage.getByRole('button', { name: '▶ Session' }).click();
       const startBanner = gmPage.locator('.dice-result-banner', { hasText: 'Start Session' });
@@ -168,39 +165,24 @@ test.describe('Subclass video — Druid / Warden of Renewal', () => {
       await expect(startBanner).not.toBeVisible({ timeout: 5000 });
 
       const playerReedCard = playerPage.locator('div.group\\/char', { hasText: 'Reed' });
-      const gmReedCard = gmPage.locator('div.group\\/char', { hasText: 'Reed' });
-      // Card chips live in Actions. Sidebar card click *toggles* the sheet — only click when
-      // Actions is not already visible (display-only steps do not auto-dismiss).
-      const sheetActions = (page) =>
-        page
-          .locator('div.rounded-xl')
-          .filter({ has: page.locator('span.uppercase', { hasText: /^Actions$/ }) })
-          .first();
-      const ensureSheet = async (page, card) => {
-        const actions = sheetActions(page);
-        if (!(await actions.isVisible().catch(() => false))) {
-          await card.click();
-        }
-        await expect(actions).toBeVisible({ timeout: 8000 });
-        return actions;
-      };
+      // Card chips live in Actions. Sidebar card click *toggles* — use shared ensureSheetOpen.
 
       // -----------------------------------------------------------------
       // Wildtouch + Regenerative Reach — narrative/display.
       // -----------------------------------------------------------------
       await caption('PLAYER A', 'Wildtouch', 'Narrative class feature — assert card renders');
-      await ensureSheet(playerPage, playerReedCard);
+      await ensureSheetOpen(playerPage, playerReedCard);
       await expect(playerPage.getByText(/Wildtouch/i).first()).toBeVisible({ timeout: 8000 });
 
       await caption('PLAYER A', "Regenerative Reach", 'Specialization — extends Regeneration to Very Close');
-      await ensureSheet(playerPage, playerReedCard);
+      await ensureSheetOpen(playerPage, playerReedCard);
       await expect(playerPage.getByText(/Regenerative Reach/i).first()).toBeVisible({ timeout: 8000 });
 
       // -----------------------------------------------------------------
       // Clarity of Nature — long-rest card chip (actionLoop only).
       // -----------------------------------------------------------------
       await caption('PLAYER A', 'Clarity of Nature', 'Once per long rest — serenity space (GM distributes Stress clears)');
-      const actionsClarity = await ensureSheet(playerPage, playerReedCard);
+      const actionsClarity = await ensureSheetOpen(playerPage, playerReedCard);
       // Prefer the Actions strip chip — Features accordion headers also match the name.
       const clarityBtn = actionsClarity
         .locator('button.dh-sheet-clickable-chip')
@@ -217,7 +199,7 @@ test.describe('Subclass video — Druid / Warden of Renewal', () => {
       const hpBeforeRegen = (await getTableState(tableId)).elements.find(
         (e) => e.instanceId === reedInstanceId
       )?.currentHp;
-      const actionsRegen = await ensureSheet(playerPage, playerReedCard);
+      const actionsRegen = await ensureSheetOpen(playerPage, playerReedCard);
       const regenGroup = actionsRegen.getByRole('group', { name: /Regeneration targets/i });
       await expect(regenGroup).toBeVisible({ timeout: 8000 });
       await regenGroup.getByRole('button', { name: /Reed/i }).click();
@@ -230,14 +212,19 @@ test.describe('Subclass video — Druid / Warden of Renewal', () => {
       }).toPass({ timeout: 8000 });
 
       // -----------------------------------------------------------------
-      // Warden's Protection — GM path (mutates ally Moss).
+      // Warden's Protection — Player A; multi-instance HP clears via
+      // v2-owned-card-chip (subclass-video-test-plan.md lesson 7).
       // -----------------------------------------------------------------
-      await caption('GM', "Warden's Protection", 'Spend 2 Hope — clear 2 HP on 1d4 Close allies (Moss)');
+      await caption(
+        'PLAYER A',
+        "Warden's Protection",
+        'Spend Hope — clear HP on ally Moss within Close range'
+      );
       const allyHpBefore = (await getTableState(tableId)).elements.find(
         (e) => e.instanceId === allyInstanceId
       )?.currentHp;
-      const gmActionsCard = await ensureSheet(gmPage, gmReedCard);
-      const protectionGroup = gmActionsCard.getByRole('group', { name: /Warden's Protection targets/i });
+      const actionsProtection = await ensureSheetOpen(playerPage, playerReedCard);
+      const protectionGroup = actionsProtection.getByRole('group', { name: /Warden's Protection targets/i });
       await expect(protectionGroup).toBeVisible({ timeout: 8000 });
       await protectionGroup.getByRole('button', { name: /Moss/i }).click();
 
@@ -254,7 +241,7 @@ test.describe('Subclass video — Druid / Warden of Renewal', () => {
       // Beastform — required for Defender.
       // -----------------------------------------------------------------
       await caption('PLAYER A', 'Beastform', 'Transform into Agile Scout (required for Defender)');
-      const actionsBf = await ensureSheet(playerPage, playerReedCard);
+      const actionsBf = await ensureSheetOpen(playerPage, playerReedCard);
       const beastformSelect = actionsBf.getByRole('button', { name: 'Beastform 1 Stress', exact: true });
       await expect(beastformSelect).toBeVisible({ timeout: 8000 });
       await expect(beastformSelect).not.toHaveAttribute('aria-disabled', 'true');
@@ -331,8 +318,9 @@ test.describe('Subclass video — Druid / Warden of Renewal', () => {
         await confirmBtn.click();
       }
 
+      await holdForDiceTumble();
       await caption('GM', 'Acknowledges the Goblin attack', 'Moss takes reduced HP; Reed marked Stress');
-      await ack(gmBanner);
+      await ack(gmBanner, { holdMs: 0 });
       await expect(gmBanner).not.toBeVisible({ timeout: 5000 });
 
       await expect(async () => {
@@ -347,12 +335,7 @@ test.describe('Subclass video — Druid / Warden of Renewal', () => {
 
       await caption('Druid / Warden of Renewal', 'Walkthrough complete', 'Clarity, Regeneration, Protection, Defender');
 
-      const seriousErrors = consoleErrors.filter(
-        (e) =>
-          !/favicon|manifest|WebGL|\[DiceRoller\] init failed|Failed to load resource.*(403|404)/i.test(
-            e
-          )
-      );
+      const seriousErrors = filterSeriousSubclassConsoleErrors(consoleErrors);
       expect(seriousErrors, `Unexpected console errors:\n${seriousErrors.join('\n')}`).toEqual([]);
     } finally {
       await finish();

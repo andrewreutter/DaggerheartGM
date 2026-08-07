@@ -33,7 +33,7 @@ import {
   grantCampaignPassForTable,
   gmRoll,
 } from '../helpers/multi-auth.js';
-import { startSubclassRun } from '../helpers/subclass-video.js';
+import { startSubclassRun, filterSeriousSubclassConsoleErrors } from '../helpers/subclass-video.js';
 import { buildDruidWardenOfTheElementsCharacterData } from '../helpers/subclass-cast-druid.js';
 import { buildAllyCharacterData } from '../helpers/subclass-cast.js';
 
@@ -123,11 +123,14 @@ test.describe('Subclass video — Druid / Warden of the Elements', () => {
 
   test('Elm the Warden of the Elements: Incarnation, Aura, Dominion, Beastform, Evolution', async ({ browser }) => {
     const consoleErrors = [];
-    const { gmPage, playerPage, caption, finish, ack } = await startSubclassRun(browser, {
-      className: 'Druid',
-      subclassName: 'Warden of the Elements',
-      actors: ['gm', 'playerA'],
-    });
+    const { gmPage, playerPage, caption, finish, ack, holdForDiceTumble, ensureSheetOpen } = await startSubclassRun(
+      browser,
+      {
+        className: 'Druid',
+        subclassName: 'Warden of the Elements',
+        actors: ['gm', 'playerA'],
+      }
+    );
 
     for (const [tag, p] of [
       ['GM', gmPage],
@@ -147,9 +150,6 @@ test.describe('Subclass video — Druid / Warden of the Elements', () => {
       await expect(gmPage.locator('button', { hasText: 'Add Character' })).toBeVisible({ timeout: 15000 });
       await expect(playerPage.locator('text=Elm').first()).toBeVisible({ timeout: 15000 });
 
-      // Keep 3D dice on the camera (playerPage) so the screencast captures tumbles.
-      await gmPage.getByLabel('Hide dice').click();
-
       await caption('GM', 'Start Session', '');
       await gmPage.getByRole('button', { name: '▶ Session' }).click();
       const startBanner = gmPage.locator('.dice-result-banner', { hasText: 'Start Session' });
@@ -158,22 +158,9 @@ test.describe('Subclass video — Druid / Warden of the Elements', () => {
       await expect(startBanner).not.toBeVisible({ timeout: 5000 });
 
       const playerElmCard = playerPage.locator('div.group\\/char', { hasText: 'Elm' });
-      // Card chips live in the sheet's Actions emphasis card — bare name matches also hit
-      // Features accordion headers. Sidebar card click *toggles* the sheet: only click when
-      // Actions is not already visible (display-only steps do not auto-dismiss the sheet).
-      const actionsLocator = () =>
-        playerPage
-          .locator('div.rounded-xl')
-          .filter({ has: playerPage.locator('span.uppercase', { hasText: /^Actions$/ }) })
-          .first();
-      const ensurePlayerSheet = async () => {
-        const actions = actionsLocator();
-        if (!(await actions.isVisible().catch(() => false))) {
-          await playerElmCard.click();
-        }
-        await expect(actions).toBeVisible({ timeout: 8000 });
-        return actions;
-      };
+      // Card chips live in Actions; bare name matches also hit Features headers.
+      // Sidebar cards toggle — shared ensureSheetOpen only clicks when needed.
+      const ensurePlayerSheet = () => ensureSheetOpen(playerPage, playerElmCard);
 
       // -----------------------------------------------------------------
       // Wildtouch — narrative/display only.
@@ -356,8 +343,9 @@ test.describe('Subclass video — Druid / Warden of the Elements', () => {
         await confirmBtn.click();
       }
 
+      await holdForDiceTumble();
       await caption('GM', 'Acknowledges the Goblin attack', '');
-      await ack(gmBanner);
+      await ack(gmBanner, { holdMs: 0 });
       await expect(gmBanner).not.toBeVisible({ timeout: 5000 });
 
       await expect(async () => {
@@ -368,12 +356,7 @@ test.describe('Subclass video — Druid / Warden of the Elements', () => {
 
       await caption('Druid / Warden of the Elements', 'Walkthrough complete', 'Incarnation, Aura, Dominion, Beastform, Evolution');
 
-      const seriousErrors = consoleErrors.filter(
-        (e) =>
-          !/favicon|manifest|WebGL|\[DiceRoller\] init failed|Failed to load resource.*(403|404)/i.test(
-            e
-          )
-      );
+      const seriousErrors = filterSeriousSubclassConsoleErrors(consoleErrors);
       expect(seriousErrors, `Unexpected console errors:\n${seriousErrors.join('\n')}`).toEqual([]);
     } finally {
       await finish();

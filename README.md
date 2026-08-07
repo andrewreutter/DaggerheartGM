@@ -150,7 +150,7 @@ DaggerheartGM/
 ├── server.js                   # Express server + API routes
 ├── package.json
 ├── vitest.config.js            # Vitest unit test config (`test/unit/**/*.test.js`, `test/vitest-setup-act.js` for React `act`)
-├── playwright.config.js        # Playwright browser test config (port 3457, NODE_ENV=test)
+├── playwright.config.js        # Playwright browser test config (port 3457, NODE_ENV=test; globalSetup purges orphaned test tables)
 ├── test/
 │   ├── unit/                   # Vitest unit tests for pure logic modules
 │   │   ├── battle-points.test.js
@@ -159,10 +159,13 @@ DaggerheartGM/
 │   │   └── smoke.spec.js
 │   ├── browser-subclass/       # Opt-in subclass feature video suite (not part of npm test/CI)
 │   │   └── bard-troubadour.spec.js
+│   ├── playwright-global-setup.js  # Deletes orphaned test-GM table_state rows before the suite
 │   ├── helpers/
 │   │   ├── auth.js             # Playwright helper: mock Firebase + API for authenticated tests
 │   │   ├── multi-auth.js       # Multi-actor (GM/Player A/Player B) Playwright helper
-│   │   ├── subclass-video.js   # Subclass video suite harness (screencast + action cursor overlays, captions)
+│   │   ├── cleanup-test-tables.js  # Purge orphaned test-GM table_state rows (used by globalSetup)
+│   │   ├── subclass-video.js   # Multi-camera subclass video harness (screencast + EDL + ffmpeg stitch)
+│   │   ├── subclass-video-stitch.js  # Pure cut-list / ffmpeg filter helpers for subclass videos
 │   │   └── subclass-cast.js    # Subclass video suite per-class/subclass character data factories
 │   ├── subclass-video-test-plan.md  # Coverage tracker + lessons learned for the subclass video suite
 │   ├── fixtures/               # OCR parse fixture images + expected JSON
@@ -492,9 +495,9 @@ npm run test:browser  # Playwright only (starts server on port 3457)
 
 The Playwright test server runs on port 3457 (`NODE_ENV=test`) with a Firebase auth bypass for `Authorization: Bearer test-token`. The `test/helpers/auth.js` helper sets up all required route mocks in one call for single-actor tests.
 
-**Multi-actor tests** (T12): `test/helpers/multi-auth.js` supports 2+ concurrent authenticated identities hitting the **real** server (no route mocking beyond Firebase CDN + `/api/config`). Uses `Bearer test-token:<uid>:<email>` tokens (multi-identity `requireAuth` extension, active only under `NODE_ENV=test`). `test/browser/action-loop-multi-actor.spec.js` covers M1 (roll SSE propagation + element-update SSE), M3 (rest cycle SSE), and M6 (token-position SSE to multiple clients). Requires a real Postgres (`DATABASE_URL`) for the full suite; basic auth extension tests run without DB.
+**Multi-actor tests** (T12): `test/helpers/multi-auth.js` supports 2+ concurrent authenticated identities hitting the **real** server (no route mocking beyond Firebase CDN + `/api/config`). Uses `Bearer test-token:<uid>:<email>` tokens (multi-identity `requireAuth` extension, active only under `NODE_ENV=test`). `test/browser/action-loop-multi-actor.spec.js` covers M1 (roll SSE propagation + element-update SSE), M3 (rest cycle SSE), and M6 (token-position SSE to multiple clients). Requires a real Postgres (`DATABASE_URL`) for the full suite; basic auth extension tests run without DB. Playwright `globalSetup` (`test/playwright-global-setup.js` / `cleanupOrphanedTestTables`) purges leftover `table_state` rows for `test-user-uid*` before each browser/subclass suite so orphaned nav tabs (e.g. "T12 Test Table") do not accumulate across interrupted runs.
 
-**Subclass feature video suite** (opt-in, **not** part of `npm test`/`test:browser`/CI): `npm run test:subclasses` runs `test/browser-subclass/*.spec.js` (Playwright project `subclass-videos`, parallel via `SUBCLASS_PARALLEL=1`; override with `SUBCLASS_WORKERS`); `npm run test:subclass -- <filter>` runs one matching spec serially (e.g. `bard-troubadour`). One test per subclass drives every feature it grants from a real player browser context and records a captioned `.webm` walkthrough (Playwright screencast with animated cursor / action overlays) to `test-artifacts/subclass-videos/` (gitignored, most-recent-run-only). Runs **headed** by default so WebGL dice appear (`SUBCLASS_HEADED=0` for headless); camera keeps 3D dice visible while GM hides them; harness `ack()` holds for the tumble. Per-worker GM/player uids keep banner queues isolated. See `test/subclass-video-test-plan.md` for the coverage tracker and harness usage notes.
+**Subclass feature video suite** (opt-in, **not** part of `npm test`/`test:browser`/CI): `npm run test:subclasses` runs `test/browser-subclass/*.spec.js` (Playwright project `subclass-videos`, parallel via `SUBCLASS_PARALLEL=1`; override with `SUBCLASS_WORKERS`); `npm run test:subclass -- <filter>` runs one matching spec serially (e.g. `bard-troubadour`). One test per subclass drives every feature it grants across GM / Player A / optional Player B contexts and stitches a multi-camera director `.webm` (hard cuts from caption roles; **active-camera-only** screencast to keep parallel headed runs stable; system `ffmpeg` required) to `test-artifacts/subclass-videos/` (gitignored, most-recent-run-only). Runs **headed** by default so WebGL dice appear (`SUBCLASS_HEADED=0` for headless); only the active stitch camera shows dice / records. Per-worker GM/player uids keep banner queues isolated. See `test/subclass-video-test-plan.md` for the coverage tracker and harness usage notes.
 
 **CI**: both suites run automatically on every push and pull request via `.github/workflows/ci.yml` (Node 22 LTS, `npm ci`, `npm run build`, then `npm run test:unit` followed by `npm run test:browser`). No secrets required — Firebase is mocked in tests and the server runs without `DATABASE_URL`.
 

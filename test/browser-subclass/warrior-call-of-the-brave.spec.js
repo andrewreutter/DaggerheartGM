@@ -16,7 +16,7 @@
  *  - **Combat Training** — passive (+level to physical damage); assert card renders.
  *  - **Courage** — automatic onResolve when Fear > Hope on a failed roll; assert card
  *    (dice outcomes are not forced in this suite).
- *  - **Battle Ritual** — long-rest card chip; clears 2 Stress / gains 2 Hope immediately.
+ *  - **Battle Ritual** — long-rest card chip (Player A); clears 2 Stress / gains 2 Hope immediately.
  *  - **Rise to the Challenge** — Hope die becomes d20 while HP ≤ 2; demonstrated via a
  *    trait roll at low HP (display the feature + roll; die-size assertion is best-effort).
  *  - **Camaraderie** — narrative/display only (Tag Team automation deferred).
@@ -37,7 +37,7 @@ import {
   cancelAllPendingBanners,
   grantCampaignPassForTable,
 } from '../helpers/multi-auth.js';
-import { startSubclassRun } from '../helpers/subclass-video.js';
+import { startSubclassRun, filterSeriousSubclassConsoleErrors } from '../helpers/subclass-video.js';
 import { buildWarriorCallOfTheBraveCharacterData } from '../helpers/subclass-cast-warrior.js';
 
 const CHAR_NAME = 'Kara';
@@ -152,7 +152,7 @@ test.describe('Subclass video — Warrior / Call of the Brave', () => {
     browser,
   }) => {
     const consoleErrors = [];
-    const { gmPage, playerPage, caption, finish, ack } = await startSubclassRun(browser, {
+    const { gmPage, playerPage, caption, finish, ack, holdForDiceTumble } = await startSubclassRun(browser, {
       className: 'Warrior',
       subclassName: 'Call of the Brave',
       actors: ['gm', 'playerA'],
@@ -176,9 +176,6 @@ test.describe('Subclass video — Warrior / Call of the Brave', () => {
       await expect(gmPage.locator('button', { hasText: 'Add Character' })).toBeVisible({ timeout: 15000 });
       await expect(playerPage.locator(`text=${CHAR_NAME}`).first()).toBeVisible({ timeout: 15000 });
 
-      // Keep 3D dice on the camera (playerPage) so the screencast captures tumbles.
-      await gmPage.getByLabel('Hide dice').click();
-
       await caption('GM', 'Start Session', '');
       await gmPage.getByRole('button', { name: '▶ Session' }).click();
       const startBanner = gmPage.locator('.dice-result-banner', { hasText: 'Start Session' });
@@ -200,7 +197,7 @@ test.describe('Subclass video — Warrior / Call of the Brave', () => {
       );
       await openCharSheet(playerPage, playerCharCard);
       const karaActionsCard = playerPage
-        .locator('div.rounded-xl')
+        .locator('div.rounded-xl.bg-gradient-to-b')
         .filter({ has: playerPage.locator('span.uppercase', { hasText: /^Actions$/ }) })
         .first();
       await expect(karaActionsCard).toBeVisible({ timeout: 8000 });
@@ -272,14 +269,11 @@ test.describe('Subclass video — Warrior / Call of the Brave', () => {
       await expect(playerPage.getByText('Courage', { exact: true }).first()).toBeVisible({ timeout: 8000 });
 
       // ---------------------------------------------------------------------
-      // Battle Ritual — long-rest card chip.
+      // Battle Ritual — long-rest card chip (owned-sheet; Player A).
       // ---------------------------------------------------------------------
-      // Run from the GM sheet so `postTableOp` applies clearStress/gainHope reliably
-      // (same pattern as Bard Gifted Performer chips that need the GM table-op path).
-      await caption('GM', 'Battle Ritual', 'Once per long rest — clear 2 Stress and gain 2 Hope');
-      const gmCharCard = gmPage.locator('div.group\\/char', { hasText: CHAR_NAME });
-      await openCharSheet(gmPage, gmCharCard);
-      const battleRitualBtn = frequencyChipButton(gmPage, 'Battle Ritual');
+      await caption('PLAYER A', 'Battle Ritual', 'Once per long rest — clear 2 Stress and gain 2 Hope');
+      await openCharSheet(playerPage, playerCharCard);
+      const battleRitualBtn = frequencyChipButton(playerPage, 'Battle Ritual');
       await expect(battleRitualBtn).toBeVisible({ timeout: 8000 });
       await battleRitualBtn.click();
 
@@ -312,9 +306,10 @@ test.describe('Subclass video — Warrior / Call of the Brave', () => {
           timeout: 8000,
         });
       }
+      await holdForDiceTumble();
       await caption('GM', 'Acknowledges the Agility roll', 'Rise to the Challenge applied at intent');
       const traitBanner = gmPage.locator('.dice-result-banner', { hasText: traitBannerText });
-      await ack(traitBanner);
+      await ack(traitBanner, { holdMs: 0 });
       await expect(traitBanner).not.toBeVisible({ timeout: 5000 });
 
       // ---------------------------------------------------------------------
@@ -336,9 +331,7 @@ test.describe('Subclass video — Warrior / Call of the Brave', () => {
         'No Mercy, Attack of Opportunity, Battle Ritual, Rise to the Challenge, Courage, Camaraderie'
       );
 
-      const seriousErrors = consoleErrors.filter(
-        (e) => !/favicon|manifest|WebGL|\[DiceRoller\] init failed|Failed to load resource.*403/i.test(e)
-      );
+      const seriousErrors = filterSeriousSubclassConsoleErrors(consoleErrors);
       expect(seriousErrors, `Unexpected console errors:\n${seriousErrors.join('\n')}`).toEqual([]);
     } finally {
       await finish();

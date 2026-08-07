@@ -41,7 +41,7 @@ import {
   cancelAllPendingBanners,
   grantCampaignPassForTable,
 } from '../helpers/multi-auth.js';
-import { startSubclassRun } from '../helpers/subclass-video.js';
+import { startSubclassRun, filterSeriousSubclassConsoleErrors } from '../helpers/subclass-video.js';
 import { buildGuardianStalwartCharacterData, buildAllyCharacterData } from '../helpers/subclass-cast.js';
 
 /** Guaranteed-hit adversary attack with physical damage (post tag `phy`). */
@@ -135,7 +135,7 @@ test.describe('Subclass video — Guardian / Stalwart', () => {
 
   test('Dara the Stalwart: Frontline Tank, Unstoppable, Iron Will, Partners-in-Arms, Loyal Protector', async ({ browser }) => {
     const consoleErrors = [];
-    const { gmPage, playerPage, playerBPage, caption, finish, ack } = await startSubclassRun(browser, {
+    const { gmPage, playerPage, playerBPage, caption, finish, ack, holdForDiceTumble } = await startSubclassRun(browser, {
       className: 'Guardian',
       subclassName: 'Stalwart',
       actors: ['gm', 'playerA', 'playerB'],
@@ -156,11 +156,6 @@ test.describe('Subclass video — Guardian / Stalwart', () => {
       await expect(playerPage.locator('text=Dara').first()).toBeVisible({ timeout: 15000 });
       await expect(playerBPage.locator('text=Reya').first()).toBeVisible({ timeout: 15000 });
 
-      // Keep 3D dice on the camera (playerPage) so the screencast captures tumbles.
-      for (const p of [gmPage, playerBPage]) {
-        await p.getByLabel('Hide dice').click();
-      }
-
       await caption('GM', 'Start Session', '');
       await gmPage.getByRole('button', { name: '▶ Session' }).click();
       const startBanner = gmPage.locator('.dice-result-banner', { hasText: 'Start Session' });
@@ -173,7 +168,6 @@ test.describe('Subclass video — Guardian / Stalwart', () => {
       await cancelAllPendingBanners();
 
       const playerDaraCard = playerPage.locator('div.group\\/char', { hasText: 'Dara' });
-      const gmDaraCard = gmPage.locator('div.group\\/char', { hasText: 'Dara' });
 
       // Sidebar card toggles the hover sheet open/closed. Display-only steps do not
       // call dismissAllHoverCards, so Escape first to guarantee the next click opens.
@@ -183,13 +177,11 @@ test.describe('Subclass video — Guardian / Stalwart', () => {
         await playerDaraCard.click();
       }
 
-      async function clickGmDaraActionsChip(nameRe) {
-        await gmPage.keyboard.press('Escape');
-        await gmPage.waitForTimeout(150);
-        await gmDaraCard.click();
-        const actionsCard = gmPage
-          .locator('div.rounded-xl')
-          .filter({ has: gmPage.locator('span.uppercase', { hasText: /^Actions$/ }) })
+      async function clickPlayerDaraActionsChip(nameRe) {
+        await openPlayerDaraSheet();
+        const actionsCard = playerPage
+          .locator('div.rounded-xl.bg-gradient-to-b')
+          .filter({ has: playerPage.locator('span.uppercase', { hasText: /^Actions$/ }) })
           .first();
         await expect(actionsCard).toBeVisible({ timeout: 8000 });
         const btn = actionsCard.locator('button.dh-sheet-clickable-chip').filter({ hasText: nameRe });
@@ -212,8 +204,8 @@ test.describe('Subclass video — Guardian / Stalwart', () => {
       // class features: page-wide / Hope-card click posts `_featureUse` without
       // running V2 onUse (clearArmor never applies). Scope to Actions chip.
       // ---------------------------------------------------------------------
-      await caption('GM', 'Frontline Tank', 'Actions chip — spends 3 Hope, clears 2 Armor');
-      await clickGmDaraActionsChip(/Frontline Tank/i);
+      await caption('PLAYER A', 'Frontline Tank', 'Actions chip — spends 3 Hope, clears 2 Armor');
+      await clickPlayerDaraActionsChip(/Frontline Tank/i);
 
       await expect(async () => {
         const state = await getTableState(tableId);
@@ -224,14 +216,14 @@ test.describe('Subclass video — Guardian / Stalwart', () => {
       }).toPass({ timeout: 8000 });
 
       // Informational actionLoop banners are usually suppressed; dismiss if sticky.
-      await gmPage.keyboard.press('Escape');
+      await playerPage.keyboard.press('Escape');
       const frontlineBanner = gmPage
         .locator('.dice-result-banner')
         .filter({ hasText: /Dara/i })
         .filter({ hasText: 'Frontline Tank' });
       if (await frontlineBanner.first().isVisible().catch(() => false)) {
         await caption('GM', 'Acknowledges Frontline Tank', 'Dismisses action notice');
-        await ack(frontlineBanner.first(), { force: true });
+        await ack(frontlineBanner.first(), { force: true, holdMs: 0 });
         await expect(frontlineBanner.first()).not.toBeVisible({ timeout: 5000 });
       }
 
@@ -239,7 +231,7 @@ test.describe('Subclass video — Guardian / Stalwart', () => {
       // Unstoppable — once per long rest; V2 Actions chip sets featureState.
       // ---------------------------------------------------------------------
       await caption('PLAYER A', 'Unstoppable', 'Once per long rest — becomes Unstoppable (d6 die at level 8)');
-      await clickGmDaraActionsChip(/Unstoppable/i);
+      await clickPlayerDaraActionsChip(/Unstoppable/i);
 
       await expect(async () => {
         const state = await getTableState(tableId);
@@ -368,9 +360,7 @@ test.describe('Subclass video — Guardian / Stalwart', () => {
 
       await caption('Guardian / Stalwart', 'Walkthrough complete', 'Class + Stalwart foundation/specialization/mastery');
 
-      const seriousErrors = consoleErrors.filter(
-        (e) => !/favicon|manifest|WebGL|\[DiceRoller\] init failed|Failed to load resource.*403/i.test(e)
-      );
+      const seriousErrors = filterSeriousSubclassConsoleErrors(consoleErrors);
       expect(seriousErrors, `Unexpected console errors:\n${seriousErrors.join('\n')}`).toEqual([]);
     } finally {
       await finish();
