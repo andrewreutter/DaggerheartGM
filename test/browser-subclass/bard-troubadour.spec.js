@@ -126,7 +126,7 @@ test.describe('Subclass video — Bard / Troubadour', () => {
 
   test('Brix the Troubadour: Gifted Performer, Maestro, Virtuoso, and Rally', async ({ browser }) => {
     const consoleErrors = [];
-    const { gmPage, playerPage, playerBPage, caption, finish } = await startSubclassRun(browser, {
+    const { gmPage, playerPage, playerBPage, caption, finish, ack } = await startSubclassRun(browser, {
       className: 'Bard',
       subclassName: 'Troubadour',
       actors: ['gm', 'playerA', 'playerB'],
@@ -147,10 +147,9 @@ test.describe('Subclass video — Bard / Troubadour', () => {
       await expect(playerPage.locator('text=Brix').first()).toBeVisible({ timeout: 15000 });
       await expect(playerBPage.locator('text=Reya').first()).toBeVisible({ timeout: 15000 });
 
-      // Hide the 3D dice canvas on all three clients so every banner in this walkthrough
-      // resolves immediately instead of racing a tumbling-dice animation (established
-      // pattern — see test/browser/action-loop-multi-actor.spec.js M2/M4/M5).
-      for (const p of [gmPage, playerPage, playerBPage]) {
+      // Keep 3D dice on the camera (playerPage) so the screencast captures tumbles.
+      // Hide on other clients so GM Acknowledge isn't gated on their local animation.
+      for (const p of [gmPage, playerBPage]) {
         await p.getByLabel('Hide dice').click();
       }
 
@@ -162,7 +161,7 @@ test.describe('Subclass video — Bard / Troubadour', () => {
       await gmPage.getByRole('button', { name: '▶ Session' }).click();
       const startBanner = gmPage.locator('.dice-result-banner', { hasText: 'Start Session' });
       await expect(startBanner).toBeVisible({ timeout: 8000 });
-      await startBanner.locator('button', { hasText: 'Acknowledge' }).first().click();
+      await ack(startBanner, { holdMs: 0 });
       await expect(startBanner).not.toBeVisible({ timeout: 5000 });
 
       // ---------------------------------------------------------------------
@@ -280,7 +279,7 @@ test.describe('Subclass video — Bard / Troubadour', () => {
       }
       await caption('GM', 'Acknowledges the Rally Die roll', '');
       const rallyStressBanner = gmPage.locator('.dice-result-banner', { hasText: rallyStressBannerText });
-      await rallyStressBanner.locator('button', { hasText: 'Acknowledge' }).first().click();
+      await ack(rallyStressBanner);
       await expect(rallyStressBanner).not.toBeVisible({ timeout: 5000 });
 
       await expect(async () => {
@@ -321,7 +320,7 @@ test.describe('Subclass video — Bard / Troubadour', () => {
 
       await caption('GM', 'Acknowledges Reya’s roll', '');
       const bBanner = gmPage.locator('.dice-result-banner', { hasText: bBannerText });
-      await bBanner.locator('button', { hasText: 'Acknowledge' }).first().click();
+      await ack(bBanner);
       await expect(bBanner).not.toBeVisible({ timeout: 5000 });
 
       // ---------------------------------------------------------------------

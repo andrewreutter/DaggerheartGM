@@ -145,7 +145,7 @@ test.describe('Subclass video — Ranger / Beastbound', () => {
 
   test("Kest the Beastbound: Companion sheet, Ranger's Focus, and Hold Them Off", async ({ browser }) => {
     const consoleErrors = [];
-    const { gmPage, playerPage, caption, finish } = await startSubclassRun(browser, {
+    const { gmPage, playerPage, caption, finish, ack } = await startSubclassRun(browser, {
       className: 'Ranger',
       subclassName: 'Beastbound',
       actors: ['gm', 'playerA'],
@@ -169,15 +169,14 @@ test.describe('Subclass video — Ranger / Beastbound', () => {
       await expect(gmPage.locator('button', { hasText: 'Add Character' })).toBeVisible({ timeout: 15000 });
       await expect(playerPage.locator('text=Kest').first()).toBeVisible({ timeout: 15000 });
 
-      for (const p of [gmPage, playerPage]) {
-        await p.getByLabel('Hide dice').click();
-      }
+      // Keep 3D dice on the camera (playerPage) so the screencast captures tumbles.
+      await gmPage.getByLabel('Hide dice').click();
 
       await caption('GM', 'Start Session', '');
       await gmPage.getByRole('button', { name: '▶ Session' }).click();
       const startBanner = gmPage.locator('.dice-result-banner', { hasText: 'Start Session' });
       await expect(startBanner).toBeVisible({ timeout: 8000 });
-      await startBanner.locator('button', { hasText: 'Acknowledge' }).first().click();
+      await ack(startBanner, { holdMs: 0 });
       await expect(startBanner).not.toBeVisible({ timeout: 5000 });
 
       const playerKestCard = playerPage.locator('div.group\\/char', { hasText: 'Kest' });
@@ -206,7 +205,7 @@ test.describe('Subclass video — Ranger / Beastbound', () => {
       }
       await caption('GM', 'Acknowledges Companion Act', '');
       const companionBanner = gmPage.locator('.dice-result-banner', { hasText: companionBannerText });
-      await companionBanner.locator('button', { hasText: 'Acknowledge' }).first().click();
+      await ack(companionBanner);
       await expect(companionBanner).not.toBeVisible({ timeout: 5000 });
 
       // Narrative / display-only Beastbound features.
@@ -268,7 +267,7 @@ test.describe('Subclass video — Ranger / Beastbound', () => {
 
       await caption('GM', "Acknowledges Ranger's Focus attack", 'Focus Wolf becomes Focus');
       const focusBannerGm = gmPage.locator('.dice-result-banner', { hasText: focusAttackText });
-      await focusBannerGm.locator('button', { hasText: 'Acknowledge' }).first().click();
+      await ack(focusBannerGm);
       await expect(focusBannerGm).not.toBeVisible({ timeout: 5000 });
 
       await expect(async () => {
@@ -325,7 +324,7 @@ test.describe('Subclass video — Ranger / Beastbound', () => {
       await caption('GM', 'Acknowledges Hold Them Off attack', 'Hope spent; extra-target HP apply is a known gap');
       const holdBannerGm = gmPage.locator('.dice-result-banner', { hasText: /Kest Dagger|Hold Them Off/i }).first();
       await expect(holdBannerGm).toBeVisible({ timeout: 8000 });
-      await holdBannerGm.locator('button', { hasText: 'Acknowledge' }).first().click();
+      await ack(holdBannerGm);
       await expect(holdBannerGm).not.toBeVisible({ timeout: 8000 });
 
       await caption(

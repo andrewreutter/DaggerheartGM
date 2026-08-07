@@ -146,7 +146,7 @@ test.describe('Subclass video — Seraph / Divine Wielder', () => {
   }) => {
     test.setTimeout(300_000);
     const consoleErrors = [];
-    const { gmPage, playerPage, playerBPage, caption, finish } = await startSubclassRun(browser, {
+    const { gmPage, playerPage, playerBPage, caption, finish, ack } = await startSubclassRun(browser, {
       className: 'Seraph',
       subclassName: 'Divine Wielder',
       actors: ['gm', 'playerA', 'playerB'],
@@ -175,7 +175,8 @@ test.describe('Subclass video — Seraph / Divine Wielder', () => {
       await expect(playerPage.locator('text=Kael').first()).toBeVisible({ timeout: 15000 });
       await expect(playerBPage.locator('text=Reya').first()).toBeVisible({ timeout: 15000 });
 
-      for (const p of [gmPage, playerPage, playerBPage]) {
+      // Keep 3D dice on the camera (playerPage) so the screencast captures tumbles.
+      for (const p of [gmPage, playerBPage]) {
         await p.getByLabel('Hide dice').click();
       }
 
@@ -190,7 +191,7 @@ test.describe('Subclass video — Seraph / Divine Wielder', () => {
       await gmPage.getByRole('button', { name: '▶ Session' }).click();
       const startBanner = gmPage.locator('.dice-result-banner', { hasText: 'Start Session' });
       await expect(startBanner).toBeVisible({ timeout: 8000 });
-      await startBanner.locator('button', { hasText: 'Acknowledge' }).first().click();
+      await ack(startBanner, { holdMs: 0 });
       await expect(startBanner).not.toBeVisible({ timeout: 5000 });
 
       await caption('GM', 'Prayer Dice roll', 'Physical-roll resume — acknowledge to grant the pool');
@@ -203,7 +204,7 @@ test.describe('Subclass video — Seraph / Divine Wielder', () => {
           timeout: 8000,
         });
       }
-      await prayerDiceBanner.locator('button', { hasText: 'Acknowledge' }).first().click({ force: true });
+      await ack(prayerDiceBanner, { force: true });
       await expect(prayerDiceBanner).not.toBeVisible({ timeout: 5000 });
 
       await expect(async () => {
@@ -291,7 +292,7 @@ test.describe('Subclass video — Seraph / Divine Wielder', () => {
       if (await cultistChip.isVisible({ timeout: 2000 }).catch(() => false)) {
         await cultistChip.click();
       }
-      await attackBanner.locator('button', { hasText: 'Acknowledge' }).first().click({ force: true });
+      await ack(attackBanner, { force: true });
       await expect(attackBanner).not.toBeVisible({ timeout: 8000 });
 
       // ---------------------------------------------------------------------
@@ -316,7 +317,7 @@ test.describe('Subclass video — Seraph / Divine Wielder', () => {
       }
       await expect(lifeSupportAck).toBeEnabled({ timeout: 8000 });
       await caption('GM', 'Acknowledges Life Support', 'Hope spend + ally heal apply on ack');
-      await lifeSupportAck.click({ force: true });
+      await ack(lifeSupportBanner, { force: true });
       await expect(lifeSupportBanner).not.toBeVisible({ timeout: 8000 });
 
       await expect(async () => {
@@ -388,7 +389,7 @@ test.describe('Subclass video — Seraph / Divine Wielder', () => {
       await caption('GM', "Acknowledges Reya’s roll", '');
       await gmPage.keyboard.press('Escape');
       const bBanner = gmPage.locator('.dice-result-banner', { hasText: bBannerText });
-      await bBanner.locator('button', { hasText: 'Acknowledge' }).first().click({ force: true });
+      await ack(bBanner, { force: true });
       await expect(bBanner).not.toBeVisible({ timeout: 5000 });
 
       await caption(

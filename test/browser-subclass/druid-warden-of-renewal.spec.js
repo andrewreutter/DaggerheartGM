@@ -128,7 +128,7 @@ test.describe('Subclass video — Druid / Warden of Renewal', () => {
 
   test("Reed the Warden of Renewal: Clarity, Regeneration, Protection, Defender", async ({ browser }) => {
     const consoleErrors = [];
-    const { gmPage, playerPage, playerBPage, caption, finish } = await startSubclassRun(browser, {
+    const { gmPage, playerPage, playerBPage, caption, finish, ack } = await startSubclassRun(browser, {
       className: 'Druid',
       subclassName: 'Warden of Renewal',
       actors: ['gm', 'playerA', 'playerB'],
@@ -155,7 +155,8 @@ test.describe('Subclass video — Druid / Warden of Renewal', () => {
       await expect(playerPage.locator('text=Reed').first()).toBeVisible({ timeout: 15000 });
       await expect(playerBPage.locator('text=Moss').first()).toBeVisible({ timeout: 15000 });
 
-      for (const p of [gmPage, playerPage, playerBPage]) {
+      // Keep 3D dice on the camera (playerPage) so the screencast captures tumbles.
+      for (const p of [gmPage, playerBPage]) {
         await p.getByLabel('Hide dice').click();
       }
 
@@ -163,7 +164,7 @@ test.describe('Subclass video — Druid / Warden of Renewal', () => {
       await gmPage.getByRole('button', { name: '▶ Session' }).click();
       const startBanner = gmPage.locator('.dice-result-banner', { hasText: 'Start Session' });
       await expect(startBanner).toBeVisible({ timeout: 8000 });
-      await startBanner.locator('button', { hasText: 'Acknowledge' }).first().click();
+      await ack(startBanner, { holdMs: 0 });
       await expect(startBanner).not.toBeVisible({ timeout: 5000 });
 
       const playerReedCard = playerPage.locator('div.group\\/char', { hasText: 'Reed' });
@@ -331,7 +332,7 @@ test.describe('Subclass video — Druid / Warden of Renewal', () => {
       }
 
       await caption('GM', 'Acknowledges the Goblin attack', 'Moss takes reduced HP; Reed marked Stress');
-      await gmBanner.locator('button', { hasText: 'Acknowledge' }).first().click();
+      await ack(gmBanner);
       await expect(gmBanner).not.toBeVisible({ timeout: 5000 });
 
       await expect(async () => {

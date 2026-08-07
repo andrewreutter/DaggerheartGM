@@ -102,7 +102,7 @@ test.describe('Subclass video — Wizard / School of War', () => {
     browser,
   }) => {
     const consoleErrors = [];
-    const { gmPage, playerPage, caption, finish } = await startSubclassRun(browser, {
+    const { gmPage, playerPage, caption, finish, ack } = await startSubclassRun(browser, {
       className: 'Wizard',
       subclassName: 'School of War',
       actors: ['gm', 'playerA'],
@@ -126,15 +126,14 @@ test.describe('Subclass video — Wizard / School of War', () => {
       await expect(gmPage.locator('button', { hasText: 'Add Character' })).toBeVisible({ timeout: 15000 });
       await expect(playerPage.locator('text=Hex').first()).toBeVisible({ timeout: 15000 });
 
-      for (const p of [gmPage, playerPage]) {
-        await p.getByLabel('Hide dice').click();
-      }
+      // Keep 3D dice on the camera (playerPage) so the screencast captures tumbles.
+      await gmPage.getByLabel('Hide dice').click();
 
       await caption('GM', 'Start Session', '');
       await gmPage.getByRole('button', { name: '▶ Session' }).click();
       const startBanner = gmPage.locator('.dice-result-banner', { hasText: 'Start Session' });
       await expect(startBanner).toBeVisible({ timeout: 8000 });
-      await startBanner.locator('button', { hasText: 'Acknowledge' }).first().click();
+      await ack(startBanner, { holdMs: 0 });
       await expect(startBanner).not.toBeVisible({ timeout: 5000 });
 
       const playerHexCard = playerPage.locator('div.group\\/char', { hasText: 'Hex' });
@@ -244,7 +243,7 @@ test.describe('Subclass video — Wizard / School of War', () => {
       if (await thugChip.isVisible({ timeout: 2000 }).catch(() => false)) {
         await thugChip.click();
       }
-      await attackBanner.locator('button', { hasText: 'Acknowledge' }).first().click();
+      await ack(attackBanner);
       await expect(attackBanner).not.toBeVisible({ timeout: 5000 });
 
       await expect(async () => {
@@ -309,7 +308,7 @@ test.describe('Subclass video — Wizard / School of War', () => {
         if (await hexTarget.isVisible({ timeout: 1500 }).catch(() => false)) {
           await hexTarget.click();
         }
-        await nttBanner.locator('button', { hasText: 'Acknowledge' }).first().click();
+        await ack(nttBanner);
       }
 
       await expect(async () => {

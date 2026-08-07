@@ -72,12 +72,20 @@ const { Pool } = pg;
 
 export const BASE_URL = `http://localhost:${Number(process.env.PLAYWRIGHT_TEST_PORT || 3457)}`;
 
-// Optional identity namespace so multiple parallel agents (each with their own
-// PLAYWRIGHT_TEST_PORT + webServer + this same shared DATABASE_URL) don't collide on the
-// fixed test uids/emails below (table ownership, dice_rolls keyed by gm_uid, library
-// character ids, etc.). Unset TEST_ACTOR_NS preserves the original fixed identities exactly,
-// so existing single-namespace suites (test/browser/*) are unaffected.
-const NS = process.env.TEST_ACTOR_NS ? `-${process.env.TEST_ACTOR_NS}` : '';
+// Optional identity namespace so parallel runners don't collide on the fixed test
+// uids/emails below (table ownership, dice_rolls keyed by gm_uid, library character
+// ids, etc.):
+//   - TEST_ACTOR_NS — parallel Cursor agents (each with their own PLAYWRIGHT_TEST_PORT
+//     + webServer sharing DATABASE_URL)
+//   - SUBCLASS_PARALLEL=1 + TEST_PARALLEL_INDEX — npm run test:subclasses (Playwright
+//     workers sharing one webServer; banner queue is per gm_uid)
+// Unset both preserves the original fixed identities so test/browser/* is unaffected.
+const NS_PARTS = [];
+if (process.env.TEST_ACTOR_NS) NS_PARTS.push(process.env.TEST_ACTOR_NS);
+if (process.env.SUBCLASS_PARALLEL === '1' && process.env.TEST_PARALLEL_INDEX != null) {
+  NS_PARTS.push(`w${process.env.TEST_PARALLEL_INDEX}`);
+}
+const NS = NS_PARTS.length ? `-${NS_PARTS.join('-')}` : '';
 
 /** The legacy GM identity — backward-compat with single-actor tests. */
 export const ACTOR_GM = {

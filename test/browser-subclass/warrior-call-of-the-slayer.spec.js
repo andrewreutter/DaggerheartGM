@@ -137,7 +137,7 @@ test.describe('Subclass video — Warrior / Call of the Slayer', () => {
     browser,
   }) => {
     const consoleErrors = [];
-    const { gmPage, playerPage, caption, finish } = await startSubclassRun(browser, {
+    const { gmPage, playerPage, caption, finish, ack } = await startSubclassRun(browser, {
       className: 'Warrior',
       subclassName: 'Call of the Slayer',
       actors: ['gm', 'playerA'],
@@ -161,15 +161,14 @@ test.describe('Subclass video — Warrior / Call of the Slayer', () => {
       await expect(gmPage.locator('button', { hasText: 'Add Character' })).toBeVisible({ timeout: 15000 });
       await expect(playerPage.locator(`text=${CHAR_NAME}`).first()).toBeVisible({ timeout: 15000 });
 
-      for (const p of [gmPage, playerPage]) {
-        await p.getByLabel('Hide dice').click();
-      }
+      // Keep 3D dice on the camera (playerPage) so the screencast captures tumbles.
+      await gmPage.getByLabel('Hide dice').click();
 
       await caption('GM', 'Start Session', 'Slayer onSessionStart would clear leftover dice from a prior session');
       await gmPage.getByRole('button', { name: '▶ Session' }).click();
       const startBanner = gmPage.locator('.dice-result-banner', { hasText: 'Start Session' });
       await expect(startBanner).toBeVisible({ timeout: 8000 });
-      await startBanner.locator('button', { hasText: 'Acknowledge' }).first().click();
+      await ack(startBanner, { holdMs: 0 });
       await expect(startBanner).not.toBeVisible({ timeout: 5000 });
 
       // Seed Slayer Dice after session start so onSessionStart does not wipe them.
@@ -186,30 +185,37 @@ test.describe('Subclass video — Warrior / Call of the Slayer', () => {
       const playerCharCard = playerPage.locator('div.group\\/char', { hasText: CHAR_NAME });
 
       // ---------------------------------------------------------------------
-      // No Mercy (legacy hope-ability Use → GM Ack) + Combat Training display.
+      // No Mercy (V2 Actions chip → GM Ack) + Combat Training display.
       // ---------------------------------------------------------------------
-      await caption('PLAYER A', 'No Mercy', 'Hope ability — 3 Hope on GM Acknowledge');
+      await caption('PLAYER A', 'No Mercy', 'Actions chip — 3 Hope applies immediately');
       await openCharSheet(playerPage, playerCharCard);
-      const noMercyBtn = playerPage.getByRole('button', { name: /No Mercy/i }).first();
+      const slayerActionsCard = playerPage
+        .locator('div.rounded-xl')
+        .filter({ has: playerPage.locator('span.uppercase', { hasText: /^Actions$/ }) })
+        .first();
+      await expect(slayerActionsCard).toBeVisible({ timeout: 8000 });
+      const noMercyBtn = slayerActionsCard
+        .locator('button.dh-sheet-clickable-chip')
+        .filter({ hasText: /No Mercy/i });
       await expect(noMercyBtn).toBeVisible({ timeout: 8000 });
-      await noMercyBtn.click();
 
-      const noMercyBannerText = 'No Mercy';
-      for (const p of [gmPage, playerPage]) {
-        await expect(p.locator('.dice-result-banner', { hasText: noMercyBannerText })).toBeVisible({
-          timeout: 8000,
-        });
-      }
-      await caption('GM', 'Acknowledges No Mercy', '');
-      const noMercyBanner = gmPage.locator('.dice-result-banner', { hasText: noMercyBannerText });
-      await noMercyBanner.locator('button', { hasText: 'Acknowledge' }).first().click();
-      await expect(noMercyBanner).not.toBeVisible({ timeout: 5000 });
+      let hopeBeforeNoMercy;
+      await expect(async () => {
+        const state = await getTableState(tableId);
+        const el = (state.elements || []).find((e) => e.instanceId === charInstanceId);
+        hopeBeforeNoMercy = el?.hope;
+        expect(hopeBeforeNoMercy).toBeGreaterThanOrEqual(3);
+      }).toPass({ timeout: 8000 });
+
+      await noMercyBtn.click();
 
       await expect(async () => {
         const state = await getTableState(tableId);
         const el = (state.elements || []).find((e) => e.instanceId === charInstanceId);
-        expect(el?.hope).toBe(2);
+        expect(el?.hope).toBe(hopeBeforeNoMercy - 3);
+        expect(JSON.stringify(el?.featureState || {})).toMatch(/"noMercyActive"\s*:\s*true/);
       }).toPass({ timeout: 8000 });
+      await caption('PLAYER A', 'No Mercy applied', 'Hope spent; +1 attacks until rest');
 
       await caption('PLAYER A', 'Combat Training', 'Passive — +level physical damage');
       await openCharSheet(playerPage, playerCharCard);
@@ -283,7 +289,7 @@ test.describe('Subclass video — Warrior / Call of the Slayer', () => {
       if (await targetChip.isVisible({ timeout: 2000 }).catch(() => false)) {
         await targetChip.click();
       }
-      await attackBanner.locator('button', { hasText: 'Acknowledge' }).first().click();
+      await ack(attackBanner);
       await expect(attackBanner).not.toBeVisible({ timeout: 5000 });
 
       await expect(async () => {

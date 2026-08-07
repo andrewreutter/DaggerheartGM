@@ -152,7 +152,7 @@ test.describe('Subclass video — Warrior / Call of the Brave', () => {
     browser,
   }) => {
     const consoleErrors = [];
-    const { gmPage, playerPage, caption, finish } = await startSubclassRun(browser, {
+    const { gmPage, playerPage, caption, finish, ack } = await startSubclassRun(browser, {
       className: 'Warrior',
       subclassName: 'Call of the Brave',
       actors: ['gm', 'playerA'],
@@ -176,51 +176,56 @@ test.describe('Subclass video — Warrior / Call of the Brave', () => {
       await expect(gmPage.locator('button', { hasText: 'Add Character' })).toBeVisible({ timeout: 15000 });
       await expect(playerPage.locator(`text=${CHAR_NAME}`).first()).toBeVisible({ timeout: 15000 });
 
-      for (const p of [gmPage, playerPage]) {
-        await p.getByLabel('Hide dice').click();
-      }
+      // Keep 3D dice on the camera (playerPage) so the screencast captures tumbles.
+      await gmPage.getByLabel('Hide dice').click();
 
       await caption('GM', 'Start Session', '');
       await gmPage.getByRole('button', { name: '▶ Session' }).click();
       const startBanner = gmPage.locator('.dice-result-banner', { hasText: 'Start Session' });
       await expect(startBanner).toBeVisible({ timeout: 8000 });
-      await startBanner.locator('button', { hasText: 'Acknowledge' }).first().click();
+      await ack(startBanner, { holdMs: 0 });
       await expect(startBanner).not.toBeVisible({ timeout: 5000 });
 
       const playerCharCard = playerPage.locator('div.group\\/char', { hasText: CHAR_NAME });
 
       // ---------------------------------------------------------------------
-      // No Mercy (Warrior hope feature) — legacy hope-ability card on the sheet
-      // (recomputeCharacter omits it from activeFeatures, so the V2 synthetic card
-      // chip is not the sheet path). Click posts a feature-use banner; GM Ack
-      // spends 3 Hope (same pattern as Rogue's Dodge in the Nightwalker pilot).
+      // No Mercy (Warrior hope feature) — V2 Actions strip chip (amber Hope card
+      // is hidden when the feature is on the guide). Click posts a feature-use
+      // banner; GM Ack spends 3 Hope.
       // ---------------------------------------------------------------------
       await caption(
         'PLAYER A',
         'No Mercy',
-        'Hope ability — spend 3 Hope for +1 to attacks until rest (ack applies the cost)'
+        'Actions chip — spend 3 Hope for +1 to attacks until rest (applies immediately)'
       );
       await openCharSheet(playerPage, playerCharCard);
-      const noMercyBtn = playerPage.getByRole('button', { name: /No Mercy/i }).first();
+      const karaActionsCard = playerPage
+        .locator('div.rounded-xl')
+        .filter({ has: playerPage.locator('span.uppercase', { hasText: /^Actions$/ }) })
+        .first();
+      await expect(karaActionsCard).toBeVisible({ timeout: 8000 });
+      const noMercyBtn = karaActionsCard
+        .locator('button.dh-sheet-clickable-chip')
+        .filter({ hasText: /No Mercy/i });
       await expect(noMercyBtn).toBeVisible({ timeout: 8000 });
-      await noMercyBtn.click();
 
-      const noMercyBannerText = 'No Mercy';
-      for (const p of [gmPage, playerPage]) {
-        await expect(p.locator('.dice-result-banner', { hasText: noMercyBannerText })).toBeVisible({
-          timeout: 8000,
-        });
-      }
-      await caption('GM', 'Acknowledges No Mercy', 'Spends 3 Hope on ack');
-      const noMercyBanner = gmPage.locator('.dice-result-banner', { hasText: noMercyBannerText });
-      await noMercyBanner.locator('button', { hasText: 'Acknowledge' }).first().click();
-      await expect(noMercyBanner).not.toBeVisible({ timeout: 5000 });
+      let hopeBeforeNoMercy;
+      await expect(async () => {
+        const state = await getTableState(tableId);
+        const el = (state.elements || []).find((e) => e.instanceId === charInstanceId);
+        hopeBeforeNoMercy = el?.hope;
+        expect(hopeBeforeNoMercy).toBeGreaterThanOrEqual(3);
+      }).toPass({ timeout: 8000 });
+
+      await noMercyBtn.click();
 
       await expect(async () => {
         const state = await getTableState(tableId);
         const el = (state.elements || []).find((e) => e.instanceId === charInstanceId);
-        expect(el?.hope).toBe(2);
+        expect(el?.hope).toBe(hopeBeforeNoMercy - 3);
+        expect(JSON.stringify(el?.featureState || {})).toMatch(/"noMercyActive"\s*:\s*true/);
       }).toPass({ timeout: 8000 });
+      await caption('PLAYER A', 'No Mercy applied', 'Hope spent; +1 attacks until rest');
 
       // ---------------------------------------------------------------------
       // Attack of Opportunity — GM drags adversary out of Melee (onTokenMove).
@@ -309,7 +314,7 @@ test.describe('Subclass video — Warrior / Call of the Brave', () => {
       }
       await caption('GM', 'Acknowledges the Agility roll', 'Rise to the Challenge applied at intent');
       const traitBanner = gmPage.locator('.dice-result-banner', { hasText: traitBannerText });
-      await traitBanner.locator('button', { hasText: 'Acknowledge' }).first().click();
+      await ack(traitBanner);
       await expect(traitBanner).not.toBeVisible({ timeout: 5000 });
 
       // ---------------------------------------------------------------------

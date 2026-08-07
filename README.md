@@ -162,7 +162,7 @@ DaggerheartGM/
 │   ├── helpers/
 │   │   ├── auth.js             # Playwright helper: mock Firebase + API for authenticated tests
 │   │   ├── multi-auth.js       # Multi-actor (GM/Player A/Player B) Playwright helper
-│   │   ├── subclass-video.js   # Subclass video suite recording harness (caption overlay, video retention)
+│   │   ├── subclass-video.js   # Subclass video suite harness (screencast + action cursor overlays, captions)
 │   │   └── subclass-cast.js    # Subclass video suite per-class/subclass character data factories
 │   ├── subclass-video-test-plan.md  # Coverage tracker + lessons learned for the subclass video suite
 │   ├── fixtures/               # OCR parse fixture images + expected JSON
@@ -494,7 +494,7 @@ The Playwright test server runs on port 3457 (`NODE_ENV=test`) with a Firebase a
 
 **Multi-actor tests** (T12): `test/helpers/multi-auth.js` supports 2+ concurrent authenticated identities hitting the **real** server (no route mocking beyond Firebase CDN + `/api/config`). Uses `Bearer test-token:<uid>:<email>` tokens (multi-identity `requireAuth` extension, active only under `NODE_ENV=test`). `test/browser/action-loop-multi-actor.spec.js` covers M1 (roll SSE propagation + element-update SSE), M3 (rest cycle SSE), and M6 (token-position SSE to multiple clients). Requires a real Postgres (`DATABASE_URL`) for the full suite; basic auth extension tests run without DB.
 
-**Subclass feature video suite** (opt-in, **not** part of `npm test`/`test:browser`/CI): `npm run test:subclasses` runs `test/browser-subclass/*.spec.js` (Playwright project `subclass-videos`), one test per subclass that drives every feature it grants from a real player browser context and records a captioned `.webm` walkthrough to `test-artifacts/subclass-videos/` (gitignored, most-recent-run-only). See `test/subclass-video-test-plan.md` for the coverage tracker and harness usage notes.
+**Subclass feature video suite** (opt-in, **not** part of `npm test`/`test:browser`/CI): `npm run test:subclasses` runs `test/browser-subclass/*.spec.js` (Playwright project `subclass-videos`, parallel via `SUBCLASS_PARALLEL=1`; override with `SUBCLASS_WORKERS`); `npm run test:subclass -- <filter>` runs one matching spec serially (e.g. `bard-troubadour`). One test per subclass drives every feature it grants from a real player browser context and records a captioned `.webm` walkthrough (Playwright screencast with animated cursor / action overlays) to `test-artifacts/subclass-videos/` (gitignored, most-recent-run-only). Runs **headed** by default so WebGL dice appear (`SUBCLASS_HEADED=0` for headless); camera keeps 3D dice visible while GM hides them; harness `ack()` holds for the tumble. Per-worker GM/player uids keep banner queues isolated. See `test/subclass-video-test-plan.md` for the coverage tracker and harness usage notes.
 
 **CI**: both suites run automatically on every push and pull request via `.github/workflows/ci.yml` (Node 22 LTS, `npm ci`, `npm run build`, then `npm run test:unit` followed by `npm run test:browser`). No secrets required — Firebase is mocked in tests and the server runs without `DATABASE_URL`.
 

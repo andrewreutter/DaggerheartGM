@@ -135,7 +135,7 @@ test.describe('Subclass video — Guardian / Stalwart', () => {
 
   test('Dara the Stalwart: Frontline Tank, Unstoppable, Iron Will, Partners-in-Arms, Loyal Protector', async ({ browser }) => {
     const consoleErrors = [];
-    const { gmPage, playerPage, playerBPage, caption, finish } = await startSubclassRun(browser, {
+    const { gmPage, playerPage, playerBPage, caption, finish, ack } = await startSubclassRun(browser, {
       className: 'Guardian',
       subclassName: 'Stalwart',
       actors: ['gm', 'playerA', 'playerB'],
@@ -156,7 +156,8 @@ test.describe('Subclass video — Guardian / Stalwart', () => {
       await expect(playerPage.locator('text=Dara').first()).toBeVisible({ timeout: 15000 });
       await expect(playerBPage.locator('text=Reya').first()).toBeVisible({ timeout: 15000 });
 
-      for (const p of [gmPage, playerPage, playerBPage]) {
+      // Keep 3D dice on the camera (playerPage) so the screencast captures tumbles.
+      for (const p of [gmPage, playerBPage]) {
         await p.getByLabel('Hide dice').click();
       }
 
@@ -164,7 +165,7 @@ test.describe('Subclass video — Guardian / Stalwart', () => {
       await gmPage.getByRole('button', { name: '▶ Session' }).click();
       const startBanner = gmPage.locator('.dice-result-banner', { hasText: 'Start Session' });
       await expect(startBanner).toBeVisible({ timeout: 8000 });
-      await startBanner.locator('button', { hasText: 'Acknowledge' }).first().click();
+      await ack(startBanner, { holdMs: 0 });
       await expect(startBanner).not.toBeVisible({ timeout: 5000 });
 
       // dice_rolls pending queue is per gm_uid (not table) — clear leftovers from prior runs
@@ -230,7 +231,7 @@ test.describe('Subclass video — Guardian / Stalwart', () => {
         .filter({ hasText: 'Frontline Tank' });
       if (await frontlineBanner.first().isVisible().catch(() => false)) {
         await caption('GM', 'Acknowledges Frontline Tank', 'Dismisses action notice');
-        await frontlineBanner.first().getByRole('button', { name: 'Acknowledge' }).click({ force: true });
+        await ack(frontlineBanner.first(), { force: true });
         await expect(frontlineBanner.first()).not.toBeVisible({ timeout: 5000 });
       }
 

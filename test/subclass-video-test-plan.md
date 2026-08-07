@@ -34,19 +34,36 @@ lighter-touch assertion (see "Narrative-only features" below), not a full mechan
 ## How to run
 
 ```bash
-npm run test:subclasses                      # all specs in test/browser-subclass/
-npx playwright test --project=subclass-videos test/browser-subclass/<file>.spec.js --reporter=list
+npm run test:subclasses                      # all specs in test/browser-subclass/ (parallel)
+SUBCLASS_WORKERS=4 npm run test:subclasses   # optional: more/fewer parallel walkthroughs
+npm run test:subclass -- bard-troubadour     # one subclass (filename substring; serial, 1 worker)
+npm run test:subclass -- rogue-nightwalker.spec.js
 ```
 
+`npm run test:subclasses` sets `SUBCLASS_PARALLEL=1` and runs multiple Playwright workers
+(override with `SUBCLASS_WORKERS`). `npm run test:subclass -- <filter>` runs the matching
+spec(s) with the default serial worker count — prefer this for authoring a single walkthrough.
+You can also pass a filter to the plural script (`npm run test:subclasses -- bard-troubadour`);
+it still enables parallel mode. Each worker gets its own GM/player uid namespace via
+`TEST_PARALLEL_INDEX` in `test/helpers/multi-auth.js` so pending-banner queues (`dice_rolls`
+keyed by `gm_uid`) do not cross-cancel. Specs still share one test `webServer` on port 3457.
+
+**3D dice in the video:** the `subclass-videos` project runs **headed** (set `SUBCLASS_HEADED=0`
+for headless — WebGL may be blank) with GPU ANGLE flags, patches WebGL
+`preserveDrawingBuffer`, and keeps the dice canvas **visible on the camera** (`playerPage`).
+GM / Player B still click **Hide dice** so Acknowledge is not gated on their local tumble.
+Use harness `ack(banner)` (holds ~2.5s on the camera) instead of clicking Acknowledge directly.
+
 Videos land in `test-artifacts/subclass-videos/<class>--<subclass>.webm` (gitignored,
-most-recent-run-only — reruns overwrite in place). `npm run dev` (esbuild watch) must be
-producing a current `public/app.js`/`public/styles.css`, or the Playwright `webServer` will serve
-a stale client bundle — `npm run build:js` once if in doubt (the webServer command runs
-`node server.js` directly, it does **not** rebuild).
+most-recent-run-only — reruns overwrite in place). Requires **Playwright ≥1.61** (`@playwright/test`
+^1.62.1) for `page.screencast.showActions({ cursor: 'pointer' })`. `npm run dev` (esbuild watch)
+must be producing a current `public/app.js`/`public/styles.css`, or the Playwright `webServer`
+will serve a stale client bundle — `npm run build:js` once if in doubt (the webServer command
+runs `node server.js` directly, it does **not** rebuild).
 
 ## Reusable pieces
 
-- **Harness**: `test/helpers/subclass-video.js` — `startSubclassRun(browser, { className, subclassName, actors })` → `{ gmPage, playerPage, playerBPage, caption, finish }`. `actors` is a subset of `['gm', 'playerA', 'playerB']`; omit `'playerB'` for two-actor (GM + owner) subclasses.
+- **Harness**: `test/helpers/subclass-video.js` — `startSubclassRun(browser, { className, subclassName, actors })` → `{ gmPage, playerPage, playerBPage, caption, ack, holdForDiceTumble, finish }`. `actors` is a subset of `['gm', 'playerA', 'playerB']`; omit `'playerB'` for two-actor (GM + owner) subclasses. Camera recording uses Playwright `page.screencast` with `showActions({ cursor: 'pointer' })` (animated mouse + action titles on the player page; bottom-right so they don’t cover the top-center caption). Prefer `ack(bannerLocator)` / `ack(banner, { holdMs: 0 })` for Start Session.
 - **Character builders**: `test/helpers/subclass-cast.js` — shared factories (`buildAllyCharacterData`, Troubadour, Nightwalker) plus per-class siblings when concurrent agents need isolation (`subclass-cast-druid.js`, `subclass-cast-bard.js`, `subclass-cast-ranger.js`, …). Keep the same shape as `buildBardTroubadourCharacterData` (see below).
 - **Table/auth plumbing**: `test/helpers/multi-auth.js` — `ACTOR_GM/PLAYER_A/PLAYER_B`, `createTestTable`, `invitePlayers`, `createLibraryCharacter`/`deleteLibraryCharacter`, `addElementsToTable`, `getTableState`, `cancelAllPendingBanners`, `deleteTestTable`, and **`grantCampaignPassForTable(tableId)`** (see Gotchas below — call this in every spec's `beforeAll`).
 

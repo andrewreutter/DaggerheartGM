@@ -125,7 +125,7 @@ test.describe('Subclass video — Guardian / Vengeance', () => {
 
   test('Voss the Vengeance: Revenge, Nemesis, Act of Reprisal, and Guardian class features', async ({ browser }) => {
     const consoleErrors = [];
-    const { gmPage, playerPage, playerBPage, caption, finish } = await startSubclassRun(browser, {
+    const { gmPage, playerPage, playerBPage, caption, finish, ack } = await startSubclassRun(browser, {
       className: 'Guardian',
       subclassName: 'Vengeance',
       actors: ['gm', 'playerA', 'playerB'],
@@ -146,7 +146,8 @@ test.describe('Subclass video — Guardian / Vengeance', () => {
       await expect(playerPage.locator('text=Voss').first()).toBeVisible({ timeout: 15000 });
       await expect(playerBPage.locator('text=Reya').first()).toBeVisible({ timeout: 15000 });
 
-      for (const p of [gmPage, playerPage, playerBPage]) {
+      // Keep 3D dice on the camera (playerPage) so the screencast captures tumbles.
+      for (const p of [gmPage, playerBPage]) {
         await p.getByLabel('Hide dice').click();
       }
 
@@ -154,7 +155,7 @@ test.describe('Subclass video — Guardian / Vengeance', () => {
       await gmPage.getByRole('button', { name: '▶ Session' }).click();
       const startBanner = gmPage.locator('.dice-result-banner', { hasText: 'Start Session' });
       await expect(startBanner).toBeVisible({ timeout: 8000 });
-      await startBanner.locator('button', { hasText: 'Acknowledge' }).first().click();
+      await ack(startBanner, { holdMs: 0 });
       await expect(startBanner).not.toBeVisible({ timeout: 5000 });
 
       // Pending banner queue is per gm_uid — clear leftovers so Ack targets this run's Voss.
@@ -211,7 +212,7 @@ test.describe('Subclass video — Guardian / Vengeance', () => {
         .filter({ hasText: 'Frontline Tank' });
       if (await frontlineBanner.first().isVisible().catch(() => false)) {
         await caption('GM', 'Acknowledges Frontline Tank', 'Dismisses action notice');
-        await frontlineBanner.first().getByRole('button', { name: 'Acknowledge' }).click({ force: true });
+        await ack(frontlineBanner.first(), { force: true });
         await expect(frontlineBanner.first()).not.toBeVisible({ timeout: 5000 });
       }
 
@@ -334,7 +335,7 @@ test.describe('Subclass video — Guardian / Vengeance', () => {
       if (await cutthroatTarget.isVisible({ timeout: 2000 }).catch(() => false)) {
         await cutthroatTarget.click();
       }
-      await attackBanner.locator('button', { hasText: 'Acknowledge' }).first().click();
+      await ack(attackBanner);
       await expect(attackBanner).not.toBeVisible({ timeout: 5000 });
 
       await caption('Guardian / Vengeance', 'Walkthrough complete', 'Revenge, Nemesis, Act of Reprisal, Frontline Tank, Unstoppable');

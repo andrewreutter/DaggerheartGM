@@ -29,7 +29,8 @@
     "v2:human-queue": "node scripts/v2-human-queue-list.mjs",
     "test:unit": "vitest run",
     "test:browser": "npx playwright test --project=default",
-    "test:subclasses": "npx playwright test --project=subclass-videos",
+    "test:subclasses": "SUBCLASS_PARALLEL=1 SUBCLASS_WORKERS=3 npx playwright test --project=subclass-videos",
+    "test:subclass": "npx playwright test --project=subclass-videos",
     "agents": "node --env-file=.env scripts/orchestrate.js",
     "setup:dev-agent-labels": "node --env-file=.env scripts/setup-dev-agent-labels.mjs",
     "setup:v2-migration-labels": "node --env-file=.env scripts/setup-v2-migration-labels.mjs",
@@ -57,7 +58,7 @@
     "undici": "^7.22.0"
   },
   "devDependencies": {
-    "@playwright/test": "^1.58.2",
+    "@playwright/test": "^1.62.1",
     "@tailwindcss/cli": "^4.2.1",
     "ajv": "^8.18.0",
     "esbuild": "^0.27.3",

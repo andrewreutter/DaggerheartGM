@@ -15,11 +15,11 @@
  *  - **Sneak Attack** is a `reviewAction` chip on the pending attack banner (tier in d6 extra
  *    damage) when the attack succeeds while Cloaked. The adversary's `difficulty` is set to 1
  *    so the attack is a guaranteed hit, letting the chip actually appear and be exercised.
- *  - **Rogue's Dodge** is the class Hope ability — a single amber clickable chip on the
- *    Features list (no separate "Use" button). Clicking it posts an action notification that
- *    requires GM Acknowledge (`_featureUse: true`); the ack spends 3 Hope and sets
- *    `featureState[...].roguesDodgeActive` (+2 Evasion until the next successful attack
- *    against Nyx, or until rest).
+ *  - **Rogue's Dodge** is the class Hope ability — V2 Actions strip chip (amber Hope card is
+ *    hidden when the feature is on the guide). Clicking it applies immediately (spends 3 Hope
+ *    and sets `featureState[...].roguesDodgeActive` for +2 Evasion until the next successful
+ *    attack against Nyx, or until rest). Any action-loop notification is informational only
+ *    (suppressed from the pending-banner queue — same as Shadow Stepper).
  *  - **Shadow Stepper**, **Dark Cloud**, and **Vanishing Act** are V2 card chips without
  *    `gameTableDeferUntilBannerAck` — clicking them applies their mutations (Stress cost,
  *    Cloaked condition) immediately client-side; the resulting action-loop notification is a
@@ -119,7 +119,7 @@ test.describe('Subclass video — Rogue / Nightwalker', () => {
 
   test("Nyx the Nightwalker: Cloaked, Sneak Attack, Rogue's Dodge, and the subclass card chips", async ({ browser }) => {
     const consoleErrors = [];
-    const { gmPage, playerPage, caption, finish } = await startSubclassRun(browser, {
+    const { gmPage, playerPage, caption, finish, ack } = await startSubclassRun(browser, {
       className: 'Rogue',
       subclassName: 'Nightwalker',
       actors: ['gm', 'playerA'],
@@ -138,11 +138,8 @@ test.describe('Subclass video — Rogue / Nightwalker', () => {
       await expect(gmPage.locator('button', { hasText: 'Add Character' })).toBeVisible({ timeout: 15000 });
       await expect(playerPage.locator('text=Nyx').first()).toBeVisible({ timeout: 15000 });
 
-      // Hide the 3D dice canvas on both clients so every banner in this walkthrough resolves
-      // immediately instead of racing a tumbling-dice animation (established pattern).
-      for (const p of [gmPage, playerPage]) {
-        await p.getByLabel('Hide dice').click();
-      }
+      // Keep 3D dice on the camera (playerPage) so the screencast captures tumbles.
+      await gmPage.getByLabel('Hide dice').click();
 
       // ---------------------------------------------------------------------
       // Start Session.
@@ -151,7 +148,7 @@ test.describe('Subclass video — Rogue / Nightwalker', () => {
       await gmPage.getByRole('button', { name: '▶ Session' }).click();
       const startBanner = gmPage.locator('.dice-result-banner', { hasText: 'Start Session' });
       await expect(startBanner).toBeVisible({ timeout: 8000 });
-      await startBanner.locator('button', { hasText: 'Acknowledge' }).first().click();
+      await ack(startBanner, { holdMs: 0 });
       await expect(startBanner).not.toBeVisible({ timeout: 5000 });
 
       const playerNyxCard = playerPage.locator('div.group\\/char', { hasText: 'Nyx' });
@@ -208,7 +205,7 @@ test.describe('Subclass video — Rogue / Nightwalker', () => {
 
       await caption('GM', "Acknowledges Nyx's attack", '');
       const attackBanner = gmPage.locator('.dice-result-banner', { hasText: attackBannerText });
-      await attackBanner.locator('button', { hasText: 'Acknowledge' }).first().click();
+      await ack(attackBanner);
       await expect(attackBanner).not.toBeVisible({ timeout: 5000 });
 
       await expect(async () => {
@@ -231,12 +228,21 @@ test.describe('Subclass video — Rogue / Nightwalker', () => {
       }).toPass({ timeout: 8000 });
 
       // ---------------------------------------------------------------------
-      // Rogue's Dodge — Hope ability chip (whole card is the button; no "Use").
-      // Posts an action notification; GM Ack spends 3 Hope + sets roguesDodgeActive.
+      // Rogue's Dodge — V2 Actions chip (not amber Hope card / Features header).
+      // Applies immediately: Hope spend + roguesDodgeActive (no pending banner).
       // ---------------------------------------------------------------------
-      await caption('PLAYER A', "Rogue's Dodge", 'Spends 3 Hope for +2 Evasion until hit or rest');
+      await caption('PLAYER A', "Rogue's Dodge", 'Actions chip — spends 3 Hope for +2 Evasion until hit or rest');
+      await playerPage.keyboard.press('Escape');
+      await playerPage.waitForTimeout(150);
       await playerNyxCard.click();
-      const roguesDodgeBtn = playerPage.getByRole('button', { name: /Rogue's Dodge/i }).first();
+      const nyxActionsCard = playerPage
+        .locator('div.rounded-xl')
+        .filter({ has: playerPage.locator('span.uppercase', { hasText: /^Actions$/ }) })
+        .first();
+      await expect(nyxActionsCard).toBeVisible({ timeout: 8000 });
+      const roguesDodgeBtn = nyxActionsCard
+        .locator('button.dh-sheet-clickable-chip')
+        .filter({ hasText: /Rogue's Dodge/i });
       await expect(roguesDodgeBtn).toBeVisible({ timeout: 8000 });
       await roguesDodgeBtn.scrollIntoViewIfNeeded();
 
@@ -250,15 +256,6 @@ test.describe('Subclass video — Rogue / Nightwalker', () => {
 
       await roguesDodgeBtn.click();
 
-      const dodgeBannerText = "Rogue's Dodge";
-      for (const p of [gmPage, playerPage]) {
-        await expect(p.locator('.dice-result-banner', { hasText: dodgeBannerText })).toBeVisible({ timeout: 8000 });
-      }
-      await caption('GM', "Acknowledges Rogue's Dodge", '');
-      const dodgeBanner = gmPage.locator('.dice-result-banner', { hasText: dodgeBannerText });
-      await dodgeBanner.locator('button', { hasText: 'Acknowledge' }).first().click();
-      await expect(dodgeBanner).not.toBeVisible({ timeout: 5000 });
-
       await expect(async () => {
         const state = await getTableState(tableId);
         const nyxEl = (state.elements || []).find((e) => e.instanceId === nyxInstanceId);
@@ -266,6 +263,7 @@ test.describe('Subclass video — Rogue / Nightwalker', () => {
         // Stored under the class scope bag (`classes:srd-cls-rogue`), not the feature name key.
         expect(JSON.stringify(nyxEl?.featureState || {})).toMatch(/"roguesDodgeActive"\s*:\s*true/);
       }).toPass({ timeout: 8000 });
+      await caption('PLAYER A', "Rogue's Dodge applied", 'Hope spent; +2 Evasion active');
 
       // ---------------------------------------------------------------------
       // Shadow Stepper (Nightwalker Foundation) — 1 Stress, becomes Cloaked.
