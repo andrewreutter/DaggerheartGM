@@ -6,7 +6,10 @@ import { postActionNotification, postLifeSupportSelect, postTableOp, postV2Owned
 import { buildActionForFeatureUse } from './feature-actions.js';
 import { activateV2OwnedCardChip } from './v2-cross-sheet-lifecycle.js';
 import { applyV2LifecycleMutations } from './table-ops.js';
-import { getFeatureUsageCycleForV2Chip } from '../../features-v2/engine/chip-system.js';
+import {
+  buildNextFeatureUsageEntry,
+  getFeatureUsageCycleForV2Chip,
+} from '../../features-v2/engine/chip-system.js';
 import { getFeatureUsageKeyForGuideFeature } from './feature-usage-key.js';
 import { v2RollDieExtrasFromActionLoopPayload } from './v2-action-notification-dice.js';
 
@@ -57,7 +60,17 @@ export function applyV2OwnedCardChipEngineResultToTable({
     const ownerEl = activeElementsForV2Snapshots.find((e) => e.instanceId === el.instanceId);
     const baseline = { ...(ownerEl?.featureUsage || el.featureUsage || {}) };
     const hit = updates.find((u) => u.instanceId === el.instanceId);
-    const mergedFu = { ...baseline, ...(hit?.updates?.featureUsage || {}), [usageKey]: { used: true, cycle: usageCycle } };
+    const priorFu = { ...baseline, ...(hit?.updates?.featureUsage || {}) };
+    const maxUses =
+      typeof engineChip?._frequencyMaxUses === 'number' && engineChip._frequencyMaxUses >= 1
+        ? engineChip._frequencyMaxUses
+        : 1;
+    const nextEntry = buildNextFeatureUsageEntry(priorFu[usageKey], usageCycle, maxUses);
+    const mergedFu = { ...priorFu, [usageKey]: nextEntry };
+    // Keep chip-system keys in sync so collectChips frequency gating sees the same count.
+    if (typeof engineChip?._chipKey === 'string' && engineChip._chipKey) {
+      mergedFu[engineChip._chipKey] = nextEntry;
+    }
     if (hit) {
       hit.updates = { ...hit.updates, featureUsage: mergedFu };
     } else {

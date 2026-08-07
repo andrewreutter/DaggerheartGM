@@ -182,10 +182,28 @@ export function activateV2OwnedCardChip(characterEl, featureName, rawChip, activ
     return { mutations: [], chipState: makeChipState(), feature: null, engineChip: null, error: 'no-feature' };
   }
 
+  // `buildTableSnapshot` / `table.me` read declarative caps from the element
+  // (`contactsEverywhereSessionUses`, `shadowStepperVeryFarUnlocked`, CONV-011 stats, …).
+  // Sheet UI merges these via `mergeV2DeclarativeSheetOverlay`; the player server path
+  // only has library-resolved elements, so stamp the same overlay fields onto the owner
+  // before collecting/activating chips (feature-agnostic — no per-SRD branching).
+  const ownerWithDeclarative = {
+    ...characterEl,
+    ...(decl.stats && typeof decl.stats === 'object' ? decl.stats : {}),
+    contactsEverywhereSessionUses: decl.contactsEverywhereSessionUses ?? 1,
+    shadowStepperVeryFarUnlocked: decl.shadowStepperVeryFarUnlocked === true,
+    substituteArmorForHope: decl.substituteArmorForHope === true,
+    weaponRenderHints: decl.weaponRenderHints,
+    domainLoadoutDisabled: decl.domainLoadoutDisabled === true,
+  };
+  const activeElementsForSnap = activeElements.map((e) =>
+    e.instanceId === instanceId ? { ...e, ...ownerWithDeclarative } : e
+  );
+
   const gameState = {
     fear: opts.fearCount ?? 0,
     mapConfig: opts.mapConfig ?? null,
-    activeElements,
+    activeElements: activeElementsForSnap,
     featureState: merged,
     rolls: undefined,
     action: {

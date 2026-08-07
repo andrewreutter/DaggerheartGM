@@ -13,12 +13,15 @@
  *    banner (`postPlayerV2ReviewChip`); GM Acknowledges.
  *
  * Coverage notes:
- *  - **Unwavering / Unrelenting / Undaunted** — `passiveStatMods` on thresholds; assert cards.
+ *  - **Unwavering / Unrelenting / Undaunted** — `passiveStatMods` +6 major/severe; hard-assert
+ *    Characters-panel breakdown `21 +6 = 27 / 29 +6 = 35` and sheet bands `27–34` / `≥ 35`.
+ *    (Render path stores the +6 as `ancestryThreshold*Bonus`; V2 overlay also contributes.)
  *  - **Frontline Tank / Unstoppable** — V2 card chips on the owner's sheet.
  *  - **Iron Will / Partners-in-Arms / Loyal Protector** — `reviewAction` chips; assert
  *    armor/stress costs apply. Severity reduction / damage redirect mutate pending
  *    `action.effects` in-engine and are not separately re-applied on Acknowledge, so this
- *    suite treats those in-place mutations as exercised by the chip click + cost assert.
+ *    suite treats those in-place mutations as exercised by the chip click + cost assert
+ *    (Ack HP asserts are Phase 3 — PRODUCT_GAP).
  *  - Range bands are exact (`veryClose` for Partners, `close` for Loyal Protector) — tokens
  *    are repositioned between those steps via `updateElement`.
  */
@@ -191,13 +194,32 @@ test.describe('Subclass video — Guardian / Stalwart', () => {
       }
 
       // ---------------------------------------------------------------------
-      // Passive threshold features — display assert on the sheet.
+      // Passive threshold features — cards + concrete threshold / maxStress numbers.
       // ---------------------------------------------------------------------
-      await caption('PLAYER A', 'Unwavering / Unrelenting / Undaunted', 'Passive +1/+2/+3 damage thresholds — cards on sheet');
+      await caption(
+        'PLAYER A',
+        'Unwavering / Unrelenting / Undaunted',
+        'Passive +1/+2/+3 damage thresholds — +6 → Major 27 / Severe 35'
+      );
       await openPlayerDaraSheet();
       await expect(playerPage.getByText('Unwavering', { exact: true }).first()).toBeVisible({ timeout: 8000 });
       await expect(playerPage.getByText('Unrelenting', { exact: true }).first()).toBeVisible({ timeout: 8000 });
       await expect(playerPage.getByText('Undaunted', { exact: true }).first()).toBeVisible({ timeout: 8000 });
+
+      // Characters panel breakdown (GameTableCharacterListCard): base+level + Stalwart +6.
+      await expect(playerDaraCard.getByText(/21\s*\+\s*6\s*=\s*27/)).toBeVisible({ timeout: 8000 });
+      await expect(playerDaraCard.getByText(/29\s*\+\s*6\s*=\s*35/)).toBeVisible({ timeout: 8000 });
+      // Hover-sheet damage bands use the same merged effective thresholds.
+      await expect(playerPage.getByText('27–34').first()).toBeVisible({ timeout: 8000 });
+      await expect(playerPage.getByText('≥ 35').first()).toBeVisible({ timeout: 8000 });
+      // Stalwart has no At Ease — Stress chip max is 8 (not Vengeance's 9).
+      await expect(
+        playerPage
+          .locator('div')
+          .filter({ has: playerPage.getByText('Stress', { exact: true }) })
+          .filter({ has: playerPage.getByText('8', { exact: true }) })
+          .first()
+      ).toBeVisible({ timeout: 8000 });
 
       // ---------------------------------------------------------------------
       // Frontline Tank — V2 Actions chip (not the amber Hope card). Hope-named

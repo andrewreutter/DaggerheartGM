@@ -13,30 +13,13 @@
  *    toggles it off manually after the attack to demonstrate the mechanic without claiming
  *    the auto-clear is implemented.
  *  - **Sneak Attack** is a `reviewAction` chip on the pending attack banner (tier in d6 extra
- *    damage) when the attack succeeds while Cloaked. The adversary's `difficulty` is set to 1
- *    so the attack is a guaranteed hit, letting the chip actually appear and be exercised.
- *  - **Rogue's Dodge** is the class Hope ability — V2 Actions strip chip (amber Hope card is
- *    hidden when the feature is on the guide). Clicking it applies immediately (spends 3 Hope
- *    and sets `featureState[...].roguesDodgeActive` for +2 Evasion until the next successful
- *    attack against Nyx, or until rest). Any action-loop notification is informational only
- *    (suppressed from the pending-banner queue — same as Shadow Stepper).
- *  - **Shadow Stepper**, **Dark Cloud**, and **Vanishing Act** are V2 card chips without
- *    `gameTableDeferUntilBannerAck` — clicking them applies their mutations (Stress cost,
- *    Cloaked condition) immediately client-side; the resulting action-loop notification is a
- *    purely informational banner that the client suppresses entirely (no tags, no
- *    `_featureUse`), so it never actually appears as a pending banner requiring GM Ack (see
- *    `computeActionAckTouchesTableState` / `shouldSuppressActionBanner` in
- *    src/client/lib/action-notification-banner.js) — same pattern as Bard's Relaxing Song in
- *    the Troubadour pilot spec.
- *  - **Dark Cloud** has no Stress/Hope cost and no dice roll wired (its "Spellcast Roll (15)"
- *    is narrative text only) — the test clicks it and asserts only that the notification
- *    fires; no mechanical state change to assert.
- *  - **Adrenaline** (+level to damage while Vulnerable) and **Fleeting Shadow** (+1 Evasion
- *    passive, unlocks Very Far for Shadow Stepper) are both display-only in this suite:
- *    Adrenaline's `onReviewAction` hook is only wired into the damage-*received* hook gate,
- *    not the standard attacker-side damage-roll review chips, so it never surfaces as a
- *    clickable chip on an outgoing attack banner (docs/srd-implementation.md "Partial"); the
- *    test only asserts both feature cards render on the sheet.
+ *    damage) when the attack succeeds while Cloaked **or** an ally is in Melee of the target.
+ *    Asserts the 4d6 die lands on the banner (Cloaked path + ally path).
+ *  - **Rogue's Dodge** spends 3 Hope and sets `roguesDodgeActive` (+2 Evasion until hit/rest).
+ *    Hard-asserts Hope, featureState, sheet Evasion `17 (+2)`, and rest clear of the flag.
+ *  - **Vanishing Act** clears Restrained when present, sets Cloaked + `vanishingActCloak`;
+ *    rest clears the vanishing-act cloak.
+ *  - **Shadow Stepper** / **Dark Cloud** / **Adrenaline** — same as prior suite notes.
  */
 
 import { test, expect } from '@playwright/test';
@@ -50,17 +33,48 @@ import {
   createLibraryCharacter,
   deleteLibraryCharacter,
   addElementsToTable,
+  updateElement,
   getTableState,
   cancelAllPendingBanners,
   grantCampaignPassForTable,
 } from '../helpers/multi-auth.js';
 import { startSubclassRun, filterSeriousSubclassConsoleErrors } from '../helpers/subclass-video.js';
-import { buildRogueNightwalkerCharacterData } from '../helpers/subclass-cast.js';
+import { buildAllyCharacterData, buildRogueNightwalkerCharacterData } from '../helpers/subclass-cast.js';
+
+/** Level-8 Nightwalker sheet evasion (includes Fleeting Shadow +1). */
+const NYX_BASE_EVASION = 17;
+
+async function expectSneakAttackDieOnBanner(page, bannerText) {
+  // Prefer the live pending banner (first); Action Log / replaced banners can share the same label.
+  const banner = page.locator('.dice-result-banner', { hasText: bannerText }).first();
+  await expect(async () => {
+    const text = await banner.innerText();
+    expect(text, 'Sneak Attack should add tier (4) d6 to the damage pool').toMatch(/4d6|Sneak Attack/i);
+  }).toPass({ timeout: 8000 });
+}
+
+async function rollDaggerAtThug(playerPage, playerNyxCard, ensureSheetOpen) {
+  const daggerCard = playerPage.getByRole('button', { name: /^Dagger\b/i }).first();
+  await ensureSheetOpen(playerPage, playerNyxCard, daggerCard);
+  await daggerCard.scrollIntoViewIfNeeded();
+  await daggerCard.click();
+
+  const chooseTargetText = playerPage.getByText('Choose target');
+  if (await chooseTargetText.isVisible({ timeout: 3000 }).catch(() => false)) {
+    await playerPage.getByRole('button', { name: /Alley Thug/i }).first().click();
+  }
+
+  await expect(playerPage.getByText('Before you roll')).toBeVisible({ timeout: 8000 });
+  await playerPage.getByRole('button', { name: 'Proceed' }).click();
+  await expect(playerPage.getByText('Before you roll')).not.toBeVisible({ timeout: 8000 });
+}
 
 test.describe('Subclass video — Rogue / Nightwalker', () => {
   let tableId;
   let nyxLibId;
+  let allyLibId;
   let nyxInstanceId;
+  let allyInstanceId;
   let thugInstanceId;
 
   test.beforeAll(async () => {
@@ -73,9 +87,12 @@ test.describe('Subclass video — Rogue / Nightwalker', () => {
 
     const nyxLib = await createLibraryCharacter(ACTOR_GM, buildRogueNightwalkerCharacterData({ name: 'Nyx' }));
     nyxLibId = nyxLib.id;
+    const allyLib = await createLibraryCharacter(ACTOR_GM, buildAllyCharacterData({ name: 'Reya' }));
+    allyLibId = allyLib.id;
 
     nyxInstanceId = `char-nyx-${Date.now()}`;
-    thugInstanceId = `adv-thug-${Date.now() + 1}`;
+    allyInstanceId = `char-ally-${Date.now() + 1}`;
+    thugInstanceId = `adv-thug-${Date.now() + 2}`;
 
     await addElementsToTable(tableId, [
       {
@@ -83,11 +100,21 @@ test.describe('Subclass video — Rogue / Nightwalker', () => {
         elementType: 'character',
         id: nyxLib.id,
         name: nyxLib.name,
-        currentHp: 7, currentStress: 5, hope: 4, currentArmor: 0,
+        currentHp: 7, currentStress: 5, hope: 5, currentArmor: 0,
         conditions: '',
         tokenX: 100, tokenY: 100,
         assignedPlayerUid: ACTOR_PLAYER_A.uid,
         assignedPlayerEmail: ACTOR_PLAYER_A.email,
+      },
+      {
+        // Ally in Melee of the thug for the Sneak Attack ally path (no Player B browser needed).
+        instanceId: allyInstanceId,
+        elementType: 'character',
+        id: allyLib.id,
+        name: allyLib.name,
+        currentHp: 6, currentStress: 0, hope: 3, currentArmor: 0,
+        conditions: '',
+        tokenX: 106, tokenY: 100,
       },
       {
         instanceId: thugInstanceId,
@@ -115,6 +142,7 @@ test.describe('Subclass video — Rogue / Nightwalker', () => {
   test.afterAll(async () => {
     if (tableId) await deleteTestTable(tableId);
     if (nyxLibId) await deleteLibraryCharacter(ACTOR_GM, nyxLibId);
+    if (allyLibId) await deleteLibraryCharacter(ACTOR_GM, allyLibId);
   });
 
   test("Nyx the Nightwalker: Cloaked, Sneak Attack, Rogue's Dodge, and the subclass card chips", async ({ browser }) => {
@@ -131,7 +159,7 @@ test.describe('Subclass video — Rogue / Nightwalker', () => {
     }
 
     try {
-      await caption('GM', 'Loading the table', 'Nyx (Rogue/Nightwalker) and an Alley Thug');
+      await caption('GM', 'Loading the table', 'Nyx (Rogue/Nightwalker), Reya (ally), and an Alley Thug');
       await authenticateActor(gmPage, ACTOR_GM);
       await gmPage.goto(`/table/${tableId}`);
       await playerPage.goto(`/table/${tableId}`);
@@ -152,14 +180,27 @@ test.describe('Subclass video — Rogue / Nightwalker', () => {
       const playerNyxCard = playerPage.locator('div.group\\/char', { hasText: 'Nyx' });
 
       // ---------------------------------------------------------------------
-      // Cloaked (Rogue class feature) — toggle on. A card-chip toggle with no
-      // `gameTableDeferUntilBannerAck`: the condition mutation applies immediately;
-      // the resulting action-loop notification is purely informational and is
-      // suppressed client-side (never a pending banner) — see file header.
+      // Fleeting Shadow — passive +1 Evasion (baked into sheet total 17).
+      // ---------------------------------------------------------------------
+      await caption('PLAYER A', 'Fleeting Shadow', `Passive +1 Evasion — sheet shows ${NYX_BASE_EVASION}`);
+      await ensureSheetOpen(playerPage, playerNyxCard);
+      // Evasion lives on the Defense graphic (outside the Actions strip returned by ensureSheetOpen).
+      await expect(playerPage.getByText('Evasion', { exact: true }).first()).toBeVisible({ timeout: 8000 });
+      await expect(
+        playerPage.locator('.font-bold.tabular-nums').filter({ hasText: new RegExp(`^${NYX_BASE_EVASION}`) }).first()
+      ).toBeVisible({ timeout: 8000 });
+
+      // ---------------------------------------------------------------------
+      // Cloaked (Rogue class feature) — toggle on.
       // ---------------------------------------------------------------------
       await caption('PLAYER A', 'Cloaked (on)', 'Toggle card chip — adds the Cloaked condition immediately');
-      const cloakedToggle = playerPage.getByRole('button', { name: /Cloaked/i }).first();
-      await ensureSheetOpen(playerPage, playerNyxCard, cloakedToggle);
+      // Prefer the Actions-strip toggle (CheckSquare) over Features expand headers that share the name.
+      const nyxActionsForCloak = await ensureSheetOpen(playerPage, playerNyxCard);
+      const cloakedToggle = nyxActionsForCloak
+        .locator('button')
+        .filter({ hasText: /^Cloaked$/i })
+        .first();
+      await expect(cloakedToggle).toBeVisible({ timeout: 8000 });
       await cloakedToggle.click();
 
       await expect(async () => {
@@ -169,40 +210,25 @@ test.describe('Subclass video — Rogue / Nightwalker', () => {
       }).toPass({ timeout: 8000 });
 
       // ---------------------------------------------------------------------
-      // Weapon attack (Dagger) on the Alley Thug — guaranteed hit (difficulty 1) so
-      // Sneak Attack's `reviewAction` chip (gated on a successful attack while
-      // Cloaked) appears on the pending banner.
+      // Weapon attack while Cloaked → Sneak Attack die (4d6).
       // ---------------------------------------------------------------------
-      await caption('PLAYER A', 'Attacks with Dagger', 'Targets the Alley Thug (guaranteed hit)');
-      // Sidebar cards toggle — do not blind-click (would close the open sheet).
-      const daggerCard = playerPage.getByRole('button', { name: /^Dagger\b/i }).first();
-      await ensureSheetOpen(playerPage, playerNyxCard, daggerCard);
-      await daggerCard.click();
-
-      // In-range weapon attacks with more than one valid target show an in-place
-      // "Choose target" popover before the roll is sent (CharacterHoverCard.jsx).
-      const chooseTargetText = playerPage.getByText('Choose target');
-      if (await chooseTargetText.isVisible({ timeout: 3000 }).catch(() => false)) {
-        await playerPage.getByRole('button', { name: /Alley Thug/i }).first().click();
-      }
-
-      // Every weapon attack routes through a "Before you roll" confirmation panel.
-      await expect(playerPage.getByText('Before you roll')).toBeVisible({ timeout: 8000 });
-      await playerPage.getByRole('button', { name: 'Proceed' }).click();
+      await caption('PLAYER A', 'Attacks with Dagger', 'Targets the Alley Thug (guaranteed hit while Cloaked)');
+      await rollDaggerAtThug(playerPage, playerNyxCard, ensureSheetOpen);
 
       const attackBannerText = 'Nyx Dagger';
       for (const p of [gmPage, playerPage]) {
-        await expect(p.locator('.dice-result-banner', { hasText: attackBannerText })).toBeVisible({ timeout: 8000 });
+        await expect(p.locator('.dice-result-banner', { hasText: attackBannerText })).toBeVisible({ timeout: 15000 });
       }
 
-      await caption('PLAYER A', 'Sneak Attack', 'Adds tier (4) d6 damage — succeeded while Cloaked');
+      await caption('PLAYER A', 'Sneak Attack (Cloaked)', 'Adds tier (4) d6 damage — succeeded while Cloaked');
       const sneakAttackBtn = playerPage.getByRole('button', { name: /Sneak Attack/i }).first();
       await expect(sneakAttackBtn).toBeVisible({ timeout: 8000 });
       await sneakAttackBtn.click();
+      await expectSneakAttackDieOnBanner(playerPage, attackBannerText);
 
       await holdForDiceTumble();
       await caption('GM', "Acknowledges Nyx's attack", '');
-      const attackBanner = gmPage.locator('.dice-result-banner', { hasText: attackBannerText });
+      const attackBanner = gmPage.locator('.dice-result-banner', { hasText: attackBannerText }).first();
       await ack(attackBanner, { holdMs: 0 });
       await expect(attackBanner).not.toBeVisible({ timeout: 5000 });
 
@@ -215,8 +241,13 @@ test.describe('Subclass video — Rogue / Nightwalker', () => {
       // Cloaked off — SRD auto-clears this on attack; the engine does not automate
       // that (see file header), so demonstrate the manual toggle instead.
       await caption('PLAYER A', 'Cloaked (off)', 'SRD auto-clears on attack — toggled manually here (not automated)');
-      await ensureSheetOpen(playerPage, playerNyxCard, cloakedToggle);
-      await cloakedToggle.click();
+      const nyxActionsOff = await ensureSheetOpen(playerPage, playerNyxCard);
+      const cloakedOff = nyxActionsOff.locator('button').filter({ hasText: /^Cloaked$/i }).first();
+      await expect(cloakedOff).toBeVisible({ timeout: 8000 });
+      // Only click if still pressed (toggle may already be off if a prior step cleared it).
+      if ((await cloakedOff.getAttribute('aria-pressed')) === 'true') {
+        await cloakedOff.click();
+      }
 
       await expect(async () => {
         const state = await getTableState(tableId);
@@ -225,8 +256,31 @@ test.describe('Subclass video — Rogue / Nightwalker', () => {
       }).toPass({ timeout: 8000 });
 
       // ---------------------------------------------------------------------
-      // Rogue's Dodge — V2 Actions chip (not amber Hope card / Features header).
-      // Applies immediately: Hope spend + roguesDodgeActive (no pending banner).
+      // Sneak Attack ally path — not Cloaked; Reya is in Melee of the thug.
+      // ---------------------------------------------------------------------
+      await caption(
+        'PLAYER A',
+        'Sneak Attack (ally in Melee)',
+        'Not Cloaked — Reya within Melee of the thug still enables Sneak Attack'
+      );
+      await rollDaggerAtThug(playerPage, playerNyxCard, ensureSheetOpen);
+      for (const p of [gmPage, playerPage]) {
+        await expect(p.locator('.dice-result-banner', { hasText: attackBannerText })).toBeVisible({ timeout: 15000 });
+      }
+
+      const sneakAllyBtn = playerPage.getByRole('button', { name: /Sneak Attack/i }).first();
+      await expect(sneakAllyBtn).toBeVisible({ timeout: 8000 });
+      await sneakAllyBtn.click();
+      await expectSneakAttackDieOnBanner(playerPage, attackBannerText);
+
+      await holdForDiceTumble();
+      await caption('GM', 'Acknowledges ally-path Sneak Attack', '');
+      const allyAttackBanner = gmPage.locator('.dice-result-banner', { hasText: attackBannerText }).first();
+      await ack(allyAttackBanner, { holdMs: 0 });
+      await expect(allyAttackBanner).not.toBeVisible({ timeout: 5000 });
+
+      // ---------------------------------------------------------------------
+      // Rogue's Dodge — Hope spend + +2 Evasion on the sheet.
       // ---------------------------------------------------------------------
       await caption('PLAYER A', "Rogue's Dodge", 'Actions chip — spends 3 Hope for +2 Evasion until hit or rest');
       await playerPage.keyboard.press('Escape');
@@ -255,13 +309,18 @@ test.describe('Subclass video — Rogue / Nightwalker', () => {
         // Stored under the class scope bag (`classes:srd-cls-rogue`), not the feature name key.
         expect(JSON.stringify(nyxEl?.featureState || {})).toMatch(/"roguesDodgeActive"\s*:\s*true/);
       }).toPass({ timeout: 8000 });
-      await caption('PLAYER A', "Rogue's Dodge applied", 'Hope spent; +2 Evasion active');
+
+      // Flexible (+1) + Dodge (+2) → (+3); while Cloaked, Fleeting Shadow adds another +1 → (+4).
+      await caption('PLAYER A', "Rogue's Dodge applied", `Hope spent; Evasion parenthetical includes Dodge +2`);
+      await ensureSheetOpen(playerPage, playerNyxCard);
+      await expect(async () => {
+        const el = playerPage.locator('.font-bold.tabular-nums').filter({ hasText: new RegExp(String(NYX_BASE_EVASION)) }).first();
+        await expect(el).toBeVisible({ timeout: 2000 });
+        await expect(el).toContainText(/\(\+[34]\)/);
+      }).toPass({ timeout: 8000 });
 
       // ---------------------------------------------------------------------
       // Shadow Stepper (Nightwalker Foundation) — 1 Stress, becomes Cloaked.
-      // Mutation applies immediately; the notification is suppressed (see header).
-      // Use `.last()`: Features list expand toggles share the feature name and
-      // appear earlier in the DOM than the Actions-strip chip.
       // ---------------------------------------------------------------------
       await caption('PLAYER A', 'Shadow Stepper', 'Marks 1 Stress, teleports between shadows, becomes Cloaked');
       const shadowStepperBtn = playerPage.getByRole('button', { name: /Shadow Stepper/i }).last();
@@ -285,8 +344,7 @@ test.describe('Subclass video — Rogue / Nightwalker', () => {
       }).toPass({ timeout: 8000 });
 
       // ---------------------------------------------------------------------
-      // Dark Cloud (Nightwalker Foundation) — narrative Spellcast Roll (15), no
-      // dice wired and no cost: click and confirm the notification fires.
+      // Dark Cloud (Nightwalker Foundation) — narrative Spellcast Roll (15).
       // ---------------------------------------------------------------------
       await caption('PLAYER A', 'Dark Cloud', 'Spellcast Roll (15) — narrative only, no dice wired');
       const darkCloudBtn = playerPage.getByRole('button', { name: /Dark Cloud/i }).last();
@@ -295,9 +353,16 @@ test.describe('Subclass video — Rogue / Nightwalker', () => {
       await expect(playerPage.locator('.dice-result-banner', { hasText: 'Dark Cloud' })).toHaveCount(0, { timeout: 6000 });
 
       // ---------------------------------------------------------------------
-      // Vanishing Act (Nightwalker Specialization) — 1 Stress, becomes Cloaked.
+      // Vanishing Act — clear Restrained + Cloaked + vanishingActCloak.
       // ---------------------------------------------------------------------
-      await caption('PLAYER A', 'Vanishing Act', 'Marks 1 Stress to become Cloaked at any time');
+      await caption('PLAYER A', 'Vanishing Act (Restrained)', 'Apply Restrained, then Vanishing Act clears it');
+      await updateElement(tableId, nyxInstanceId, { conditions: 'Restrained' });
+      await expect(async () => {
+        const state = await getTableState(tableId);
+        const nyxEl = (state.elements || []).find((e) => e.instanceId === nyxInstanceId);
+        expect(String(nyxEl?.conditions || '')).toMatch(/Restrained/i);
+      }).toPass({ timeout: 8000 });
+
       const vanishingActBtn = playerPage.getByRole('button', { name: /Vanishing Act/i }).last();
       await ensureSheetOpen(playerPage, playerNyxCard, vanishingActBtn);
       await vanishingActBtn.scrollIntoViewIfNeeded();
@@ -315,22 +380,39 @@ test.describe('Subclass video — Rogue / Nightwalker', () => {
         const state = await getTableState(tableId);
         const nyxEl = (state.elements || []).find((e) => e.instanceId === nyxInstanceId);
         expect(nyxEl?.currentStress).toBe(stressBeforeVanish + 1);
+        expect(String(nyxEl?.conditions || '')).not.toMatch(/Restrained/i);
         expect(String(nyxEl?.conditions || '')).toMatch(/Cloaked/i);
+        expect(JSON.stringify(nyxEl?.featureState || {})).toMatch(/"vanishingActCloak"\s*:\s*true/);
       }).toPass({ timeout: 8000 });
 
       // ---------------------------------------------------------------------
-      // Adrenaline (Nightwalker Mastery) and Fleeting Shadow (Nightwalker
-      // Specialization) — both display-only in this suite (see file header).
+      // Adrenaline — display-only in this suite (see file header).
       // ---------------------------------------------------------------------
       await caption('PLAYER A', 'Adrenaline', 'Display-only — onReviewAction hook not wired into outgoing attack banners');
       const adrenaline = playerPage.getByText('Adrenaline', { exact: true }).first();
       await ensureSheetOpen(playerPage, playerNyxCard, adrenaline);
       await expect(adrenaline).toBeVisible({ timeout: 8000 });
 
-      await caption('PLAYER A', 'Fleeting Shadow', 'Display-only — passive +1 Evasion, unlocks Very Far for Shadow Stepper');
-      await expect(playerPage.getByText('Fleeting Shadow', { exact: true }).first()).toBeVisible({ timeout: 8000 });
+      // ---------------------------------------------------------------------
+      // Short Rest — clears Rogue's Dodge + Vanishing Act cloak / Cloaked.
+      // ---------------------------------------------------------------------
+      await caption('GM', 'Short Rest', 'Clears Rogue\'s Dodge and Vanishing Act cloak');
+      await gmPage.getByRole('button', { name: '⏸ Short' }).click();
+      const restBanner = gmPage.locator('.dice-result-banner', { hasText: 'Short Rest' });
+      await expect(restBanner).toBeVisible({ timeout: 8000 });
+      gmPage.once('dialog', (d) => d.accept());
+      await ack(restBanner, { holdMs: 0 });
+      await expect(restBanner).not.toBeVisible({ timeout: 8000 });
 
-      await caption('Rogue / Nightwalker', 'Walkthrough complete', 'Cloaked, Sneak Attack, Rogue\u2019s Dodge, and every Nightwalker feature');
+      await expect(async () => {
+        const state = await getTableState(tableId);
+        const nyxEl = (state.elements || []).find((e) => e.instanceId === nyxInstanceId);
+        expect(JSON.stringify(nyxEl?.featureState || {})).not.toMatch(/"roguesDodgeActive"\s*:\s*true/);
+        expect(JSON.stringify(nyxEl?.featureState || {})).not.toMatch(/"vanishingActCloak"\s*:\s*true/);
+        expect(String(nyxEl?.conditions || '')).not.toMatch(/Cloaked/i);
+      }).toPass({ timeout: 10000 });
+
+      await caption('Rogue / Nightwalker', 'Walkthrough complete', 'Cloaked, Sneak Attack (Cloaked + ally), Dodge evasion, Vanishing Act, rest clears');
 
       const seriousErrors = filterSeriousSubclassConsoleErrors(consoleErrors);
       expect(seriousErrors, `Unexpected console errors:\n${seriousErrors.join('\n')}`).toEqual([]);

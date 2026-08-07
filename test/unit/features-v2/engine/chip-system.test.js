@@ -10,6 +10,8 @@ import {
   deductChipCosts,
   trackChipFrequency,
   resetChipFrequency,
+  getFrequencyUsedCount,
+  buildNextFeatureUsageEntry,
   makeChipState,
   resolveChipDisabled,
   evaluateIsDisabled,
@@ -745,6 +747,23 @@ describe('trackChipFrequency()', () => {
     expect(store.k.count).toBe(3);
     expect(store.k.used).toBe(true);
     expect(trackChipFrequency('k', 'session', store, 3)).toBe(false);
+  });
+});
+
+describe('buildNextFeatureUsageEntry()', () => {
+  it('increments count and keeps used false until maxUses', () => {
+    expect(getFrequencyUsedCount({ used: true })).toBe(1);
+    const a = buildNextFeatureUsageEntry(undefined, 'session', 3);
+    expect(a).toEqual({ cycle: 'session', count: 1, used: false });
+    const b = buildNextFeatureUsageEntry(a, 'session', 3);
+    expect(b).toEqual({ cycle: 'session', count: 2, used: false });
+    const c = buildNextFeatureUsageEntry(b, 'session', 3);
+    expect(c).toEqual({ cycle: 'session', count: 3, used: true });
+  });
+
+  it('treats legacy { used: true } as one prior use', () => {
+    const next = buildNextFeatureUsageEntry({ used: true, cycle: 'session' }, 'session', 3);
+    expect(next).toEqual({ cycle: 'session', count: 2, used: false });
   });
 });
 

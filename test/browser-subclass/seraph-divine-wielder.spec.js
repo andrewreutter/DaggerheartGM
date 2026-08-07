@@ -15,14 +15,17 @@
  *  - Life Support: Player A initiates the card chip (posts deferred action banner +
  *    `life-support-select`); GM acknowledges so Hope spend + ally heal apply.
  *  - Sparing Touch: display-only in this suite — Actions strip `isSelect` returns
- *    before `selectTargets`, so the heal cannot be activated from the chip UI yet.
+ *    before `selectTargets`, so the heal cannot be activated from the chip UI yet
+ *    (PRODUCT_GAP — Phase 3).
  *  - Devout (tier 3+) also has `onSessionStart` that silently rolls (n+1)d4 drop
  *    lowest; the class Prayer Dice `rollThenResume` banner still appears and its
  *    ack overwrites the pool with the physical-roll faces — that banner is what
  *    this video asserts.
  *  - Spirit Weapon / Sacred Resonance are mostly automatic hooks — Spirit Weapon's
  *    Melee→Close range override is exercised via a Broadsword attack; Sacred
- *    Resonance only adds statics when damage dice match (display + attack only).
+ *    Resonance / Spirit Weapon reach are PRODUCT_GAP (not asserted here).
+ *  - Phase 1 TEST_GAP: Prayer Die pool shrink; Damage + Hope spend modes (Reduce
+ *    lives on the Winged Sentinel sibling walkthrough).
  */
 
 import { test, expect } from '@playwright/test';
@@ -205,11 +208,13 @@ test.describe('Subclass video — Seraph / Divine Wielder', () => {
       await ack(prayerDiceBanner, { force: true, holdMs: 0 });
       await expect(prayerDiceBanner).not.toBeVisible({ timeout: 8000 });
 
+      let prayerPoolLen = 0;
       await expect(async () => {
         const state = await getTableState(tableId);
         const el = (state.elements || []).find((e) => e.instanceId === seraphInstanceId);
         const pool = el?.prayerDice?.pool;
         expect(Array.isArray(pool) && pool.length).toBeGreaterThan(0);
+        prayerPoolLen = pool.length;
       }).toPass({ timeout: 8000 });
 
       // ---------------------------------------------------------------------
@@ -279,19 +284,51 @@ test.describe('Subclass video — Seraph / Divine Wielder', () => {
         });
       }
 
+      // Prayer Die — Damage (P1): spend from GM banner (addDamage replaces the roll).
+      await holdForDiceTumble();
+      await caption(
+        'GM',
+        'Prayer Die — Damage',
+        'Spends a Prayer Die to add its face value to Broadsword damage',
+      );
+      await gmPage.keyboard.press('Escape');
+      const attackBanner = gmPage.locator('.dice-result-banner', { hasText: attackBannerText });
+      await expect(attackBanner).toBeVisible({ timeout: 8000 });
+      const prayerDieDamageGroup = attackBanner
+        .getByLabel(/add its value to this damage roll/i)
+        .first();
+      const prayerDieDamageOption = prayerDieDamageGroup.getByRole('button', { name: /^d4 \(/ }).first();
+      await expect(prayerDieDamageOption, 'Prayer Die — Damage chip missing on attack banner').toBeVisible({
+        timeout: 8000,
+      });
+      await prayerDieDamageOption.click();
+      await expect(async () => {
+        const state = await getTableState(tableId);
+        const el = (state.elements || []).find((e) => e.instanceId === seraphInstanceId);
+        const pool = el?.prayerDice?.pool;
+        expect(Array.isArray(pool), 'Prayer Die — Damage: pool missing').toBe(true);
+        expect(pool.length, 'Prayer Die — Damage: pool should shrink by 1').toBe(prayerPoolLen - 1);
+      }).toPass({ timeout: 8000 });
+      prayerPoolLen -= 1;
+      // postBannerAddDamage cancels + replaces the banner — wait for the new roll.
+      await expect(
+        attackBanner.getByText(/Prayer Die/i).first(),
+      ).toBeVisible({ timeout: 8000 });
+
       await holdForDiceTumble();
       await caption(
         'GM',
         'Acknowledges Broadsword attack',
-        'Sacred Resonance auto-adds when damage dice match (not asserted)',
+        'Sacred Resonance auto-adds when damage dice match (not asserted — PRODUCT_GAP)',
       );
-      await gmPage.keyboard.press('Escape');
-      const attackBanner = gmPage.locator('.dice-result-banner', { hasText: attackBannerText });
       // Damage banners need a selected target before Acknowledge enables.
-      const cultistChip = attackBanner.getByRole('button', { name: /Cultist Thug/i }).first();
+      // Exact name — not the banner title ("… → Cultist Thug · GM").
+      const cultistChip = attackBanner.getByRole('button', { name: /^Cultist Thug$/i }).first();
       if (await cultistChip.isVisible({ timeout: 2000 }).catch(() => false)) {
-        await cultistChip.click();
+        await cultistChip.click({ force: true });
       }
+      // After addDamage, cutTo GM can re-show dice and gate Acknowledge — resolve then ack.
+      await attackBanner.click({ force: true, position: { x: 12, y: 12 } }).catch(() => {});
       await ack(attackBanner, { force: true, holdMs: 0 });
       await expect(attackBanner).not.toBeVisible({ timeout: 8000 });
 
@@ -355,6 +392,35 @@ test.describe('Subclass video — Seraph / Divine Wielder', () => {
       await playerPage.keyboard.press('Escape');
 
       // ---------------------------------------------------------------------
+      // Prayer Dice — gain Hope (P1 card chip)
+      // ---------------------------------------------------------------------
+      const hopeBeforeGain = (
+        await getTableState(tableId)
+      ).elements?.find((e) => e.instanceId === seraphInstanceId)?.hope;
+      await caption(
+        'PLAYER A',
+        'Prayer Dice — gain Hope',
+        'Spends a Prayer Die from the Actions strip to gain Hope equal to its face',
+      );
+      const gainHopeGroup = playerPage.getByRole('group', { name: /Prayer Dice — gain Hope/i });
+      await ensureSheetOpen(playerPage, playerKaelCard, gainHopeGroup);
+      const gainHopeOption = gainHopeGroup.getByRole('button', { name: /^d4 \(/ }).first();
+      await expect(gainHopeOption, 'Prayer Dice — gain Hope chip missing').toBeVisible({
+        timeout: 8000,
+      });
+      await gainHopeOption.click();
+      await expect(async () => {
+        const state = await getTableState(tableId);
+        const el = (state.elements || []).find((e) => e.instanceId === seraphInstanceId);
+        const pool = el?.prayerDice?.pool;
+        expect(Array.isArray(pool), 'gain Hope: pool missing').toBe(true);
+        expect(pool.length, 'gain Hope: pool should shrink by 1').toBe(prayerPoolLen - 1);
+        expect(el?.hope, 'gain Hope: Hope should increase').toBeGreaterThan(hopeBeforeGain ?? 0);
+      }).toPass({ timeout: 8000 });
+      prayerPoolLen -= 1;
+      await playerPage.keyboard.press('Escape');
+
+      // ---------------------------------------------------------------------
       // M2: Player B rolls → Player A (owner) spends Prayer Die on that banner
       // ---------------------------------------------------------------------
       const playerBReyaCard = playerBPage.locator('div.group\\/char', { hasText: 'Reya' });
@@ -378,16 +444,23 @@ test.describe('Subclass video — Seraph / Divine Wielder', () => {
       );
       const prayerDieActionGroup = playerPage.getByLabel(/add its value to this action roll/i).first();
       const prayerDieOption = prayerDieActionGroup.getByRole('button', { name: /^d4 \(/ }).first();
-      await expect(prayerDieOption).toBeVisible({ timeout: 8000 });
+      await expect(prayerDieOption, 'Prayer Die — Action chip missing').toBeVisible({ timeout: 8000 });
+      const poolBeforeAction = (
+        await getTableState(tableId)
+      ).elements?.find((e) => e.instanceId === seraphInstanceId)?.prayerDice?.pool?.length;
+      expect(poolBeforeAction, 'Prayer Die — Action: pool empty before spend').toBeGreaterThan(0);
       await prayerDieOption.click();
 
       await expect(async () => {
         const state = await getTableState(tableId);
         const el = (state.elements || []).find((e) => e.instanceId === seraphInstanceId);
-        // Pool shrinks by one after spend (review chip applies immediately).
         const pool = el?.prayerDice?.pool;
-        expect(Array.isArray(pool)).toBe(true);
-      }).toPass({ timeout: 8000 });
+        expect(Array.isArray(pool), 'Prayer Die — Action: pool missing').toBe(true);
+        expect(pool.length, 'Prayer Die — Action: pool should shrink by 1').toBe(poolBeforeAction - 1);
+      }).toPass({ timeout: 12000 });
+      await expect(
+        playerPage.locator('.dice-result-banner', { hasText: bBannerText }).getByText(/Prayer Die/i).first(),
+      ).toBeVisible({ timeout: 8000 });
 
       await holdForDiceTumble();
       await caption('GM', "Acknowledges Reya’s roll", '');
@@ -399,7 +472,7 @@ test.describe('Subclass video — Seraph / Divine Wielder', () => {
       await caption(
         'Seraph / Divine Wielder',
         'Walkthrough complete',
-        'Prayer Dice resume, Life Support, Sparing Touch, Spirit Weapon, M2 Prayer Die spend',
+        'Prayer Dice resume, Damage/Hope/Action spends, Life Support, Spirit Weapon',
       );
 
       const seriousErrors = filterSeriousSubclassConsoleErrors(consoleErrors);

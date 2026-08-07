@@ -6,19 +6,16 @@
  * (Ranger's Focus intent toggle, Hold Them Off reviewAction multi-select). GM + Player A
  * only — Beastbound is solo-capable for this suite (companion is owned by the Ranger).
  *
- * Coverage notes (per docs/srd-implementation.md):
- *  - **Companion**: declarative sheet card (`Fang` / Wolf) + shape-anchored "Take an action"
- *    chip → Companion Act spellcast roll (pre-roll panel → GM Acknowledge).
+ * Coverage notes (per docs/srd-implementation.md) + Phase 1 TEST_GAP hardening:
+ *  - **Companion**: declarative sheet card (`Fang` / Wolf) + experiences + boardToken
+ *    (tray → place near Ranger) + shape-anchored "Take an action" → Companion Act.
  *  - **Expert Training**, **Advanced Training**, **Loyal Friend**: narrative / advancement-
- *    only — caption + assert the feature card renders.
- *  - **Battle-Bonded**: automated `onIntent` +2 Evasion vs Melee adversary attacks near the
- *    companion — no clickable chip; assert the card renders (display-only in this suite).
- *  - **Ranger's Focus**: V2 intent toggle "Attempt Ranger's Focus" in the Before-you-roll
- *    panel; on a successful hit, Focus is set (assert `focusTargetId` / adversary `focusedBy`).
- *  - **Hold Them Off**: V2 `reviewAction` multi-select chip (needs ≥3 Hope + a damage target
- *    selected first). Apply spends 3 Hope and queues `addDamageRoll` follow-ups (banner
- *    augments with Hold Them Off damage dice). Multi-target HP on the extras is not yet
- *    applied by `postBannerAddDamage` — assert Hope spend as the mechanical proof.
+ *    only — caption + assert the feature card renders (GM actionLoop — not mechanical E2E).
+ *  - **Battle-Bonded**: `onIntent` +2 Evasion — no chip / no persisted table mod today
+ *    (PRODUCT_GAP for hard E2E); assert the card renders.
+ *  - **Ranger's Focus**: intent toggle; on hit assert Focus id + Focus target Stress (P0).
+ *  - **End Focus to reroll**: force miss vs Focus → V2 review chip → Duality reroll + Focus clear (P1).
+ *  - **Hold Them Off**: Hope spend asserted; multi-target HP via `addDamageRoll` is PRODUCT_GAP.
  */
 
 import { test, expect } from '@playwright/test';
@@ -38,6 +35,11 @@ import {
 } from '../helpers/multi-auth.js';
 import { startSubclassRun, filterSeriousSubclassConsoleErrors } from '../helpers/subclass-video.js';
 import { buildRangerBeastboundCharacterData } from '../helpers/subclass-cast-ranger.js';
+import {
+  assertRangerFocusStressApplied,
+  assertBeastboundCompanionTokenAndExperiences,
+  runEndFocusRerollScene,
+} from '../helpers/subclass-ranger-steps.js';
 
 test.describe('Subclass video — Ranger / Beastbound', () => {
   let tableId;
@@ -90,6 +92,9 @@ test.describe('Subclass video — Ranger / Beastbound', () => {
         difficulty: 1,
         hp_max: 10,
         currentHp: 10,
+        // damageTargets maps stress_max → maxStress; wrapEntity.markStress no-ops when that is 0.
+        stress_max: 6,
+        maxStress: 6,
         currentStress: 0,
         conditions: '',
         tokenX: 103,
@@ -104,6 +109,8 @@ test.describe('Subclass video — Ranger / Beastbound', () => {
         difficulty: 1,
         hp_max: 10,
         currentHp: 10,
+        stress_max: 6,
+        maxStress: 6,
         currentStress: 0,
         conditions: '',
         tokenX: 100,
@@ -118,6 +125,8 @@ test.describe('Subclass video — Ranger / Beastbound', () => {
         difficulty: 1,
         hp_max: 10,
         currentHp: 10,
+        stress_max: 6,
+        maxStress: 6,
         currentStress: 0,
         conditions: '',
         tokenX: 103,
@@ -181,10 +190,18 @@ test.describe('Subclass video — Ranger / Beastbound', () => {
       // ---------------------------------------------------------------------
       // Companion declarative sheet card + "Take an action" (Companion Act).
       // ---------------------------------------------------------------------
-      await caption('PLAYER A', 'Companion sheet', 'Declarative card — Fang the Wolf');
+      await caption('PLAYER A', 'Companion sheet', 'Declarative card — Fang the Wolf + experiences');
       const fangMarker = playerPage.getByText('Fang', { exact: true }).first();
       await ensureSheetOpen(playerPage, playerKestCard, fangMarker);
       await expect(playerPage.getByText('Wolf', { exact: true }).first()).toBeVisible({ timeout: 8000 });
+
+      await caption('PLAYER A', 'Companion token + experiences', 'boardToken auto-add; place Fang near Kest');
+      await assertBeastboundCompanionTokenAndExperiences({
+        tableId,
+        playerPage,
+        kestInstanceId,
+        placeOnMap: true,
+      });
 
       await caption('PLAYER A', 'Take an action', 'Companion Act — Spellcast (Agility) roll');
       const takeActionBtn = playerPage.getByRole('button', { name: /Take an action/i }).first();
@@ -227,7 +244,7 @@ test.describe('Subclass video — Ranger / Beastbound', () => {
       await caption(
         'PLAYER A',
         'Battle-Bonded',
-        'Display-only here — onIntent +2 Evasion vs Melee attacks near companion',
+        'Card only — onIntent +2 Evasion not persisted on table yet (PRODUCT_GAP)',
       );
       await expect(playerPage.getByText('Battle-Bonded', { exact: true }).first()).toBeVisible({
         timeout: 8000,
@@ -264,19 +281,39 @@ test.describe('Subclass video — Ranger / Beastbound', () => {
       await selectBannerDamageTarget(playerPage, focusBannerPlayer, /Focus Wolf/i);
 
       await holdForDiceTumble();
-      await caption('GM', "Acknowledges Ranger's Focus attack", 'Focus Wolf becomes Focus');
+      await caption('GM', "Acknowledges Ranger's Focus attack", 'Focus Wolf becomes Focus + marks Stress');
       const focusBannerGm = gmPage.locator('.dice-result-banner', { hasText: focusAttackText });
       await selectBannerDamageTarget(gmPage, focusBannerGm, /Focus Wolf/i);
       await ack(focusBannerGm, { holdMs: 0 });
       await expect(focusBannerGm).not.toBeVisible({ timeout: 5000 });
 
-      await expect(async () => {
-        const state = await getTableState(tableId);
-        const kestEl = (state.elements || []).find((e) => e.instanceId === kestInstanceId);
-        const advEl = (state.elements || []).find((e) => e.instanceId === advAId);
-        const focusId = kestEl?.focusTargetInstanceId ?? kestEl?.focusTargetId;
-        expect(focusId === advAId || advEl?.focusedBy === 'Kest').toBe(true);
-      }).toPass({ timeout: 10000 });
+      await assertRangerFocusStressApplied({
+        tableId,
+        rangerInstanceId: kestInstanceId,
+        advInstanceId: advAId,
+        rangerName: 'Kest',
+      });
+
+      // ---------------------------------------------------------------------
+      // End Focus to reroll — miss vs Focus → Duality reroll + clear Focus.
+      // ---------------------------------------------------------------------
+      await runEndFocusRerollScene({
+        tableId,
+        gmPage,
+        playerPage,
+        caption,
+        ensureSheetOpen,
+        selectBannerDamageTarget,
+        dismissBannerTargetMenu,
+        holdForDiceTumble,
+        charCard: playerKestCard,
+        charName: 'Kest',
+        advNameRe: /Focus Wolf/i,
+        advInstanceId: advAId,
+        rangerInstanceId: kestInstanceId,
+        attackBannerText: focusAttackText,
+        restoreDifficulty: 1,
+      });
 
       // ---------------------------------------------------------------------
       // Hold Them Off — successful weapon attack, multi-select two extras.
@@ -329,7 +366,7 @@ test.describe('Subclass video — Ranger / Beastbound', () => {
       await caption(
         'Ranger / Beastbound',
         'Walkthrough complete',
-        'Companion, narrative cards, Ranger\'s Focus, Hold Them Off',
+        'Companion token/XP, Focus Stress, End Focus reroll, Hold Them Off',
       );
 
       const seriousErrors = filterSeriousSubclassConsoleErrors(consoleErrors);

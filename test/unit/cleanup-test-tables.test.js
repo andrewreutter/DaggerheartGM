@@ -5,6 +5,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
   isTestGmUserId,
+  buildTestGmTableOwnerFilter,
   cleanupOrphanedTestTablesWithDb,
 } from '../helpers/cleanup-test-tables.js';
 
@@ -28,10 +29,27 @@ describe('isTestGmUserId', () => {
   });
 });
 
+describe('buildTestGmTableOwnerFilter', () => {
+  it('matches bare GM + parallel workers when no actor NS is set (not agent NS uids)', () => {
+    expect(buildTestGmTableOwnerFilter('')).toEqual({
+      sql: '(user_id = $2 OR user_id ~ $3)',
+      params: ['test-user-uid', '^test-user-uid-w[0-9]+(-.*)?$'],
+    });
+    expect(buildTestGmTableOwnerFilter(undefined).params[0]).toBe('test-user-uid');
+  });
+
+  it('scopes to TEST_ACTOR_NS so parallel agents do not wipe each other', () => {
+    expect(buildTestGmTableOwnerFilter('warrior')).toEqual({
+      sql: '(user_id = $2 OR user_id LIKE $3)',
+      params: ['test-user-uid-warrior', 'test-user-uid-warrior-%'],
+    });
+  });
+});
+
 describe('cleanupOrphanedTestTablesWithDb', () => {
   it('no-ops when there are no orphaned tables', async () => {
     const query = vi.fn().mockResolvedValueOnce({ rows: [] });
-    const result = await cleanupOrphanedTestTablesWithDb({ query }, 'app');
+    const result = await cleanupOrphanedTestTablesWithDb({ query }, 'app', { actorNs: '' });
     expect(result).toEqual({ deletedTableIds: [], gmUserIds: [] });
     expect(query).toHaveBeenCalledTimes(1);
   });
@@ -46,11 +64,13 @@ describe('cleanupOrphanedTestTablesWithDb', () => {
       })
       .mockResolvedValue({ rows: [], rowCount: 0 });
 
-    const result = await cleanupOrphanedTestTablesWithDb({ query }, 'app');
+    const result = await cleanupOrphanedTestTablesWithDb({ query }, 'app', { actorNs: '' });
 
     expect(result.deletedTableIds).toEqual(['table-a', 'table-b']);
     expect(result.gmUserIds.sort()).toEqual(['test-user-uid', 'test-user-uid-w0']);
     expect(query).toHaveBeenCalledTimes(4);
+
+    expect(query.mock.calls[0][1]).toEqual(['app', 'test-user-uid', '^test-user-uid-w[0-9]+(-.*)?$']);
 
     expect(query.mock.calls[1][0]).toMatch(/character_table_placements/);
     expect(query.mock.calls[1][1]).toEqual(['app', ['table-a', 'table-b']]);
@@ -60,5 +80,11 @@ describe('cleanupOrphanedTestTablesWithDb', () => {
 
     expect(query.mock.calls[3][0]).toMatch(/DELETE FROM items/);
     expect(query.mock.calls[3][1]).toEqual(['app', ['table-a', 'table-b']]);
+  });
+
+  it('scopes SELECT to TEST_ACTOR_NS when provided', async () => {
+    const query = vi.fn().mockResolvedValueOnce({ rows: [] });
+    await cleanupOrphanedTestTablesWithDb({ query }, 'app', { actorNs: 'druid' });
+    expect(query.mock.calls[0][1]).toEqual(['app', 'test-user-uid-druid', 'test-user-uid-druid-%']);
   });
 });

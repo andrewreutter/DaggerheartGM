@@ -12,7 +12,10 @@
  *    card chips that mutate allies/adversaries).
  *  - Player A grants Rally Dice (Epic Poetry → d10) and spends their own die to clear Stress.
  *  - Player B rolls a trait and spends the granted Rally Die via the cross-sheet
- *    "Spend Rally Die — Action" `reviewAction` chip (M2 pattern).
+ *    "Spend Rally Die — Action" `reviewAction` chip (M2 pattern); banner "Rally Die" +
+ *    partyDice clear are hard-asserted.
+ *  - Eloquent's three narrative isSelect options are walked (session End→Start between uses).
+ *  - Rousing Speech longRest frequency: Short Rest keeps usage; Long Rest clears it.
  *  - Epic Poetry's Tag Team d10 advantage chip is captioned as a known VTT gap: there is no
  *    Game Table UI yet that posts `action.type === 'tagTeam'` rolls, so the intent chip cannot
  *    be exercised end-to-end. The d10 Rally Die size (same feature) is asserted mechanically.
@@ -33,6 +36,7 @@ import {
   getTableState,
   cancelAllPendingBanners,
   grantCampaignPassForTable,
+  setTableTop,
 } from '../helpers/multi-auth.js';
 import { startSubclassRun, filterSeriousSubclassConsoleErrors } from '../helpers/subclass-video.js';
 import { buildBardWordsmithCharacterData, buildAllyCharacterData } from '../helpers/subclass-cast.js';
@@ -124,6 +128,42 @@ test.describe('Subclass video — Bard / Wordsmith', () => {
       p.on('console', (msg) => { if (msg.type() === 'error') consoleErrors.push(`[${tag}] ${msg.text()}`); });
     }
 
+    async function ackRestBanner(labelRe) {
+      const banner = gmPage.locator('.dice-result-banner', { hasText: labelRe });
+      await expect(banner).toBeVisible({ timeout: 15000 });
+      await holdForDiceTumble();
+      gmPage.once('dialog', (d) => d.accept());
+      await caption('GM', 'Acknowledges rest', 'Incomplete rest moves OK');
+      await ack(banner, { holdMs: 0 });
+      await expect(banner).not.toBeVisible({ timeout: 8000 });
+    }
+
+    /** End Session then Start Session — refreshes session-frequency Eloquent. */
+    async function endAndRestartSession(note) {
+      await caption('GM', 'End Session', note);
+      gmPage.once('dialog', (d) => d.accept());
+      await gmPage.getByRole('button', { name: '■ End' }).click();
+      await expect(async () => {
+        const state = await getTableState(tableId);
+        expect(state.top?.sessionStarted).toBe(false);
+      }).toPass({ timeout: 8000 });
+
+      await caption('GM', 'Start Session', 'Clears session featureUsage');
+      await gmPage.getByRole('button', { name: '▶ Session' }).click();
+      const startBanner = gmPage.locator('.dice-result-banner', { hasText: 'Start Session' });
+      await expect(startBanner).toBeVisible({ timeout: 8000 });
+      await ack(startBanner, { holdMs: 0 });
+      await expect(startBanner).not.toBeVisible({ timeout: 5000 });
+    }
+
+    function hasLongRestUsage(el) {
+      return Object.values(el?.featureUsage || {}).some((v) => v?.cycle === 'longRest' && v?.used === true);
+    }
+
+    function hasSessionUsage(el) {
+      return Object.values(el?.featureUsage || {}).some((v) => v?.cycle === 'session' && v?.used === true);
+    }
+
     try {
       await caption('GM', 'Loading the table', 'Callie (Bard/Wordsmith), Reya (ally), and a Snarling Goblin');
       await authenticateActor(gmPage, ACTOR_GM);
@@ -144,6 +184,15 @@ test.describe('Subclass video — Bard / Wordsmith', () => {
       await expect(startBanner).toBeVisible({ timeout: 8000 });
       await ack(startBanner, { holdMs: 0 });
       await expect(startBanner).not.toBeVisible({ timeout: 5000 });
+      await expect(async () => {
+        let state = await getTableState(tableId);
+        if (state.top?.sessionStarted !== true) {
+          await setTableTop(tableId, { sessionStarted: true, sessionPaused: false });
+          state = await getTableState(tableId);
+        }
+        expect(state.top?.sessionStarted).toBe(true);
+      }).toPass({ timeout: 10000 });
+      await expect(gmPage.getByRole('button', { name: '■ End' })).toBeVisible({ timeout: 15000 });
 
       // ---------------------------------------------------------------------
       // Player A — Make a Scene / Rousing Speech (multi-instance via v2-owned-card-chip)
@@ -162,7 +211,10 @@ test.describe('Subclass video — Bard / Wordsmith', () => {
       await expect(async () => {
         const state = await getTableState(tableId);
         const bardEl = (state.elements || []).find((e) => e.instanceId === bardInstanceId);
+        const advEl = (state.elements || []).find((e) => e.instanceId === advInstanceId);
         expect(bardEl?.hope).toBe(1);
+        // P0 — Make a Scene difficultyMod
+        expect(advEl?.difficultyMod).toBe(-2);
       }).toPass({ timeout: 8000 });
 
       // Rousing Speech — clears 2 Stress on allies within Far.
@@ -183,8 +235,49 @@ test.describe('Subclass video — Bard / Wordsmith', () => {
       await expect(async () => {
         const state = await getTableState(tableId);
         const allyEl = (state.elements || []).find((e) => e.instanceId === allyInstanceId);
+        const bardEl = (state.elements || []).find((e) => e.instanceId === bardInstanceId);
         expect(allyEl?.currentStress).toBe(1);
+        expect(hasLongRestUsage(bardEl)).toBe(true);
       }).toPass({ timeout: 8000 });
+
+      // P1 — Long-rest refresh: Short keeps longRest usage; Long clears it.
+      await caption('GM', 'Short Rest', 'Rousing Speech (longRest) should NOT refresh');
+      await expect(gmPage.getByRole('button', { name: /⏸\s*Short/ })).toBeVisible({ timeout: 8000 });
+      await gmPage.getByRole('button', { name: /⏸\s*Short/ }).click();
+      await ackRestBanner(/Short Rest/i);
+
+      await expect(async () => {
+        const state = await getTableState(tableId);
+        const bardEl = (state.elements || []).find((e) => e.instanceId === bardInstanceId);
+        expect(hasLongRestUsage(bardEl)).toBe(true);
+      }).toPass({ timeout: 8000 });
+
+      const actionsRousingAfterShort = await ensureSheetOpen(playerPage, playerACallieCard);
+      const rousingAfterShort = actionsRousingAfterShort
+        .locator('button.dh-sheet-clickable-chip')
+        .filter({ hasText: /Rousing Speech/i });
+      // Used once/longRest — chip should be disabled or absent from usable Actions strip.
+      if (await rousingAfterShort.isVisible({ timeout: 2000 }).catch(() => false)) {
+        await expect(rousingAfterShort).toBeDisabled({ timeout: 8000 });
+      }
+
+      await caption('GM', 'Long Rest', 'Rousing Speech frequency clears');
+      await expect(gmPage.getByRole('button', { name: /⏹\s*Long/ })).toBeVisible({ timeout: 8000 });
+      await gmPage.getByRole('button', { name: /⏹\s*Long/ }).click();
+      await ackRestBanner(/Long Rest/i);
+
+      await expect(async () => {
+        const state = await getTableState(tableId);
+        const bardEl = (state.elements || []).find((e) => e.instanceId === bardInstanceId);
+        expect(hasLongRestUsage(bardEl)).toBe(false);
+      }).toPass({ timeout: 8000 });
+
+      const actionsRousingAfterLong = await ensureSheetOpen(playerPage, playerACallieCard);
+      const rousingAfterLong = actionsRousingAfterLong
+        .locator('button.dh-sheet-clickable-chip')
+        .filter({ hasText: /Rousing Speech/i });
+      await expect(rousingAfterLong).toBeVisible({ timeout: 8000 });
+      await expect(rousingAfterLong).toBeEnabled({ timeout: 8000 });
 
       // ---------------------------------------------------------------------
       // Player A — Heart of a Poet (Presence action roll + reviewAction d4)
@@ -218,16 +311,58 @@ test.describe('Subclass video — Bard / Wordsmith', () => {
       await expect(presenceBanner).not.toBeVisible({ timeout: 5000 });
 
       // ---------------------------------------------------------------------
-      // Eloquent — isSelect card chip (actionLoop only; no GM Acknowledge)
+      // P1 — Eloquent: all three isSelect options (no Hope cost — narrative actionLoop).
+      // frequency: session → End+Start between options.
       // ---------------------------------------------------------------------
-      await caption('PLAYER A', 'Eloquent', 'Once per session — choose a benefit for an ally');
-      const actionsEloquent = await ensureSheetOpen(playerPage, playerACallieCard);
-      const eloquentGroup = actionsEloquent.getByRole('group', { name: /Eloquent/i });
+      await caption('PLAYER A', 'Eloquent — catalog', 'Three once-per-session narrative options');
+      const actionsEloquentCatalog = await ensureSheetOpen(playerPage, playerACallieCard);
+      const eloquentGroup = actionsEloquentCatalog.getByRole('group', { name: /Eloquent/i });
       await expect(eloquentGroup).toBeVisible({ timeout: 8000 });
-      await eloquentGroup.getByRole('button', { name: /Find a mundane object/i }).click();
+      await expect(eloquentGroup.getByRole('button', { name: /Find a mundane object/i })).toBeVisible();
+      await expect(eloquentGroup.getByRole('button', { name: /Help an Ally without spending Hope/i })).toBeVisible();
+      await expect(eloquentGroup.getByRole('button', { name: /Extra downtime move on next rest/i })).toBeVisible();
 
-      // Action-only banner self-dismisses; assert via Action Log / just wait briefly.
-      await playerPage.waitForTimeout(800);
+      await caption('PLAYER A', 'Eloquent — Find a mundane object', 'Action-loop narration (no Hope cost)');
+      await eloquentGroup.getByRole('button', { name: /Find a mundane object/i }).click();
+      await expect(playerPage.getByText(/mundane object or tool/i).first()).toBeVisible({ timeout: 10000 });
+      // Eloquent is narrative actionLoop only — no Hope spend. Session frequency marks featureUsage.
+      await expect(async () => {
+        const state = await getTableState(tableId);
+        const bardEl = (state.elements || []).find((e) => e.instanceId === bardInstanceId);
+        expect(hasSessionUsage(bardEl)).toBe(true);
+      }).toPass({ timeout: 8000 });
+
+      await endAndRestartSession('Refresh Eloquent for next option');
+
+      await caption('PLAYER A', 'Eloquent — Help without Hope', 'Second session option');
+      const actionsEloquent2 = await ensureSheetOpen(playerPage, playerACallieCard);
+      const eloquentGroup2 = actionsEloquent2.getByRole('group', { name: /Eloquent/i });
+      await expect(eloquentGroup2).toBeVisible({ timeout: 8000 });
+      await eloquentGroup2.getByRole('button', { name: /Help an Ally without spending Hope/i }).click();
+      await expect(playerPage.getByText(/Help an Ally without spending Hope/i).first()).toBeVisible({
+        timeout: 10000,
+      });
+      await expect(async () => {
+        const state = await getTableState(tableId);
+        const bardEl = (state.elements || []).find((e) => e.instanceId === bardInstanceId);
+        expect(hasSessionUsage(bardEl)).toBe(true);
+      }).toPass({ timeout: 8000 });
+
+      await endAndRestartSession('Refresh Eloquent for final option');
+
+      await caption('PLAYER A', 'Eloquent — Extra downtime move', 'Third session option');
+      const actionsEloquent3 = await ensureSheetOpen(playerPage, playerACallieCard);
+      const eloquentGroup3 = actionsEloquent3.getByRole('group', { name: /Eloquent/i });
+      await expect(eloquentGroup3).toBeVisible({ timeout: 8000 });
+      await eloquentGroup3.getByRole('button', { name: /Extra downtime move on next rest/i }).click();
+      await expect(playerPage.getByText(/additional downtime move/i).first()).toBeVisible({
+        timeout: 10000,
+      });
+      await expect(async () => {
+        const state = await getTableState(tableId);
+        const bardEl = (state.elements || []).find((e) => e.instanceId === bardInstanceId);
+        expect(hasSessionUsage(bardEl)).toBe(true);
+      }).toPass({ timeout: 8000 });
 
       // ---------------------------------------------------------------------
       // Rally + Epic Poetry d10 die size
@@ -268,7 +403,11 @@ test.describe('Subclass video — Bard / Wordsmith', () => {
       await expect(async () => {
         const state = await getTableState(tableId);
         const bardEl = (state.elements || []).find((e) => e.instanceId === bardInstanceId);
+        const pd = bardEl?.featureState?.Rally?.partyDice;
         expect(bardEl?.currentStress).toBeLessThan(3);
+        // P0 — Callie's partyDice entry cleared after Clear Stress
+        expect(pd?.[bardInstanceId]).toBeUndefined();
+        expect(pd?.[allyInstanceId]?.dice).toBe('d10');
       }).toPass({ timeout: 8000 });
 
       // ---------------------------------------------------------------------
@@ -292,6 +431,17 @@ test.describe('Subclass video — Bard / Wordsmith', () => {
       const spendActionBtn = playerBPage.getByRole('button', { name: /Spend Rally Die — Action/i }).first();
       await expect(spendActionBtn).toBeVisible({ timeout: 8000 });
       await spendActionBtn.click();
+
+      // P0 — partyDice cleared + duality line "Rally Die N"
+      const bBannerPlayer = playerBPage.locator('.dice-result-banner', { hasText: bBannerText });
+      await expect(async () => {
+        const state = await getTableState(tableId);
+        const bardEl = (state.elements || []).find((e) => e.instanceId === bardInstanceId);
+        const pd = bardEl?.featureState?.Rally?.partyDice || {};
+        expect(pd[allyInstanceId]).toBeUndefined();
+        expect(pd[bardInstanceId]).toBeUndefined();
+      }).toPass({ timeout: 8000 });
+      await expect(bBannerPlayer.getByText(/Rally Die \d+/i).first()).toBeVisible({ timeout: 8000 });
 
       await holdForDiceTumble();
       await caption('GM', 'Acknowledges Reya’s roll', '');

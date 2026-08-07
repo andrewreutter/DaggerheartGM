@@ -27,6 +27,7 @@ import {
   buildV2BannerGameState,
   runV2RestHooksForTable,
   expandTableCharactersAncestryForV2Loader,
+  enrichTableCharactersWithResolvedGear,
   loadAllV2FeaturesForTable,
 } from '../../src/client/lib/v2-action-loop-bridge.js';
 import { buildV2RegistryWithSrdItems } from '../../src/client/lib/v2-declarative-sheet.js';
@@ -439,6 +440,98 @@ describe('v2-action-loop-bridge', () => {
     ];
     enrichV2RollIsSuccessFromTarget(roll, activeElements);
     expect(roll.isSuccess).toBe(false);
+  });
+
+  it('enrichTableCharactersWithResolvedGear fills weapons[] from primary/secondary ids', () => {
+    const el = {
+      elementType: 'character',
+      instanceId: 'pc-1',
+      primaryWeaponId: 'srd-wpn-a',
+      secondaryWeaponId: 'srd-wpn-b',
+      traits: { agility: 1, strength: 1, finesse: 0, instinct: 0, presence: 0, knowledge: 0 },
+      level: 1,
+    };
+    const srdData = {
+      weaponsById: {
+        'srd-wpn-a': { id: 'srd-wpn-a', name: 'Axe', damage: 'd8', trait: 'Strength', range: 'Melee' },
+        'srd-wpn-b': { id: 'srd-wpn-b', name: 'Dagger', damage: 'd4', trait: 'Finesse', range: 'Melee' },
+      },
+      ancestriesById: {},
+      communitiesById: {},
+      classesById: {},
+      subclassesById: {},
+      armorById: {},
+    };
+    const [out] = enrichTableCharactersWithResolvedGear([el], srdData);
+    expect(out.weapons).toHaveLength(2);
+    expect(out.weapons[0]).toMatchObject({ id: 'wep_0', name: 'Axe' });
+    expect(out.weapons[1]).toMatchObject({ id: 'wep_1', name: 'Dagger' });
+    expect(String(out.weapons[0].damage)).toMatch(/d8/i);
+    expect(String(out.weapons[1].damage)).toMatch(/d4/i);
+  });
+
+  it('collectV2ReviewActionChips includes Weapon Specialist when table char has ids but no weapons[]', async () => {
+    const { mockCharacter, mockAdversary } = await import('./features-v2/helpers.js');
+    const warrior = mockCharacter({
+      instanceId: 'warrior-1',
+      classId: 'srd-cls-warrior',
+      subclassId: 'srd-sub-call-of-the-slayer',
+      hope: 4,
+      level: 5,
+      primaryWeaponId: 'srd-wpn-broadsword',
+      secondaryWeaponId: 'srd-wpn-roundshield',
+      // Simulate SSE table element: ids only, no resolved weapons[]
+      weapons: undefined,
+    });
+    delete warrior.weapons;
+    delete warrior.primaryWeapon;
+    delete warrior.secondaryWeapon;
+    const adv = mockAdversary({ instanceId: 'adv-1', difficulty: 12 });
+    const roll = {
+      _attackerInstanceId: 'warrior-1',
+      _selectedTargetInstanceId: 'adv-1',
+      _weaponId: 'wep_0',
+      _traitKey: 'strength',
+      subItems: [
+        { pre: 'Hope ', input: 'd12', result: '9', post: '' },
+        { pre: 'Fear ', input: 'd12', result: '4', post: '' },
+        { pre: 'damage ', input: 'd8', result: '5', post: ' phy' },
+      ],
+      total: 18,
+      dominant: 'hope',
+    };
+    enrichV2RollIsSuccessFromTarget(roll, [warrior, adv]);
+    expect(roll.isSuccess).toBe(true);
+
+    const chips = collectV2ReviewActionChips({
+      roll,
+      activeElements: [warrior, adv],
+      srdData: {
+        weaponsById: {
+          'srd-wpn-broadsword': {
+            id: 'srd-wpn-broadsword',
+            name: 'Broadsword',
+            damage: 'd8',
+            trait: 'Strength',
+            range: 'Melee',
+          },
+          'srd-wpn-roundshield': {
+            id: 'srd-wpn-roundshield',
+            name: 'Round Shield',
+            damage: 'd4',
+            trait: 'Strength',
+            range: 'Melee',
+          },
+        },
+        armorById: {},
+        ancestriesById: {},
+        communitiesById: {},
+        classesById: {},
+        subclassesById: {},
+      },
+      dedupeFeatureNames: new Set(),
+    });
+    expect(chips.some((c) => c._featureName === 'Weapon Specialist')).toBe(true);
   });
 
   it('collectV2ReviewActionChips includes Sneak Attack for Cloaked Rogue on a successful attack', async () => {

@@ -5,15 +5,14 @@
  * Fueled by Fear, Thrive in Chaos, Have No Fear) plus inherited Wizard class features
  * (Prestidigitation, Strange Patterns, Not This Time). GM + Player A only.
  *
- * Coverage notes (docs/srd-implementation.md Partial rows):
- *  - **Battlemage** — +1 max HP (declarative); assert feature card (sheet overlay applies HP).
- *  - **Conjure Shield** — +Proficiency to Evasion while Hope ≥ 2; assert card + Hope seed ≥ 2.
+ * Coverage notes (docs/srd-implementation.md Partial rows + Phase 1 TEST_GAP):
+ *  - **Battlemage** / **Conjure Shield** numeric sheet merge — PRODUCT_GAP / Phase 3; card + Hope seed only.
  *  - **Face Your Fear** / **Fueled by Fear** / **Have No Fear** — Fear-success damage dice
- *    scale by tier inside Face Your Fear's hook; cannot force Fear dominance with random
- *    duality dice, so these are captioned + sheet-asserted (display).
+ *    scale by tier inside Face Your Fear's hook; `onReviewAction` VTT is PRODUCT_GAP — display-only.
  *  - **Thrive in Chaos** — `reviewAction` on a successful attack with damage: mark Stress,
- *    target marks +1 HP. Adversary difficulty 1 for a reliable hit.
- *  - **Not This Time** — legacy GM banner button (player V2 `rerollDie` follow-up unsupported).
+ *    target marks +1 HP (hard-assert Stress +1 and adversary HP drop). Difficulty 1 for a hit.
+ *  - **Not This Time** — legacy GM banner button (V2 `gmDie`/`damageDie` is PRODUCT_GAP).
+ *  - Plan P0 "Adept arming" was mis-filed under this War spec — Adept lives on School of Knowledge.
  */
 
 import { test, expect } from '@playwright/test';
@@ -219,19 +218,34 @@ test.describe('Subclass video — Wizard / School of War', () => {
         });
       }
 
+      const stressBeforeThrive = (await getTableState(tableId)).elements.find(
+        (e) => e.instanceId === hexInstanceId
+      )?.currentStress;
+      const thugHpBefore = (await getTableState(tableId)).elements.find(
+        (e) => e.instanceId === thugInstanceId
+      )?.currentHp;
+
       await caption(
         'PLAYER A',
         'Thrive in Chaos',
         'Mark 1 Stress — target marks 1 additional Hit Point'
       );
-      const thriveBtn = playerPage.getByRole('button', { name: /Thrive in Chaos/i }).first();
+      await playerPage.keyboard.press('Escape');
+      await playerPage.waitForTimeout(150);
+      const thriveBtn = playerPage
+        .locator('.dice-result-banner', { hasText: attackBannerText })
+        .getByRole('button', { name: /Thrive in Chaos/i })
+        .first();
       await expect(thriveBtn).toBeVisible({ timeout: 10000 });
       await thriveBtn.click();
 
       await expect(async () => {
         const state = await getTableState(tableId);
         const hexEl = (state.elements || []).find((e) => e.instanceId === hexInstanceId);
-        expect(hexEl?.currentStress).toBeGreaterThanOrEqual(2);
+        expect(
+          hexEl?.currentStress,
+          'Thrive in Chaos should mark exactly 1 Stress'
+        ).toBe((stressBeforeThrive ?? 1) + 1);
       }).toPass({ timeout: 10000 });
 
       await holdForDiceTumble();
@@ -247,7 +261,10 @@ test.describe('Subclass video — Wizard / School of War', () => {
       await expect(async () => {
         const state = await getTableState(tableId);
         const thugEl = (state.elements || []).find((e) => e.instanceId === thugInstanceId);
-        expect(thugEl?.currentHp ?? 8).toBeLessThan(8);
+        expect(
+          thugEl?.currentHp ?? 8,
+          'Thrive + weapon damage should reduce Alley Thug HP'
+        ).toBeLessThan(thugHpBefore ?? 8);
       }).toPass({ timeout: 8000 });
 
       // ---------------------------------------------------------------------

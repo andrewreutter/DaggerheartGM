@@ -5,15 +5,16 @@
  * Elusive Predator (display — onIntent vs Focus attacker), plus inherited Ranger class
  * features (Ranger's Focus, Hold Them Off). GM + Player A only.
  *
- * Coverage notes (per docs/srd-implementation.md — Wayfinder Done):
+ * Coverage notes (per docs/srd-implementation.md — Wayfinder Done) + Phase 1 TEST_GAP:
  *  - **Path Forward**: narrative travel sense — caption + assert card renders.
- *  - **Ruthless Predator**: `reviewAction` chip — mark 1 Stress for +1 damage; Severe→Stress
- *    is an automatic hook (not separately clicked).
+ *  - **Ruthless Predator**: `reviewAction` chip — mark 1 Stress for +1 damage (asserted).
+ *    Severe→adversary Stress needs `runOnVttDamageApplyReviewOutcome` (PRODUCT_GAP — skipped).
  *  - **Apex Predator**: intent chip before attacking Focus — spend 1 Hope; on success remove
  *    1 Fear from the GM pool (table seeded with fearCount: 3).
- *  - **Elusive Predator**: automated +2 Evasion when Focus attacks you — no chip; assert card.
- *  - **Ranger's Focus** / **Hold Them Off**: same V2 chip flows as the Beastbound spec
- *    (Hold Them Off asserts Hope spend; multi-target HP apply via addDamageRoll is a known gap).
+ *  - **Elusive Predator**: `onIntent` +2 Evasion — no chip / no persisted table mod
+ *    (PRODUCT_GAP for hard E2E); assert card renders.
+ *  - **Ranger's Focus**: Focus id + Focus target Stress (P0); **End Focus to reroll** Duality (P1).
+ *  - **Hold Them Off**: Hope spend asserted; multi-target HP is PRODUCT_GAP.
  */
 
 import { test, expect } from '@playwright/test';
@@ -34,6 +35,10 @@ import {
 } from '../helpers/multi-auth.js';
 import { startSubclassRun, filterSeriousSubclassConsoleErrors } from '../helpers/subclass-video.js';
 import { buildRangerWayfinderCharacterData } from '../helpers/subclass-cast-ranger.js';
+import {
+  assertRangerFocusStressApplied,
+  runEndFocusRerollScene,
+} from '../helpers/subclass-ranger-steps.js';
 
 async function setFearCount(tableId, fearCount) {
   const res = await fetch(`${BASE_URL}/api/room/my/op`, {
@@ -98,6 +103,9 @@ test.describe('Subclass video — Ranger / Wayfinder', () => {
         difficulty: 1,
         hp_max: 10,
         currentHp: 10,
+        // damageTargets maps stress_max → maxStress; wrapEntity.markStress no-ops when that is 0.
+        stress_max: 6,
+        maxStress: 6,
         currentStress: 0,
         conditions: '',
         tokenX: 103,
@@ -112,6 +120,8 @@ test.describe('Subclass video — Ranger / Wayfinder', () => {
         difficulty: 1,
         hp_max: 10,
         currentHp: 10,
+        stress_max: 6,
+        maxStress: 6,
         currentStress: 0,
         conditions: '',
         tokenX: 100,
@@ -126,6 +136,8 @@ test.describe('Subclass video — Ranger / Wayfinder', () => {
         difficulty: 1,
         hp_max: 10,
         currentHp: 10,
+        stress_max: 6,
+        maxStress: 6,
         currentStress: 0,
         conditions: '',
         tokenX: 103,
@@ -199,7 +211,7 @@ test.describe('Subclass video — Ranger / Wayfinder', () => {
       await caption(
         'PLAYER A',
         'Elusive Predator',
-        'Display-only here — onIntent +2 Evasion when Focus attacks you',
+        'Card only — onIntent +2 Evasion not persisted on table yet (PRODUCT_GAP)',
       );
       await expect(playerPage.getByText('Elusive Predator', { exact: true }).first()).toBeVisible({
         timeout: 8000,
@@ -233,19 +245,18 @@ test.describe('Subclass video — Ranger / Wayfinder', () => {
       await selectBannerDamageTarget(playerPage, focusBannerPlayer, /Stalked Prey/i);
 
       await holdForDiceTumble();
-      await caption('GM', "Acknowledges Ranger's Focus attack", '');
+      await caption('GM', "Acknowledges Ranger's Focus attack", 'Focus set + target marks Stress');
       const focusBannerGm = gmPage.locator('.dice-result-banner', { hasText: focusAttackText });
       await selectBannerDamageTarget(gmPage, focusBannerGm, /Stalked Prey/i);
       await ack(focusBannerGm, { holdMs: 0 });
       await expect(focusBannerGm).not.toBeVisible({ timeout: 5000 });
 
-      await expect(async () => {
-        const state = await getTableState(tableId);
-        const ashraEl = (state.elements || []).find((e) => e.instanceId === ashraInstanceId);
-        const advEl = (state.elements || []).find((e) => e.instanceId === advAId);
-        const focusId = ashraEl?.focusTargetInstanceId ?? ashraEl?.focusTargetId;
-        expect(focusId === advAId || advEl?.focusedBy === 'Ashra').toBe(true);
-      }).toPass({ timeout: 10000 });
+      await assertRangerFocusStressApplied({
+        tableId,
+        rangerInstanceId: ashraInstanceId,
+        advInstanceId: advAId,
+        rangerName: 'Ashra',
+      });
 
       // ---------------------------------------------------------------------
       // Apex Predator — intent chip vs Focus; Ruthless Predator on the banner.
@@ -288,7 +299,11 @@ test.describe('Subclass video — Ranger / Wayfinder', () => {
       }).toPass({ timeout: 8000 });
 
       await holdForDiceTumble();
-      await caption('GM', 'Acknowledges Apex + Ruthless attack', 'On hit Apex removes 1 Fear (net may cancel a Fear-result +1)');
+      await caption(
+        'GM',
+        'Acknowledges Apex + Ruthless attack',
+        'Apex Fear −1; Severe→Stress hook not on VTT damage-apply (PRODUCT_GAP)',
+      );
       const fearBeforeAck = await getTableState(tableId).then(
         (s) => s.fearCount ?? s.data?.fearCount ?? 0,
       );
@@ -305,6 +320,27 @@ test.describe('Subclass video — Ranger / Wayfinder', () => {
         expect(fear).toBeLessThanOrEqual(fearBeforeAck);
         if (!bannerHasFear) expect(fear).toBeLessThan(fearBeforeAck);
       }).toPass({ timeout: 10000 });
+
+      // ---------------------------------------------------------------------
+      // End Focus to reroll — miss vs Focus → Duality reroll + clear Focus.
+      // ---------------------------------------------------------------------
+      await runEndFocusRerollScene({
+        tableId,
+        gmPage,
+        playerPage,
+        caption,
+        ensureSheetOpen,
+        selectBannerDamageTarget,
+        dismissBannerTargetMenu,
+        holdForDiceTumble,
+        charCard: playerAshraCard,
+        charName: 'Ashra',
+        advNameRe: /Stalked Prey/i,
+        advInstanceId: advAId,
+        rangerInstanceId: ashraInstanceId,
+        attackBannerText: focusAttackText,
+        restoreDifficulty: 1,
+      });
 
       // ---------------------------------------------------------------------
       // Hold Them Off.
@@ -339,8 +375,10 @@ test.describe('Subclass video — Ranger / Wayfinder', () => {
       await expect(async () => {
         const state = await getTableState(tableId);
         const ashraEl = (state.elements || []).find((e) => e.instanceId === ashraInstanceId);
-        // Focus (1) + Apex (1) + Hold Them Off (3) from starting 6; Hope-result acks may refund.
-        expect(ashraEl?.hope ?? 6).toBeLessThanOrEqual(2);
+        // Focus (1) + Apex (1) + Hold Them Off (3) from starting 6. Hope-result acks refund +1
+        // per successful Hope duality, so net after HTO is often 3 (not 2).
+        expect(ashraEl?.hope ?? 6, 'Hold Them Off should spend 3 Hope').toBeLessThanOrEqual(3);
+        expect(ashraEl?.hope ?? 6).toBeLessThan(6);
       }).toPass({ timeout: 10000 });
 
       await holdForDiceTumble();
@@ -353,7 +391,7 @@ test.describe('Subclass video — Ranger / Wayfinder', () => {
       await caption(
         'Ranger / Wayfinder',
         'Walkthrough complete',
-        'Path Forward, Focus, Apex/Ruthless Predator, Hold Them Off',
+        'Focus Stress, Apex/Ruthless, End Focus reroll, Hold Them Off',
       );
 
       const seriousErrors = filterSeriousSubclassConsoleErrors(consoleErrors);

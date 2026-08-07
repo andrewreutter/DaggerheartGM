@@ -13,8 +13,34 @@
  *    and synthetic banner effects omit `source`, so this suite asserts the feature card only.
  *  - **Nemesis**: Prioritize card chip (selectTargets) + Swap Hope/Fear reviewAction chip
  *    (`swapHopeFearDice` is engineRollDisplayOnly — assert chip appears/activates; outcome
- *    swap is not persisted on the banner yet).
+ *    swap is not persisted on the banner yet). Long Rest clears `prioritizedAdversaryId`
+ *    via `hooks.onRest` (asserted).
+ *  - **Unstoppable**: once/longRest — after use, `featureUsage` marked and the Actions chip is
+ *    omitted (frequency gate skips exhausted chips); Long Rest clears usage and the chip returns.
+ *    Ongoing mid-scene hooks are PRODUCT_GAP.
  */
+
+/** Walk `featureState` for a key (Nemesis bags live under source/feature scopes). */
+function findFeatureStateValue(fs, key) {
+  if (!fs || typeof fs !== 'object') return undefined;
+  if (Object.prototype.hasOwnProperty.call(fs, key)) return fs[key];
+  for (const v of Object.values(fs)) {
+    if (v && typeof v === 'object' && !Array.isArray(v)) {
+      const found = findFeatureStateValue(v, key);
+      if (found !== undefined) return found;
+    }
+  }
+  return undefined;
+}
+
+/** Find a featureUsage entry whose key mentions the feature name. */
+function findFeatureUsageEntry(el, nameRe) {
+  const fu = el?.featureUsage && typeof el.featureUsage === 'object' ? el.featureUsage : {};
+  for (const [k, v] of Object.entries(fu)) {
+    if (nameRe.test(k)) return { key: k, entry: v };
+  }
+  return null;
+}
 
 import { test, expect } from '@playwright/test';
 import {
@@ -178,11 +204,20 @@ test.describe('Subclass video — Guardian / Vengeance', () => {
       }
 
       // ---------------------------------------------------------------------
-      // At Ease — passive +1 max Stress (display).
+      // At Ease — passive +1 max Stress (9 Stress slots on the Characters panel track).
       // ---------------------------------------------------------------------
       await caption('PLAYER A', 'At Ease', 'Passive +1 max Stress — card on sheet (maxStress 9)');
       await openVossSheet();
       await expect(playerPage.getByText('At Ease', { exact: true }).first()).toBeVisible({ timeout: 8000 });
+      // Defense Stress chip shows max 9 (At Ease); without At Ease the cast would be 8.
+      await expect(
+        playerPage
+          .locator('div')
+          .filter({ has: playerPage.getByText('Stress', { exact: true }) })
+          .filter({ has: playerPage.getByText('9', { exact: true }) })
+          .first(),
+        'At Ease → Stress max 9 on sheet'
+      ).toBeVisible({ timeout: 8000 });
 
       // ---------------------------------------------------------------------
       // Frontline Tank — V2 Actions chip (not amber Hope card; see plan lesson 15).
@@ -209,13 +244,31 @@ test.describe('Subclass video — Guardian / Vengeance', () => {
         await expect(frontlineBanner.first()).not.toBeVisible({ timeout: 5000 });
       }
 
-      await caption('PLAYER A', 'Unstoppable', 'Once per long rest');
+      await caption('PLAYER A', 'Unstoppable', 'Once per long rest — arms die; frequency exhausts');
       await clickPlayerVossActionsChip(/Unstoppable/i);
       await expect(async () => {
         const state = await getTableState(tableId);
         const voss = (state.elements || []).find((e) => e.instanceId === vossInstanceId);
         expect(JSON.stringify(voss?.featureState || {})).toMatch(/unstoppableActive":true/);
+        const usage = findFeatureUsageEntry(voss, /Unstoppable/i);
+        expect(usage?.entry?.used, 'Unstoppable featureUsage.used').toBe(true);
+        expect(usage?.entry?.cycle, 'Unstoppable featureUsage.cycle').toBe('longRest');
       }).toPass({ timeout: 8000 });
+
+      await caption('PLAYER A', 'Unstoppable exhausted', 'Actions chip omitted until Long Rest');
+      await openVossSheet();
+      {
+        const actionsCard = playerPage
+          .locator('div.rounded-xl.bg-gradient-to-b')
+          .filter({ has: playerPage.locator('span.uppercase', { hasText: /^Actions$/ }) })
+          .first();
+        await expect(actionsCard).toBeVisible({ timeout: 8000 });
+        // Frequency-exhausted chips are skipped in collectChips — not rendered disabled.
+        await expect(
+          actionsCard.locator('button.dh-sheet-clickable-chip').filter({ hasText: /Unstoppable/i }),
+          'Unstoppable once/longRest should disappear from Actions after use'
+        ).toHaveCount(0);
+      }
 
       // Restore Hope for Nemesis (2 Hope) after Frontline Tank spent 3.
       await updateElement(tableId, vossInstanceId, { hope: 4 });
@@ -332,7 +385,46 @@ test.describe('Subclass video — Guardian / Vengeance', () => {
       await ack(attackBanner, { holdMs: 0 });
       await expect(attackBanner).not.toBeVisible({ timeout: 5000 });
 
-      await caption('Guardian / Vengeance', 'Walkthrough complete', 'Revenge, Nemesis, Act of Reprisal, Frontline Tank, Unstoppable');
+      // ---------------------------------------------------------------------
+      // Long Rest — clears Nemesis prioritize + refreshes Unstoppable frequency.
+      // Acknowledge without filling rest moves (confirm dialog — Playwright accepts).
+      // ---------------------------------------------------------------------
+      await caption('GM', 'Long Rest', 'Refreshes Unstoppable; Nemesis onRest clears Prioritize');
+      await gmPage.getByRole('button', { name: '⏹ Long' }).click();
+      const restBanner = gmPage.locator('.dice-result-banner', { hasText: /Long Rest/i });
+      await expect(restBanner).toBeVisible({ timeout: 10000 });
+      await holdForDiceTumble();
+      await caption('GM', 'Acknowledges Long Rest', 'Clears longRest featureUsage + Nemesis prioritize');
+      // Rest Acknowledge prompts confirm when moves are empty — accept explicitly, then click
+      // without the dice-banner force/resolve path (RestBanner has no pointer-events gate).
+      gmPage.once('dialog', (dialog) => dialog.accept());
+      await restBanner.getByRole('button', { name: 'Acknowledge' }).click({ timeout: 15000 });
+      await expect(restBanner).not.toBeVisible({ timeout: 10000 });
+
+      await expect(async () => {
+        const state = await getTableState(tableId);
+        const voss = (state.elements || []).find((e) => e.instanceId === vossInstanceId);
+        const prioritized = findFeatureStateValue(voss?.featureState, 'prioritizedAdversaryId');
+        expect(prioritized, 'Nemesis prioritizedAdversaryId cleared on rest').toBeFalsy();
+        const usage = findFeatureUsageEntry(voss, /Unstoppable/i);
+        expect(usage, 'Unstoppable featureUsage cleared on Long Rest').toBeNull();
+      }).toPass({ timeout: 10000 });
+
+      await caption('PLAYER A', 'Unstoppable refreshed', 'Actions chip returns after Long Rest');
+      await openVossSheet();
+      {
+        const actionsCard = playerPage
+          .locator('div.rounded-xl.bg-gradient-to-b')
+          .filter({ has: playerPage.locator('span.uppercase', { hasText: /^Actions$/ }) })
+          .first();
+        const unstopBtn = actionsCard.locator('button.dh-sheet-clickable-chip').filter({ hasText: /Unstoppable/i });
+        await expect(unstopBtn, 'Unstoppable should return to Actions after Long Rest').toBeVisible({
+          timeout: 8000,
+        });
+        await expect(unstopBtn).toBeEnabled();
+      }
+
+      await caption('Guardian / Vengeance', 'Walkthrough complete', 'Revenge, Nemesis, Act of Reprisal, Frontline Tank, Unstoppable + rest clears');
 
       const seriousErrors = filterSeriousSubclassConsoleErrors(consoleErrors);
       expect(seriousErrors, `Unexpected console errors:\n${seriousErrors.join('\n')}`).toEqual([]);

@@ -8,24 +8,24 @@ follow-on agents don't have to rediscover them.
 
 | # | Class | Subclass | Status |
 |---|-------|----------|--------|
-| 1 | Bard | Troubadour | ✅ Done — `test/browser-subclass/bard-troubadour.spec.js` |
-| 2 | Bard | Wordsmith | ✅ Done — `test/browser-subclass/bard-wordsmith.spec.js` |
-| 3 | Druid | Warden of the Elements | ✅ Done — `test/browser-subclass/druid-warden-of-the-elements.spec.js` |
-| 4 | Druid | Warden of Renewal | ✅ Done — `test/browser-subclass/druid-warden-of-renewal.spec.js` |
-| 5 | Guardian | Stalwart | ✅ Done — `test/browser-subclass/guardian-stalwart.spec.js` |
-| 6 | Guardian | Vengeance | ✅ Done — `test/browser-subclass/guardian-vengeance.spec.js` |
-| 7 | Ranger | Beastbound | ✅ Done — `test/browser-subclass/ranger-beastbound.spec.js` |
-| 8 | Ranger | Wayfinder | ✅ Done — `test/browser-subclass/ranger-wayfinder.spec.js` |
+| 1 | Bard | Troubadour | ✅ Done — Phase 1 P0–P1 hardened (`difficultyMod`, Rally d8 / banner die / Damage / reaction / ally Clear Stress / session-end clear, Gifted Performer long-rest uses) — `bard-troubadour.spec.js` |
+| 2 | Bard | Wordsmith | ✅ Done — Phase 1 P0–P1 hardened (`difficultyMod`, Rally banner die + `partyDice` clear, Eloquent ×3 options, Rousing Speech short/long rest) — `bard-wordsmith.spec.js` |
+| 3 | Druid | Warden of the Elements | ✅ Done — Phase 1 P0–P1 hardened (Earth/Air/Water matrix, Short Rest channel clear; Fragile auto-drop deferred PRODUCT_GAP) — `druid-warden-of-the-elements.spec.js` |
+| 4 | Druid | Warden of Renewal | ✅ Done — Phase 1 P0–P1 hardened (Protection/Defender numbers, Very Close Regen, Long Rest frequency; Fragile/last-HP deferred PRODUCT_GAP) — `druid-warden-of-renewal.spec.js` |
+| 5 | Guardian | Stalwart | ✅ Done — `test/browser-subclass/guardian-stalwart.spec.js` (Phase 1 P0: +6 threshold bonuses + maxStress 8; sheet bands) |
+| 6 | Guardian | Vengeance | ✅ Done — `test/browser-subclass/guardian-vengeance.spec.js` (Phase 1 P1: Unstoppable frequency + Nemesis Long Rest clear; At Ease 9 Stress) |
+| 7 | Ranger | Beastbound | ✅ Done — Phase 1 P0–P1 hardened (Focus Stress, End Focus Duality, companion token/XP) — `ranger-beastbound.spec.js` |
+| 8 | Ranger | Wayfinder | ✅ Done — Phase 1 P0–P1 hardened (Focus Stress, End Focus Duality, Apex/Ruthless chip) — `ranger-wayfinder.spec.js` |
 | 9 | Rogue | Nightwalker | ✅ Done — `test/browser-subclass/rogue-nightwalker.spec.js` |
 | 10 | Rogue | Syndicate | ✅ Done — `test/browser-subclass/rogue-syndicate.spec.js` |
 | 11 | Seraph | Divine Wielder | ✅ Done — `test/browser-subclass/seraph-divine-wielder.spec.js` |
 | 12 | Seraph | Winged Sentinel | ✅ Done — `test/browser-subclass/seraph-winged-sentinel.spec.js` |
-| 13 | Sorcerer | Elemental Origin | ✅ Done — `test/browser-subclass/sorcerer-elemental-origin.spec.js` |
-| 14 | Sorcerer | Primal Origin | ✅ Done — `test/browser-subclass/sorcerer-primal-origin.spec.js` |
+| 13 | Sorcerer | Elemental Origin | ✅ Done — Phase 1 P0–P1 hardened (Elementalist +3 Hope + Intent log, Natural Evasion Stress + `naturalEvasionD6`, Volatile Hope) — `sorcerer-elemental-origin.spec.js` |
+| 14 | Sorcerer | Primal Origin | ✅ Done — Phase 1 P0–P1 hardened (Channel seeded Hope path, Manipulate Magic +2/extend, Arcane Charge +10, Volatile Hope) — `sorcerer-primal-origin.spec.js` |
 | 15 | Warrior | Call of the Brave | ✅ Done — `test/browser-subclass/warrior-call-of-the-brave.spec.js` |
 | 16 | Warrior | Call of the Slayer | ✅ Done — `test/browser-subclass/warrior-call-of-the-slayer.spec.js` |
-| 17 | Wizard | School of Knowledge | ✅ Done — `test/browser-subclass/wizard-school-of-knowledge.spec.js` |
-| 18 | Wizard | School of War | ✅ Done — `test/browser-subclass/wizard-school-of-war.spec.js` |
+| 17 | Wizard | School of Knowledge | ✅ Done — `test/browser-subclass/wizard-school-of-knowledge.spec.js` (Phase 1 P0/P1: Adept arming, Perfect Recall `featureUsage`, Strange Patterns seed + review chip + long-rest re-pick) |
+| 18 | Wizard | School of War | ✅ Done — `test/browser-subclass/wizard-school-of-war.spec.js` (Phase 1: Thrive Stress +1 / HP drop hard asserts; Battlemage/Conjure Shield numbers + V2 NTT deferred) |
 
 For each subclass, verify against `docs/srd-implementation.md` (Status column) which features are
 automated vs. display-only **before** writing the spec — narrative/display-only features get a
@@ -258,19 +258,23 @@ doubt (the webServer command runs `node server.js` directly, it does **not** reb
 ## Multi-user coverage plan (per the design doc's registry survey)
 
 - **Bard/Troubadour + Wordsmith**: Rally grant → Player B spends a Rally die on their own roll
-  (cross-sheet `reviewAction` chip, M2-style); Maestro choice rendered on Player B's sheet
-  (Troubadour only — known gap, see lesson 10). Wordsmith **Epic Poetry** Tag Team d10
-  advantage is captioned as a VTT gap (no Game Table Tag Team roll UI yet); the d10 Rally
-  Die size from the same feature is asserted after Grant Rally Dice.
+  (cross-sheet `reviewAction` chip, M2-style; banner **Rally Die** + `partyDice` clear asserted);
+  Troubadour also walks ally Clear Stress, Damage spend, reaction spend, d8 grant, session-end
+  clear, and Gifted Performer short/long rest uses. Maestro choice rendered on Player B's sheet
+  (Troubadour only — known gap, see lesson 10). Wordsmith walks Eloquent ×3 (End→Start between
+  options; no Hope cost), Rousing Speech rest refresh, and Make a Scene `difficultyMod`.
+  **Epic Poetry** Tag Team d10 advantage remains a VTT gap (no Game Table Tag Team roll UI).
 - **Seraph (both subclasses)**: session start grants Prayer Dice via physical-roll resume; owner
   spends a prayer die on Player B's pending banner (M2 pattern). Factories:
   `buildSeraphDivineWielderCharacterData` / `buildSeraphWingedSentinelCharacterData` in
-  `subclass-cast.js` (level 8, unlockSteps 2, Strength spellcast → 4 Prayer Dice). **Sparing
-  Touch** is display-asserted only — the Actions strip’s `isSelect` branch returns before
-  `selectTargets`, so heal/clear cannot be activated from the chip UI yet (same class of gap
-  as Maestro cross-sheet `isSelect`). Place the adversary in **Melee** (`tokenX` ~+3ft) —
-  `WeaponCard` drops `role=button` when `outOfRangeDisableReason` is set, and Spirit Weapon’s
-  `rangeOverrides` are not yet applied to that Game Table reach check.
+  `subclass-cast.js` (level 8, unlockSteps 2, Strength spellcast → 4 Prayer Dice). **Phase 1
+  hardened asserts:** `prayerDice.pool` length −1 after each spend; Divine Wielder walks Prayer
+  Die **Damage** + **gain Hope** + **Action**; Winged Sentinel walks **reduce damage** + **gain
+  Hope** + **Action**, Ascendant Severe `≥ 31`, Wings of Light **d12** + Hope, Ethereal Visage
+  advantage die (Fear chip when Hope dominates). **Sparing Touch** remains display-asserted only
+  (PRODUCT_GAP — `isSelect` before `selectTargets`). Place the adversary in **Melee**
+  (`tokenX` ~+3ft) — Spirit Weapon `rangeOverrides` are still PRODUCT_GAP for reach checks.
+  Coverage gaps plan: `docs/plans/subclass-video-coverage-gaps.md`.
 - **Guardian/Stalwart + Vengeance, Druid/Warden of Renewal, Wizard**: ally-damage intervention
   chips — Player B takes a hit, the owner's `reviewAction` chip (Loyal Protector, Defender,
   Revenge, etc.) fires on that banner. **Sorcerer** (Elemental Origin / Primal Origin) has none
@@ -291,16 +295,27 @@ as a living gap report. Do not invent mechanical assertions for Display-only fea
 ## Ranger notes (Beastbound + Wayfinder)
 
 - Cast factories: `test/helpers/subclass-cast-ranger.js` (re-exported from `subclass-cast.js`).
+- Shared steps: `test/helpers/subclass-ranger-steps.js` — Focus Stress assert, End Focus Duality
+  reroll scene, Beastbound companion token/experiences.
 - **Sheet toggle:** click-to-pin sidebar cards close if already open — use an `ensureSheetOpen`
   helper keyed on a visible marker (weapon button / feature title) before each interaction.
-- **Companion** (Beastbound): declarative sheet card + shape chip `Take an action` → Companion Act
-  spellcast roll through the Before-you-roll panel.
+- **Companion** (Beastbound): declarative sheet card + experiences + `boardToken` (place near Ranger)
+  + shape chip `Take an action` → Companion Act.
+- **Ranger's Focus:** after damage ack, assert Focus id **and** Focus target `currentStress ≥ 1`.
+- **End Focus to reroll:** raise Focus adversary `difficulty` to force a miss, activate V2 chip,
+  assert Focus cleared; restore difficulty before Hold Them Off.
 - **Hold Them Off:** assert Hope spend after Apply; `addDamageRoll` currently augments the primary
   banner via `postBannerAddDamage` and does **not** apply HP to the selected extra adversaries
-  (known gap — captioned in the videos).
+  (PRODUCT_GAP — captioned in the videos).
 - **Apex Predator** needs Focus `focusTargetInstanceId` (set on Ranger's Focus damage ack) plus
   intent `onUse` arming `apexPredatorArmed` (via `activateV2IntentChipOnUse` on Proceed) and
   `runOnReviewActionAfterHpApplied` so damage-ack can `spendFear`.
+- **Coverage gaps plan:** `docs/plans/subclass-video-coverage-gaps.md` (Ranger + Sorcerer P0–P1
+  TEST_GAP done; Ranger PRODUCT_GAP remains: Elusive/Battle-Bonded onIntent persistence, Ruthless
+  Severe→Stress `runOnVttDamageApplyReviewOutcome`, Hold Them Off multi-target HP).
+- **Adversary Stress fixture:** banner `damageTargets` set `maxStress` from `stress_max`; if omitted
+  it becomes `0` and `wrapEntity.markStress` no-ops — seed `stress_max` (+ `maxStress`) when asserting
+  Focus Stress.
 
 ## Future work (out of scope for this suite, see design doc)
 

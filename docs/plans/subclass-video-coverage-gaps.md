@@ -1,6 +1,6 @@
 # Subclass Video Coverage Gaps — Plan
 
-**Status:** Draft — ready for follow-on agents  
+**Status:** Draft — Phase 1 in progress (Sorcerer P0–P1 TEST_GAP done)  
 **Repo:** DaggerheartGM  
 **Audience:** Spec-hardening agents (Phase 1), product/V2 agents (Phase 2), then deferred E2E (Phase 3)  
 **Related:** [`test/subclass-video-test-plan.md`](../../test/subclass-video-test-plan.md), `test/browser-subclass/*.spec.js`
@@ -14,7 +14,7 @@
 | Track | State |
 |-------|--------|
 | Subclass video suite (18 specs) | ✅ Specs exist for all 9 classes × 2 subclasses |
-| Phase 1 — Spec hardening | ⬜ Not started (this plan’s primary backlog) |
+| Phase 1 — Spec hardening | 🔄 In progress (Bard + Druid + Guardian + Ranger + Rogue + Seraph + Sorcerer P0–P1 ✅; other classes pending) |
 | Phase 2 — Product gap fixes | ⬜ Reported only; owned by V2/engine/UI work |
 | Phase 3 — Deferred E2E after product | ⬜ Blocked on Phase 2 |
 | Tracker / SRD doc drift | ⬜ Update when specs or product land |
@@ -54,13 +54,13 @@ Work only where the Game Table / V2 bridge **already** supports the path. Prefer
 - [ ] **P0 — Outcome asserts on walked paths**
   - [ ] `difficultyMod` / Make a Scene style difficulty changes persist and are readable from table state or UI
   - [ ] Banner die landed (size/face) after Rally / Prayer Die / similar `addRollDie` / static adds
-  - [ ] Resource pool shrink (Prayer Dice pool length, Rally die consumed, Slayer bank, etc.)
-  - [ ] Passive numeric deltas: evasion, thresholds, maxStress, Armor, Hope — compare before/after via `getTableState` or visible tracks
+  - [x] Resource pool shrink (Prayer Dice pool length on Seraph specs; Rally die consumed, Slayer bank, etc. still pending other classes)
+  - [ ] Passive numeric deltas: evasion, thresholds, maxStress, Armor, Hope — compare before/after via `getTableState` or visible tracks (Seraph Ascendant Severe ✅)
 - [ ] **P1 — Missing spend paths already wired**
   - [ ] Rally: Damage, reaction, ally Clear Stress, session-end clear, d8 path, banner die
-  - [ ] Prayer Die: Damage, reduce, Hope modes + pool shrink
+  - [x] Prayer Die: Damage, reduce, Hope modes + pool shrink (Seraph both specs)
   - [ ] Hold Them Off / multi-target only where product already applies HP (do not assert dropped targets — see PRODUCT_GAP)
-  - [ ] Sneak Attack dice + ally path; Contacts multi-use options that already mutate
+  - [x] Sneak Attack dice + ally path; Contacts multi-use options that already mutate (Rogue)
   - [ ] Channel Raw Power **seeded** loadout path; Manipulate Magic modes that exist; Elementalist +3 / Natural Evasion depth
 - [ ] **P1 — Rest / session lifecycle**
   - [ ] Frequency refresh (once/rest, once/session)
@@ -71,8 +71,8 @@ Work only where the Game Table / V2 bridge **already** supports the path. Prefer
   - [ ] Contacts option matrix (where product applies)
   - [ ] Manipulate Magic mode variants
 - [ ] **P2 — Combat / matrix breadth**
-  - [ ] Druid elemental combat matrix (Incarnation / Aura / Dominion) — product largely supports; specs under-exercise
-  - [ ] Beastform combat, Fragile, last-HP drop
+  - [x] Druid elemental combat matrix (Incarnation / Aura / Dominion) — covered in Elements Phase 1 P1
+  - [ ] Beastform combat, Fragile, last-HP drop — PRODUCT_GAP (featureState-only form); Phase 3 after fix
   - [ ] Virtuoso / domain breadth only if cheap
 - [ ] **Harness hygiene**
   - [ ] Replace soft optional clicks with hard expects + failure messages naming the feature
@@ -87,92 +87,94 @@ Priority: **P0** = small assert on already-walked path · **P1** = new spend/lif
 
 | Class | Spec file | Gap | Suggested step | Priority |
 |-------|-----------|-----|----------------|----------|
-| Bard | `bard-troubadour.spec.js` | Make a Scene `difficultyMod` not hard-asserted | After chip resolve, `getTableState` / UI expect target `difficultyMod` (or equivalent) changed | P0 |
-| Bard | `bard-troubadour.spec.js` | Rally die on banner not asserted | After Rally add-die path, expect banner sub-item / die size present | P0 |
-| Bard | `bard-troubadour.spec.js` | Rally Damage spend path missing | Walk Rally → Damage option; assert damage sub-item or stress/hope costs | P1 |
-| Bard | `bard-troubadour.spec.js` | Rally reaction path missing | Trigger reaction-eligible roll; activate Rally reaction chip; assert | P1 |
-| Bard | `bard-troubadour.spec.js` | Ally Clear Stress via Rally missing | Player B / ally sheet cross-chip; assert stress cleared | P1 |
-| Bard | `bard-troubadour.spec.js` | Rally session-end clear missing | End scene/session hook path; assert party dice / modifiers cleared | P1 |
-| Bard | `bard-troubadour.spec.js` | Rally d8 path missing | Exercise d8 variant if cast/level allows; assert die notation | P1 |
-| Bard | `bard-wordsmith.spec.js` | Eloquent 2/3 Hope options incomplete | Click each option; assert Hope spent + effect | P1 |
+| Bard | `bard-troubadour.spec.js` | Make a Scene `difficultyMod` not hard-asserted | After chip resolve, `getTableState` / UI expect target `difficultyMod` (or equivalent) changed | P0 ✅ |
+| Bard | `bard-troubadour.spec.js` | Rally die on banner not asserted | After Rally add-die path, expect banner sub-item / die size present | P0 ✅ |
+| Bard | `bard-troubadour.spec.js` | Rally Damage spend path missing | Walk Rally → Damage option; assert damage sub-item or stress/hope costs | P1 ✅ |
+| Bard | `bard-troubadour.spec.js` | Rally reaction path missing | Trigger reaction-eligible roll; activate Rally reaction chip; assert | P1 ✅ |
+| Bard | `bard-troubadour.spec.js` | Ally Clear Stress via Rally missing | Player B / ally sheet cross-chip; assert stress cleared | P1 ✅ |
+| Bard | `bard-troubadour.spec.js` | Rally session-end clear missing | End scene/session hook path; assert party dice / modifiers cleared | P1 ✅ |
+| Bard | `bard-troubadour.spec.js` | Rally d8 path missing | Exercise d8 variant if cast/level allows; assert die notation | P1 ✅ |
+| Bard | `bard-wordsmith.spec.js` | Eloquent options incomplete | Walk all three isSelect options (narrative actionLoop — **no Hope cost** in product); End→Start Session between uses | P1 ✅ |
 | Bard | both | Virtuoso breadth thin | Optional second domain/card interaction if cheap | P2 |
-| Bard | both | Long-rest refresh of once/rest features | Short vs long rest; assert frequency cleared | P1 |
+| Bard | both | Long-rest refresh of once/rest features | Short vs long rest; assert frequency cleared | P1 ✅ (Troubadour Gifted Performer uses; Wordsmith Rousing Speech) |
+| Bard | `bard-wordsmith.spec.js` | Make a Scene `difficultyMod` / Rally banner die + `partyDice` clear | Shared P0 asserts (also on Wordsmith walkthrough) | P0 ✅ |
 
 #### Druid
 
-| Class | Spec file | Gap | Suggested step | Priority |
-|-------|-----------|-----|----------------|----------|
-| Druid | `druid-warden-of-renewal.spec.js` | Protection / Defender asserts soft | Hard-assert threshold / armor / stress numbers after use | P0 |
-| Druid | `druid-warden-of-renewal.spec.js` | Regeneration Very Close untested | Place tokens in range; use Regeneration; assert HP | P1 |
-| Druid | `druid-warden-of-the-elements.spec.js` | Elemental Incarnation/Aura/Dominion matrix mostly untested | Matrix table: pick 2–3 element×mode combos with VTT support; assert state + combat effect | P1 |
-| Druid | both | Beastform combat / Fragile / last-HP drop | Enter beastform; deal damage to Fragile; assert drop; last-HP exit | P1 |
-| Druid | both | Rest clear of beastform / channel state | Rest cycle; assert `featureState` cleared | P1 |
+| Class | Spec file | Gap | Suggested step | Priority | Status |
+|-------|-----------|-----|----------------|----------|--------|
+| Druid | `druid-warden-of-renewal.spec.js` | Protection / Defender asserts soft | Hard-assert Hope −2 / ally HP +2 / Defender Stress +1 | P0 | ✅ |
+| Druid | `druid-warden-of-renewal.spec.js` | Regeneration Very Close untested | Place tokens in range; use Regeneration; assert HP | P1 | ✅ |
+| Druid | `druid-warden-of-the-elements.spec.js` | Elemental Incarnation/Aura/Dominion matrix mostly untested | Matrix: Fire+Aura, Earth thresholds, Air evasion, Water Dominion | P1 | ✅ |
+| Druid | both | Beastform combat / Fragile / last-HP drop | Auto-drop on damage when form is featureState-only | P1 | ⏭️ skipped — PRODUCT_GAP (applyDamageToTarget misses featureState beastform; Phase 3 after fix) |
+| Druid | both | Rest clear of beastform / channel state | Elements Short Rest clears channel/aura; Renewal Long Rest clears Clarity/Protection `featureUsage` | P1 | ✅ |
 
 #### Guardian
 
 | Class | Spec file | Gap | Suggested step | Priority |
 |-------|-----------|-----|----------------|----------|
-| Guardian | `guardian-stalwart.spec.js` | Threshold / maxStress numbers soft | Assert concrete threshold and maxStress values from sheet/state | P0 |
-| Guardian | `guardian-vengeance.spec.js` | Unstoppable frequency not asserted | Use once; expect disabled; rest/session refresh path | P1 |
-| Guardian | `guardian-vengeance.spec.js` | Nemesis rest clear missing | Set Nemesis; rest; assert cleared | P1 |
+| Guardian | `guardian-stalwart.spec.js` | Threshold / maxStress numbers soft | Assert Characters-panel `21 +6 = 27 / 29 +6 = 35`, sheet bands, Stress max 8 | P0 | ✅ |
+| Guardian | `guardian-vengeance.spec.js` | Unstoppable frequency not asserted | Use once; chip omitted + `featureUsage`; Long Rest restores chip | P1 | ✅ |
+| Guardian | `guardian-vengeance.spec.js` | Nemesis rest clear missing | Prioritize; Long Rest; assert `prioritizedAdversaryId` cleared | P1 | ✅ |
 | Guardian | `guardian-stalwart.spec.js` | Ack-based HP after severity product fix | **Phase 3** — do not add until Iron Will etc. persist (see Phase 2) | — |
 
 #### Ranger
 
 | Class | Spec file | Gap | Suggested step | Priority |
 |-------|-----------|-----|----------------|----------|
-| Ranger | `ranger-wayfinder.spec.js` | Battle-Bonded / Elusive `onIntent` soft | Pre-roll intent chips; assert modifiers on roll skeleton / banner | P1 |
-| Ranger | both | Focus Stress cost not asserted | Mark Focus; assert Stress spent | P0 |
-| Ranger | both | End Focus reroll path missing | End Focus → reroll chip; assert new banner / die | P1 |
-| Ranger | `ranger-wayfinder.spec.js` | Ruthless Severe→Stress missing | Force Severe hit; assert Stress path | P1 |
-| Ranger | `ranger-beastbound.spec.js` | Companion experience / token thin | Assert companion stress/token placement or experience chip | P1 |
+| Ranger | `ranger-wayfinder.spec.js` | ~~Battle-Bonded / Elusive `onIntent` soft~~ | **Skipped (PRODUCT_GAP)** — Elusive (Wayfinder) / Battle-Bonded (Beastbound) are automatic `onIntent` with no chip; `addTemporaryStatMod` not persisted on table. Keep card-visible asserts. | P1 |
+| Ranger | both | ~~Focus Stress cost not asserted~~ | ✅ P0 — after Focus damage ack, `assertRangerFocusStressApplied` expects Focus id + adversary `currentStress ≥ 1` | P0 |
+| Ranger | both | ~~End Focus reroll path missing~~ | ✅ P1 — `runEndFocusRerollScene` (difficulty 30 miss → `End Focus to reroll` → Focus cleared + Duality banner) | P1 |
+| Ranger | `ranger-wayfinder.spec.js` | ~~Ruthless Severe→Stress missing~~ | **Skipped (PRODUCT_GAP)** — Severe→`markStress` needs `runOnVttDamageApplyReviewOutcome` (not set on Ruthless). Optional +1 Stress chip already asserted. | P1 |
+| Ranger | `ranger-beastbound.spec.js` | ~~Companion experience / token thin~~ | ✅ P1 — experiences on sheet + `boardToken` auto-add; place Fang near Kest via `updateElement` | P1 |
 
 #### Rogue
 
 | Class | Spec file | Gap | Suggested step | Priority |
 |-------|-----------|-----|----------------|----------|
-| Rogue | `rogue-nightwalker.spec.js` | Evasion deltas soft | Before/after evasion number assert | P0 |
-| Rogue | both | Rest clears missing | Rest; assert cloaked/temp flags cleared where product clears | P1 |
-| Rogue | `rogue-nightwalker.spec.js` | Restrained clear path | Apply Restrained; use clear feature; assert condition gone | P1 |
-| Rogue | both | Sneak Attack dice + ally path | With ally in Melee; assert Sneak Attack die on banner | P1 |
-| Rogue | `rogue-syndicate.spec.js` | Contacts 3× uses + other options | Exhaust uses; try alternate options that already mutate | P1 |
+| Rogue | `rogue-nightwalker.spec.js` | ✅ Evasion deltas soft | Before/after evasion number assert | P0 |
+| Rogue | both | ✅ Rest clears missing | Rest; assert cloaked/temp flags cleared where product clears | P1 |
+| Rogue | `rogue-nightwalker.spec.js` | ✅ Restrained clear path | Apply Restrained; use clear feature; assert condition gone | P1 |
+| Rogue | both | ✅ Sneak Attack dice + ally path | With ally in Melee; assert Sneak Attack die on banner | P1 |
+| Rogue | `rogue-syndicate.spec.js` | ✅ Contacts 3× uses + other options | Exhaust uses; try alternate options that already mutate | P1 |
 
 #### Seraph
 
 | Class | Spec file | Gap | Suggested step | Priority |
 |-------|-----------|-----|----------------|----------|
-| Seraph | both | Prayer Die pool shrink not asserted | After spend, expect `prayerDice.pool` length −1 | P0 |
-| Seraph | both | Prayer Die Damage / reduce / Hope modes missing | One scene per mode; assert banner mutation + cost | P1 |
-| Seraph | `seraph-winged-sentinel.spec.js` | Wings d12 path | Toggle/ack Wings d8/d12 path per product; assert Hope + die | P1 |
-| Seraph | `seraph-winged-sentinel.spec.js` | Ascendant +4 soft | Assert numeric bonus on roll/banner | P0 |
-| Seraph | `seraph-divine-wielder.spec.js` | Ethereal Visage advantage / Fear | Assert advantage die or Fear interaction | P1 |
+| Seraph | both | ✅ Prayer Die pool shrink not asserted | After spend, expect `prayerDice.pool` length −1 | P0 |
+| Seraph | both | ✅ Prayer Die Damage / reduce / Hope modes missing | One scene per mode; assert banner mutation + cost (Damage+Hope on Divine Wielder; Reduce+Hope on Winged Sentinel; Action pool shrink on both) | P1 |
+| Seraph | `seraph-winged-sentinel.spec.js` | ✅ Wings d12 path | Toggle/ack Wings d8/d12 path per product; assert Hope + die | P1 |
+| Seraph | `seraph-winged-sentinel.spec.js` | ✅ Ascendant +4 soft | Assert numeric Severe `≥ 31` on sheet (Chainmail L8 + Ascendant) | P0 |
+| Seraph | `seraph-winged-sentinel.spec.js` | ✅ Ethereal Visage advantage / Fear | Assert advantage die on Presence banner; Fear chip when Hope dominates (seeded fear pool) | P1 |
 
 #### Sorcerer
 
 | Class | Spec file | Gap | Suggested step | Priority |
 |-------|-----------|-----|----------------|----------|
-| Sorcerer | `sorcerer-elemental-origin.spec.js` | Elementalist +3 soft | Assert +3 on qualifying roll | P0 |
-| Sorcerer | `sorcerer-elemental-origin.spec.js` | Natural Evasion depth thin | Assert evasion delta + any stress/hope side effect product applies | P1 |
-| Sorcerer | `sorcerer-primal-origin.spec.js` | Channel Raw Power seeded loadout path | Seed loadout in cast factory; walk Channel; assert | P1 |
-| Sorcerer | both | Charge from magic damage / +3 reaction discharge | Take magic damage; discharge; assert | P1 |
-| Sorcerer | `sorcerer-primal-origin.spec.js` | Manipulate Magic modes incomplete | Walk each available mode chip; assert distinct outcomes | P1 |
-| Sorcerer | `sorcerer-primal-origin.spec.js` | Volatile on Primal (where product works) | Trigger Volatile; assert stress/damage product already applies — skip `damageDie` partition until Phase 2 | P1 |
+| Sorcerer | `sorcerer-elemental-origin.spec.js` | ✅ Elementalist +3 — Hope −1 + Intent (used) log (banner damage +3 not persisted from intent) | Assert +3 on qualifying roll | P0 |
+| Sorcerer | `sorcerer-elemental-origin.spec.js` | ✅ Natural Evasion — Stress +1 + `naturalEvasionD6` in featureState (sheet evasion / hit-miss not wired) | Assert evasion delta + any stress/hope side effect product applies | P1 |
+| Sorcerer | `sorcerer-primal-origin.spec.js` | ✅ Channel Raw Power seeded — CustomSelect Hope path (Cinder Grasp +2); vault move still VTT follow-up | Seed loadout in cast factory; walk Channel; assert | P1 |
+| Sorcerer | both | ⚠️ Charge — Hope→Charged + discharge +10 hardened; mag-dmg Charged / +3 rx still product/actionLoop | Take magic damage; discharge; assert | P1 |
+| Sorcerer | `sorcerer-primal-origin.spec.js` | ✅ Manipulate Magic — +2 + extend-reach (Stress); double-die blocked by Dualstaff `mag` PRODUCT_GAP | Walk each available mode chip; assert distinct outcomes | P1 |
+| Sorcerer | `sorcerer-primal-origin.spec.js` | ✅ Volatile — hard-click + Hope −3; `damageDie` reroll still PRODUCT_GAP | Trigger Volatile; assert stress/damage product already applies — skip `damageDie` partition until Phase 2 | P1 |
 
 #### Warrior
 
 | Class | Spec file | Gap | Suggested step | Priority |
 |-------|-----------|-----|----------------|----------|
-| Warrior | `warrior-call-of-the-slayer.spec.js` | Slayer bank / session-start Hope soft | Assert banked value; Start Session Hope grant | P0 |
-| Warrior | `warrior-call-of-the-brave.spec.js` | Weapon Specialist hard assert missing | Assert damage/trait rewrite or chip effect numerically | P0 |
-| Warrior | `warrior-call-of-the-brave.spec.js` | No Mercy rest clear missing | Arm No Mercy; rest; assert cleared | P1 |
+| Warrior | `warrior-call-of-the-slayer.spec.js` | ~~Slayer bank / session-start Hope soft~~ | Assert banked value; Start Session Hope grant | P0 ✅ |
+| Warrior | `warrior-call-of-the-slayer.spec.js` | ~~Weapon Specialist hard assert missing~~ | Assert Hope −1 + Weapon Specialist die on banner (plan previously mis-filed under Brave) | P0 ✅ |
+| Warrior | `warrior-call-of-the-brave.spec.js` | ~~No Mercy rest clear missing~~ | Arm No Mercy; Short Rest ack; assert `noMercyActive` cleared | P1 ✅ |
 
 #### Wizard
 
 | Class | Spec file | Gap | Suggested step | Priority |
 |-------|-----------|-----|----------------|----------|
-| Wizard | `wizard-school-of-knowledge.spec.js` | Perfect Recall assert soft | Hard-assert resource / card effect product applies | P0 |
-| Wizard | `wizard-school-of-war.spec.js` | Adept arming assert soft | Assert armed state flag / chip disabled after arm | P0 |
-| Wizard | `wizard-school-of-knowledge.spec.js` | Strange Patterns seed + chips + rest re-pick | Seed pattern in factory; activate chips; rest → re-pick UI if present | P1 |
+| Wizard | `wizard-school-of-knowledge.spec.js` | Perfect Recall assert soft | Hard-assert resource / card effect product applies | P0 ✅ |
+| Wizard | `wizard-school-of-knowledge.spec.js` | Adept arming assert soft | Assert `featureState.SchoolOfKnowledge.adeptUseStress` after intent arm (was mis-filed under War) | P0 ✅ |
+| Wizard | `wizard-school-of-knowledge.spec.js` | Strange Patterns seed + chips + rest re-pick | Seed pattern in factory; activate chips; rest → re-pick UI if present | P1 ✅ |
+| Wizard | `wizard-school-of-war.spec.js` | Thrive in Chaos Stress/HP soft | Exact Stress +1 before Ack; adversary HP drop after Ack | P0 ✅ |
 | Wizard | `wizard-school-of-war.spec.js` | Battlemage / Conjure Shield numbers | **Phase 3** after sheet-merge product fix | — |
 | Wizard | both | V2 Not This Time path | **Phase 3** after `gmDie`/`damageDie` support | — |
 
@@ -219,6 +221,7 @@ Do **not** add Playwright coverage that depends on missing UI or bridge behavior
 | Water aura reposition | Druid | Map/aura move incomplete | Water Dominion reposition |
 | Air fly/hover | Druid | Fly/hover token behavior missing | Air elemental movement |
 | Agile Far Hope move | Druid | Far-range Hope move incomplete | Agile hope-move E2E |
+| Beastform Fragile / last-HP auto-drop | Druid | `applyDamageToTarget` gates drop on legacy `activeBeastform`; V2 form in `featureState` only → no auto-drop | Fragile Major+ / last-HP exit E2E |
 | Iron Will / Partners / Loyal Protector severity persistence | Guardian | Severity mutations not Ack-persisted | Ack HP/threshold asserts (Stalwart) |
 | Unstoppable ongoing hooks | Guardian | Ongoing effect hooks incomplete | Mid-scene Unstoppable E2E |
 | Act of Reprisal | Guardian | Bridge/UI incomplete | Reprisal retaliate E2E |

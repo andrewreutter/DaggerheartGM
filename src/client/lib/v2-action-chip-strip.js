@@ -1,6 +1,7 @@
 import {
   evaluateIsDisabled,
   describeChipResourceBlock,
+  getFrequencyUsedCount,
   resolveChipDisabled,
 } from '../../features-v2/engine/chip-system.js';
 import { buildFeatureCardModelForCharacter } from './build-feature-card-model.js';
@@ -84,8 +85,17 @@ export function getActionChipUnusablePrimaryLine({
  */
 export function computeActionChipUnusableState(chip, model, table, el, effectiveKey) {
   const { chipForEngine, resolvedName } = resolveActionChipSlotContext(chip, model, table);
-  const isUsed = !!(el?.featureUsage?.[effectiveKey]?.used);
-  const chipUsed = !!(chip.frequency && isUsed);
+  const usageEntry = el?.featureUsage?.[effectiveKey];
+  let maxUses = 1;
+  if (typeof chip._frequencyMaxUses === 'number' && chip._frequencyMaxUses >= 1) {
+    maxUses = chip._frequencyMaxUses;
+  } else if (chip.frequencyMaxUses !== undefined && table) {
+    const raw =
+      typeof chip.frequencyMaxUses === 'function' ? chip.frequencyMaxUses(table) : chip.frequencyMaxUses;
+    maxUses = Math.max(1, Math.floor(Number(raw)) || 1);
+  }
+  const usedCount = getFrequencyUsedCount(usageEntry);
+  const chipUsed = !!(chip.frequency && usedCount >= maxUses);
   const resourceUnaffordable = !!chip.resourceUnaffordable;
   const logicDisabled = resolveChipDisabled(chipForEngine, table);
   const moveToUnusable = shouldMoveV2ActionChipToUnusableSubsection({

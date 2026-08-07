@@ -6,24 +6,20 @@
  * Player-capable initiations (sheet, intents, review chips, weapon rolls) are Player A;
  * GM handles Start Session, adversary attacks, and banner Acknowledge.
  *
- * Coverage notes:
+ * Coverage notes (Phase 1 TEST_GAP hardening):
  *  - **Arcane Sense** — narrative-only (Display): caption + assert the feature card renders.
  *  - **Minor Illusion** — synthesized card chip (`onUse` → `actionLoop` DC 10); mutation is
  *    an informational action notification (no pending banner requiring Ack).
- *  - **Channel Raw Power** — V2 `isSelect` over `table.me.domainLoadout`; Game Table loadout
- *    hydration for the Actions CustomSelect is unreliable in this suite, so we caption +
- *    assert the feature card renders (living gap report).
- *  - **Elementalist** — create-placement affinity chip is character-creation-only (not on the
- *    Game Table); affinity is pre-seeded on the table element. Intent chips (+2 action / +3
- *    damage) share the feature name label; exercised via Dualstaff intent panel.
- *  - **Natural Evasion** — `reviewAction` when an attack succeeds *against the Sorcerer*
- *    (self-targeted, not ally-damage). GM posts a high-bonus adversary attack via `gmRoll`
- *    with `_selectedTargetInstanceId` set to Pyra so `isSuccess` enriches true vs Evasion.
- *  - **Transcendence** — card `multiSelect` (pick 2) is not wired in GuideFeatureCard
- *    (CustomSelect only forwards a single `selectedId`); captioned as a known UI gap —
- *    assert the feature card renders.
- *  - **Volatile Magic** — `reviewAction` on a successful Dualstaff attack (magic damage
- *    via `mag` post tag → engine `damageType: 'magic'`).
+ *  - **Channel Raw Power** — seeded-loadout walk + Hope assert lives on Primal Origin
+ *    (`sorcerer-primal-origin.spec.js`). Here: caption + assert the feature card renders.
+ *  - **Elementalist** — create-placement affinity chip is character-creation-only; affinity is
+ *    pre-seeded. **P0:** hard-click the +3 damage intent (second Elementalist chip), assert
+ *    Hope −1 and banner Intent (used) log. Intent `addRollStatic` is not persisted onto the
+ *    pending banner (applyV2BannerMutations skip) — do not assert a damage sub-item +3.
+ *  - **Natural Evasion** — **P1:** Stress +1 and `featureState['Natural Evasion'].naturalEvasionD6`
+ *    (1–6). Sheet evasion / hit→miss via `pendingEvasionBonus` is not wired for this feature.
+ *  - **Transcendence** — card `multiSelect` (pick 2) is PRODUCT_GAP — caption + assert render.
+ *  - **Volatile Magic** — hard-click + Hope −3; `damageDie` reroll partition is PRODUCT_GAP.
  *
  * Ally-damage intervention: Elemental Origin has none (Natural Evasion is against-you).
  * Two actors (GM + Player A) are sufficient.
@@ -77,7 +73,7 @@ test.describe('Subclass video — Sorcerer / Elemental Origin', () => {
         id: pyraLib.id,
         name: pyraLib.name,
         // maxHp 7 / maxStress 8 / maxHope 6 — leave headroom for Stress (Natural Evasion)
-        // and Hope spends (Elementalist / Volatile Magic).
+        // and Hope spends (Elementalist 1 + Volatile Magic 3).
         currentHp: 7,
         currentStress: 2,
         hope: 5,
@@ -89,7 +85,7 @@ test.describe('Subclass video — Sorcerer / Elemental Origin', () => {
         assignedPlayerEmail: ACTOR_PLAYER_A.email,
         // Character-creation Elementalist affinity (create-placement chip is not on Game Table).
         featureState: { ElementalOrigin: { element: 'fire' } },
-        // Seed hydrated loadout so Channel Raw Power's isSelect has options (runtime merge).
+        // Seed hydrated loadout (Channel exercised on Primal; keep parity with cast factory).
         domainLoadout: [
           { id: 'srd-abl-rune-ward', name: 'Rune Ward', level: 1 },
           { id: 'srd-abl-wall-walk', name: 'Wall Walk', level: 1 },
@@ -167,6 +163,8 @@ test.describe('Subclass video — Sorcerer / Elemental Origin', () => {
       await expect(startBanner).toBeVisible({ timeout: 8000 });
       await ack(startBanner, { holdMs: 0 });
       await expect(startBanner).not.toBeVisible({ timeout: 5000 });
+      // dice_rolls pending queue is per gm_uid — clear orphans from other suites sharing this GM.
+      await cancelAllPendingBanners();
 
       const playerPyraCard = playerPage.locator('div.group\\/char', { hasText: 'Pyra' });
 
@@ -198,22 +196,30 @@ test.describe('Subclass video — Sorcerer / Elemental Origin', () => {
       });
 
       // ---------------------------------------------------------------------
-      // Channel Raw Power — display / gap (CustomSelect loadout path flaky on Game Table).
+      // Channel Raw Power — card renders; seeded walk + Hope assert is on Primal Origin.
       // ---------------------------------------------------------------------
       await caption(
         'PLAYER A',
         'Channel Raw Power',
-        'Display + gap — Actions isSelect over domainLoadout not reliably activatable here'
+        'Card on sheet — seeded loadout Hope path asserted on Primal Origin video'
       );
       await ensurePyraSheet(playerPage.getByText('Channel Raw Power', { exact: true }).first());
 
       // ---------------------------------------------------------------------
-      // Elementalist — feature card + intent (+2 action) on Dualstaff attack.
+      // Elementalist — P0: +3 damage intent + Hope spend + Intent (used) log.
       // ---------------------------------------------------------------------
-      await caption('PLAYER A', 'Elementalist', 'Fire affinity pre-seeded; intent +2 on Dualstaff attack');
+      await caption('PLAYER A', 'Elementalist', 'Fire affinity pre-seeded; intent +3 damage on Dualstaff');
       await ensurePyraSheet(playerPage.getByText('Elementalist', { exact: true }).first());
 
-      await caption('PLAYER A', 'Dualstaff attack', 'Before-you-roll → Elementalist intent → Proceed');
+      let hopeBeforeElementalist;
+      await expect(async () => {
+        const state = await getTableState(tableId);
+        const pyraEl = (state.elements || []).find((e) => e.instanceId === pyraInstanceId);
+        hopeBeforeElementalist = pyraEl?.hope;
+        expect(hopeBeforeElementalist, 'Elementalist needs ≥1 Hope').toBeGreaterThanOrEqual(1);
+      }).toPass({ timeout: 8000 });
+
+      await caption('PLAYER A', 'Dualstaff attack', 'Before-you-roll → Elementalist +3 damage → Proceed');
       const dualstaffCard = playerPage.getByRole('button', { name: /^Dualstaff\b/i }).first();
       await ensurePyraSheet(dualstaffCard);
       await dualstaffCard.click();
@@ -224,11 +230,10 @@ test.describe('Subclass video — Sorcerer / Elemental Origin', () => {
       }
 
       await expect(playerPage.getByText('Before you roll')).toBeVisible({ timeout: 8000 });
-      // Both Elementalist intents share the feature name; click the first match (+2 or +3).
-      const elementalistIntent = playerPage.getByRole('button', { name: /Elementalist/i }).first();
-      if (await elementalistIntent.isVisible({ timeout: 2000 }).catch(() => false)) {
-        await elementalistIntent.click();
-      }
+      // Both intents share accessible name "Elementalist"; chips are ordered +2 action, +3 damage.
+      const elementalistIntents = playerPage.getByRole('button', { name: /^Elementalist\b/i });
+      await expect(elementalistIntents, 'Elementalist +2 and +3 intents').toHaveCount(2, { timeout: 8000 });
+      await elementalistIntents.nth(1).click();
       await playerPage.getByRole('button', { name: 'Proceed' }).click();
 
       const attackBannerText = 'Pyra Dualstaff';
@@ -238,20 +243,44 @@ test.describe('Subclass video — Sorcerer / Elemental Origin', () => {
         });
       }
 
+      const playerAttackBanner = playerPage.locator('.dice-result-banner', { hasText: attackBannerText });
+      await expect(
+        playerAttackBanner.getByText(/Elementalist/i).first(),
+        'Elementalist Intent (used) log on banner'
+      ).toBeVisible({ timeout: 8000 });
+
+      await expect(async () => {
+        const state = await getTableState(tableId);
+        const pyraEl = (state.elements || []).find((e) => e.instanceId === pyraInstanceId);
+        expect(pyraEl?.hope, 'Elementalist spends 1 Hope').toBe(hopeBeforeElementalist - 1);
+      }).toPass({ timeout: 8000 });
+
       // Volatile Magic on this same banner (magic damage + hope ≥ 3).
-      await caption('PLAYER A', 'Volatile Magic', 'Spend 3 Hope to reroll magic damage dice');
-      const volatileBtn = playerPage.getByRole('button', { name: /Volatile Magic/i }).first();
-      await expect(volatileBtn).toBeVisible({ timeout: 8000 });
+      await caption('PLAYER A', 'Volatile Magic', 'Spend 3 Hope to queue damage-die rerolls');
+      let hopeBeforeVolatile;
+      await expect(async () => {
+        const state = await getTableState(tableId);
+        const pyraEl = (state.elements || []).find((e) => e.instanceId === pyraInstanceId);
+        hopeBeforeVolatile = pyraEl?.hope;
+        expect(hopeBeforeVolatile, 'Volatile Magic needs ≥3 Hope').toBeGreaterThanOrEqual(3);
+      }).toPass({ timeout: 8000 });
+
+      const volatileBtn = playerAttackBanner.getByRole('button', { name: /Volatile Magic/i }).first();
+      await expect(volatileBtn, 'Volatile Magic review chip').toBeVisible({ timeout: 8000 });
+      await expect(volatileBtn).toBeEnabled({ timeout: 8000 });
       await volatileBtn.click();
+
+      await expect(async () => {
+        const state = await getTableState(tableId);
+        const pyraEl = (state.elements || []).find((e) => e.instanceId === pyraInstanceId);
+        expect(pyraEl?.hope, 'Volatile Magic spends 3 Hope').toBe(hopeBeforeVolatile - 3);
+      }).toPass({ timeout: 10000 });
 
       await holdForDiceTumble();
       await caption('GM', "Acknowledges Pyra's Dualstaff attack", '');
       const attackBanner = gmPage.locator('.dice-result-banner', { hasText: attackBannerText });
-      // Select target chip if Acknowledge is gated.
-      const thugChip = attackBanner.getByRole('button', { name: /Alley Thug/i }).first();
-      if (await thugChip.isVisible({ timeout: 2000 }).catch(() => false)) {
-        await thugChip.click();
-      }
+      await selectBannerDamageTarget(gmPage, attackBanner, /Alley Thug/i);
+      await dismissBannerTargetMenu(gmPage);
       await ack(attackBanner, { holdMs: 0 });
       await expect(attackBanner).not.toBeVisible({ timeout: 5000 });
 
@@ -262,7 +291,7 @@ test.describe('Subclass video — Sorcerer / Elemental Origin', () => {
       }).toPass({ timeout: 8000 });
 
       // ---------------------------------------------------------------------
-      // Natural Evasion — GM adversary attack succeeds against Pyra → review chip.
+      // Natural Evasion — P1: Stress + naturalEvasionD6 in featureState.
       // ---------------------------------------------------------------------
       await caption('GM', 'Alley Thug attacks Pyra', 'Guaranteed hit (+20) so Natural Evasion appears');
       await gmRoll(tableId, 'Alley Thug Claw [d20+20] damage [1d8] phy', 'Alley Thug Claw', {
@@ -278,7 +307,15 @@ test.describe('Subclass video — Sorcerer / Elemental Origin', () => {
         });
       }
 
-      await caption('PLAYER A', 'Natural Evasion', 'Mark 1 Stress, roll d6, add to Evasion vs this attack');
+      let stressBeforeEvasion;
+      await expect(async () => {
+        const state = await getTableState(tableId);
+        const pyraEl = (state.elements || []).find((e) => e.instanceId === pyraInstanceId);
+        stressBeforeEvasion = pyraEl?.currentStress;
+        expect(typeof stressBeforeEvasion).toBe('number');
+      }).toPass({ timeout: 8000 });
+
+      await caption('PLAYER A', 'Natural Evasion', 'Mark 1 Stress, roll d6 into featureState');
       // Pinned sheet / choose-target portal intercept banner chip clicks (lessons 13 / Wayfinder).
       await playerPage.keyboard.press('Escape');
       await playerPage.waitForTimeout(150);
@@ -286,7 +323,7 @@ test.describe('Subclass video — Sorcerer / Elemental Origin', () => {
       await selectBannerDamageTarget(playerPage, thugBannerPlayer, /Pyra/i);
       await dismissBannerTargetMenu(playerPage);
       const naturalEvasionBtn = thugBannerPlayer.getByRole('button', { name: /Natural Evasion/i }).first();
-      await expect(naturalEvasionBtn).toBeVisible({ timeout: 8000 });
+      await expect(naturalEvasionBtn, 'Natural Evasion review chip').toBeVisible({ timeout: 8000 });
       await expect(naturalEvasionBtn).toBeEnabled({ timeout: 8000 });
       await naturalEvasionBtn.click();
       // Player locally marks the chip consumed only after a successful v2-review-chip response.
@@ -297,8 +334,10 @@ test.describe('Subclass video — Sorcerer / Elemental Origin', () => {
       await expect(async () => {
         const state = await getTableState(tableId);
         const pyraEl = (state.elements || []).find((e) => e.instanceId === pyraInstanceId);
-        // Started at currentStress 2; Natural Evasion marks +1.
-        expect(pyraEl?.currentStress).toBeGreaterThanOrEqual(3);
+        expect(pyraEl?.currentStress, 'Natural Evasion marks 1 Stress').toBe(stressBeforeEvasion + 1);
+        const d6 = pyraEl?.featureState?.['Natural Evasion']?.naturalEvasionD6;
+        expect(d6, 'naturalEvasionD6 persisted in featureState').toBeGreaterThanOrEqual(1);
+        expect(d6, 'naturalEvasionD6 is a d6 face').toBeLessThanOrEqual(6);
       }).toPass({ timeout: 10000 });
 
       await holdForDiceTumble();
@@ -310,7 +349,7 @@ test.describe('Subclass video — Sorcerer / Elemental Origin', () => {
       await expect(thugBanner).not.toBeVisible({ timeout: 5000 });
 
       // ---------------------------------------------------------------------
-      // Transcendence — multiSelect card UI gap (caption + assert render).
+      // Transcendence — multiSelect card UI gap (PRODUCT_GAP — caption + assert render).
       // ---------------------------------------------------------------------
       await caption(
         'PLAYER A',
@@ -322,7 +361,7 @@ test.describe('Subclass video — Sorcerer / Elemental Origin', () => {
       await caption(
         'Sorcerer / Elemental Origin',
         'Walkthrough complete',
-        'Elementalist, Natural Evasion, Transcendence + Sorcerer class features'
+        'Elementalist +3 Hope, Natural Evasion d6 state, Transcendence + Sorcerer class features'
       );
 
       const seriousErrors = filterSeriousSubclassConsoleErrors(consoleErrors);

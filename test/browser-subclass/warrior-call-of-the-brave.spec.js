@@ -7,7 +7,8 @@
  *
  * Coverage notes:
  *  - **No Mercy** — root hopeCost/onUse synthesizes a card chip; spends 3 Hope and
- *    sets featureState noMercyActive (+1 to attack rolls until rest).
+ *    sets featureState noMercyActive (+1 to attack rolls until rest). **P1:** Short Rest
+ *    ack clears `noMercyActive` (hard-asserted).
  *  - **Attack of Opportunity** — GM drags an adversary out of Melee; `onTokenMove`
  *    posts a suppressed action-loop notification that still lands in the Action Log
  *    (M6-style map automation). The leaveMelee reaction-outcome multi-select chip
@@ -179,9 +180,11 @@ test.describe('Subclass video — Warrior / Call of the Brave', () => {
       await caption('GM', 'Start Session', '');
       await gmPage.getByRole('button', { name: '▶ Session' }).click();
       const startBanner = gmPage.locator('.dice-result-banner', { hasText: 'Start Session' });
-      await expect(startBanner).toBeVisible({ timeout: 8000 });
+      await expect(startBanner).toBeVisible({ timeout: 15000 });
       await ack(startBanner, { holdMs: 0 });
       await expect(startBanner).not.toBeVisible({ timeout: 5000 });
+      // Rest cycle buttons no-op until the client sees sessionStarted (SSE).
+      await expect(gmPage.getByRole('button', { name: '■ End' })).toBeVisible({ timeout: 15000 });
 
       const playerCharCard = playerPage.locator('div.group\\/char', { hasText: CHAR_NAME });
 
@@ -220,9 +223,34 @@ test.describe('Subclass video — Warrior / Call of the Brave', () => {
         const state = await getTableState(tableId);
         const el = (state.elements || []).find((e) => e.instanceId === charInstanceId);
         expect(el?.hope).toBe(hopeBeforeNoMercy - 3);
-        expect(JSON.stringify(el?.featureState || {})).toMatch(/"noMercyActive"\s*:\s*true/);
+        expect(el?.featureState?.['No Mercy']?.noMercyActive).toBe(true);
       }).toPass({ timeout: 8000 });
       await caption('PLAYER A', 'No Mercy applied', 'Hope spent; +1 attacks until rest');
+
+      // ---------------------------------------------------------------------
+      // No Mercy clears on Short Rest (hooks.onRest) — P1 TEST_GAP.
+      // ---------------------------------------------------------------------
+      await caption('GM', 'Short Rest', 'No Mercy ends at the next rest');
+      await expect(gmPage.getByRole('button', { name: '■ End' })).toBeVisible({ timeout: 8000 });
+      // RestBanner confirms when downtime moves are unfilled — register before Ack.
+      gmPage.once('dialog', (dialog) => dialog.accept());
+      await gmPage.getByRole('button', { name: '⏸ Short' }).click();
+      const restBanner = gmPage.locator('.dice-result-banner', { hasText: /Short Rest/i });
+      await expect(restBanner).toBeVisible({ timeout: 15000 });
+      await holdForDiceTumble();
+      await caption('GM', 'Acknowledges Short Rest', 'Skip move picks — confirm clears No Mercy');
+      await ack(restBanner, { holdMs: 0 });
+      await expect(restBanner).not.toBeVisible({ timeout: 8000 });
+
+      await expect(async () => {
+        const state = await getTableState(tableId);
+        const el = (state.elements || []).find((e) => e.instanceId === charInstanceId);
+        expect(
+          el?.featureState?.['No Mercy']?.noMercyActive,
+          'No Mercy should clear on Short Rest'
+        ).not.toBe(true);
+      }).toPass({ timeout: 8000 });
+      await caption('GM', 'No Mercy cleared', 'featureState.noMercyActive is no longer true');
 
       // ---------------------------------------------------------------------
       // Attack of Opportunity — GM drags adversary out of Melee (onTokenMove).

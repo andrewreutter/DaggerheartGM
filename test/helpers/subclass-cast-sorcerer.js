@@ -92,7 +92,8 @@ function buildSorcererBase({ name, subclassId, overrides = {} }) {
     domainLoadoutIds: [...STARTING_ABILITIES, ARCANA_HEAVY_CARDS[0], ARCANA_HEAVY_CARDS[1], ARCANA_HEAVY_CARDS[2]],
     // Hydrated loadout objects for V2 `table.me.domainLoadout` (Channel Raw Power). The Game
     // Table does not yet derive this array from `domainLoadoutIds`/`abilities` alone — see
-    // docs/v2-game-table-cutover-remaining.md — so seed it explicitly on the library row.
+    // docs/v2-game-table-cutover-remaining.md — so seed it explicitly. Primal Origin video
+    // walks the Actions CustomSelect Hope path against this seed.
     domainLoadout: [
       { id: 'srd-abl-rune-ward', name: 'Rune Ward', level: 1 },
       { id: 'srd-abl-wall-walk', name: 'Wall Walk', level: 1 },

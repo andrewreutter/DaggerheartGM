@@ -33,6 +33,8 @@ export {
   deductChipCosts,
   trackChipFrequency,
   resetChipFrequency,
+  getFrequencyUsedCount,
+  buildNextFeatureUsageEntry,
   makeChipState,
 } from './chip-system.js';
 export {

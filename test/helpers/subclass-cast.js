@@ -287,6 +287,12 @@ export function buildGuardianStalwartCharacterData({ name = 'Dara', overrides = 
     maxStress: 8,
     maxHope: 6,
     maxArmor: 4,
+    // Informational — `recomputeCharacter` derives live values at render. Seeded so resolved
+    // table elements carry Chainmail thresholds + Stalwart +6 for Characters-panel breakdown.
+    armorThresholds: { major: 7, severe: 15 },
+    ancestryThresholdMajorBonus: 6,
+    ancestryThresholdSevereBonus: 6,
+    ancestryThresholdBonusSource: 'Unwavering, Unrelenting, Undaunted',
     ...overrides,
   };
 }

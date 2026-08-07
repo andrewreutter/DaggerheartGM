@@ -72,6 +72,55 @@ describe('computePlayerV2OwnedCardChipApply', () => {
     expect(payload._suppressActionBanner).toBe(true);
   });
 
+  it('Contacts Everywhere: Reliable Backup allows 3 session uses with featureUsage count', () => {
+    // Library-resolved syndicate PC without sheet overlay — activate must stamp
+    // contactsEverywhereSessionUses from applyDeclarativeFeatures onto table.me.
+    const vex = mockCharacter({
+      instanceId: 'v1',
+      classId: 'srd-cls-rogue',
+      subclassId: 'srd-sub-syndicate',
+      level: 8,
+      hope: 6,
+      featureUsage: {},
+      featureState: {},
+    });
+    const usageKey = 'srd-sub-syndicate-spec-feat-contacts-everywhere';
+    const r1 = computePlayerV2OwnedCardChipApply({
+      activeElements: [vex],
+      tableState: { fearCount: 0 },
+      ownerInstanceId: 'v1',
+      featureName: 'Contacts Everywhere',
+      chipName: 'Contacts Everywhere',
+      selectOpts: { selectedId: 'hpShield' },
+      passedFeatureKey: usageKey,
+    });
+    expect(r1.ok).toBe(true);
+    expect(r1.updates[0].updates.featureState?.['Contacts Everywhere']?.pendingHpShield).toBe(true);
+    expect(r1.updates[0].updates.featureUsage?.[usageKey]).toEqual({
+      cycle: 'session',
+      count: 1,
+      used: false,
+    });
+
+    const after1 = {
+      ...vex,
+      featureUsage: r1.updates[0].updates.featureUsage,
+      featureState: r1.updates[0].updates.featureState,
+    };
+    const r2 = computePlayerV2OwnedCardChipApply({
+      activeElements: [after1],
+      tableState: { fearCount: 0 },
+      ownerInstanceId: 'v1',
+      featureName: 'Contacts Everywhere',
+      chipName: 'Contacts Everywhere',
+      selectOpts: { selectedId: 'presenceD20' },
+      passedFeatureKey: usageKey,
+    });
+    expect(r2.ok).toBe(true);
+    expect(r2.updates[0].updates.featureUsage?.[usageKey]?.count).toBe(2);
+    expect(r2.updates[0].updates.featureUsage?.[usageKey]?.used).toBe(false);
+  });
+
   it("Warden's Protection: clears ally HP and spends owner Hope (multi-instance)", () => {
     const druid = mockCharacter({
       instanceId: 'd1',

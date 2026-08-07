@@ -28,6 +28,7 @@ import {
   tokenDistanceFtForElements,
 } from './map-range.js';
 import { buildV2RegistryWithSrdItems, expandSrdAncestryIdsToV2Keys } from './v2-declarative-sheet.js';
+import { recomputeCharacter } from './character-calc.js';
 import { computeHpLoss, effectiveEvasion, effectiveThresholds } from './helpers.js';
 import { applyV2LifecycleMutations } from './table-ops.js';
 import { PENDING_EVASION_BONUS_STATE_KEY } from '../../game-constants.js';
@@ -64,6 +65,27 @@ export function expandTableCharactersAncestryForV2Loader(activeElements, srdData
     const v2Keys = expandSrdAncestryIdsToV2Keys(raw, srdData);
     if (!v2Keys.length) return el;
     return { ...el, ancestryIds: v2Keys };
+  });
+}
+
+/**
+ * Table SSE / DB characters often carry only `primaryWeaponId` / `secondaryWeaponId` (no
+ * `weapons[]`). Banner `table.me.primaryWeapon` / `secondaryWeapon` fall back to
+ * `weapons[0]`/`[1]`, so review chips that gate on those (e.g. Weapon Specialist) never
+ * collect until we recompute gear onto the element for the banner snapshot.
+ *
+ * @param {object[]|null|undefined} activeElements
+ * @param {object|null|undefined} srdData
+ * @returns {object[]}
+ */
+export function enrichTableCharactersWithResolvedGear(activeElements, srdData) {
+  if (!Array.isArray(activeElements) || !srdData) return activeElements || [];
+  return activeElements.map((el) => {
+    if (el?.elementType !== 'character') return el;
+    if (Array.isArray(el.weapons) && el.weapons.length > 0) return el;
+    const rec = recomputeCharacter(el, srdData);
+    if (!rec || !Array.isArray(rec.weapons) || rec.weapons.length === 0) return el;
+    return { ...el, weapons: rec.weapons };
   });
 }
 
@@ -849,6 +871,7 @@ export function collectV2ReviewActionChips(opts) {
   }
 
   const activeForLoader = preloaded?.activeForLoader ?? expandTableCharactersAncestryForV2Loader(activeElements, srdData);
+  const activeForBanner = enrichTableCharactersWithResolvedGear(activeForLoader, srdData);
 
   const registry = preloaded?.registry ?? buildV2RegistryWithSrdItems(srdData);
   const featureOpts = { fearCount, mapConfig, tableFeatureState };
@@ -859,7 +882,7 @@ export function collectV2ReviewActionChips(opts) {
 
   const gameState = buildV2BannerGameState({
     roll,
-    activeElements,
+    activeElements: activeForBanner,
     fearCount,
     mapConfig,
     tableFeatureState,
@@ -871,7 +894,7 @@ export function collectV2ReviewActionChips(opts) {
     list.push(...collectPhaseChipsOnly(gameState, actionConfig, features, phase, {}, viewer));
   }
 
-  const party = (activeForLoader || []).filter((e) => e.elementType === 'character');
+  const party = (activeForBanner || []).filter((e) => e.elementType === 'character');
   const targetIds = new Set();
   const sel = roll._selectedTargetInstanceId;
   if (sel && party.some((p) => p.instanceId === sel)) targetIds.add(sel);
@@ -927,6 +950,7 @@ export function activateV2ReviewChip(chip, roll, activeElements, srdData, opts =
   }
 
   const activeForLoader = expandTableCharactersAncestryForV2Loader(activeElements, srdData);
+  const activeForBanner = enrichTableCharactersWithResolvedGear(activeForLoader, srdData);
 
   const registry = buildV2RegistryWithSrdItems(srdData);
   const featureOpts = {
@@ -952,7 +976,7 @@ export function activateV2ReviewChip(chip, roll, activeElements, srdData, opts =
   const gameState = {
     ...buildV2BannerGameState({
       roll,
-      activeElements,
+      activeElements: activeForBanner,
       fearCount: opts.fearCount,
       mapConfig: opts.mapConfig,
       tableFeatureState: opts.tableFeatureState,

@@ -346,6 +346,17 @@ export async function setTableTop(tableId, patch) {
   return res.json();
 }
 
+/** GM-only set-fear op — seed the Fear pool for chips that require `table.top.fear >= 1`. */
+export async function setFearCount(tableId, fearCount) {
+  const res = await fetch(`${BASE_URL}/api/room/my/op`, {
+    method: 'POST',
+    headers: authHeaders(ACTOR_GM),
+    body: JSON.stringify({ op: 'set-fear', tableId, fearCount }),
+  });
+  if (!res.ok) throw new Error(`setFearCount failed: ${res.status} — ${await res.text()}`);
+  return res.json();
+}
+
 const TEST_APP_ID = process.env.APP_ID || 'daggerheart-gm-tool';
 let _testPgPool = null;
 

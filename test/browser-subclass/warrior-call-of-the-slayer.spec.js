@@ -6,15 +6,16 @@
  * Opportunity via token move, Combat Training). GM + Player A only.
  *
  * Coverage notes:
- *  - **Slayer** — after Start Session, seed `featureState.CallOfTheSlayer.slayerDiceCount`
- *    so spend chips are available without relying on a Hope-dominating roll. Optionally
- *    banks a die when the reviewAction chip appears; Player A spends via the damage-roll
- *    isSelect chip on a Broadsword attack.
+ *  - **Slayer** — seed `featureState.CallOfTheSlayer.slayerDiceCount` **before** Start
+ *    Session so `onSessionStart` converts unspent dice → Hope (P0 hard assert). Re-seed
+ *    after session start for the damage-spend path; assert exact pool shrink after spend.
  *  - **Weapon Specialist** — on a successful primary-weapon attack with a secondary that
- *    has a leading damage die, Player A spends 1 Hope to add that die (reviewAction chip).
+ *    has a leading damage die, Player A spends 1 Hope to add that die (reviewAction chip);
+ *    hard-assert Hope −1 and Weapon Specialist die on the banner (P0).
  *  - **Martial Preparation** — long-rest card chip (Player A) posts an informational
  *    action-loop (suppressed banner → Action Log).
  *  - **Attack of Opportunity** — same GM token-drag pattern as Call of the Brave.
+ *  - **Slayer intent isSelect** — PRODUCT_GAP (preroll does not pass selectedId); skipped.
  */
 
 import { test, expect } from '@playwright/test';
@@ -100,7 +101,8 @@ test.describe('Subclass video — Warrior / Call of the Slayer', () => {
         name: charLib.name,
         currentHp: 7,
         currentStress: 1,
-        hope: 5,
+        // Room under maxHope (6) for session-start Slayer → Hope (+2 from seeded bank).
+        hope: 3,
         currentArmor: 0,
         conditions: '',
         tokenX: 40,
@@ -161,15 +163,8 @@ test.describe('Subclass video — Warrior / Call of the Slayer', () => {
       await expect(gmPage.locator('button', { hasText: 'Add Character' })).toBeVisible({ timeout: 15000 });
       await expect(playerPage.locator(`text=${CHAR_NAME}`).first()).toBeVisible({ timeout: 15000 });
 
-      await caption('GM', 'Start Session', 'Slayer onSessionStart would clear leftover dice from a prior session');
-      await gmPage.getByRole('button', { name: '▶ Session' }).click();
-      const startBanner = gmPage.locator('.dice-result-banner', { hasText: 'Start Session' });
-      await expect(startBanner).toBeVisible({ timeout: 8000 });
-      await ack(startBanner, { holdMs: 0 });
-      await expect(startBanner).not.toBeVisible({ timeout: 5000 });
-
-      // Seed Slayer Dice after session start so onSessionStart does not wipe them.
-      await caption('GM', 'Seed Slayer Dice', '2 dice in the CallOfTheSlayer pool (simulates prior Hope banks)');
+      // Seed leftover Slayer Dice *before* Start Session so onSessionStart can convert them.
+      await caption('GM', 'Seed leftover Slayer Dice', '2 unspent dice from a prior session');
       await updateElement(tableId, charInstanceId, {
         featureState: {
           CallOfTheSlayer: {
@@ -178,6 +173,62 @@ test.describe('Subclass video — Warrior / Call of the Slayer', () => {
           },
         },
       });
+
+      let hopeBeforeSession;
+      await expect(async () => {
+        const state = await getTableState(tableId);
+        const el = (state.elements || []).find((e) => e.instanceId === charInstanceId);
+        hopeBeforeSession = el?.hope;
+        expect(el?.featureState?.CallOfTheSlayer?.slayerDiceCount).toBe(2);
+        expect(hopeBeforeSession).toBe(3);
+      }).toPass({ timeout: 8000 });
+
+      await caption(
+        'GM',
+        'Start Session',
+        'Slayer onSessionStart — clear banked dice and grant 1 Hope per die'
+      );
+      const sessionBtn = gmPage.getByRole('button', { name: '▶ Session' });
+      await expect(sessionBtn).toBeVisible({ timeout: 8000 });
+      await sessionBtn.click();
+      const startBanner = gmPage.locator('.dice-result-banner', { hasText: 'Start Session' });
+      // Retry once — headed stitch cut / Encounter panel focus can swallow the first click.
+      if (!(await startBanner.isVisible({ timeout: 4000 }).catch(() => false))) {
+        await sessionBtn.click();
+      }
+      await expect(startBanner).toBeVisible({ timeout: 15000 });
+      await ack(startBanner, { holdMs: 0 });
+      await expect(startBanner).not.toBeVisible({ timeout: 5000 });
+      await expect(gmPage.getByRole('button', { name: '■ End' })).toBeVisible({ timeout: 15000 });
+
+      await expect(async () => {
+        const state = await getTableState(tableId);
+        const el = (state.elements || []).find((e) => e.instanceId === charInstanceId);
+        expect(
+          el?.featureState?.CallOfTheSlayer?.slayerDiceCount ?? 0,
+          'Slayer bank should clear on Start Session'
+        ).toBe(0);
+        expect(el?.hope, 'Start Session should grant 1 Hope per cleared Slayer die').toBe(
+          hopeBeforeSession + 2
+        );
+      }).toPass({ timeout: 8000 });
+      await caption('GM', 'Slayer session-start Hope', '+2 Hope; bank emptied');
+
+      // Re-seed for the damage-spend / Weapon Specialist path.
+      await caption('GM', 'Seed Slayer Dice', '2 dice for the spend chip (post-session bank)');
+      await updateElement(tableId, charInstanceId, {
+        featureState: {
+          CallOfTheSlayer: {
+            slayerDiceCount: 2,
+            weaponSpecialistSlayerRerollAvailable: true,
+          },
+        },
+      });
+      await expect(async () => {
+        const state = await getTableState(tableId);
+        const el = (state.elements || []).find((e) => e.instanceId === charInstanceId);
+        expect(el?.featureState?.CallOfTheSlayer?.slayerDiceCount).toBe(2);
+      }).toPass({ timeout: 8000 });
 
       const playerCharCard = playerPage.locator('div.group\\/char', { hasText: CHAR_NAME });
 
@@ -210,7 +261,7 @@ test.describe('Subclass video — Warrior / Call of the Slayer', () => {
         const state = await getTableState(tableId);
         const el = (state.elements || []).find((e) => e.instanceId === charInstanceId);
         expect(el?.hope).toBe(hopeBeforeNoMercy - 3);
-        expect(JSON.stringify(el?.featureState || {})).toMatch(/"noMercyActive"\s*:\s*true/);
+        expect(el?.featureState?.['No Mercy']?.noMercyActive).toBe(true);
       }).toPass({ timeout: 8000 });
       await caption('PLAYER A', 'No Mercy applied', 'Hope spent; +1 attacks until rest');
 
@@ -258,12 +309,53 @@ test.describe('Subclass video — Warrior / Call of the Slayer', () => {
         });
       }
 
+      const attackBanner = gmPage.locator('.dice-result-banner', { hasText: attackBannerText });
+      const playerAttackBanner = playerPage.locator('.dice-result-banner', { hasText: attackBannerText });
+
+      // Weapon Specialist first — reviewAction chip on a successful primary hit (before Slayer
+      // spend mutates the damage pool / banner follow-ups).
+      let hopeBeforeSpecialist;
+      await expect(async () => {
+        const state = await getTableState(tableId);
+        const el = (state.elements || []).find((e) => e.instanceId === charInstanceId);
+        hopeBeforeSpecialist = el?.hope;
+        expect(hopeBeforeSpecialist).toBeGreaterThanOrEqual(1);
+      }).toPass({ timeout: 8000 });
+
+      await caption('PLAYER A', 'Weapon Specialist', 'Spend 1 Hope — add Shortsword d8 to this hit');
+      const specialistBtn = playerAttackBanner.getByRole('button', { name: /Weapon Specialist/i }).first();
+      await expect(
+        specialistBtn,
+        'Weapon Specialist reviewAction chip should appear on a successful primary hit'
+      ).toBeVisible({ timeout: 10000 });
+      await specialistBtn.click();
+
+      await expect(async () => {
+        const state = await getTableState(tableId);
+        const el = (state.elements || []).find((e) => e.instanceId === charInstanceId);
+        expect(el?.hope, 'Weapon Specialist spends 1 Hope').toBe(hopeBeforeSpecialist - 1);
+      }).toPass({ timeout: 8000 });
+
+      // Die lands on the pending banner via postBannerActionAddDie (d8 from Shortsword).
+      await expect(
+        playerAttackBanner.getByText(/Weapon Specialist/i).first(),
+        'Weapon Specialist damage die should appear on the banner'
+      ).toBeVisible({ timeout: 8000 });
+
       // Optional bank chip when Hope dominates (not guaranteed).
       const bankBtn = playerPage.getByRole('button', { name: /Slayer \(bank d6\)/i }).first();
       if (await bankBtn.isVisible({ timeout: 2500 }).catch(() => false)) {
         await caption('PLAYER A', 'Slayer (bank d6)', 'Hope dominated — bank a die instead of gaining Hope');
         await bankBtn.click();
       }
+
+      let poolBeforeSpend;
+      await expect(async () => {
+        const state = await getTableState(tableId);
+        const el = (state.elements || []).find((e) => e.instanceId === charInstanceId);
+        poolBeforeSpend = el?.featureState?.CallOfTheSlayer?.slayerDiceCount;
+        expect(poolBeforeSpend).toBeGreaterThanOrEqual(1);
+      }).toPass({ timeout: 8000 });
 
       // Slayer spend: engine `rollDie` is audit-only; damage lands via addRollStatic →
       // postBannerAddDamage (player `postPlayerV2ReviewChip` applies the same follow-ups).
@@ -272,30 +364,23 @@ test.describe('Subclass video — Warrior / Call of the Slayer', () => {
       await expect(spendOneDmg).toBeVisible({ timeout: 8000 });
       await spendOneDmg.click();
 
-      const specialistBtn = playerPage.getByRole('button', { name: /Weapon Specialist/i }).first();
-      if (await specialistBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
-        await caption('PLAYER A', 'Weapon Specialist', 'Spend 1 Hope — add Shortsword damage die to this hit');
-        await specialistBtn.click();
-      } else {
-        await caption('PLAYER A', 'Weapon Specialist', 'Chip not on banner — sheet assert later');
-      }
+      await expect(async () => {
+        const state = await getTableState(tableId);
+        const el = (state.elements || []).find((e) => e.instanceId === charInstanceId);
+        expect(
+          el?.featureState?.CallOfTheSlayer?.slayerDiceCount ?? 0,
+          'Slayer bank should shrink by 1 after damage spend'
+        ).toBe(poolBeforeSpend - 1);
+      }).toPass({ timeout: 8000 });
 
       await holdForDiceTumble();
       await caption('GM', "Acknowledges Rex's attack", '');
-      const attackBanner = gmPage.locator('.dice-result-banner', { hasText: attackBannerText });
       const targetChip = attackBanner.getByRole('button', { name: new RegExp(ADV_NAME, 'i') }).first();
       if (await targetChip.isVisible({ timeout: 2000 }).catch(() => false)) {
         await targetChip.click();
       }
       await ack(attackBanner, { holdMs: 0 });
       await expect(attackBanner).not.toBeVisible({ timeout: 5000 });
-
-      await expect(async () => {
-        const state = await getTableState(tableId);
-        const el = (state.elements || []).find((e) => e.instanceId === charInstanceId);
-        const pool = el?.featureState?.CallOfTheSlayer?.slayerDiceCount;
-        expect(pool == null || pool < 2).toBe(true);
-      }).toPass({ timeout: 8000 });
 
       // ---------------------------------------------------------------------
       // Martial Preparation — card chip → Action Log narration (Player A).

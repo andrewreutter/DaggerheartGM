@@ -6,18 +6,19 @@
  * Wildtouch). Three actors: GM, Player A (Reed the Warden), Player B (ally Moss)
  * so Defender can fire on an ally-damage banner (plan multi-user row).
  *
+ * Phase 1 TEST_GAP hardening (docs/plans/subclass-video-coverage-gaps.md):
+ *  - P0 hard-assert Hope/HP/Stress numbers for Protection + Defender
+ *  - P1 Regeneration on ally in Very Close (Regenerative Reach)
+ *  - P1 Long Rest refreshes once/long-rest featureUsage
+ *  - Beastform Fragile / last-HP auto-drop deferred (PRODUCT_GAP)
+ *
  * Coverage notes:
  *  - **Wildtouch / Regenerative Reach** — narrative/display; caption + assert cards render.
- *    Regenerative Reach only extends Regeneration's range (tier ≥ 3); no separate chip.
- *  - **Beastform** — required for Defender (`table.me.inBeastform`); transform before the
- *    ally-damage step.
+ *  - **Beastform** — required for Defender (`table.me.inBeastform`).
  *  - **Clarity of Nature** — card chip posts an actionLoop notification (no dice); no GM Ack.
- *  - **Regeneration** — player regenerates self (own instance); clears 1d4 HP.
- *  - **Warden's Protection** — mutates the ally; Player A activates it via
- *    `POST /api/room/:tableId/v2-owned-card-chip` (lesson 7: prefer Player A for
- *    multi-instance owned card chips).
- *  - **Defender** — reviewAction chip on an adversary attack banner against Player B while
- *    Reed is in Beastform; Player A activates it (stress 1, reduce ally pending HP by 1).
+ *  - **Regeneration** — self + Very Close ally; clears 1d4 HP.
+ *  - **Warden's Protection** — Player A via `v2-owned-card-chip` (lesson 7).
+ *  - **Defender** — reviewAction chip on adversary attack against Player B.
  */
 
 import { test, expect } from '@playwright/test';
@@ -33,6 +34,7 @@ import {
   deleteLibraryCharacter,
   addElementsToTable,
   getTableState,
+  updateElement,
   cancelAllPendingBanners,
   grantCampaignPassForTable,
   gmRoll,
@@ -40,6 +42,14 @@ import {
 import { startSubclassRun, filterSeriousSubclassConsoleErrors } from '../helpers/subclass-video.js';
 import { buildDruidWardenOfRenewalCharacterData } from '../helpers/subclass-cast-druid.js';
 import { buildAllyCharacterData } from '../helpers/subclass-cast.js';
+
+/** Guide/`featureUsage` keys are often `sub-<Name>-N`, not the bare feature name. */
+function featureUsageEntry(featureUsage, nameSubstring) {
+  const fu = featureUsage && typeof featureUsage === 'object' ? featureUsage : {};
+  const re = new RegExp(nameSubstring, 'i');
+  const hit = Object.entries(fu).find(([k]) => re.test(k));
+  return hit ? { key: hit[0], entry: hit[1] } : null;
+}
 
 test.describe('Subclass video — Druid / Warden of Renewal', () => {
   let tableId;
@@ -75,7 +85,7 @@ test.describe('Subclass video — Druid / Warden of Renewal', () => {
         id: reedLib.id,
         name: reedLib.name,
         // Short of max HP so Regeneration (self) is visible; room for Beastform + Defender Stress;
-        // Hope for Regeneration (3) + Warden's Protection (2).
+        // Hope for Regeneration (3) + Very Close Regen (3) + Warden's Protection (2) — refill between.
         currentHp: 4,
         currentStress: 0,
         hope: 6,
@@ -91,12 +101,13 @@ test.describe('Subclass video — Druid / Warden of Renewal', () => {
         elementType: 'character',
         id: allyLib.id,
         name: allyLib.name,
-        // Wounded so Warden's Protection / Defender have something to change.
+        // Wounded so Warden's Protection / Defender / Very Close Regen have room to heal.
         currentHp: 3,
         currentStress: 2,
         hope: 3,
         currentArmor: 0,
         conditions: '',
+        // Start in Melee of Reed; repositioned to Very Close for Regenerative Reach.
         tokenX: 105,
         tokenY: 100,
         assignedPlayerUid: ACTOR_PLAYER_B.uid,
@@ -129,12 +140,21 @@ test.describe('Subclass video — Druid / Warden of Renewal', () => {
 
   test("Reed the Warden of Renewal: Clarity, Regeneration, Protection, Defender", async ({ browser }) => {
     const consoleErrors = [];
-    const { gmPage, playerPage, playerBPage, caption, finish, ack, holdForDiceTumble, ensureSheetOpen } =
-      await startSubclassRun(browser, {
-        className: 'Druid',
-        subclassName: 'Warden of Renewal',
-        actors: ['gm', 'playerA', 'playerB'],
-      });
+    const {
+      gmPage,
+      playerPage,
+      playerBPage,
+      caption,
+      finish,
+      ack,
+      holdForDiceTumble,
+      ensureSheetOpen,
+      selectBannerDamageTarget,
+    } = await startSubclassRun(browser, {
+      className: 'Druid',
+      subclassName: 'Warden of Renewal',
+      actors: ['gm', 'playerA', 'playerB'],
+    });
 
     for (const [tag, p] of [
       ['GM', gmPage],
@@ -165,7 +185,6 @@ test.describe('Subclass video — Druid / Warden of Renewal', () => {
       await expect(startBanner).not.toBeVisible({ timeout: 5000 });
 
       const playerReedCard = playerPage.locator('div.group\\/char', { hasText: 'Reed' });
-      // Card chips live in Actions. Sidebar card click *toggles* — use shared ensureSheetOpen.
 
       // -----------------------------------------------------------------
       // Wildtouch + Regenerative Reach — narrative/display.
@@ -183,14 +202,15 @@ test.describe('Subclass video — Druid / Warden of Renewal', () => {
       // -----------------------------------------------------------------
       await caption('PLAYER A', 'Clarity of Nature', 'Once per long rest — serenity space (GM distributes Stress clears)');
       const actionsClarity = await ensureSheetOpen(playerPage, playerReedCard);
-      // Prefer the Actions strip chip — Features accordion headers also match the name.
       const clarityBtn = actionsClarity
         .locator('button.dh-sheet-clickable-chip')
         .filter({ hasText: /Clarity of Nature/i });
       await expect(clarityBtn).toBeVisible({ timeout: 8000 });
       await clarityBtn.scrollIntoViewIfNeeded();
       await clarityBtn.click();
-      // Action-only card chips suppress pending banners — no Ack step.
+      // ActionLoop-only chip — frequency may land under a guide key (`sub-Clarity…`).
+      // Hard-assert once/long-rest refresh via Protection + Long Rest below.
+      await playerPage.waitForTimeout(500);
 
       // -----------------------------------------------------------------
       // Regeneration — heal self (own instance; player path OK).
@@ -199,6 +219,9 @@ test.describe('Subclass video — Druid / Warden of Renewal', () => {
       const hpBeforeRegen = (await getTableState(tableId)).elements.find(
         (e) => e.instanceId === reedInstanceId
       )?.currentHp;
+      const hopeBeforeRegen = (await getTableState(tableId)).elements.find(
+        (e) => e.instanceId === reedInstanceId
+      )?.hope;
       const actionsRegen = await ensureSheetOpen(playerPage, playerReedCard);
       const regenGroup = actionsRegen.getByRole('group', { name: /Regeneration targets/i });
       await expect(regenGroup).toBeVisible({ timeout: 8000 });
@@ -207,22 +230,61 @@ test.describe('Subclass video — Druid / Warden of Renewal', () => {
       await expect(async () => {
         const state = await getTableState(tableId);
         const reed = (state.elements || []).find((e) => e.instanceId === reedInstanceId);
-        expect(reed?.hope).toBeLessThan(6);
-        expect(reed?.currentHp).toBeGreaterThan(hpBeforeRegen ?? 4);
+        expect(reed?.hope, 'Regeneration Hope cost').toBe((hopeBeforeRegen ?? 6) - 3);
+        expect(reed?.currentHp, 'Regeneration cleared HP on self').toBeGreaterThan(hpBeforeRegen ?? 4);
       }).toPass({ timeout: 8000 });
 
       // -----------------------------------------------------------------
-      // Warden's Protection — Player A; multi-instance HP clears via
-      // v2-owned-card-chip (subclass-video-test-plan.md lesson 7).
+      // Regeneration — Very Close ally (Regenerative Reach at tier ≥ 3).
+      // -----------------------------------------------------------------
+      await caption('PLAYER A', 'Regeneration (Very Close)', 'Regenerative Reach — Moss outside Melee');
+      // Edge distance ~7.5' → Very Close band (Melee ≤5', Very Close ≤10').
+      await updateElement(tableId, allyInstanceId, { tokenX: 110, tokenY: 100, currentHp: 2 });
+      await updateElement(tableId, reedInstanceId, { hope: 6 });
+
+      const allyHpBeforeVc = (await getTableState(tableId)).elements.find(
+        (e) => e.instanceId === allyInstanceId
+      )?.currentHp;
+      const hopeBeforeVc = (await getTableState(tableId)).elements.find(
+        (e) => e.instanceId === reedInstanceId
+      )?.hope;
+
+      const actionsRegenVc = await ensureSheetOpen(playerPage, playerReedCard);
+      const regenGroupVc = actionsRegenVc.getByRole('group', { name: /Regeneration targets/i });
+      await expect(regenGroupVc).toBeVisible({ timeout: 8000 });
+      const mossRegenBtn = regenGroupVc.getByRole('button', { name: /Moss/i });
+      await expect(mossRegenBtn, 'Moss in Very Close for Regenerative Reach').toBeVisible({ timeout: 8000 });
+      await mossRegenBtn.click();
+
+      await expect(async () => {
+        const state = await getTableState(tableId);
+        const reed = (state.elements || []).find((e) => e.instanceId === reedInstanceId);
+        const ally = (state.elements || []).find((e) => e.instanceId === allyInstanceId);
+        expect(reed?.hope, 'Very Close Regeneration Hope').toBe((hopeBeforeVc ?? 6) - 3);
+        expect(ally?.currentHp, 'Very Close Regeneration healed Moss').toBeGreaterThan(allyHpBeforeVc ?? 2);
+      }).toPass({ timeout: 8000 });
+
+      // Move Moss back to Close/Melee for Protection + Defender range gates.
+      await updateElement(tableId, allyInstanceId, { tokenX: 105, tokenY: 100 });
+      await updateElement(tableId, reedInstanceId, { hope: 6 });
+
+      // -----------------------------------------------------------------
+      // Warden's Protection — hard-assert Hope −2 and ally HP +2 (capped).
       // -----------------------------------------------------------------
       await caption(
         'PLAYER A',
         "Warden's Protection",
-        'Spend Hope — clear HP on ally Moss within Close range'
+        'Spend 2 Hope — clear 2 HP on ally Moss within Close range'
       );
-      const allyHpBefore = (await getTableState(tableId)).elements.find(
+      const allyHpBeforeProt = (await getTableState(tableId)).elements.find(
         (e) => e.instanceId === allyInstanceId
       )?.currentHp;
+      const hopeBeforeProt = (await getTableState(tableId)).elements.find(
+        (e) => e.instanceId === reedInstanceId
+      )?.hope;
+      const allyMaxHp =
+        (await getTableState(tableId)).elements.find((e) => e.instanceId === allyInstanceId)?.maxHp ?? 6;
+
       const actionsProtection = await ensureSheetOpen(playerPage, playerReedCard);
       const protectionGroup = actionsProtection.getByRole('group', { name: /Warden's Protection targets/i });
       await expect(protectionGroup).toBeVisible({ timeout: 8000 });
@@ -232,9 +294,13 @@ test.describe('Subclass video — Druid / Warden of Renewal', () => {
         const state = await getTableState(tableId);
         const ally = (state.elements || []).find((e) => e.instanceId === allyInstanceId);
         const reed = (state.elements || []).find((e) => e.instanceId === reedInstanceId);
-        // d4 allies cleared — with one selected target, Moss should gain up to 2 HP (capped by max).
-        expect(ally?.currentHp).toBeGreaterThanOrEqual(allyHpBefore ?? 3);
-        expect(reed?.hope).toBeLessThanOrEqual(3);
+        expect(reed?.hope, "Warden's Protection Hope cost").toBe((hopeBeforeProt ?? 6) - 2);
+        const expectedHp = Math.min(allyMaxHp, (allyHpBeforeProt ?? 3) + 2);
+        expect(ally?.currentHp, "Warden's Protection cleared 2 HP on Moss").toBe(expectedHp);
+        const prot = featureUsageEntry(reed?.featureUsage, "Warden's Protection");
+        expect(prot, 'Protection featureUsage key present').toBeTruthy();
+        expect(prot?.entry?.used, 'Protection marked used').toBe(true);
+        expect(prot?.entry?.cycle).toBe('longRest');
       }).toPass({ timeout: 8000 });
 
       // -----------------------------------------------------------------
@@ -246,7 +312,6 @@ test.describe('Subclass video — Druid / Warden of Renewal', () => {
       await expect(beastformSelect).toBeVisible({ timeout: 8000 });
       await expect(beastformSelect).not.toHaveAttribute('aria-disabled', 'true');
       await beastformSelect.click();
-      // Portaled CustomSelect — see subclass-video-test-plan.md lesson 18.
       const agileOpt = playerPage
         .locator('[data-dh-outside-dismiss-exempt]')
         .getByRole('button', { name: /^Agile Scout$/i });
@@ -262,7 +327,7 @@ test.describe('Subclass video — Druid / Warden of Renewal', () => {
       }).toPass({ timeout: 10000 });
 
       // -----------------------------------------------------------------
-      // Defender — Goblin hits Moss for ≥2 raw damage while Reed is in Beastform.
+      // Defender — hard-assert +1 Stress on Reed.
       // -----------------------------------------------------------------
       await caption('GM', 'Goblin attacks Moss', 'Guaranteed hit with heavy damage — Defender chip');
       const allyHpBeforeHit = (await getTableState(tableId)).elements.find(
@@ -292,17 +357,13 @@ test.describe('Subclass video — Druid / Warden of Renewal', () => {
       }
 
       const gmBanner = gmPage.locator('.dice-result-banner', { hasText: atkBannerText });
-      const mossTargetChip = gmBanner.getByRole('button', { name: /Moss/i }).first();
-      if (await mossTargetChip.isVisible({ timeout: 2000 }).catch(() => false)) {
-        await mossTargetChip.click();
-      }
+      await selectBannerDamageTarget(gmPage, gmBanner, /Moss/i);
 
       await caption('PLAYER A', 'Defender', 'In Beastform — mark Stress to reduce Moss’s pending HP by 1');
       const defenderChip = playerPage.getByRole('button', { name: /^Defender$/i }).first();
       await expect(defenderChip).toBeVisible({ timeout: 10000 });
       await defenderChip.click();
 
-      // selectTargets: pick Moss if a target bank is shown, then Confirm.
       const defenderMoss = playerPage
         .locator('.dice-result-banner', { hasText: atkBannerText })
         .getByRole('button', { name: /Moss/i })
@@ -327,13 +388,51 @@ test.describe('Subclass video — Druid / Warden of Renewal', () => {
         const state = await getTableState(tableId);
         const reed = (state.elements || []).find((e) => e.instanceId === reedInstanceId);
         const ally = (state.elements || []).find((e) => e.instanceId === allyInstanceId);
-        expect(reed?.currentStress).toBeGreaterThan(reedStressBefore ?? 0);
-        // Ally should have taken some HP loss, but Defender reduced it by 1 vs unmitigated.
-        expect(ally?.currentHp).toBeLessThan(allyHpBeforeHit ?? 6);
-        expect(ally?.currentHp).toBeGreaterThan(0);
+        expect(reed?.currentStress, 'Defender Stress cost').toBe((reedStressBefore ?? 0) + 1);
+        expect(ally?.currentHp, 'Defender ally took reduced damage').toBeLessThan(allyHpBeforeHit ?? 6);
+        expect(ally?.currentHp, 'Defender ally survived').toBeGreaterThan(0);
       }).toPass({ timeout: 8000 });
 
-      await caption('Druid / Warden of Renewal', 'Walkthrough complete', 'Clarity, Regeneration, Protection, Defender');
+      // Beastform last-HP / Fragile auto-drop: PRODUCT_GAP (see Elements spec + Phase 2).
+      // Drop out manually so Long Rest starts from a clean non-beastform state.
+      await caption('PLAYER A', 'Drop out of Beastform', 'Return to normal form before Long Rest');
+      const actionsDrop = await ensureSheetOpen(playerPage, playerReedCard);
+      const dropBtn = actionsDrop.getByRole('button', { name: /Drop out of .*Beastform/i }).first();
+      await expect(dropBtn).toBeVisible({ timeout: 8000 });
+      await dropBtn.click();
+      await expect(async () => {
+        const state = await getTableState(tableId);
+        const reed = (state.elements || []).find((e) => e.instanceId === reedInstanceId);
+        const bf = reed?.featureState?.['classes:srd-cls-druid']?.activeBeastform;
+        expect(bf == null || bf === null).toBe(true);
+      }).toPass({ timeout: 8000 });
+
+      // -----------------------------------------------------------------
+      // Long Rest — refreshes once/long-rest Clarity + Protection usage.
+      // -----------------------------------------------------------------
+      await caption('GM', 'Long Rest', 'Refresh Clarity / Warden\'s Protection frequency');
+      await updateElement(tableId, reedInstanceId, { currentHp: 4, hope: 3 });
+
+      gmPage.once('dialog', (d) => d.accept());
+      await gmPage.getByRole('button', { name: '⏹ Long' }).click();
+      const longRestBanner = gmPage.locator('.dice-result-banner', { hasText: /Long Rest/i });
+      await expect(longRestBanner).toBeVisible({ timeout: 8000 });
+      await ack(longRestBanner, { holdMs: 0 });
+      await expect(longRestBanner).not.toBeVisible({ timeout: 8000 });
+
+      await expect(async () => {
+        const state = await getTableState(tableId);
+        const reed = (state.elements || []).find((e) => e.instanceId === reedInstanceId);
+        expect(
+          featureUsageEntry(reed?.featureUsage, "Warden's Protection"),
+          'Long Rest cleared Protection usage'
+        ).toBeNull();
+        // Clarity is actionLoop-only; when its usage key is present it must also clear.
+        const clarityAfter = featureUsageEntry(reed?.featureUsage, 'Clarity of Nature');
+        expect(clarityAfter, 'Long Rest cleared Clarity usage if present').toBeNull();
+      }).toPass({ timeout: 10000 });
+
+      await caption('Druid / Warden of Renewal', 'Walkthrough complete', 'Clarity, Regen VC, Protection, Defender, Long Rest');
 
       const seriousErrors = filterSeriousSubclassConsoleErrors(consoleErrors);
       expect(seriousErrors, `Unexpected console errors:\n${seriousErrors.join('\n')}`).toEqual([]);

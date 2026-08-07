@@ -280,8 +280,8 @@ export function collectChipsForShapePlacement(features, shape, table, usageStore
 
       const chipKey = `${feature.name}::${chipDisplayName}::shape:${shapeKey}`;
 
+      let maxUses = 1;
       if (chip.frequency) {
-        let maxUses = 1;
         if (chip.frequencyMaxUses !== undefined) {
           const raw =
             typeof chip.frequencyMaxUses === 'function' ? chip.frequencyMaxUses(table) : chip.frequencyMaxUses;
@@ -302,6 +302,7 @@ export function collectChipsForShapePlacement(features, shape, table, usageStore
         _featureSource: feature._source,
         _ownerInstanceId: feature._ownerInstanceId,
         _chipKey: chipKey,
+        ...(chip.frequency ? { _frequencyMaxUses: maxUses } : {}),
       });
     }
   }
@@ -333,8 +334,8 @@ export function collectChips(features, phase, table, usageStore = {}) {
       const chipKey = `${feature.name}::${chipDisplayName}::${placements.join(',')}`;
 
       // Check frequency availability
+      let maxUses = 1;
       if (chip.frequency) {
-        let maxUses = 1;
         if (chip.frequencyMaxUses !== undefined) {
           const raw =
             typeof chip.frequencyMaxUses === 'function' ? chip.frequencyMaxUses(table) : chip.frequencyMaxUses;
@@ -357,6 +358,7 @@ export function collectChips(features, phase, table, usageStore = {}) {
         _featureSource: feature._source,
         _ownerInstanceId: feature._ownerInstanceId,
         _chipKey: chipKey,
+        ...(chip.frequency ? { _frequencyMaxUses: maxUses } : {}),
       });
     }
   }
@@ -766,12 +768,30 @@ export function getFeatureUsageCycleForV2Chip(chip) {
 /**
  * Read how many times a chip has been consumed this frequency cycle.
  * Legacy entries used `{ used: true }` without `count` (treated as 1).
+ *
+ * @param {{ used?: boolean, count?: number } | null | undefined} entry
+ * @returns {number}
  */
-function getFrequencyUsedCount(entry) {
+export function getFrequencyUsedCount(entry) {
   if (!entry) return 0;
   if (typeof entry.count === 'number') return entry.count;
   if (entry.used) return 1;
   return 0;
+}
+
+/**
+ * Next `featureUsage` / usageStore entry after consuming one use of a frequency-gated chip.
+ *
+ * @param {{ used?: boolean, count?: number, cycle?: string } | null | undefined} prevEntry
+ * @param {string} cycle — 'session' | 'rest' | 'longRest' (persisted featureUsage cycle)
+ * @param {number} [maxUses=1]
+ * @returns {{ cycle: string, count: number, used: boolean }}
+ */
+export function buildNextFeatureUsageEntry(prevEntry, cycle, maxUses = 1) {
+  const max = Math.max(1, Math.floor(Number(maxUses)) || 1);
+  const used = getFrequencyUsedCount(prevEntry);
+  const next = Math.min(max, used + 1);
+  return { cycle, count: next, used: next >= max };
 }
 
 /**

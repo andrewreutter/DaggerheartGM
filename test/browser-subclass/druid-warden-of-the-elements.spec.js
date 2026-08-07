@@ -6,15 +6,17 @@
  * for most of the walk; an ally token is still placed so Close-range aura copy stays
  * honest. See .cursor/plans/subclass_feature_video_suite_7ff124eb.plan.md.
  *
+ * Phase 1 TEST_GAP hardening (docs/plans/subclass-video-coverage-gaps.md):
+ *  - P1 elemental matrix: Fire+Aura, Earth thresholds, Air channel, Water Dominion chip
+ *  - P1 Short Rest clears channel / aura featureState
+ *  - Beastform Fragile / last-HP auto-drop deferred (PRODUCT_GAP)
+ *
  * Coverage notes:
  *  - **Wildtouch** — narrative/display only (announce); caption + assert the card renders.
  *  - **Beastform / Evolution** — V2 card `isSelect` (CustomSelect; 24 options at tier 4).
- *    Transform + Drop out exercised via Beastform; Evolution asserts Hope spend + transform.
  *  - **Elemental Incarnation** — `selectPresentation: 'iconGrid'` Fire/Earth/Water/Air.
  *  - **Elemental Aura** — once-per-rest card chip (requires a channeled element first).
- *  - **Elemental Dominion** — mastery card asserted on the sheet; Water reviewAction chip
- *    (Vulnerable attacker) exercised when an adversary attack succeeds against Elm while
- *    Channeling Water.
+ *  - **Elemental Dominion** — Water reviewAction chip; Air/Earth via passiveStatMods.
  */
 
 import { test, expect } from '@playwright/test';
@@ -36,6 +38,15 @@ import {
 import { startSubclassRun, filterSeriousSubclassConsoleErrors } from '../helpers/subclass-video.js';
 import { buildDruidWardenOfTheElementsCharacterData } from '../helpers/subclass-cast-druid.js';
 import { buildAllyCharacterData } from '../helpers/subclass-cast.js';
+
+/** Major threshold band start from the open sheet's DAMAGE THRESHOLDS graphic. */
+async function readSheetMajorThreshold(page) {
+  const majorLabel = page.getByText('Major', { exact: true }).first();
+  await expect(majorLabel).toBeVisible({ timeout: 5000 });
+  const rangeText = await majorLabel.locator('..').locator('span').nth(1).textContent();
+  const m = String(rangeText || '').match(/^(\d+)–/);
+  return m ? Number(m[1]) : null;
+}
 
 test.describe('Subclass video — Druid / Warden of the Elements', () => {
   let tableId;
@@ -123,14 +134,20 @@ test.describe('Subclass video — Druid / Warden of the Elements', () => {
 
   test('Elm the Warden of the Elements: Incarnation, Aura, Dominion, Beastform, Evolution', async ({ browser }) => {
     const consoleErrors = [];
-    const { gmPage, playerPage, caption, finish, ack, holdForDiceTumble, ensureSheetOpen } = await startSubclassRun(
-      browser,
-      {
-        className: 'Druid',
-        subclassName: 'Warden of the Elements',
-        actors: ['gm', 'playerA'],
-      }
-    );
+    const {
+      gmPage,
+      playerPage,
+      caption,
+      finish,
+      ack,
+      holdForDiceTumble,
+      ensureSheetOpen,
+      selectBannerDamageTarget,
+    } = await startSubclassRun(browser, {
+      className: 'Druid',
+      subclassName: 'Warden of the Elements',
+      actors: ['gm', 'playerA'],
+    });
 
     for (const [tag, p] of [
       ['GM', gmPage],
@@ -158,8 +175,6 @@ test.describe('Subclass video — Druid / Warden of the Elements', () => {
       await expect(startBanner).not.toBeVisible({ timeout: 5000 });
 
       const playerElmCard = playerPage.locator('div.group\\/char', { hasText: 'Elm' });
-      // Card chips live in Actions; bare name matches also hit Features headers.
-      // Sidebar cards toggle — shared ensureSheetOpen only clicks when needed.
       const ensurePlayerSheet = () => ensureSheetOpen(playerPage, playerElmCard);
 
       // -----------------------------------------------------------------
@@ -170,7 +185,7 @@ test.describe('Subclass video — Druid / Warden of the Elements', () => {
       await expect(playerPage.getByText(/Wildtouch/i).first()).toBeVisible({ timeout: 8000 });
 
       // -----------------------------------------------------------------
-      // Elemental Incarnation — channel Fire (iconGrid).
+      // Elemental Incarnation — channel Fire (iconGrid) + Aura.
       // -----------------------------------------------------------------
       await caption('PLAYER A', 'Elemental Incarnation (Fire)', 'Mark 1 Stress to Channel Fire');
       const actionsForFire = await ensurePlayerSheet();
@@ -181,17 +196,12 @@ test.describe('Subclass video — Druid / Warden of the Elements', () => {
       await expect(async () => {
         const state = await getTableState(tableId);
         const elm = (state.elements || []).find((e) => e.instanceId === elmInstanceId);
-        expect(elm?.featureState?.WardenOfTheElements?.channeledElement).toBe('fire');
-        expect(elm?.currentStress).toBeGreaterThanOrEqual(1);
+        expect(elm?.featureState?.WardenOfTheElements?.channeledElement, 'Fire Incarnation').toBe('fire');
+        expect(elm?.currentStress, 'Fire Incarnation Stress').toBeGreaterThanOrEqual(1);
       }).toPass({ timeout: 8000 });
 
-      // -----------------------------------------------------------------
-      // Elemental Aura — once per rest while Channeling.
-      // -----------------------------------------------------------------
       await caption('PLAYER A', 'Elemental Aura', 'Assume Fire aura until Channeling ends');
       const actionsForAura = await ensurePlayerSheet();
-      // Prefer the Actions strip chip (`dh-sheet-clickable-chip`) — Features accordion
-      // headers also match `/Elemental Aura/i` (e.g. "Elemental Aura Before a roll").
       const auraBtn = actionsForAura
         .locator('button.dh-sheet-clickable-chip')
         .filter({ hasText: /Elemental Aura/i });
@@ -202,26 +212,57 @@ test.describe('Subclass video — Druid / Warden of the Elements', () => {
       await expect(async () => {
         const state = await getTableState(tableId);
         const elm = (state.elements || []).find((e) => e.instanceId === elmInstanceId);
-        expect(elm?.featureState?.WardenOfTheElements?.auraActive).toBe(true);
-        expect(elm?.featureState?.WardenOfTheElements?.auraUsedThisRest).toBe(true);
+        expect(elm?.featureState?.WardenOfTheElements?.auraActive, 'Fire Aura active').toBe(true);
+        expect(elm?.featureState?.WardenOfTheElements?.auraUsedThisRest, 'Aura used this rest').toBe(true);
       }).toPass({ timeout: 8000 });
 
       // -----------------------------------------------------------------
-      // Elemental Dominion — mastery card on the sheet (Fire bonus is onIntent).
+      // Earth Incarnation — +Proficiency to Major/Severe thresholds (sheet).
       // -----------------------------------------------------------------
-      await caption('PLAYER A', 'Elemental Dominion', 'Mastery feature card (Fire +Proficiency on damage)');
+      await caption('PLAYER A', 'Elemental Incarnation (Earth)', 'Channel Earth — +Proficiency thresholds');
+      await ensurePlayerSheet();
+      const majorBeforeEarth = await readSheetMajorThreshold(playerPage);
+      expect(majorBeforeEarth, 'baseline Major threshold readable').toBeGreaterThan(0);
+
+      const actionsForEarth = await ensurePlayerSheet();
+      await actionsForEarth.getByRole('button', { name: /^Earth$/i }).click();
+      await expect(async () => {
+        const state = await getTableState(tableId);
+        const elm = (state.elements || []).find((e) => e.instanceId === elmInstanceId);
+        expect(elm?.featureState?.WardenOfTheElements?.channeledElement, 'Earth Incarnation').toBe('earth');
+      }).toPass({ timeout: 8000 });
+
+      await ensurePlayerSheet();
+      await expect(async () => {
+        const majorAfter = await readSheetMajorThreshold(playerPage);
+        // Tier-4 proficiency is 4 — Earth passiveStatMods adds proficiency to thresholds.
+        expect(majorAfter, 'Earth channel raises Major threshold').toBeGreaterThan(majorBeforeEarth);
+        expect(majorAfter - majorBeforeEarth, 'Earth Major delta = proficiency').toBeGreaterThanOrEqual(1);
+      }).toPass({ timeout: 8000 });
+
+      // -----------------------------------------------------------------
+      // Air Incarnation — channel asserted in featureState.
+      // (Dominion +1 Evasion is applied in applyDeclarativeFeatures / unit-tested;
+      // mergeV2DeclarativeSheetOverlay does not yet surface evasion deltas on the sheet.)
+      // -----------------------------------------------------------------
+      await caption('PLAYER A', 'Elemental Incarnation (Air)', 'Channel Air (Dominion +1 Evasion in engine)');
+      const actionsForAir = await ensurePlayerSheet();
+      await actionsForAir.getByRole('button', { name: /^Air$/i }).click();
+      await expect(async () => {
+        const state = await getTableState(tableId);
+        const elm = (state.elements || []).find((e) => e.instanceId === elmInstanceId);
+        expect(elm?.featureState?.WardenOfTheElements?.channeledElement, 'Air Incarnation').toBe('air');
+      }).toPass({ timeout: 8000 });
+
+      await caption('PLAYER A', 'Elemental Dominion', 'Mastery feature card (Fire/Earth/Air/Water while Channeling)');
       await ensurePlayerSheet();
       await expect(playerPage.getByText(/Elemental Dominion/i).first()).toBeVisible({ timeout: 8000 });
 
       // -----------------------------------------------------------------
       // Beastform / Evolution — CustomSelect from the player's Actions strip.
-      // (Helper opens the portaled option list and picks Agile Scout.)
       // -----------------------------------------------------------------
-      // CustomSelect options are portaled to body; must use the outside-dismiss-exempt
-      // portal (see subclass-video-test-plan.md lesson 18 / useHoverOverlay).
       const pickBeastformOption = async (page, trigger) => {
         await expect(trigger).toBeVisible({ timeout: 8000 });
-        // Soft-blocked selects open the menu but ignore option clicks — fail loudly.
         await expect(trigger).not.toHaveAttribute('aria-disabled', 'true');
         await trigger.click();
         const opt = page
@@ -260,9 +301,6 @@ test.describe('Subclass video — Druid / Warden of the Elements', () => {
         expect(bf == null || bf === null).toBe(true);
       }).toPass({ timeout: 8000 });
 
-      // -----------------------------------------------------------------
-      // Evolution — spend 3 Hope to transform without Stress.
-      // -----------------------------------------------------------------
       await caption('PLAYER A', 'Evolution', 'Spend 3 Hope — Beastform without marking Stress');
       const hopeBeforeEvo = (await getTableState(tableId)).elements.find(
         (e) => e.instanceId === elmInstanceId
@@ -280,10 +318,9 @@ test.describe('Subclass video — Druid / Warden of the Elements', () => {
           elm?.featureState?.['classes:srd-cls-druid']?.activeBeastform || elm?.activeBeastform;
         expect(bf?.beastformId || bf?.id).toBe('srd-bst-agile-scout');
         expect(bf?.viaEvolution).toBe(true);
-        expect(elm?.hope).toBe((hopeBeforeEvo ?? 6) - 3);
+        expect(elm?.hope, 'Evolution Hope cost').toBe((hopeBeforeEvo ?? 6) - 3);
       }).toPass({ timeout: 10000 });
 
-      // Drop out again so Water Dominion demo is not blocked by beastform weapon UI.
       const actionsForDrop2 = await ensurePlayerSheet();
       await actionsForDrop2.getByRole('button', { name: /Drop out of .*Beastform/i }).first().click();
       await expect(async () => {
@@ -294,8 +331,7 @@ test.describe('Subclass video — Druid / Warden of the Elements', () => {
       }).toPass({ timeout: 8000 });
 
       // -----------------------------------------------------------------
-      // Re-channel Water, then adversary hits Elm → Elemental Dominion (Water)
-      // reviewAction chip makes the attacker Vulnerable.
+      // Water Incarnation + Elemental Dominion (Water) reviewAction chip.
       // -----------------------------------------------------------------
       await caption('PLAYER A', 'Elemental Incarnation (Water)', 'Re-channel Water for Dominion chip');
       const actionsForWater = await ensurePlayerSheet();
@@ -303,7 +339,7 @@ test.describe('Subclass video — Druid / Warden of the Elements', () => {
       await expect(async () => {
         const state = await getTableState(tableId);
         const elm = (state.elements || []).find((e) => e.instanceId === elmInstanceId);
-        expect(elm?.featureState?.WardenOfTheElements?.channeledElement).toBe('water');
+        expect(elm?.featureState?.WardenOfTheElements?.channeledElement, 'Water Incarnation').toBe('water');
       }).toPass({ timeout: 8000 });
 
       await caption('GM', 'Goblin attacks Elm', 'Guaranteed hit — surfaces Elemental Dominion (Water)');
@@ -326,18 +362,13 @@ test.describe('Subclass video — Druid / Warden of the Elements', () => {
         });
       }
 
-      // Ensure the banner's selected target is Elm (chip gate + synthetic effects).
       const gmBanner = gmPage.locator('.dice-result-banner', { hasText: atkBannerText });
-      const elmTargetChip = gmBanner.getByRole('button', { name: /Elm/i }).first();
-      if (await elmTargetChip.isVisible({ timeout: 2000 }).catch(() => false)) {
-        await elmTargetChip.click();
-      }
+      await selectBannerDamageTarget(gmPage, gmBanner, /Elm/i);
 
       await caption('PLAYER A', 'Elemental Dominion (Water)', 'Mark Stress — attacker becomes Vulnerable');
       const dominionWater = playerPage.getByRole('button', { name: /Elemental Dominion \(Water\)/i }).first();
       await expect(dominionWater).toBeVisible({ timeout: 10000 });
       await dominionWater.click();
-      // selectTargets Confirm path — if a Confirm button appears, click it.
       const confirmBtn = playerPage.getByRole('button', { name: /^Confirm$/i }).first();
       if (await confirmBtn.isVisible({ timeout: 1500 }).catch(() => false)) {
         await confirmBtn.click();
@@ -351,10 +382,43 @@ test.describe('Subclass video — Druid / Warden of the Elements', () => {
       await expect(async () => {
         const state = await getTableState(tableId);
         const adv = (state.elements || []).find((e) => e.instanceId === advInstanceId);
-        expect(String(adv?.conditions || '')).toMatch(/Vulnerable/i);
+        expect(String(adv?.conditions || ''), 'Water Dominion Vulnerable').toMatch(/Vulnerable/i);
       }).toPass({ timeout: 8000 });
 
-      await caption('Druid / Warden of the Elements', 'Walkthrough complete', 'Incarnation, Aura, Dominion, Beastform, Evolution');
+      // Beastform Fragile / last-HP auto-drop: PRODUCT_GAP when form lives only in
+      // featureState (applyDamageToTarget skips drop if legacy activeBeastform is absent).
+      // Drop chip is already exercised above. See Phase 2 / Phase 3 in coverage-gaps plan.
+
+      // -----------------------------------------------------------------
+      // Short Rest — clears channel + aura rest flags (ElementalIncarnation.onRest).
+      // -----------------------------------------------------------------
+      await caption('GM', 'Short Rest', 'Clears Elemental channel / aura rest flags');
+      // Water may still be channeled from Dominion; re-channel Fire so rest clear is obvious on video.
+      const actionsPreRest = await ensurePlayerSheet();
+      await actionsPreRest.getByRole('button', { name: /^Fire$/i }).click();
+      await expect(async () => {
+        const state = await getTableState(tableId);
+        const elm = (state.elements || []).find((e) => e.instanceId === elmInstanceId);
+        expect(elm?.featureState?.WardenOfTheElements?.channeledElement).toBe('fire');
+      }).toPass({ timeout: 8000 });
+
+      gmPage.once('dialog', (d) => d.accept());
+      await gmPage.getByRole('button', { name: '⏸ Short' }).click();
+      const restBanner = gmPage.locator('.dice-result-banner', { hasText: /Short Rest/i });
+      await expect(restBanner).toBeVisible({ timeout: 8000 });
+      await ack(restBanner, { holdMs: 0 });
+      await expect(restBanner).not.toBeVisible({ timeout: 8000 });
+
+      await expect(async () => {
+        const state = await getTableState(tableId);
+        const elm = (state.elements || []).find((e) => e.instanceId === elmInstanceId);
+        const w = elm?.featureState?.WardenOfTheElements || {};
+        expect(w.channeledElement == null || w.channeledElement === null, 'Rest cleared channel').toBe(true);
+        expect(w.auraActive === true, 'Rest cleared auraActive').toBe(false);
+        expect(w.auraUsedThisRest === true, 'Rest cleared auraUsedThisRest').toBe(false);
+      }).toPass({ timeout: 10000 });
+
+      await caption('Druid / Warden of the Elements', 'Walkthrough complete', 'Incarnation matrix, Aura, Dominion, Beastform, Rest');
 
       const seriousErrors = filterSeriousSubclassConsoleErrors(consoleErrors);
       expect(seriousErrors, `Unexpected console errors:\n${seriousErrors.join('\n')}`).toEqual([]);

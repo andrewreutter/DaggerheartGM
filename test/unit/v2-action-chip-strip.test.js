@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  computeActionChipUnusableState,
   entryHasUnusableActionChipsForSheet,
   hasAnyUnusableActionChipsForSheet,
   shouldMoveV2ActionChipToUnusableSubsection,
@@ -56,5 +57,24 @@ describe('hasAnyUnusableActionChipsForSheet', () => {
     expect(entryHasUnusableActionChipsForSheet(entry, {}, {})).toBe(
       hasAnyUnusableActionChipsForSheet([entry], {}, {}),
     );
+  });
+});
+
+describe('computeActionChipUnusableState multi-use frequency', () => {
+  const model = { displayName: 'Contacts Everywhere', name: 'Contacts Everywhere' };
+  const table = {};
+
+  it('keeps chip usable while count < frequencyMaxUses', () => {
+    const chip = { name: 'Contacts Everywhere', frequency: 'session', _frequencyMaxUses: 3 };
+    const el = { featureUsage: { 'Contacts Everywhere': { cycle: 'session', count: 2, used: false } } };
+    const state = computeActionChipUnusableState(chip, model, table, el, 'Contacts Everywhere');
+    expect(state.chipUsed).toBe(false);
+  });
+
+  it('marks chip used when count reaches frequencyMaxUses', () => {
+    const chip = { name: 'Contacts Everywhere', frequency: 'session', _frequencyMaxUses: 3 };
+    const el = { featureUsage: { 'Contacts Everywhere': { cycle: 'session', count: 3, used: true } } };
+    const state = computeActionChipUnusableState(chip, model, table, el, 'Contacts Everywhere');
+    expect(state.chipUsed).toBe(true);
   });
 });

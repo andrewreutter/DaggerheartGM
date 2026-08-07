@@ -9,6 +9,12 @@
  *  - Session start grants Prayer Dice via physical-roll resume.
  *  - Owner (Player A) spends a Prayer Die on Player B's pending action banner (M2).
  *  - Power of the Gods arms `powerOfTheGodsMastery` on session start (d12 Wings damage).
+ *
+ * Phase 1 TEST_GAP:
+ *  - Ascendant Severe threshold (≥ 31 at level 8 with Chainmail).
+ *  - Prayer Die pool shrink; Reduce + Hope + Action modes (Damage is on Divine Wielder).
+ *  - Wings of Light extra damage d12 (Power of the Gods) + Hope cost.
+ *  - Ethereal Visage advantage die on Presence while flying (Fear chip when Hope dominates).
  */
 
 import { test, expect } from '@playwright/test';
@@ -26,12 +32,29 @@ import {
   getTableState,
   cancelAllPendingBanners,
   grantCampaignPassForTable,
+  gmRoll,
+  setFearCount,
 } from '../helpers/multi-auth.js';
 import { startSubclassRun, filterSeriousSubclassConsoleErrors } from '../helpers/subclass-video.js';
 import {
   buildSeraphWingedSentinelCharacterData,
   buildAllyCharacterData,
 } from '../helpers/subclass-cast.js';
+
+/** Guaranteed-hit adversary attack with physical damage (for Prayer Die — reduce). */
+async function gmAdversaryAttack(tableId, { advInstanceId, targetInstanceId, displayName }) {
+  return gmRoll(
+    tableId,
+    `${displayName} [d20+50] damage [2d8+4] phy melee`,
+    displayName,
+    {
+      _attackerInstanceId: advInstanceId,
+      _attackerType: 'adversary',
+      _selectedTargetInstanceId: targetInstanceId,
+      _attackRangeFt: 5,
+    },
+  );
+}
 
 test.describe('Subclass video — Seraph / Winged Sentinel', () => {
   let tableId;
@@ -181,14 +204,31 @@ test.describe('Subclass video — Seraph / Winged Sentinel', () => {
       await ack(prayerDiceBanner, { force: true, holdMs: 0 });
       await expect(prayerDiceBanner).not.toBeVisible({ timeout: 8000 });
 
+      let prayerPoolLen = 0;
       await expect(async () => {
         const state = await getTableState(tableId);
         const el = (state.elements || []).find((e) => e.instanceId === seraphInstanceId);
         const pool = el?.prayerDice?.pool;
         expect(Array.isArray(pool) && pool.length).toBeGreaterThan(0);
+        prayerPoolLen = pool.length;
       }).toPass({ timeout: 8000 });
 
       const playerElyraCard = playerPage.locator('div.group\\/char', { hasText: 'Elyra' });
+
+      // ---------------------------------------------------------------------
+      // Ascendant (P0) — permanent +4 Severe → effective Severe ≥ 31 (Chainmail 15 + L8 + 4)
+      // ---------------------------------------------------------------------
+      await caption(
+        'PLAYER A',
+        'Ascendant',
+        'Passive +4 Severe threshold — sheet shows Severe 31 (Chainmail 15 + L8 + 4)',
+      );
+      await ensureSheetOpen(playerPage, playerElyraCard);
+      // Sidebar card: "Thresholds 15 / 31"; Defense graphic: "≥ 31".
+      await expect(
+        playerPage.getByText(/15\s*\/\s*31|≥\s*31/).first(),
+        'Ascendant +4 Severe should yield 31 on Chainmail at level 8',
+      ).toBeVisible({ timeout: 8000 });
 
       // ---------------------------------------------------------------------
       // Display Ascendant / Ethereal Visage / Power of the Gods on sheet
@@ -272,24 +312,49 @@ test.describe('Subclass video — Seraph / Winged Sentinel', () => {
         });
       }
 
-      const wingsDmgBtn = playerPage.getByRole('button', { name: /Wings of Light — extra damage/i }).first();
-      if (await wingsDmgBtn.isVisible({ timeout: 5000 }).catch(() => false)) {
-        await caption('PLAYER A', 'Wings of Light — extra damage', 'Spend 1 Hope for bonus damage die');
-        await wingsDmgBtn.click();
-      } else {
-        await caption(
-          'PLAYER A',
-          'Wings of Light — extra damage',
-          'Chip not shown (attack may have missed or flying state not armed) — continuing',
-        );
-      }
+      // Wings of Light — extra damage d12 (P1; Power of the Gods mastery from session start).
+      // Activate from GM banner so postBannerAddDamage + Ack share one camera after the tumble.
+      await holdForDiceTumble();
+      await caption(
+        'GM',
+        'Wings of Light — extra damage',
+        'Spend 1 Hope for d12 bonus damage (Power of the Gods)',
+      );
+      await gmPage.keyboard.press('Escape');
+      const attackBanner = gmPage.locator('.dice-result-banner', { hasText: attackBannerText });
+      await expect(attackBanner).toBeVisible({ timeout: 8000 });
+      const hopeBeforeWings = (
+        await getTableState(tableId)
+      ).elements?.find((e) => e.instanceId === seraphInstanceId)?.hope;
+      const wingsDmgBtn = attackBanner
+        .getByRole('button', { name: /Wings of Light — extra damage/i })
+        .first();
+      await expect(
+        wingsDmgBtn,
+        'Wings of Light — extra damage chip missing (need flying + successful attack)',
+      ).toBeVisible({ timeout: 8000 });
+      await wingsDmgBtn.click();
+      await expect(async () => {
+        const state = await getTableState(tableId);
+        const el = (state.elements || []).find((e) => e.instanceId === seraphInstanceId);
+        expect(el?.hope, 'Wings d12: Hope should decrease by 1').toBe((hopeBeforeWings ?? 4) - 1);
+      }).toPass({ timeout: 8000 });
+      await expect(attackBanner.getByText(/Wings of Light/i).first()).toBeVisible({ timeout: 8000 });
+      // postBannerAddDamage adds a d12 damage sub-item — notation or face label includes d12.
+      await expect(attackBanner.getByText(/d12/i).first()).toBeVisible({ timeout: 8000 });
 
       await holdForDiceTumble();
       await caption('GM', 'Acknowledges Broadsword attack', '');
-      await gmPage.keyboard.press('Escape');
-      const attackBanner = gmPage.locator('.dice-result-banner', { hasText: attackBannerText });
+      // Target chips are exact "Cultist Thug" — avoid the banner title
+      // ("Elyra Broadsword → Cultist Thug · GM") which is also role=button.
+      const cultistChip = attackBanner.getByRole('button', { name: /^Cultist Thug$/i }).first();
+      if (await cultistChip.isVisible({ timeout: 2000 }).catch(() => false)) {
+        await cultistChip.click({ force: true });
+      }
+      // addDamage replaces the banner and restarts the tumble — resolve-instantly then Ack.
+      await attackBanner.click({ force: true, position: { x: 12, y: 12 } }).catch(() => {});
       await ack(attackBanner, { force: true, holdMs: 0 });
-      await expect(attackBanner).not.toBeVisible({ timeout: 5000 });
+      await expect(attackBanner).not.toBeVisible({ timeout: 8000 });
 
       // ---------------------------------------------------------------------
       // Life Support (Player A initiates; GM ack applies Hope + ally heal)
@@ -314,12 +379,13 @@ test.describe('Subclass video — Seraph / Winged Sentinel', () => {
       await expect(lifeSupportBanner).not.toBeVisible({ timeout: 8000 });
 
       // ---------------------------------------------------------------------
-      // Ethereal Visage — Presence roll while flying (advantage onIntent)
+      // Ethereal Visage — Presence roll while flying (advantage onIntent) (P1)
       // ---------------------------------------------------------------------
+      await setFearCount(tableId, 3);
       await caption(
         'PLAYER A',
         'Ethereal Visage — Presence',
-        'While flying: advantage on Presence rolls',
+        'While flying: advantage die on Presence; Fear-instead-of-Hope when Hope dominates',
       );
       // Main Traits grid chip includes TRAIT_VERBS.presence (Charm/Perform/Deceive) —
       // disambiguates from the Defense card's Reaction Rolls grid (same "Presence" title).
@@ -330,18 +396,28 @@ test.describe('Subclass video — Seraph / Winged Sentinel', () => {
       await playerPage.getByRole('button', { name: 'Proceed' }).click();
 
       const presenceBannerText = 'Elyra Presence';
+      const presenceBannerPlayer = playerPage.locator('.dice-result-banner', {
+        hasText: presenceBannerText,
+      });
+      await expect(presenceBannerPlayer).toBeVisible({ timeout: 8000 });
+      // onIntent adds Ethereal Visage [d6] into the posted roll text / sub-items.
       await expect(
-        gmPage.locator('.dice-result-banner', { hasText: presenceBannerText }),
+        presenceBannerPlayer.getByText(/Ethereal Visage/i).first(),
+        'Ethereal Visage advantage die missing from Presence banner',
       ).toBeVisible({ timeout: 8000 });
 
-      // Optional Ethereal Visage reviewOutcome chip — only when Hope dominates a
-      // successful Presence roll and the GM Fear pool is non-empty (often absent here).
+      // reviewOutcome Fear chip — only when Hope dominates a successful Presence roll.
       const fearChip = playerPage
         .getByRole('button', { name: /Ethereal Visage — Fear instead of Hope/i })
         .first();
       if (await fearChip.isVisible({ timeout: 2500 }).catch(() => false)) {
         await caption('PLAYER A', 'Ethereal Visage — Fear instead of Hope', 'reviewOutcome toggle');
+        const fearBefore = (await getTableState(tableId)).fearCount ?? 0;
         await fearChip.click();
+        await expect(async () => {
+          const state = await getTableState(tableId);
+          expect(state.fearCount, 'Ethereal Visage Fear spend').toBeLessThan(fearBefore);
+        }).toPass({ timeout: 8000 });
       }
 
       await holdForDiceTumble();
@@ -354,7 +430,86 @@ test.describe('Subclass video — Seraph / Winged Sentinel', () => {
       await expect(presenceBanner).not.toBeVisible({ timeout: 5000 });
 
       // ---------------------------------------------------------------------
-      // M2: Player B rolls → Player A spends Prayer Die
+      // Prayer Die — reduce damage (P1): adversary hits ally Reya
+      // ---------------------------------------------------------------------
+      await caption(
+        'GM',
+        'Cultist attacks Reya',
+        'Incoming damage banner for Prayer Die — reduce',
+      );
+      const reduceRoll = await gmAdversaryAttack(tableId, {
+        advInstanceId,
+        targetInstanceId: allyInstanceId,
+        displayName: 'Cultist Thug Smash Reya',
+      });
+      expect(reduceRoll._rollDbId).toBeTruthy();
+      const reduceBannerText = 'Cultist Thug Smash Reya';
+      for (const p of [gmPage, playerPage]) {
+        await expect(p.locator('.dice-result-banner', { hasText: reduceBannerText })).toBeVisible({
+          timeout: 8000,
+        });
+      }
+      await caption(
+        'PLAYER A',
+        'Prayer Die — reduce damage',
+        'Spends a Prayer Die to reduce incoming damage on Reya',
+      );
+      const prayerDieReduceGroup = playerPage.getByLabel(/reduce incoming damage/i).first();
+      const prayerDieReduceOption = prayerDieReduceGroup
+        .getByRole('button', { name: /^d4 \(/ })
+        .first();
+      await expect(
+        prayerDieReduceOption,
+        'Prayer Die — reduce damage chip missing',
+      ).toBeVisible({ timeout: 8000 });
+      await prayerDieReduceOption.click();
+      await expect(async () => {
+        const state = await getTableState(tableId);
+        const el = (state.elements || []).find((e) => e.instanceId === seraphInstanceId);
+        const pool = el?.prayerDice?.pool;
+        expect(Array.isArray(pool), 'reduce: pool missing').toBe(true);
+        expect(pool.length, 'reduce: pool should shrink by 1').toBe(prayerPoolLen - 1);
+      }).toPass({ timeout: 8000 });
+      prayerPoolLen -= 1;
+
+      await holdForDiceTumble();
+      await caption('GM', 'Acknowledges Cultist smash', '');
+      await gmPage.keyboard.press('Escape');
+      const reduceBanner = gmPage.locator('.dice-result-banner', { hasText: reduceBannerText });
+      await ack(reduceBanner, { force: true, holdMs: 0 });
+      await expect(reduceBanner).not.toBeVisible({ timeout: 5000 });
+
+      // ---------------------------------------------------------------------
+      // Prayer Dice — gain Hope (P1 card chip)
+      // ---------------------------------------------------------------------
+      const hopeBeforeGain = (
+        await getTableState(tableId)
+      ).elements?.find((e) => e.instanceId === seraphInstanceId)?.hope;
+      await caption(
+        'PLAYER A',
+        'Prayer Dice — gain Hope',
+        'Spends a Prayer Die from the Actions strip to gain Hope equal to its face',
+      );
+      const gainHopeGroup = playerPage.getByRole('group', { name: /Prayer Dice — gain Hope/i });
+      await ensureSheetOpen(playerPage, playerElyraCard, gainHopeGroup);
+      const gainHopeOption = gainHopeGroup.getByRole('button', { name: /^d4 \(/ }).first();
+      await expect(gainHopeOption, 'Prayer Dice — gain Hope chip missing').toBeVisible({
+        timeout: 8000,
+      });
+      await gainHopeOption.click();
+      await expect(async () => {
+        const state = await getTableState(tableId);
+        const el = (state.elements || []).find((e) => e.instanceId === seraphInstanceId);
+        const pool = el?.prayerDice?.pool;
+        expect(Array.isArray(pool), 'gain Hope: pool missing').toBe(true);
+        expect(pool.length, 'gain Hope: pool should shrink by 1').toBe(prayerPoolLen - 1);
+        expect(el?.hope, 'gain Hope: Hope should increase').toBeGreaterThan(hopeBeforeGain ?? 0);
+      }).toPass({ timeout: 8000 });
+      prayerPoolLen -= 1;
+      await playerPage.keyboard.press('Escape');
+
+      // ---------------------------------------------------------------------
+      // M2: Player B rolls → Player A spends Prayer Die — Action (P0 pool shrink)
       // ---------------------------------------------------------------------
       const playerBReyaCard = playerBPage.locator('div.group\\/char', { hasText: 'Reya' });
       await caption('PLAYER B', 'Rolls Agility', 'Pending banner for Elyra to aid with a Prayer Die');
@@ -377,8 +532,23 @@ test.describe('Subclass video — Seraph / Winged Sentinel', () => {
       );
       const prayerDieActionGroup = playerPage.getByLabel(/add its value to this action roll/i).first();
       const prayerDieOption = prayerDieActionGroup.getByRole('button', { name: /^d4 \(/ }).first();
-      await expect(prayerDieOption).toBeVisible({ timeout: 8000 });
+      await expect(prayerDieOption, 'Prayer Die — Action chip missing').toBeVisible({ timeout: 8000 });
+      const poolBeforeAction = (
+        await getTableState(tableId)
+      ).elements?.find((e) => e.instanceId === seraphInstanceId)?.prayerDice?.pool?.length;
+      expect(poolBeforeAction, 'Prayer Die — Action: pool empty before spend').toBeGreaterThan(0);
       await prayerDieOption.click();
+
+      await expect(async () => {
+        const state = await getTableState(tableId);
+        const el = (state.elements || []).find((e) => e.instanceId === seraphInstanceId);
+        const pool = el?.prayerDice?.pool;
+        expect(Array.isArray(pool), 'Prayer Die — Action: pool missing').toBe(true);
+        expect(pool.length, 'Prayer Die — Action: pool should shrink by 1').toBe(poolBeforeAction - 1);
+      }).toPass({ timeout: 12000 });
+      await expect(
+        playerPage.locator('.dice-result-banner', { hasText: bBannerText }).getByText(/Prayer Die/i).first(),
+      ).toBeVisible({ timeout: 8000 });
 
       await holdForDiceTumble();
       await caption('GM', "Acknowledges Reya’s roll", '');
@@ -390,7 +560,7 @@ test.describe('Subclass video — Seraph / Winged Sentinel', () => {
       await caption(
         'Seraph / Winged Sentinel',
         'Walkthrough complete',
-        'Prayer Dice resume, Wings of Light, Life Support, M2 Prayer Die spend',
+        'Ascendant, Wings d12, Ethereal Visage, Prayer Die Reduce/Hope/Action',
       );
 
       const seriousErrors = filterSeriousSubclassConsoleErrors(consoleErrors);

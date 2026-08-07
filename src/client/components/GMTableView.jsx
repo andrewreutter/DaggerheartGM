@@ -2666,16 +2666,24 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
       // persisted/sent by the server) — recompute it here alongside the other SRD-derived fields
       // (`spellcastTrait`, `traits`, `tier`) so the hook-scanning loops below actually find features
       // (e.g. Seraph Prayer Dice `onSessionStart`).
+      // Merge declarative overlay so activeFeatures carry `_sourceScopeKey` / `_sourceObject`
+      // (recompute alone spreads descriptors but omits registry scope — subclass `table.source`
+      // bags like Call of the Slayer would no-op onSessionStart without it).
       let workingElements = activeElements.map((e) => {
         if (e.elementType !== 'character') return { ...e };
-        const rec = recomputeCharacter(e, srdData);
-        if (!rec || rec === e) return { ...e };
+        const base = recomputeCharacter(e, srdData);
+        if (!base) return { ...e };
+        const merged = mergeV2DeclarativeSheetOverlay(base, e, srdData, {
+          fearCount,
+          mapConfig,
+          tableFeatureState: sessionTableFeatureState,
+        });
         return {
           ...e,
-          spellcastTrait: rec.spellcastTrait ?? e.spellcastTrait,
-          traits: rec.traits ?? e.traits,
-          tier: rec.tier ?? e.tier,
-          activeFeatures: rec.activeFeatures ?? e.activeFeatures,
+          spellcastTrait: merged.spellcastTrait ?? e.spellcastTrait,
+          traits: merged.traits ?? e.traits,
+          tier: merged.tier ?? e.tier,
+          activeFeatures: merged.activeFeatures ?? base.activeFeatures ?? e.activeFeatures,
         };
       });
       // Use the feature-enriched character list (not the raw `charactersList` above) for every

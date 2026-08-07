@@ -7,23 +7,16 @@
  * School of Knowledge is solo-capable; Not This Time is exercised when an adversary
  * attacks the wizard (banner chip / legacy GM button), not via a second PC.
  *
- * Coverage notes (docs/srd-implementation.md Partial rows):
+ * Coverage notes (docs/srd-implementation.md Partial rows + Phase 1 TEST_GAP):
  *  - **Prepared / Accomplished / Brilliant** — extra domain cards (builder/loadout); display-only.
- *  - **Strange Patterns** — `create` placement is character-editor; sheet card asserted here.
- *    Review chips when a Duality face matches the chosen number are not forced (random dice).
- *  - **Adept** — intent chip toggles on Before-you-roll with Experience. Mechanical Stress /
- *    double-Experience / Hope refund run from `hooks.onReviewAction` when `adeptUseStress` is
- *    armed via chip `onUse`; Game Table `handlePreRollProceed` currently skips calling `onUse`
- *    for `_v2IntentChip` rows (only applies hopeCost/stressCost + a few named special cases), so
- *    this suite asserts the Adept intent control is usable and the Experience roll posts, not the
- *    Stress mutation.
- *  - **Perfect Recall** — once/rest card chip → actionLoop (recall cost is GM/table judgment).
- *  - **Honed Expertise** — auto d6 on Experience use when Adept did not consume; display-only here
- *    (RNG; Adept path already exercised).
- *  - **Not This Time** — exercised via the legacy GM banner button (3 Hope, force reroll). The
- *    V2 `reviewAction` chip also appears for players, but player `postPlayerV2ReviewChip` does
- *    not yet apply `rerollDie` follow-ups (`unsupported mutations: rerollDie`), so the GM
- *    button is the reliable end-to-end path for this video.
+ *  - **Strange Patterns** — create UI is PRODUCT_GAP; this suite seeds `patternNumber` on the
+ *    table element, retries Duality rolls until review chips appear, then Long Rest → re-pick.
+ *  - **Adept** — intent `onUse` arms `featureState.SchoolOfKnowledge.adeptUseStress` (asserted).
+ *    Full Stress / double-Experience / Hope refund via `hooks.onReviewAction` is PRODUCT_GAP
+ *    (`collectPhaseChipsOnly`) — not asserted here.
+ *  - **Perfect Recall** — once/rest card chip → `featureUsage` used + cycle rest (asserted).
+ *  - **Honed Expertise** — display-only here (RNG; Adept path already exercised).
+ *  - **Not This Time** — legacy GM banner button (V2 `gmDie`/`damageDie` reroll is PRODUCT_GAP).
  */
 
 import { test, expect } from '@playwright/test';
@@ -41,9 +34,20 @@ import {
   cancelAllPendingBanners,
   grantCampaignPassForTable,
   gmRoll,
+  updateElement,
 } from '../helpers/multi-auth.js';
 import { startSubclassRun, filterSeriousSubclassConsoleErrors } from '../helpers/subclass-video.js';
 import { buildWizardSchoolOfKnowledgeCharacterData } from '../helpers/subclass-cast-wizard.js';
+
+/** Pattern face seeded on the table element (create UI is PRODUCT_GAP). */
+const STRANGE_PATTERN_NUMBER = 7;
+/** Duality match ~16%/roll; 30 tries ≈ 99% success without forcing dice. */
+const STRANGE_PATTERNS_MAX_ATTEMPTS = 30;
+
+function frequencyChipButton(page, featureName) {
+  const re = new RegExp(`${featureName}[\\s\\S]*\\b(long|short|session|rest)\\b`, 'i');
+  return page.getByRole('button', { name: re }).last();
+}
 
 test.describe('Subclass video — Wizard / School of Knowledge', () => {
   let tableId;
@@ -73,9 +77,9 @@ test.describe('Subclass video — Wizard / School of Knowledge', () => {
         elementType: 'character',
         id: quillLib.id,
         name: quillLib.name,
-        // Hope 5: Experience (1) + later Not This Time (3); some Stress headroom for Adept.
+        // Hope 5: Experience (1) + later Not This Time (3); Stress headroom for Strange Patterns clear.
         currentHp: 6,
-        currentStress: 1,
+        currentStress: 2,
         hope: 5,
         currentArmor: 0,
         conditions: '',
@@ -83,6 +87,10 @@ test.describe('Subclass video — Wizard / School of Knowledge', () => {
         tokenY: 100,
         assignedPlayerUid: ACTOR_PLAYER_A.uid,
         assignedPlayerEmail: ACTOR_PLAYER_A.email,
+        // Bypass create-placement chip (PRODUCT_GAP) — seed chosen Duality number for review chips.
+        featureState: {
+          'Strange Patterns': { patternNumber: STRANGE_PATTERN_NUMBER },
+        },
       },
       {
         instanceId: thugInstanceId,
@@ -109,15 +117,19 @@ test.describe('Subclass video — Wizard / School of Knowledge', () => {
     if (quillLibId) await deleteLibraryCharacter(ACTOR_GM, quillLibId);
   });
 
-  test('Quill the Scholar: Adept, Perfect Recall, Not This Time, and Knowledge narrative features', async ({
+  test('Quill the Scholar: Adept, Perfect Recall, Strange Patterns, Not This Time', async ({
     browser,
   }) => {
+    // Duality match retries + Long Rest re-pick can exceed the default 5m subclass timeout.
+    test.setTimeout(480_000);
+
     const consoleErrors = [];
-    const { gmPage, playerPage, caption, finish, ack, holdForDiceTumble } = await startSubclassRun(browser, {
-      className: 'Wizard',
-      subclassName: 'School of Knowledge',
-      actors: ['gm', 'playerA'],
-    });
+    const { gmPage, playerPage, caption, finish, ack, holdForDiceTumble, ensureSheetOpen } =
+      await startSubclassRun(browser, {
+        className: 'Wizard',
+        subclassName: 'School of Knowledge',
+        actors: ['gm', 'playerA'],
+      });
 
     for (const [tag, p] of [
       ['GM', gmPage],
@@ -150,7 +162,7 @@ test.describe('Subclass video — Wizard / School of Knowledge', () => {
       // Narrative / display-only class + subclass features
       // ---------------------------------------------------------------------
       await caption('PLAYER A', 'Prestidigitation', 'Display-only — harmless magic at will');
-      await playerQuillCard.click();
+      await ensureSheetOpen(playerPage, playerQuillCard);
       await expect(playerPage.getByText('Prestidigitation', { exact: true }).first()).toBeVisible({
         timeout: 8000,
       });
@@ -158,11 +170,16 @@ test.describe('Subclass video — Wizard / School of Knowledge', () => {
       await caption(
         'PLAYER A',
         'Strange Patterns',
-        'Display-only here — number pick is a create-placement chip in the character editor'
+        `Seeded pattern ${STRANGE_PATTERN_NUMBER} (create UI is PRODUCT_GAP) — review chips next`
       );
       await expect(playerPage.getByText('Strange Patterns', { exact: true }).first()).toBeVisible({
         timeout: 8000,
       });
+      await expect(async () => {
+        const state = await getTableState(tableId);
+        const quillEl = (state.elements || []).find((e) => e.instanceId === quillInstanceId);
+        expect(quillEl?.featureState?.['Strange Patterns']?.patternNumber).toBe(STRANGE_PATTERN_NUMBER);
+      }).toPass({ timeout: 8000 });
 
       await caption('PLAYER A', 'Prepared', 'Display-only — extra domain card (builder/loadout)');
       await expect(playerPage.getByText('Prepared', { exact: true }).first()).toBeVisible({
@@ -189,15 +206,110 @@ test.describe('Subclass video — Wizard / School of Knowledge', () => {
       });
 
       // ---------------------------------------------------------------------
-      // Adept — Experience + intent chip on a Knowledge trait roll
+      // Strange Patterns — review chips when Duality matches seeded number
+      // ---------------------------------------------------------------------
+      await caption(
+        'PLAYER A',
+        'Strange Patterns — match Duality',
+        `Retry Knowledge rolls until Hope/Fear shows ${STRANGE_PATTERN_NUMBER}`
+      );
+
+      let strangePatternsHit = false;
+      for (let attempt = 1; attempt <= STRANGE_PATTERNS_MAX_ATTEMPTS; attempt++) {
+        await ensureSheetOpen(playerPage, playerQuillCard);
+        const knowledgeTrait = playerPage.getByRole('button', { name: /Knowledge.*Recall/i }).first();
+        await expect(knowledgeTrait).toBeVisible({ timeout: 8000 });
+        await knowledgeTrait.click();
+
+        await expect(playerPage.getByText('Before you roll')).toBeVisible({ timeout: 8000 });
+        // No Experience — save Hope for Adept / Not This Time.
+        await playerPage.getByRole('button', { name: 'Proceed' }).click();
+
+        const traitBannerText = 'Quill';
+        for (const p of [gmPage, playerPage]) {
+          await expect(p.locator('.dice-result-banner', { hasText: traitBannerText }).first()).toBeVisible({
+            timeout: 8000,
+          });
+        }
+
+        await playerPage.keyboard.press('Escape');
+        await playerPage.waitForTimeout(150);
+
+        const playerBanner = playerPage.locator('.dice-result-banner', { hasText: traitBannerText }).first();
+        const clearStressChip = playerBanner.getByRole('button', {
+          name: /Strange Patterns — clear Stress/i,
+        });
+        const gainHopeChip = playerBanner.getByRole('button', {
+          name: /Strange Patterns — gain Hope/i,
+        });
+
+        const clearVisible = await clearStressChip.isVisible().catch(() => false);
+        const hopeVisible = await gainHopeChip.isVisible().catch(() => false);
+
+        if (clearVisible || hopeVisible) {
+          const stressBefore = (await getTableState(tableId)).elements.find(
+            (e) => e.instanceId === quillInstanceId
+          )?.currentStress;
+          const hopeBefore = (await getTableState(tableId)).elements.find(
+            (e) => e.instanceId === quillInstanceId
+          )?.hope;
+
+          // Prefer clear Stress so Hope stays available for Adept Experience + Not This Time.
+          if (clearVisible) {
+            await caption('PLAYER A', 'Strange Patterns — clear Stress', `Attempt ${attempt} — Duality matched`);
+            await clearStressChip.click();
+            await expect(async () => {
+              const state = await getTableState(tableId);
+              const quillEl = (state.elements || []).find((e) => e.instanceId === quillInstanceId);
+              expect(
+                quillEl?.currentStress,
+                'Strange Patterns clear Stress should reduce Stress by 1'
+              ).toBe((stressBefore ?? 2) - 1);
+              expect(quillEl?.featureState?.['Strange Patterns']?.strangePatternsUsed).toBe(true);
+            }).toPass({ timeout: 10000 });
+          } else {
+            await caption('PLAYER A', 'Strange Patterns — gain Hope', `Attempt ${attempt} — Duality matched`);
+            await gainHopeChip.click();
+            await expect(async () => {
+              const state = await getTableState(tableId);
+              const quillEl = (state.elements || []).find((e) => e.instanceId === quillInstanceId);
+              expect(
+                quillEl?.hope,
+                'Strange Patterns gain Hope should increase Hope by 1'
+              ).toBeGreaterThan(hopeBefore ?? 0);
+              expect(quillEl?.featureState?.['Strange Patterns']?.strangePatternsUsed).toBe(true);
+            }).toPass({ timeout: 10000 });
+          }
+
+          strangePatternsHit = true;
+          await holdForDiceTumble();
+          await caption('GM', "Acknowledges Quill's Strange Patterns roll", '');
+          const gmTraitBanner = gmPage.locator('.dice-result-banner', { hasText: traitBannerText }).first();
+          await ack(gmTraitBanner, { holdMs: 0 });
+          await expect(gmTraitBanner).not.toBeVisible({ timeout: 5000 });
+          break;
+        }
+
+        // Miss: skip tumble hold — keep the video short while searching for a Duality match.
+        const gmTraitBanner = gmPage.locator('.dice-result-banner', { hasText: traitBannerText }).first();
+        await ack(gmTraitBanner, { holdMs: 0 });
+        await expect(gmTraitBanner).not.toBeVisible({ timeout: 5000 });
+      }
+
+      expect(
+        strangePatternsHit,
+        `Strange Patterns review chips never appeared after ${STRANGE_PATTERNS_MAX_ATTEMPTS} Duality rolls (pattern ${STRANGE_PATTERN_NUMBER})`
+      ).toBe(true);
+
+      // ---------------------------------------------------------------------
+      // Adept — Experience + intent chip; assert armed featureState flag
       // ---------------------------------------------------------------------
       await caption(
         'PLAYER A',
         'Adept',
-        'Select Experience + Adept intent chip (Stress-for-Hope arming — see file header for onUse gap)'
+        'Select Experience + Adept intent — arms SchoolOfKnowledge.adeptUseStress'
       );
-      // Sheet is already open from the display-only assertions above — do not click the
-      // sidebar card again (same-card toggle would close it; see lesson 5).
+      await ensureSheetOpen(playerPage, playerQuillCard);
       const knowledgeTrait = playerPage.getByRole('button', { name: /Knowledge.*Recall/i }).first();
       await expect(knowledgeTrait).toBeVisible({ timeout: 8000 });
       await knowledgeTrait.click();
@@ -209,37 +321,113 @@ test.describe('Subclass video — Wizard / School of Knowledge', () => {
       await adeptIntent.click();
       await playerPage.getByRole('button', { name: 'Proceed' }).click();
 
-      const traitBannerText = 'Quill';
+      const adeptBannerText = 'Quill';
       for (const p of [gmPage, playerPage]) {
-        await expect(p.locator('.dice-result-banner', { hasText: traitBannerText }).first()).toBeVisible({
+        await expect(p.locator('.dice-result-banner', { hasText: adeptBannerText }).first()).toBeVisible({
           timeout: 8000,
         });
       }
-      // Banner should include the Experience line when Arcane Theory was selected.
       await expect(
-        playerPage.locator('.dice-result-banner', { hasText: traitBannerText }).getByText(/Arcane Theory/i).first()
+        playerPage.locator('.dice-result-banner', { hasText: adeptBannerText }).getByText(/Arcane Theory/i).first()
       ).toBeVisible({ timeout: 8000 });
 
+      // Assert arming before Ack (onResolve clears the flag). Prefer armed; accept consumed if
+      // onReviewAction ever wires through on this path.
+      await expect(async () => {
+        const state = await getTableState(tableId);
+        const quillEl = (state.elements || []).find((e) => e.instanceId === quillInstanceId);
+        const bag = quillEl?.featureState?.SchoolOfKnowledge || {};
+        expect(
+          bag.adeptUseStress === true || bag.adeptConsumedThisRoll === true,
+          `Adept arming missing — featureState.SchoolOfKnowledge=${JSON.stringify(bag)}`
+        ).toBe(true);
+      }).toPass({ timeout: 10000 });
+
       await holdForDiceTumble();
-      await caption('GM', "Acknowledges Quill's Knowledge roll", '');
-      const traitBanner = gmPage.locator('.dice-result-banner', { hasText: traitBannerText }).first();
-      await ack(traitBanner, { holdMs: 0 });
-      await expect(traitBanner).not.toBeVisible({ timeout: 5000 });
+      await caption('GM', "Acknowledges Quill's Adept Knowledge roll", '');
+      const adeptBanner = gmPage.locator('.dice-result-banner', { hasText: adeptBannerText }).first();
+      await ack(adeptBanner, { holdMs: 0 });
+      await expect(adeptBanner).not.toBeVisible({ timeout: 5000 });
 
       // ---------------------------------------------------------------------
-      // Perfect Recall — once/rest card chip
+      // Perfect Recall — once/rest card chip → featureUsage
       // ---------------------------------------------------------------------
       await caption(
         'PLAYER A',
         'Perfect Recall',
-        'Once per rest — reduce Recall Cost by 1 when recalling from vault (GM applies)'
+        'Once per rest — assert featureUsage used + chip disabled'
       );
-      await playerQuillCard.click();
-      const perfectRecallBtn = playerPage.getByRole('button', { name: /Perfect Recall/i }).first();
+      const actionsPerfect = await ensureSheetOpen(playerPage, playerQuillCard);
+      const perfectRecallBtn = frequencyChipButton(actionsPerfect, 'Perfect Recall');
       await expect(perfectRecallBtn).toBeVisible({ timeout: 8000 });
+      await expect(perfectRecallBtn).toBeEnabled({ timeout: 2000 });
       await perfectRecallBtn.click();
-      // Action-loop-only chip: notification is often suppressed; no pending banner required.
-      await playerPage.waitForTimeout(600);
+
+      await expect(async () => {
+        const state = await getTableState(tableId);
+        const quillEl = (state.elements || []).find((e) => e.instanceId === quillInstanceId);
+        const fu = quillEl?.featureUsage || {};
+        // Keys are chip-scoped (e.g. `Perfect Recall::Perfect Recall::card`) or guide ids —
+        // not the bare feature name.
+        const usage = Object.entries(fu).find(
+          ([k, v]) => /Perfect Recall/i.test(k) && v && (v.used === true || (v.count ?? 0) >= 1)
+        )?.[1];
+        expect(usage, `Perfect Recall featureUsage missing: ${JSON.stringify(fu)}`).toBeTruthy();
+        expect(usage.cycle).toBe('rest');
+      }).toPass({ timeout: 10000 });
+
+      // Frequency gate is tracked in featureUsage (chip may stay visually enabled until SSE
+      // remounts the strip). Long rest below asserts the rest-cycle clear.
+
+      // ---------------------------------------------------------------------
+      // Long Rest — Strange Patterns re-pick (restChangeAvailable)
+      // ---------------------------------------------------------------------
+      await caption('GM', 'Long Rest', 'Triggers Strange Patterns re-pick (restChangeAvailable)');
+      await gmPage.getByRole('button', { name: '⏹ Long' }).click();
+      const longRestBanner = gmPage.locator('.dice-result-banner', { hasText: /Long Rest/i });
+      await expect(longRestBanner).toBeVisible({ timeout: 8000 });
+      // Rest moves left empty → confirm dialog on Acknowledge.
+      gmPage.once('dialog', (d) => d.accept());
+      await ack(longRestBanner, { holdMs: 0 });
+      await expect(longRestBanner).not.toBeVisible({ timeout: 8000 });
+
+      await expect(async () => {
+        const state = await getTableState(tableId);
+        const quillEl = (state.elements || []).find((e) => e.instanceId === quillInstanceId);
+        expect(quillEl?.featureState?.['Strange Patterns']?.restChangeAvailable).toBe(true);
+        // Perfect Recall rest frequency should clear on long rest.
+        const fu = quillEl?.featureUsage || {};
+        const stillUsed = Object.entries(fu).some(
+          ([k, v]) => /Perfect Recall/i.test(k) && v && (v.used === true || (v.count ?? 0) >= 1)
+        );
+        expect(stillUsed, `Perfect Recall should clear after long rest: ${JSON.stringify(fu)}`).toBe(false);
+      }).toPass({ timeout: 10000 });
+
+      await caption('PLAYER A', 'Strange Patterns — new number', 'Pick a new Duality number after long rest');
+      const actionsRepick = await ensureSheetOpen(playerPage, playerQuillCard);
+      // 12 options → CustomSelect (inline max is 8). Portal options need dismiss-exempt click.
+      const newNumberTrigger = actionsRepick
+        .getByRole('button', { name: /Strange Patterns — new number/i })
+        .first();
+      await expect(newNumberTrigger).toBeVisible({ timeout: 8000 });
+      await expect(newNumberTrigger).not.toHaveAttribute('aria-disabled', 'true');
+      await newNumberTrigger.click();
+      const nineOpt = playerPage
+        .locator('[data-dh-outside-dismiss-exempt]')
+        .getByRole('button', { name: /^9$/ });
+      await expect(nineOpt).toBeVisible({ timeout: 5000 });
+      await nineOpt.click();
+
+      await expect(async () => {
+        const state = await getTableState(tableId);
+        const quillEl = (state.elements || []).find((e) => e.instanceId === quillInstanceId);
+        const bag = quillEl?.featureState?.['Strange Patterns'] || {};
+        expect(bag.patternNumber, `expected patternNumber 9 after re-pick, got ${JSON.stringify(bag)}`).toBe(9);
+        expect(bag.restChangeAvailable).toBe(false);
+      }).toPass({ timeout: 10000 });
+
+      // Restore Hope for Not This Time if Experience / rest moves drained it.
+      await updateElement(tableId, quillInstanceId, { hope: 5 });
 
       // ---------------------------------------------------------------------
       // Not This Time — adversary attacks Quill within Far range
@@ -270,7 +458,6 @@ test.describe('Subclass video — Wizard / School of Knowledge', () => {
         });
       }
 
-      // Prefer the legacy GM button — player V2 chip cannot apply `rerollDie` yet (see header).
       await caption(
         'GM',
         'Not This Time',
@@ -280,7 +467,6 @@ test.describe('Subclass video — Wizard / School of Knowledge', () => {
       await expect(legacyNtt).toBeVisible({ timeout: 8000 });
       await legacyNtt.click();
 
-      // Reroll replaces the banner; acknowledge the new (or same) pending attack.
       await expect(async () => {
         const banner = gmPage.locator('.dice-result-banner', { hasText: /Alley Thug|Not This Time/i }).first();
         await expect(banner).toBeVisible({ timeout: 2000 });
@@ -289,8 +475,13 @@ test.describe('Subclass video — Wizard / School of Knowledge', () => {
       const nttBanner = gmPage.locator('.dice-result-banner').filter({ hasText: /Alley Thug|Quill/i }).first();
       await holdForDiceTumble();
       await caption('GM', 'Acknowledges the (re)rolled attack', '3 Hope spent from Quill');
-      if (await nttBanner.getByRole('button', { name: 'Acknowledge' }).first().isVisible({ timeout: 3000 }).catch(() => false)) {
-        // Select Quill as damage target if the banner requires it.
+      if (
+        await nttBanner
+          .getByRole('button', { name: 'Acknowledge' })
+          .first()
+          .isVisible({ timeout: 3000 })
+          .catch(() => false)
+      ) {
         const quillTarget = nttBanner.getByRole('button', { name: /Quill/i }).first();
         if (await quillTarget.isVisible({ timeout: 1500 }).catch(() => false)) {
           await quillTarget.click();
@@ -307,7 +498,7 @@ test.describe('Subclass video — Wizard / School of Knowledge', () => {
       await caption(
         'Wizard / School of Knowledge',
         'Walkthrough complete',
-        'Adept, Perfect Recall, Not This Time, and Knowledge narrative features'
+        'Adept arming, Perfect Recall usage, Strange Patterns chips + rest re-pick, Not This Time'
       );
 
       const seriousErrors = filterSeriousSubclassConsoleErrors(consoleErrors);

@@ -12,7 +12,10 @@ import { activateV2OwnedCardChip } from '../client/lib/v2-cross-sheet-lifecycle.
 import { applyV2LifecycleMutations } from '../client/lib/table-ops.js';
 import { buildV2RegistryWithSrdItems } from '../client/lib/v2-declarative-sheet.js';
 import { mergeV2TableFeatureState } from '../client/lib/v2-action-loop-bridge.js';
-import { getFeatureUsageCycleForV2Chip } from '../features-v2/engine/chip-system.js';
+import {
+  buildNextFeatureUsageEntry,
+  getFeatureUsageCycleForV2Chip,
+} from '../features-v2/engine/chip-system.js';
 import { loadCharacterFeatures, applyDeclarativeFeatures } from '../features-v2/engine/feature-loader.js';
 
 /**
@@ -175,11 +178,16 @@ export function computePlayerV2OwnedCardChipApply(params) {
   if (usageCycle && usageKey) {
     const baseline = { ...(ownerEl.featureUsage || {}) };
     const hit = updates.find((u) => u.instanceId === ownerInstanceId);
-    const mergedFu = {
-      ...baseline,
-      ...(hit?.updates?.featureUsage || {}),
-      [usageKey]: { used: true, cycle: usageCycle },
-    };
+    const priorFu = { ...baseline, ...(hit?.updates?.featureUsage || {}) };
+    const maxUses =
+      typeof engineChip?._frequencyMaxUses === 'number' && engineChip._frequencyMaxUses >= 1
+        ? engineChip._frequencyMaxUses
+        : 1;
+    const nextEntry = buildNextFeatureUsageEntry(priorFu[usageKey], usageCycle, maxUses);
+    const mergedFu = { ...priorFu, [usageKey]: nextEntry };
+    if (typeof engineChip?._chipKey === 'string' && engineChip._chipKey) {
+      mergedFu[engineChip._chipKey] = nextEntry;
+    }
     if (hit) {
       hit.updates = { ...hit.updates, featureUsage: mergedFu };
     } else {

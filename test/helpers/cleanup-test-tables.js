@@ -54,21 +54,50 @@ export function isTestGmUserId(userId) {
 }
 
 /**
+ * When `TEST_ACTOR_NS` is set (parallel Cursor agents, each with their own
+ * PLAYWRIGHT_TEST_PORT), only purge that namespace's GM tables so one agent's
+ * globalSetup cannot DELETE another agent's in-flight `table_state` rows.
+ * Unset → legacy: all `test-user-uid` / `test-user-uid-*` owners.
+ *
+ * @param {string | undefined} [actorNs]
+ * @returns {{ sql: string, params: string[] }}
+ */
+export function buildTestGmTableOwnerFilter(actorNs = process.env.TEST_ACTOR_NS) {
+  const ns = typeof actorNs === 'string' ? actorNs.trim() : '';
+  if (!ns) {
+    // Default / CI: bare GM + SUBCLASS_PARALLEL workers (`test-user-uid-w0`, …).
+    // Do NOT use `test-user-uid-%` — that wipes parallel Cursor agents that set
+    // TEST_ACTOR_NS (e.g. `test-user-uid-guardian-p1`) mid-run via their globalSetup.
+    return {
+      sql: `(user_id = $2 OR user_id ~ $3)`,
+      params: ['test-user-uid', '^test-user-uid-w[0-9]+(-.*)?$'],
+    };
+  }
+  const exact = `test-user-uid-${ns}`;
+  return {
+    sql: `(user_id = $2 OR user_id LIKE $3)`,
+    params: [exact, `${exact}-%`],
+  };
+}
+
+/**
  * Delete every `table_state` row owned by a test GM uid, plus related
  * placement / campaign-pass rows for those table ids.
  *
  * @param {{ query: (sql: string, params?: unknown[]) => Promise<{ rows: object[], rowCount?: number }> }} db
  * @param {string} [appId]
+ * @param {{ actorNs?: string }} [opts] — override `TEST_ACTOR_NS` scoping (tests)
  * @returns {Promise<{ deletedTableIds: string[], gmUserIds: string[] }>}
  */
-export async function cleanupOrphanedTestTablesWithDb(db, appId = 'daggerheart-gm-tool') {
+export async function cleanupOrphanedTestTablesWithDb(db, appId = 'daggerheart-gm-tool', opts = {}) {
+  const ownerFilter = buildTestGmTableOwnerFilter(opts.actorNs ?? process.env.TEST_ACTOR_NS);
   const { rows: tableRows } = await db.query(
     `SELECT id, user_id
        FROM items
       WHERE app_id = $1
         AND collection = 'table_state'
-        AND (user_id = 'test-user-uid' OR user_id LIKE 'test-user-uid-%')`,
-    [appId],
+        AND ${ownerFilter.sql}`,
+    [appId, ...ownerFilter.params],
   );
 
   const deletedTableIds = tableRows.map((r) => r.id);
