@@ -10,7 +10,7 @@ follow-on agents don't have to rediscover them.
 |---|-------|----------|--------|
 | 1 | Bard | Troubadour | ✅ Done — Phase 1 P0–P1 hardened (`difficultyMod`, Rally d8 / banner die / Damage / reaction / ally Clear Stress / session-end clear, Gifted Performer long-rest uses) — `bard-troubadour.spec.js` |
 | 2 | Bard | Wordsmith | ✅ Done — Phase 1 P0–P1 hardened (`difficultyMod`, Rally banner die + `partyDice` clear, Eloquent ×3 options, Rousing Speech short/long rest) — `bard-wordsmith.spec.js` |
-| 3 | Druid | Warden of the Elements | ✅ Done — Phase 1 P0–P1 hardened (Earth/Air/Water matrix, Short Rest channel clear; Fragile auto-drop deferred PRODUCT_GAP) — `druid-warden-of-the-elements.spec.js` |
+| 3 | Druid | Warden of the Elements | ✅ Done — Phase 1 P0–P2 hardened (Earth/Air/Water matrix, Fire retaliation + Aura Stress, Air Agility adv, Water splash, aura once/rest, Short Rest; Severe clear E2E deferred; Fragile/Evolution trait/Water reposition/Air fly PRODUCT_GAP) — `druid-warden-of-the-elements.spec.js` |
 | 4 | Druid | Warden of Renewal | ✅ Done — Phase 1 P0–P1 hardened (Protection/Defender numbers, Very Close Regen, Long Rest frequency; Fragile/last-HP deferred PRODUCT_GAP) — `druid-warden-of-renewal.spec.js` |
 | 5 | Guardian | Stalwart | ✅ Done — `test/browser-subclass/guardian-stalwart.spec.js` (Phase 1 P0: +6 threshold bonuses + maxStress 8; sheet bands) |
 | 6 | Guardian | Vengeance | ✅ Done — `test/browser-subclass/guardian-vengeance.spec.js` (Phase 1 P1: Unstoppable frequency + Nemesis Long Rest clear; At Ease 9 Stress) |

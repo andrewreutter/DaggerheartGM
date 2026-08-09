@@ -4961,9 +4961,17 @@ export function BattleMap({
     }
   }, []);
 
+  // Primary bullseye SVG gate: show immediately when snapped to a token, otherwise only after
+  // the free-hover idle delay. Token range-band highlights use the same gate (plus follow-drag).
+  const primaryBullseyeVisible = !!(
+    bullseyeFt && (bullseyeFt.excludeInstanceId != null || bullseyeIdleVisible)
+  );
+  const rangeBullseyeVisible = !!(followBullseyeFt || primaryBullseyeVisible);
+
   // Compute range band index (0–4) for each placed token based on distance to bullseye.
   // During drag from map, use the follow bullseye (moving) so highlights reflect the token being moved.
   const tokenRangeBands = useMemo(() => {
+    if (!rangeBullseyeVisible) return {};
     const center = followBullseyeFt ?? bullseyeFt;
     if (!center) return {};
     const result = {};
@@ -4984,7 +4992,7 @@ export function BattleMap({
       result[element.instanceId] = bandIdx; // -1 means Out of Range
     }
     return result;
-  }, [bullseyeFt, followBullseyeFt, allMapTokens, parentByInstanceId]);
+  }, [rangeBullseyeVisible, bullseyeFt, followBullseyeFt, allMapTokens, parentByInstanceId]);
 
   // Dragged token's range band relative to the static (left-behind) bullseye, for ghost highlight
   const draggedTokenRangeBandFromStatic = useMemo(() => {
@@ -6281,9 +6289,8 @@ export function BattleMap({
               />
 
               {/* Range band bullseye overlay (above draw canvas z-20) */}
-              {/* Show immediately when snapped to a token (excludeInstanceId set), otherwise only
-                  after the cursor has rested over empty map space for BULLSEYE_IDLE_DELAY_MS. */}
-              {bullseyeFt && (bullseyeFt.excludeInstanceId != null || bullseyeIdleVisible) && (
+              {/* Visibility gated by primaryBullseyeVisible (same gate as token range highlights). */}
+              {primaryBullseyeVisible && (
                 <svg
                   className="absolute inset-0 pointer-events-none"
                   style={{ width: renderedWidthPx, height: renderedHeightPx, zIndex: 25 }}

@@ -8,7 +8,8 @@
  *
  * Multi-user coverage exercised here (per the plan's "Bard/Troubadour + Wordsmith" row):
  *  - Player A (the Troubadour) runs Make a Scene and Gifted Performer songs (Relaxing /
- *    Epic / Heartbreaking) — these mutate OTHER characters/adversaries via
+ *    Epic / Heartbreaking) — each song twice after Virtuoso onSessionStart doubles the
+ *    per-long-rest cap — these mutate OTHER characters/adversaries via
  *    `POST /api/room/:tableId/v2-owned-card-chip` (lesson 7: prefer Player A for
  *    multi-instance owned card chips).
  *  - Player A also runs "Grant Rally Dice" and "Spend Rally Die — Clear Stress" on
@@ -272,8 +273,8 @@ test.describe('Subclass video — Bard / Troubadour', () => {
         expect(gpBag?.relaxingUses).toBe(2);
       }).toPass({ timeout: 8000 });
 
-      // Epic Song: make the Goblin Vulnerable.
-      await caption('PLAYER A', 'Epic Song', 'Applies Vulnerable to a target within Close range');
+      // Epic Song ×2 — Virtuoso doubles this song’s per-long-rest cap (not only Relaxing).
+      await caption('PLAYER A', 'Epic Song (1st use)', 'Applies Vulnerable to a target within Close range');
       const actionsEpic = await ensureSheetOpen(playerPage, playerABrixCard);
       const epicSongGroup = actionsEpic.getByRole('group', { name: /Epic Song targets/i });
       await expect(epicSongGroup).toBeVisible({ timeout: 8000 });
@@ -286,8 +287,34 @@ test.describe('Subclass video — Bard / Troubadour', () => {
         expect(String(advEl?.conditions || '')).toMatch(/Vulnerable/i);
       }).toPass({ timeout: 8000 });
 
-      // Heartbreaking Song: Brix and Reya each gain 1 Hope.
-      await caption('PLAYER A', 'Heartbreaking Song', 'Brix and Reya gain 1 Hope');
+      // Clear Vulnerable so the 2nd Epic Song can re-apply a visible condition.
+      await updateElement(tableId, advInstanceId, { conditions: '' });
+      await expect(async () => {
+        const state = await getTableState(tableId);
+        const advEl = (state.elements || []).find((e) => e.instanceId === advInstanceId);
+        expect(String(advEl?.conditions || '')).not.toMatch(/Vulnerable/i);
+      }).toPass({ timeout: 8000 });
+
+      await caption('PLAYER A', 'Epic Song (2nd use)', 'Virtuoso: twice per long rest instead of once');
+      const actionsEpic2 = await ensureSheetOpen(playerPage, playerABrixCard);
+      const epicSongGroup2 = actionsEpic2.getByRole('group', { name: /Epic Song targets/i });
+      await expect(epicSongGroup2).toBeVisible({ timeout: 8000 });
+      await epicSongGroup2.getByRole('button', { name: /Snarling Goblin/i }).click();
+      await expect(playerPage.locator('.dice-result-banner', { hasText: 'Epic Song' })).toHaveCount(0, { timeout: 6000 });
+
+      await expect(async () => {
+        const state = await getTableState(tableId);
+        const advEl = (state.elements || []).find((e) => e.instanceId === advInstanceId);
+        const bardEl = (state.elements || []).find((e) => e.instanceId === bardInstanceId);
+        expect(String(advEl?.conditions || '')).toMatch(/Vulnerable/i);
+        const gpBag =
+          bardEl?.featureState?.['Gifted Performer'] ||
+          Object.values(bardEl?.featureState || {}).find((b) => b && typeof b === 'object' && 'epicUses' in b);
+        expect(gpBag?.epicUses).toBe(2);
+      }).toPass({ timeout: 8000 });
+
+      // Heartbreaking Song ×2 — same Virtuoso cap doubling for the third song.
+      await caption('PLAYER A', 'Heartbreaking Song (1st use)', 'Brix and Reya gain 1 Hope');
       const actionsHeart = await ensureSheetOpen(playerPage, playerABrixCard);
       const heartbreakingBtn = actionsHeart.getByRole('button', { name: /Heartbreaking Song/i });
       await expect(heartbreakingBtn).toBeVisible({ timeout: 8000 });
@@ -300,6 +327,28 @@ test.describe('Subclass video — Bard / Troubadour', () => {
         const allyEl = (state.elements || []).find((e) => e.instanceId === allyInstanceId);
         expect(bardEl?.hope).toBe(1);
         expect(allyEl?.hope).toBe(4);
+      }).toPass({ timeout: 8000 });
+
+      await caption('PLAYER A', 'Heartbreaking Song (2nd use)', 'Virtuoso: twice per long rest instead of once');
+      const actionsHeart2 = await ensureSheetOpen(playerPage, playerABrixCard);
+      const heartbreakingBtn2 = actionsHeart2.getByRole('button', { name: /Heartbreaking Song/i });
+      await expect(heartbreakingBtn2).toBeVisible({ timeout: 8000 });
+      await heartbreakingBtn2.click();
+      await expect(playerPage.locator('.dice-result-banner', { hasText: 'Heartbreaking Song' })).toHaveCount(0, { timeout: 6000 });
+
+      await expect(async () => {
+        const state = await getTableState(tableId);
+        const bardEl = (state.elements || []).find((e) => e.instanceId === bardInstanceId);
+        const allyEl = (state.elements || []).find((e) => e.instanceId === allyInstanceId);
+        expect(bardEl?.hope).toBe(2);
+        expect(allyEl?.hope).toBe(5);
+        const gpBag =
+          bardEl?.featureState?.['Gifted Performer'] ||
+          Object.values(bardEl?.featureState || {}).find((b) => b && typeof b === 'object' && 'heartbreakingUses' in b);
+        expect(gpBag?.heartbreakingUses).toBe(2);
+        // P2 — Virtuoso breadth: all three songs at doubled long-rest cap.
+        expect(gpBag?.relaxingUses).toBe(2);
+        expect(gpBag?.epicUses).toBe(2);
       }).toPass({ timeout: 8000 });
 
       // ---------------------------------------------------------------------
@@ -318,6 +367,8 @@ test.describe('Subclass video — Bard / Troubadour', () => {
           bardEl?.featureState?.['Gifted Performer'] ||
           Object.values(bardEl?.featureState || {}).find((b) => b && typeof b === 'object' && 'relaxingUses' in b);
         expect(gpBag?.relaxingUses).toBe(2);
+        expect(gpBag?.epicUses).toBe(2);
+        expect(gpBag?.heartbreakingUses).toBe(2);
       }).toPass({ timeout: 8000 });
 
       await caption('GM', 'Long Rest', 'Gifted Performer song uses refresh on long rest');
@@ -332,6 +383,8 @@ test.describe('Subclass video — Bard / Troubadour', () => {
           bardEl?.featureState?.['Gifted Performer'] ||
           Object.values(bardEl?.featureState || {}).find((b) => b && typeof b === 'object' && 'relaxingUses' in b);
         expect(gpBag?.relaxingUses ?? 0).toBe(0);
+        expect(gpBag?.epicUses ?? 0).toBe(0);
+        expect(gpBag?.heartbreakingUses ?? 0).toBe(0);
       }).toPass({ timeout: 8000 });
 
       // ---------------------------------------------------------------------

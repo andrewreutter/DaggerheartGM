@@ -9,7 +9,12 @@
  * Phase 1 TEST_GAP hardening (docs/plans/subclass-video-coverage-gaps.md):
  *  - P1 elemental matrix: Fire+Aura, Earth thresholds, Air channel, Water Dominion chip
  *  - P1 Short Rest clears channel / aura featureState
+ *  - P2 combat matrix: Fire retaliation + Fire aura Stress, Air Agility advantage,
+ *    Water splash Stress, aura once/rest gate
+ *  - Severe channel clear: engine unit-tested; E2E skipped (VTT ack applied Minor HP for
+ *    damage [40] vs sheet thresholds 14/21 — needs damageTier / threshold wiring check)
  *  - Beastform Fragile / last-HP auto-drop deferred (PRODUCT_GAP)
+ *  - Skipped PRODUCT_GAP: Evolution trait picker, Water aura reposition, Air fly/hover
  *
  * Coverage notes:
  *  - **Wildtouch** — narrative/display only (announce); caption + assert the card renders.
@@ -34,6 +39,7 @@ import {
   cancelAllPendingBanners,
   grantCampaignPassForTable,
   gmRoll,
+  playerRoll,
 } from '../helpers/multi-auth.js';
 import { startSubclassRun, filterSeriousSubclassConsoleErrors } from '../helpers/subclass-video.js';
 import { buildDruidWardenOfTheElementsCharacterData } from '../helpers/subclass-cast-druid.js';
@@ -48,6 +54,44 @@ async function readSheetMajorThreshold(page) {
   return m ? Number(m[1]) : null;
 }
 
+/** Player A Quarterstaff attack via sheet (fallback: playerRoll API). */
+async function rollQuarterstaffAt(playerPage, playerElmCard, ensureSheetOpen, {
+  targetNameRe,
+  elmInstanceId,
+  targetInstanceId,
+  tableId,
+}) {
+  const staff = playerPage.getByRole('button', { name: /Quarterstaff/i }).first();
+  await ensureSheetOpen(playerPage, playerElmCard, playerPage.getByText(/Quarterstaff/i).first());
+  const canClick = await staff.isVisible({ timeout: 4000 }).catch(() => false);
+  const bannerText = 'Elm Quarterstaff';
+  if (canClick) {
+    await staff.scrollIntoViewIfNeeded();
+    await staff.click();
+    const chooseTargetText = playerPage.getByText('Choose target');
+    if (await chooseTargetText.isVisible({ timeout: 3000 }).catch(() => false)) {
+      await playerPage.getByRole('button', { name: targetNameRe }).first().click();
+    }
+    await expect(playerPage.getByText('Before you roll')).toBeVisible({ timeout: 8000 });
+    await playerPage.getByRole('button', { name: 'Proceed' }).click();
+    await expect(playerPage.getByText('Before you roll')).not.toBeVisible({ timeout: 8000 });
+  } else {
+    await playerRoll(
+      ACTOR_PLAYER_A,
+      tableId,
+      'Hope [1d12] Fear [1d12] [d20+2] damage [1d6+1] phy',
+      bannerText,
+      {
+        _attackerInstanceId: elmInstanceId,
+        _weaponId: 'srd-wpn-quarterstaff',
+        _weaponRangeFt: 5,
+        _selectedTargetInstanceId: targetInstanceId,
+      }
+    );
+  }
+  return bannerText;
+}
+
 test.describe('Subclass video — Druid / Warden of the Elements', () => {
   let tableId;
   let elmLibId;
@@ -55,6 +99,7 @@ test.describe('Subclass video — Druid / Warden of the Elements', () => {
   let elmInstanceId;
   let allyInstanceId;
   let advInstanceId;
+  let adv2InstanceId;
 
   test.beforeAll(async () => {
     await cancelAllPendingBanners();
@@ -74,6 +119,7 @@ test.describe('Subclass video — Druid / Warden of the Elements', () => {
     elmInstanceId = `char-elm-${Date.now()}`;
     allyInstanceId = `char-ally-${Date.now() + 1}`;
     advInstanceId = `adv-goblin-${Date.now() + 2}`;
+    adv2InstanceId = `adv-goblin2-${Date.now() + 3}`;
 
     await addElementsToTable(tableId, [
       {
@@ -82,6 +128,7 @@ test.describe('Subclass video — Druid / Warden of the Elements', () => {
         id: elmLib.id,
         name: elmLib.name,
         // Room for Beastform Stress + Incarnation Stress; full Hope for Evolution (3 Hope).
+        // Extra HP headroom for Fire retaliation inbound + Severe-clear demo.
         currentHp: 7,
         currentStress: 0,
         hope: 6,
@@ -116,9 +163,26 @@ test.describe('Subclass video — Druid / Warden of the Elements', () => {
         hp_max: 8,
         currentHp: 8,
         currentStress: 0,
+        stress_max: 6,
         conditions: '',
-        // Melee of Elm (Fire retaliation / Water Dominion reposition range).
+        // Melee of Elm (Fire retaliation / Water splash / Dominion).
         tokenX: 103,
+        tokenY: 100,
+      },
+      {
+        // Second foe in Very Close of Elm for Water Incarnation splash Stress.
+        instanceId: adv2InstanceId,
+        elementType: 'adversary',
+        id: `test-adv-${adv2InstanceId}`,
+        name: 'Cave Rat',
+        tier: 1,
+        difficulty: 1,
+        hp_max: 4,
+        currentHp: 4,
+        currentStress: 0,
+        stress_max: 6,
+        conditions: '',
+        tokenX: 108,
         tokenY: 100,
       },
     ]);
@@ -159,7 +223,7 @@ test.describe('Subclass video — Druid / Warden of the Elements', () => {
     }
 
     try {
-      await caption('GM', 'Loading the table', 'Elm (Druid/Warden of the Elements), Moss, Snarling Goblin');
+      await caption('GM', 'Loading the table', 'Elm (Druid/Warden of the Elements), Moss, Snarling Goblin, Cave Rat');
       await authenticateActor(gmPage, ACTOR_GM);
       await gmPage.goto(`/table/${tableId}`);
       await playerPage.goto(`/table/${tableId}`);
@@ -216,6 +280,74 @@ test.describe('Subclass video — Druid / Warden of the Elements', () => {
         expect(elm?.featureState?.WardenOfTheElements?.auraUsedThisRest, 'Aura used this rest').toBe(true);
       }).toPass({ timeout: 8000 });
 
+      // P2 — Aura once/rest gate (frequency-exhausted chip omitted from Actions, like Unstoppable).
+      await caption('PLAYER A', 'Elemental Aura (once/rest)', 'Chip omitted until rest clears auraUsedThisRest');
+      const actionsAuraGate = await ensurePlayerSheet();
+      const auraAgain = actionsAuraGate
+        .locator('button.dh-sheet-clickable-chip')
+        .filter({ hasText: /Elemental Aura/i });
+      await expect(auraAgain, 'Aura chip should be omitted after once/rest use').toHaveCount(0);
+
+      // -----------------------------------------------------------------
+      // P2 — Fire Incarnation retaliation + Fire Aura Stress on HP mark.
+      // -----------------------------------------------------------------
+      await caption('GM', 'Goblin strikes Elm (Fire)', 'Melee hit — Fire Retaliation 1d10 + Fire Aura Stress');
+      const goblinHpBeforeFire = (await getTableState(tableId)).elements.find(
+        (e) => e.instanceId === advInstanceId
+      )?.currentHp;
+      // d20+50 vs EVA 13 — guaranteed hit; damage [6] is Minor vs Major 14.
+      await gmRoll(
+        tableId,
+        'Snarling Goblin Claw [d20+50] damage [6] phy',
+        'Snarling Goblin',
+        {
+          _attackerInstanceId: advInstanceId,
+          _attackerType: 'adversary',
+          _selectedTargetInstanceId: elmInstanceId,
+          _attackRangeFt: 5,
+        }
+      );
+
+      const fireHitText = 'Snarling Goblin';
+      for (const p of [gmPage, playerPage]) {
+        await expect(p.locator('.dice-result-banner', { hasText: fireHitText })).toBeVisible({
+          timeout: 8000,
+        });
+      }
+      const fireHitBanner = gmPage.locator('.dice-result-banner', { hasText: fireHitText });
+      await selectBannerDamageTarget(gmPage, fireHitBanner, /Elm/i);
+      await holdForDiceTumble();
+      await caption('GM', 'Acknowledges Goblin hit', 'Triggers Fire Retaliation follow-up');
+      await ack(fireHitBanner, { holdMs: 0 });
+      await expect(fireHitBanner).not.toBeVisible({ timeout: 5000 });
+
+      // postRoll uses displayName=Elm + rollText "…Fire Retaliation damage [1d10]"; banner title is Elm.
+      const fireRetaliation = gmPage
+        .locator('.dice-result-banner')
+        .filter({ hasText: /^Elm|Elm →/ })
+        .filter({ hasText: /1d10|damage/i })
+        .first();
+      await expect(fireRetaliation, 'Fire Retaliation 1d10 banner missing').toBeVisible({
+        timeout: 10000,
+      });
+      await selectBannerDamageTarget(gmPage, fireRetaliation, /Snarling Goblin/i);
+      await holdForDiceTumble();
+      await caption('GM', 'Acknowledges Fire Retaliation', 'Goblin takes magic damage + Fire Aura Stress');
+      await ack(fireRetaliation, { holdMs: 0 });
+      await expect(fireRetaliation).not.toBeVisible({ timeout: 5000 });
+
+      await expect(async () => {
+        const state = await getTableState(tableId);
+        const adv = (state.elements || []).find((e) => e.instanceId === advInstanceId);
+        expect(adv?.currentHp ?? 8, 'Fire Retaliation HP').toBeLessThan(goblinHpBeforeFire ?? 8);
+        expect(adv?.currentStress ?? 0, 'Fire Aura Stress on HP mark').toBeGreaterThanOrEqual(1);
+      }).toPass({ timeout: 10000 });
+
+      // Severe → clearChannel: covered by unit test
+      // `runV2DamageApplyReviewOutcomePhase clears Elemental Incarnation channel on severe HP loss`.
+      // E2E deferred — Game Table ack of damage [40] only marked 1 HP (Minor) despite sheet
+      // thresholds 14/21 (threshold / damageTotal wiring on adversary→PC ack needs a product pass).
+
       // -----------------------------------------------------------------
       // Earth Incarnation — +Proficiency to Major/Severe thresholds (sheet).
       // -----------------------------------------------------------------
@@ -241,11 +373,9 @@ test.describe('Subclass video — Druid / Warden of the Elements', () => {
       }).toPass({ timeout: 8000 });
 
       // -----------------------------------------------------------------
-      // Air Incarnation — channel asserted in featureState.
-      // (Dominion +1 Evasion is applied in applyDeclarativeFeatures / unit-tested;
-      // mergeV2DeclarativeSheetOverlay does not yet surface evasion deltas on the sheet.)
+      // Air Incarnation — channel + P2 Agility advantage die.
       // -----------------------------------------------------------------
-      await caption('PLAYER A', 'Elemental Incarnation (Air)', 'Channel Air (Dominion +1 Evasion in engine)');
+      await caption('PLAYER A', 'Elemental Incarnation (Air)', 'Channel Air — advantage on Agility');
       const actionsForAir = await ensurePlayerSheet();
       await actionsForAir.getByRole('button', { name: /^Air$/i }).click();
       await expect(async () => {
@@ -253,6 +383,27 @@ test.describe('Subclass video — Druid / Warden of the Elements', () => {
         const elm = (state.elements || []).find((e) => e.instanceId === elmInstanceId);
         expect(elm?.featureState?.WardenOfTheElements?.channeledElement, 'Air Incarnation').toBe('air');
       }).toPass({ timeout: 8000 });
+
+      await caption('PLAYER A', 'Elemental Incarnation (Air) — Agility', 'Advantage die on Agility trait roll');
+      const agilityBtn = playerPage.getByRole('button', { name: /Agility.*Sprint/i });
+      await ensureSheetOpen(playerPage, playerElmCard, agilityBtn);
+      await agilityBtn.click();
+      await expect(playerPage.getByText('Before you roll')).toBeVisible({ timeout: 8000 });
+      await playerPage.getByRole('button', { name: 'Proceed' }).click();
+
+      const airAgilityText = 'Elm Agility';
+      const airBanner = playerPage.locator('.dice-result-banner', { hasText: airAgilityText });
+      await expect(airBanner).toBeVisible({ timeout: 8000 });
+      await expect(
+        airBanner.getByText(/Elemental Incarnation \(Air\)/i).first(),
+        'Air Incarnation advantage die missing from Agility banner'
+      ).toBeVisible({ timeout: 8000 });
+
+      await holdForDiceTumble();
+      await caption('GM', 'Acknowledges Air Agility roll', '');
+      const airBannerGm = gmPage.locator('.dice-result-banner', { hasText: airAgilityText });
+      await ack(airBannerGm, { holdMs: 0 });
+      await expect(airBannerGm).not.toBeVisible({ timeout: 5000 });
 
       await caption('PLAYER A', 'Elemental Dominion', 'Mastery feature card (Fire/Earth/Air/Water while Channeling)');
       await ensurePlayerSheet();
@@ -331,9 +482,9 @@ test.describe('Subclass video — Druid / Warden of the Elements', () => {
       }).toPass({ timeout: 8000 });
 
       // -----------------------------------------------------------------
-      // Water Incarnation + Elemental Dominion (Water) reviewAction chip.
+      // P2 — Water Incarnation splash Stress on nearby foe.
       // -----------------------------------------------------------------
-      await caption('PLAYER A', 'Elemental Incarnation (Water)', 'Re-channel Water for Dominion chip');
+      await caption('PLAYER A', 'Elemental Incarnation (Water)', 'Channel Water — Melee splash Stress');
       const actionsForWater = await ensurePlayerSheet();
       await actionsForWater.getByRole('button', { name: /^Water$/i }).click();
       await expect(async () => {
@@ -342,10 +493,49 @@ test.describe('Subclass video — Druid / Warden of the Elements', () => {
         expect(elm?.featureState?.WardenOfTheElements?.channeledElement, 'Water Incarnation').toBe('water');
       }).toPass({ timeout: 8000 });
 
+      const ratStressBefore = (await getTableState(tableId)).elements.find(
+        (e) => e.instanceId === adv2InstanceId
+      )?.currentStress ?? 0;
+
+      await caption('PLAYER A', 'Water splash', 'Quarterstaff hit Goblin — Cave Rat marks Stress');
+      const staffBannerText = await rollQuarterstaffAt(playerPage, playerElmCard, ensureSheetOpen, {
+        targetNameRe: /Snarling Goblin/i,
+        elmInstanceId,
+        targetInstanceId: advInstanceId,
+        tableId,
+      });
+
+      for (const p of [gmPage, playerPage]) {
+        await expect(p.locator('.dice-result-banner', { hasText: staffBannerText })).toBeVisible({
+          timeout: 15000,
+        });
+      }
+      const staffBannerGm = gmPage.locator('.dice-result-banner', { hasText: staffBannerText }).first();
+      await selectBannerDamageTarget(gmPage, staffBannerGm, /Snarling Goblin/i);
+      await holdForDiceTumble();
+      await caption('GM', "Acknowledges Elm's Quarterstaff", 'Water splash marks Stress on Cave Rat');
+      await ack(staffBannerGm, { holdMs: 0 });
+      await expect(staffBannerGm).not.toBeVisible({ timeout: 5000 });
+
+      await expect(async () => {
+        const state = await getTableState(tableId);
+        const rat = (state.elements || []).find((e) => e.instanceId === adv2InstanceId);
+        expect(rat?.currentStress ?? 0, 'Water Incarnation splash Stress').toBeGreaterThan(ratStressBefore);
+      }).toPass({ timeout: 10000 });
+
+      // Action Log / suppressed banner may show Water Retaliation notice — soft visibility ok.
+      const waterNotice = gmPage.getByText(/Water Retaliation|nearby adversary/i).first();
+      if (await waterNotice.isVisible({ timeout: 2000 }).catch(() => false)) {
+        await caption('GM', 'Water Retaliation notice', 'Nearby adversary marked Stress');
+      }
+
+      // -----------------------------------------------------------------
+      // Water Dominion reviewAction chip (P1).
+      // -----------------------------------------------------------------
       await caption('GM', 'Goblin attacks Elm', 'Guaranteed hit — surfaces Elemental Dominion (Water)');
       await gmRoll(
         tableId,
-        'Snarling Goblin Claw [d20+10] damage [1d8] phy',
+        'Snarling Goblin Claw [d20+50] damage [1d8] phy',
         'Snarling Goblin',
         {
           _attackerInstanceId: advInstanceId,
@@ -418,7 +608,11 @@ test.describe('Subclass video — Druid / Warden of the Elements', () => {
         expect(w.auraUsedThisRest === true, 'Rest cleared auraUsedThisRest').toBe(false);
       }).toPass({ timeout: 10000 });
 
-      await caption('Druid / Warden of the Elements', 'Walkthrough complete', 'Incarnation matrix, Aura, Dominion, Beastform, Rest');
+      await caption(
+        'Druid / Warden of the Elements',
+        'Walkthrough complete',
+        'Incarnation combat matrix, Aura, Dominion, Beastform, Rest'
+      );
 
       const seriousErrors = filterSeriousSubclassConsoleErrors(consoleErrors);
       expect(seriousErrors, `Unexpected console errors:\n${seriousErrors.join('\n')}`).toEqual([]);

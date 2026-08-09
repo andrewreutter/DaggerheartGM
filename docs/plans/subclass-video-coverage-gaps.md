@@ -14,7 +14,7 @@
 | Track | State |
 |-------|--------|
 | Subclass video suite (18 specs) | ✅ Specs exist for all 9 classes × 2 subclasses |
-| Phase 1 — Spec hardening | 🔄 In progress (Bard + Druid + Guardian + Ranger + Rogue + Seraph + Sorcerer P0–P1 ✅; other classes pending) |
+| Phase 1 — Spec hardening | 🔄 In progress (Bard + Druid P0–P2 elemental ✅ + Guardian + Ranger + Rogue + Seraph + Sorcerer P0–P1 ✅; Virtuoso / other P2 pending) |
 | Phase 2 — Product gap fixes | ⬜ Reported only; owned by V2/engine/UI work |
 | Phase 3 — Deferred E2E after product | ⬜ Blocked on Phase 2 |
 | Tracker / SRD doc drift | ⬜ Update when specs or product land |
@@ -71,9 +71,9 @@ Work only where the Game Table / V2 bridge **already** supports the path. Prefer
   - [ ] Contacts option matrix (where product applies)
   - [ ] Manipulate Magic mode variants
 - [ ] **P2 — Combat / matrix breadth**
-  - [x] Druid elemental combat matrix (Incarnation / Aura / Dominion) — covered in Elements Phase 1 P1
+  - [x] Druid elemental combat matrix (Incarnation / Aura / Dominion) — P1 channel/state + P2 Fire retaliation/Aura Stress, Air Agility advantage, Water splash, aura once/rest (Severe clear E2E deferred — VTT ack threshold wiring)
   - [ ] Beastform combat, Fragile, last-HP drop — PRODUCT_GAP (featureState-only form); Phase 3 after fix
-  - [ ] Virtuoso / domain breadth only if cheap
+  - [x] Virtuoso / domain breadth only if cheap (Troubadour Epic + Heartbreaking ×2)
 - [ ] **Harness hygiene**
   - [ ] Replace soft optional clicks with hard expects + failure messages naming the feature
   - [ ] Prefer `getTableState` numeric checks over caption-only narration for Done features
@@ -95,7 +95,8 @@ Priority: **P0** = small assert on already-walked path · **P1** = new spend/lif
 | Bard | `bard-troubadour.spec.js` | Rally session-end clear missing | End scene/session hook path; assert party dice / modifiers cleared | P1 ✅ |
 | Bard | `bard-troubadour.spec.js` | Rally d8 path missing | Exercise d8 variant if cast/level allows; assert die notation | P1 ✅ |
 | Bard | `bard-wordsmith.spec.js` | Eloquent options incomplete | Walk all three isSelect options (narrative actionLoop — **no Hope cost** in product); End→Start Session between uses | P1 ✅ |
-| Bard | both | Virtuoso breadth thin | Optional second domain/card interaction if cheap | P2 |
+| Bard | `bard-troubadour.spec.js` | Virtuoso breadth thin | Epic + Heartbreaking Song 2nd uses after Virtuoso onSessionStart (not only Relaxing ×2) | P2 ✅ |
+| Bard | `bard-wordsmith.spec.js` | Virtuoso N/A (Wordsmith) | — | — |
 | Bard | both | Long-rest refresh of once/rest features | Short vs long rest; assert frequency cleared | P1 ✅ (Troubadour Gifted Performer uses; Wordsmith Rousing Speech) |
 | Bard | `bard-wordsmith.spec.js` | Make a Scene `difficultyMod` / Rally banner die + `partyDice` clear | Shared P0 asserts (also on Wordsmith walkthrough) | P0 ✅ |
 
@@ -105,7 +106,8 @@ Priority: **P0** = small assert on already-walked path · **P1** = new spend/lif
 |-------|-----------|-----|----------------|----------|--------|
 | Druid | `druid-warden-of-renewal.spec.js` | Protection / Defender asserts soft | Hard-assert Hope −2 / ally HP +2 / Defender Stress +1 | P0 | ✅ |
 | Druid | `druid-warden-of-renewal.spec.js` | Regeneration Very Close untested | Place tokens in range; use Regeneration; assert HP | P1 | ✅ |
-| Druid | `druid-warden-of-the-elements.spec.js` | Elemental Incarnation/Aura/Dominion matrix mostly untested | Matrix: Fire+Aura, Earth thresholds, Air evasion, Water Dominion | P1 | ✅ |
+| Druid | `druid-warden-of-the-elements.spec.js` | Elemental Incarnation/Aura/Dominion matrix mostly untested | Matrix: Fire+Aura, Earth thresholds, Air channel, Water Dominion | P1 | ✅ |
+| Druid | `druid-warden-of-the-elements.spec.js` | Elemental combat hooks (retaliation / splash / Air adv) | Fire Retaliation 1d10 + Fire Aura Stress; Air Agility advantage die; Water splash Stress; aura once/rest chip omitted. Severe→clearChannel E2E deferred (VTT ack marked Minor for high damage; engine unit-tested) | P2 | ✅ |
 | Druid | both | Beastform combat / Fragile / last-HP drop | Auto-drop on damage when form is featureState-only | P1 | ⏭️ skipped — PRODUCT_GAP (applyDamageToTarget misses featureState beastform; Phase 3 after fix) |
 | Druid | both | Rest clear of beastform / channel state | Elements Short Rest clears channel/aura; Renewal Long Rest clears Clarity/Protection `featureUsage` | P1 | ✅ |
 
