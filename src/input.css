@@ -534,6 +534,15 @@ a, button, input[type="submit"], input[type="button"], input[type="checkbox"], i
   animation: dice-banner-in 0.35s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
 }
 
+/* Pre-roll intent sheet: slide up from the bottom of the map column */
+@keyframes dh-preroll-sheet-in {
+  from { transform: translateY(100%); }
+  to   { transform: none; }
+}
+.dh-preroll-sheet {
+  animation: dh-preroll-sheet-in 0.28s ease-out both;
+}
+
 /* Battle map: ping marker fade — duration set inline from MAP_PING_LABEL_FADE_MS (default 5s) */
 @keyframes dh-map-ping-marker-fade {
   0% {

@@ -28,7 +28,7 @@ import { indexResolvedItemsByRequestId } from '../lib/resolve-items-index.js';
 import { buildSystemContext } from '../lib/feature-context.js';
 import { withActionBannerSuppression } from '../lib/action-notification-banner.js';
 import { isReactionRoll } from '../lib/reaction-roll-display.js';
-import { buildTraitRollText } from '../lib/trait-roll-text.js';
+import { buildTraitRollText, buildPreRollPanelTitle } from '../lib/trait-roll-text.js';
 import { buildReactionCallRoster, canViewerProceedReaction } from '../lib/reaction-call-roster.js';
 import {
   postRoll as postRollToServer,
@@ -6261,15 +6261,40 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
             </button>
           </div>
         )}
-        {/* Pre-roll banner (onAct chips, e.g. Quick Reactions) — popover overlay */}
+        <div className="flex-1 min-h-0 relative flex flex-col overflow-hidden">
+        {/* Pre-roll banner (onAct chips, e.g. Quick Reactions) — slides up over the map */}
         {preRollBanner && (
           <div
-            className="shrink-0 z-20 border-b border-dh-border bg-dh-surface/95 px-4 py-3 text-dh max-h-[min(50vh,420px)] overflow-y-auto pointer-events-auto"
+            className="dh-preroll-sheet absolute inset-x-0 bottom-0 z-20 h-auto max-h-full rounded-t-lg border-t border-dh-border bg-dh-surface/95 px-4 py-3 text-dh overflow-y-auto overscroll-contain pointer-events-auto shadow-[0_-12px_40px_rgba(0,0,0,0.5)]"
             role="region"
             aria-labelledby="preroll-title"
           >
             <div className="max-w-3xl mx-auto w-full">
-              <div id="preroll-title" className="text-sm font-bold text-dh mb-2">Before you roll</div>
+              {(() => {
+                const cel = activeElements.find((e) => e.instanceId === preRollBanner.characterEl.instanceId) || preRollBanner.characterEl;
+                const meta = preRollBanner.pending?.meta || {};
+                const companion = cel?.companion;
+                const isCompanionAttack = !!meta._companionExperienceForRoll && !!companion?.attackName;
+                const weapon = Array.isArray(cel?.weapons) && meta._weaponId != null
+                  ? cel.weapons.find((w) => w.id === meta._weaponId)
+                  : null;
+                const title = buildPreRollPanelTitle({
+                  actorName: isCompanionAttack ? companion.name : (cel?.name || ''),
+                  traitKey: meta._traitKey,
+                  displayName: preRollBanner.pending?.displayName,
+                  actionName: meta._subFeatureName || meta._featureName || null,
+                  weaponName: weapon?.name || null,
+                  isSpellcast: !!meta._isSpellcastRoll && !meta._companionExperienceForRoll,
+                  isReaction: !!meta._isReaction,
+                  companionAttackName: isCompanionAttack ? companion.attackName : null,
+                });
+                return (
+                  <>
+                    <div className="text-[10px] font-bold uppercase tracking-wide text-dh-muted mb-0.5">Before you roll</div>
+                    <div id="preroll-title" className="text-sm font-bold text-dh mb-2">{title}</div>
+                  </>
+                );
+              })()}
               <p className="text-xs text-dh mb-2">Choose experience and optional toggles, then Proceed.</p>
               {preRollBanner.pending?.meta?._deferExperienceToPreRoll && (() => {
                 const cel = activeElements.find(e => e.instanceId === preRollBanner.characterEl.instanceId) || preRollBanner.characterEl;
@@ -6827,6 +6852,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
             renderPinnedCharacterPanel={renderPinnedCharacterPanel}
             renderAdversaryTargetAid={renderAdversaryTargetAid}
           />
+        </div>
         </div>
         {/* Action log footer — collapsed title bar; click to open overlay with roll/action history */}
         <ActionLog
