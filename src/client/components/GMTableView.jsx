@@ -20,12 +20,16 @@ import { EditChoiceDialog } from './modals/EditChoiceDialog.jsx';
 import { ItemDetailModal } from './modals/ItemDetailModal.jsx';
 import { ItemPickerModal } from './modals/ItemPickerModal.jsx';
 import { EncounterNoteEditorModal } from './modals/EncounterNoteEditorModal.jsx';
+import { ReactionCallModal } from './modals/ReactionCallModal.jsx';
+import { TRAIT_FULL } from './CharacterDisplay.jsx';
 import { MarkdownText } from '../lib/markdown.js';
 import { handleAiConceptTextareaKeyDown } from '../lib/ai-concept-textarea.js';
 import { indexResolvedItemsByRequestId } from '../lib/resolve-items-index.js';
 import { buildSystemContext } from '../lib/feature-context.js';
 import { withActionBannerSuppression } from '../lib/action-notification-banner.js';
 import { isReactionRoll } from '../lib/reaction-roll-display.js';
+import { buildTraitRollText } from '../lib/trait-roll-text.js';
+import { buildReactionCallRoster, canViewerProceedReaction } from '../lib/reaction-call-roster.js';
 import {
   postRoll as postRollToServer,
   postTableOp,
@@ -100,7 +104,6 @@ import {
   CharacterSheetHighlightSurface,
 } from './CharacterSheetSourceHighlight.jsx';
 import { resolveV2LibraryItemSourcePath } from '../../features-v2/resolve-feature-source-path.js';
-import { TRAIT_FULL } from './CharacterDisplay.jsx';
 import { FeatureResourceCostIcons } from './FeatureResourceCostIcons.jsx';
 import { FrequencyCycleChipSuffix, getFrequencyCycleWord } from '../lib/frequency-cycle-ui.jsx';
 import { DiceRoller } from './DiceRoller.jsx';
@@ -858,6 +861,8 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
   const [preRollDisadvantages, setPreRollDisadvantages] = useState([]); // string[]: optional name per disadvantage ('' = default "Disadvantage")
   /** Intent panel: review/change attack target (same list as in-sheet target menu). */
   const [preRollTargetInstanceId, setPreRollTargetInstanceId] = useState(null);
+  /** GM Call for Reaction modal: `{ seedInstanceIds: string[] }` or null. */
+  const [reactionCallModal, setReactionCallModal] = useState(null);
 
   const potAdvKey = potAdvOverlay.data?.element?.id ?? null;
   const potAdvAdjust = useViewportClamp(potAdvOverlay.overlayRef, potAdvOverlay.isOpen, potAdvKey);
@@ -2071,6 +2076,21 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
       return;
     }
 
+    // GM-called reaction marquee: ack the marquee and every correlated pending sub-roll together.
+    if (roll._reactionCall) {
+      const marqueeId = roll._rollDbId;
+      if (marqueeId != null) {
+        const subs = (pendingBanners || []).filter(
+          (b) => b._reactionCallRollDbId === marqueeId && b._rollDbId != null,
+        );
+        for (const sub of subs) {
+          postBannerAck(sub._rollDbId, 'acknowledge', { tableId }).catch(() => {});
+        }
+        postBannerAck(marqueeId, 'acknowledge', { tableId }).catch(() => {});
+      }
+      return;
+    }
+
     // V2 physical-roll resume: run `hooks.onPhysicalRollResolved` with the actual roll values,
     // apply any resulting element mutations, then mark the banner acknowledged.
     // These are simple die rolls (no Hope/Fear duality) so we return early to skip unrelated side-effects.
@@ -2485,6 +2505,14 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     }
     if (roll._lifeSupportTargets != null && onLifeSupportClear) onLifeSupportClear(roll._rollDbId);
     if (roll._rest && roll._rollDbId != null && onRestMoveClear) onRestMoveClear(roll._rollDbId);
+    if (roll._reactionCall && roll._rollDbId != null) {
+      const subs = (pendingBanners || []).filter(
+        (b) => b._reactionCallRollDbId === roll._rollDbId && b._rollDbId != null,
+      );
+      for (const sub of subs) {
+        postBannerAck(sub._rollDbId, 'cancel', { tableId }).catch(() => {});
+      }
+    }
     removePendingCosts(roll);
     pendingDamageRef.current = null;
     postBannerAck(roll._rollDbId, 'cancel', { tableId }).catch(() => {});
@@ -2918,6 +2946,26 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
       }),
     };
     handleActionNotification(cycleNotification);
+  };
+
+  const openReactionCallModal = (seedInstanceIds = []) => {
+    setReactionCallModal({ seedInstanceIds: seedInstanceIds.filter(Boolean) });
+  };
+
+  const handleCallReaction = ({ targetInstanceIds, trait, difficulty }) => {
+    const ids = (targetInstanceIds || []).filter(Boolean);
+    if (ids.length === 0) return;
+    handleActionNotification({
+      _action: true,
+      _reactionCall: true,
+      rollUser: user?.displayName || user?.email || 'GM',
+      actionName: 'Reaction Roll',
+      actionText: `DC ${difficulty} — ${TRAIT_FULL[trait] || trait}`,
+      _reactionTargetInstanceIds: ids,
+      _reactionTrait: trait,
+      _reactionDifficulty: difficulty,
+    });
+    setReactionCallModal(null);
   };
 
   // Run the same character clear as session cycle (used when rest banner is acknowledged).
@@ -3704,7 +3752,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     // GM-initiated character roll: add difficulty chip so banner is shown and GM can set DC before rolling.
     // Skip for attack rolls (weapon/beastform/feature-with-target); those use the target's difficulty or evasion.
     const isAttackRoll = (meta) => (meta._weaponRangeFt != null || meta._featureNeedsTarget === true);
-    if (!isPlayer && !isAttackRoll(meta)) {
+    if (!isPlayer && !isAttackRoll(meta) && meta._reactionCallRollDbId == null) {
       canvas.chips.push({ _difficultyChip: true, label: 'Difficulty (optional)' });
     }
 
@@ -3855,6 +3903,42 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
         chips: serializableChips,
       });
     }
+  };
+
+  const handleReactionProceed = (instanceId, marqueeRoll) => {
+    if (!marqueeRoll?._reactionCall || marqueeRoll._rollDbId == null) return;
+    const characterEl = activeElements.find((e) => e.instanceId === instanceId && e.elementType === 'character');
+    if (!characterEl) return;
+    if (!canViewerProceedReaction({
+      isPlayer,
+      characterEl,
+      playerEmail,
+      playerUid: user?.uid,
+    })) return;
+    const alreadyRolled = (pendingBanners || []).some(
+      (b) => b._reactionCallRollDbId === marqueeRoll._rollDbId && b._attackerInstanceId === instanceId,
+    );
+    if (alreadyRolled) return;
+    if (preRollBanner?.characterEl?.instanceId === instanceId) return;
+
+    const trait = marqueeRoll._reactionTrait;
+    const displayChar = characterDisplayByInstanceId.get(instanceId) || characterEl;
+    const traits = displayChar?.traits || {};
+    const baseScore = traits[trait] ?? 0;
+    const bf = parseBeastformBonus(displayChar?.activeBeastform?.trait_bonus);
+    const traitScore = baseScore + (bf?.stat === trait ? bf.bonus : 0);
+    const traitLabel = TRAIT_FULL[trait] || trait;
+    const rollText = buildTraitRollText(characterEl.name, trait, traitScore, null, 2);
+    const displayName = `${characterEl.name} — Reaction (${traitLabel})`;
+    handlePlayerOwnRoll(rollText, displayName, {
+      _attackerInstanceId: instanceId,
+      _traitKey: trait,
+      _isReaction: true,
+      _difficulty: marqueeRoll._reactionDifficulty,
+      _reactionCallRollDbId: marqueeRoll._rollDbId,
+      _intentPanelForActionRoll: true,
+      _deferExperienceToPreRoll: true,
+    }, { characterEl });
   };
 
   /** V2 `isToggle` card chips on sidebar character cards (GM; assigned players on their own card — same path as hover sheet). */
@@ -4901,6 +4985,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                   }
                 : undefined
             }
+            onCallReaction={!isPlayer ? (instanceId) => openReactionCallModal([instanceId]) : undefined}
             cardRootProps={{}}
             trailingHeaderActions={
               <>
@@ -4955,6 +5040,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
       v2Registry,
       v2TableContextForPanels,
       handleCharacterPanelV2CardChip,
+      openReactionCallModal,
     ],
   );
 
@@ -5363,6 +5449,20 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     }
     return out;
   }, [pendingBanners, activeElements, srdData, fearCount, mapConfig, tableFeatureState]);
+
+  const reactionCallRosterByRollDbId = useMemo(() => {
+    const out = {};
+    for (const roll of pendingBanners || []) {
+      if (!roll._reactionCall || roll._rollDbId == null) continue;
+      out[roll._rollDbId] = buildReactionCallRoster({
+        targetInstanceIds: roll._reactionTargetInstanceIds,
+        marqueeRollDbId: roll._rollDbId,
+        pendingBanners,
+        tableCharacters,
+      });
+    }
+    return out;
+  }, [pendingBanners, tableCharacters]);
 
   const restBannerChipsByInstanceId = useMemo(() => {
     const restBanner = pendingBanners?.find(b => b._rest);
@@ -5973,6 +6073,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                       }
                     : undefined
                 }
+                onCallReaction={!isPlayer ? (instanceId) => openReactionCallModal([instanceId]) : undefined}
                 cardRootProps={{}}
                 v2Registry={srdData ? v2Registry : null}
                 v2TableContext={v2TableContextForPanels}
@@ -6603,6 +6704,15 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
               return byUid || byEmail;
             } : () => true}
             restGmUid={tableId}
+            onReactionProceed={handleReactionProceed}
+            reactionCallRosterByRollDbId={reactionCallRosterByRollDbId}
+            canReactionProceed={(instanceId) => canViewerProceedReaction({
+              isPlayer,
+              characterEl: activeElements.find((e) => e.instanceId === instanceId && e.elementType === 'character'),
+              playerEmail,
+              playerUid: user?.uid,
+            })}
+            reactionProceedingInstanceId={preRollBanner?.characterEl?.instanceId ?? null}
             actionAdversarySelections={actionAdversarySelections}
             onActionAdversarySelect={(rollDbId, instanceId) => {
               setActionAdversarySelections(prev => ({ ...prev, [rollDbId]: instanceId }));
@@ -6785,6 +6895,14 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
               className="flex-1 text-[10px] font-semibold px-1.5 py-1 rounded border border-dh-strong bg-dh-hover text-dh hover:bg-dh-strong transition-colors"
             >⏹ Long</button>
           </div>
+          <button
+            type="button"
+            title="Call for Reaction — pick characters, trait, and difficulty"
+            onClick={() => openReactionCallModal([])}
+            className="w-full text-[10px] font-semibold px-1.5 py-1 rounded border border-sky-800/60 bg-sky-950/30 text-sky-300 hover:bg-sky-900/40 hover:border-sky-700 transition-colors"
+          >
+            ⚡ Call for Reaction
+          </button>
           {/* Fear tracker */}
           <div className="rounded-lg border border-dh-strong bg-dh-surface px-2.5 py-2">
             <div className="grid grid-cols-[auto_auto_minmax(0,1fr)] items-center gap-x-1.5 gap-y-1.5">
@@ -7736,6 +7854,16 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
         </div>
       );
     })()}
+
+    {reactionCallModal && !isPlayer && (
+      <ReactionCallModal
+        open
+        characters={activeElements.filter((e) => e.elementType === 'character')}
+        seedInstanceIds={reactionCallModal.seedInstanceIds}
+        onCall={handleCallReaction}
+        onClose={() => setReactionCallModal(null)}
+      />
+    )}
 
     {editState?.step === 'note' && editState.baseElement && (
       <EncounterNoteEditorModal

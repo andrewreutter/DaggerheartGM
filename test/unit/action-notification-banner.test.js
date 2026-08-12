@@ -71,6 +71,19 @@ describe('computeActionAckTouchesTableState', () => {
     expect(computeActionAckTouchesTableState(roll, { actionAdversaryTargets: [] })).toBe(false);
   });
 
+  it('returns true for a GM-called reaction marquee so it stays a pending banner', () => {
+    const roll = {
+      _action: true,
+      _reactionCall: true,
+      actionName: 'Reaction Roll',
+      _reactionTargetInstanceIds: ['c1'],
+    };
+    expect(computeActionAckTouchesTableState(roll, { actionAdversaryTargets: [] })).toBe(true);
+    expect(shouldSuppressActionBanner(roll, { actionAdversaryTargets: [] })).toBe(false);
+    const out = withActionBannerSuppression(roll, { actionAdversaryTargets: [] });
+    expect(out._suppressActionBanner).toBeUndefined();
+  });
+
   it('returns true when tags + attacker imply resource ack', () => {
     const roll = {
       _action: true,

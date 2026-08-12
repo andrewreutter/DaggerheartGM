@@ -1,6 +1,6 @@
 import {
   User, Shield, AlertCircle, AlertTriangle, Swords, Package,
-  ChevronDown, ChevronRight, Dices, Zap, X, Flame, Mountain, Droplets, Wind, Sparkles, Sticker,
+  ChevronDown, ChevronRight, Dices, X, Flame, Mountain, Droplets, Wind, Sparkles, Sticker,
 } from 'lucide-react';
 import { useState, useMemo, useCallback } from 'react';
 import { MarkdownText } from '../lib/markdown.js';
@@ -9,7 +9,6 @@ import { buildModifierChipHoverTitle } from '../lib/modifier-chip-title.js';
 import {
   traitScoreNumberColorClass,
   traitScoreNumberSizeClassTraitChip,
-  traitScoreNumberSizeClassReactionGrid,
   traitScoreNumberSizeClassWeaponBadge,
 } from '../lib/trait-score-display.js';
 
@@ -129,68 +128,6 @@ export function computeEffectiveTraitScore(el, t) {
   const beastformTraitBonus = parseBeastformBonus(el.activeBeastform?.trait_bonus);
   const bfMod = beastformTraitBonus?.stat === t ? beastformTraitBonus.bonus : 0;
   return score + wMod + aMod + bfMod;
-}
-
-/**
- * 3×2 grid of trait + effective modifier for reaction-style rolls; lives at bottom of DEFENSE card.
- */
-export function DefenseReactionRollGrid({ el, onTraitClick, compact }) {
-  const traits = el.traits || {};
-  if (!TRAIT_ORDER.some((x) => traits[x] != null)) return null;
-  const Cell = ({ t }) => {
-    const eff = computeEffectiveTraitScore(el, t);
-    const disp = eff > 0 ? `+${eff}` : String(eff);
-    const base =
-      'rounded-lg border border-dh-strong bg-dh-raised/50 px-1.5 py-1 text-center min-w-0 w-full transition-colors';
-    const lineCls = compact ? 'text-[9px]' : 'text-[10px]';
-    const nameSizeCls = compact ? 'text-[9px]' : 'text-[10px]';
-    const numSizeCls = traitScoreNumberSizeClassReactionGrid(eff, compact);
-    const name = TRAIT_FULL[t];
-    const inner = (
-      <span className={`flex items-center justify-center gap-1 w-full min-w-0 ${lineCls} font-semibold leading-tight`}>
-        <span
-          className={`min-w-0 flex-1 truncate text-center font-semibold uppercase tracking-wide text-dh-muted ${nameSizeCls}`}
-          title={name}
-        >
-          {name}
-        </span>
-        <span
-          className={`inline-flex min-h-[1.125rem] items-center justify-center tabular-nums shrink-0 ${traitScoreNumberColorClass(eff)} ${numSizeCls}`}
-        >
-          {disp}
-        </span>
-      </span>
-    );
-    if (onTraitClick) {
-      return (
-        <button
-          type="button"
-          title={`Roll ${TRAIT_FULL[t]}`}
-          className={`${base} dh-sheet-clickable-chip hover:bg-dh-hover/50 hover:border-sky-500/55 cursor-pointer`}
-          onClick={(e) => {
-            e.stopPropagation();
-            onTraitClick(t, { isReaction: true });
-          }}
-        >
-          {inner}
-        </button>
-      );
-    }
-    return <div className={base}>{inner}</div>;
-  };
-  return (
-    <div className={`w-full min-w-0 ${compact ? 'pt-1.5' : 'pt-2'} border-t border-dh-border/50 mt-1`}>
-      <div className="text-[10px] font-semibold text-dh-muted uppercase tracking-wider mb-2">Reaction Rolls</div>
-      <div className="grid grid-cols-3 gap-2 w-full">
-        {TRAIT_GRID_TOP.map((t) => (
-          <Cell key={t} t={t} />
-        ))}
-        {TRAIT_GRID_BOTTOM.map((t) => (
-          <Cell key={t} t={t} />
-        ))}
-      </div>
-    </div>
-  );
 }
 
 // ─── Weapon tag descriptions (from SRD) ──────────────────────────────────────
@@ -682,7 +619,7 @@ export function CharacterIdentityHeader({ el, showIncomplete = false, actions, o
  * Six traits in a 3×2 grid (full trait names).
  *
  * Props:
- *   onTraitClick(traitKey, opts?) — when provided, chips become clickable. opts may include { isReaction: true }.
+ *   onTraitClick(traitKey) — when provided, chips become clickable action rolls.
  */
 export function CharacterTraitGrid({ el, onTraitClick, onSpellcastRoll, omitOuterSection, sheetEmphasisTitle, sheetEmphasisSubtitle }) {
   const traits = el.traits || {};
@@ -2775,7 +2712,6 @@ export function CharacterDetailPane({ item, srdData, onCharacterRuntimeUpdate, o
                   srdData={srdData}
                   hideHope
                   defenseTrackInteraction={defenseTrackInteraction}
-                  defenseFooter={<DefenseReactionRollGrid el={el} />}
                 />
                 <CharacterStatBlockGraphic
                   el={el}

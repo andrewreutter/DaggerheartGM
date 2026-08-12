@@ -1,0 +1,71 @@
+/**
+ * GM-called reaction roll marquee: correlate pending sub-rolls with target instance ids.
+ */
+
+/**
+ * @param {object} [opts]
+ * @param {string[]} [opts.targetInstanceIds]
+ * @param {number | string | null} [opts.marqueeRollDbId]
+ * @param {object[]} [opts.pendingBanners]
+ * @param {object[]} [opts.tableCharacters]
+ * @returns {Array<{ instanceId: string, name: string, subRoll: object | null }>}
+ */
+export function buildReactionCallRoster({
+  targetInstanceIds = [],
+  marqueeRollDbId,
+  pendingBanners = [],
+  tableCharacters = [],
+} = {}) {
+  const charsById = new Map(tableCharacters.map((c) => [c.instanceId, c]));
+  return (targetInstanceIds || []).filter(Boolean).map((instanceId) => {
+    const char = charsById.get(instanceId);
+    const subRoll = (pendingBanners || []).find(
+      (b) => b._reactionCallRollDbId === marqueeRollDbId && b._attackerInstanceId === instanceId,
+    ) || null;
+    return {
+      instanceId,
+      name: char?.name || 'Unknown',
+      subRoll,
+    };
+  });
+}
+
+/**
+ * Compact Success / Failure / Critical label for a correlated reaction sub-roll.
+ * Mirrors ResultBanner difficulty math: critical always succeeds; otherwise total >= DC.
+ *
+ * @param {object | null} subRoll
+ * @param {number | null} [fallbackDifficulty]
+ * @returns {{ total: number, label: string, success: boolean } | null}
+ */
+export function formatReactionCallResultBadge(subRoll, fallbackDifficulty) {
+  if (!subRoll || typeof subRoll.total !== 'number') return null;
+  const isCritical = subRoll.dominant === 'critical';
+  const dc = subRoll._difficulty ?? fallbackDifficulty;
+  if (isCritical) {
+    return { total: subRoll.total, label: '✦ Critical!', success: true };
+  }
+  if (dc == null) {
+    return { total: subRoll.total, label: String(subRoll.total), success: null };
+  }
+  const success = subRoll.total >= dc;
+  return { total: subRoll.total, label: success ? 'Success' : 'Failure', success };
+}
+
+/**
+ * GM may act for any target; a player may act only for their assigned character.
+ *
+ * @param {object} [opts]
+ * @param {boolean} [opts.isPlayer]
+ * @param {object | null} [opts.characterEl]
+ * @param {string | null} [opts.playerEmail]
+ * @param {string | null} [opts.playerUid]
+ * @returns {boolean}
+ */
+export function canViewerProceedReaction({ isPlayer, characterEl, playerEmail, playerUid } = {}) {
+  if (!isPlayer) return true;
+  if (!characterEl) return false;
+  const byUid = playerUid != null && characterEl.assignedPlayerUid === playerUid;
+  const byEmail = !!playerEmail && characterEl.assignedPlayerEmail === playerEmail;
+  return !!(byUid || byEmail);
+}

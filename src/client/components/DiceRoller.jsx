@@ -18,6 +18,8 @@ import {
   resolveWeaponTagDescriptor,
 } from '../lib/game-table-mechanics.js';
 import { MarkdownText } from '../lib/markdown.js';
+import { TRAIT_FULL } from './CharacterDisplay.jsx';
+import { formatReactionCallResultBadge } from '../lib/reaction-call-roster.js';
 import { mergeOptionAndFeatureTooltipMarkdown } from '../lib/guide-feature-card-tip-text.js';
 import { usePortalHoverTooltip, PortalHoverTooltipLayer } from '../lib/portal-hover-tooltip.jsx';
 import { FeatureResourceCostIcons } from './FeatureResourceCostIcons.jsx';
@@ -514,7 +516,22 @@ function RestBanner({
   );
 }
 
-function ActionBanner({ roll, onAcknowledge, onCancel, disableDismiss, lifeSupportSelectedId, onLifeSupportSelect, actionAdversarySelectedId, onActionAdversarySelect, actionAdversaryTargets = [], targets = [] }) {
+function ActionBanner({
+  roll,
+  onAcknowledge,
+  onCancel,
+  disableDismiss,
+  lifeSupportSelectedId,
+  onLifeSupportSelect,
+  actionAdversarySelectedId,
+  onActionAdversarySelect,
+  actionAdversaryTargets = [],
+  targets = [],
+  onReactionProceed,
+  reactionCallRoster = [],
+  canReactionProceed,
+  reactionProceedingInstanceId = null,
+}) {
   const visible = useBannerVisible();
   const displayName = roll.rollUser || roll.characterName || '';
   const lifeSupportTargets = roll._lifeSupportTargets;
@@ -541,6 +558,12 @@ function ActionBanner({ roll, onAcknowledge, onCancel, disableDismiss, lifeSuppo
   const showActionBannerCancel = onCancel != null && (roll._sessionStart || actionAckTouchesTableState);
 
   const handleAcknowledge = () => {
+    if (roll._reactionCall) {
+      const awaiting = reactionCallRoster.filter((r) => !r.subRoll);
+      if (awaiting.length > 0) {
+        if (!window.confirm('Not everyone has rolled. Acknowledge this reaction call anyway?')) return;
+      }
+    }
     const extra = {};
     if (isLifeSupport && selectedLifeSupportInstanceId) extra.selectedLifeSupportTargetInstanceId = selectedLifeSupportInstanceId;
     if (isActionAdversary && selectedActionAdversaryInstanceId) extra.selectedActionAdversaryTargetInstanceId = selectedActionAdversaryInstanceId;
@@ -548,9 +571,13 @@ function ActionBanner({ roll, onAcknowledge, onCancel, disableDismiss, lifeSuppo
   };
 
   // Action-only banner title: avoid showing "0" when actionName is missing or numeric zero (e.g. Rally)
-  const actionTitle = roll._action && (roll.actionName == null || roll.actionName === '' || roll.actionName === 0)
-    ? (roll._featureName || 'Hope ability')
-    : (roll.actionName || 'Action');
+  const isReactionCall = !!roll._reactionCall;
+  const reactionTraitLabel = TRAIT_FULL[roll._reactionTrait] || roll._reactionTrait || 'Trait';
+  const actionTitle = isReactionCall
+    ? `Reaction Roll — DC ${roll._reactionDifficulty} (${reactionTraitLabel})`
+    : roll._action && (roll.actionName == null || roll.actionName === '' || roll.actionName === 0)
+      ? (roll._featureName || 'Hope ability')
+      : (roll.actionName || 'Action');
 
   return (
     <div
@@ -560,19 +587,19 @@ function ActionBanner({ roll, onAcknowledge, onCancel, disableDismiss, lifeSuppo
         transform: visible ? 'translateY(0)' : 'translateY(16px)',
         transition: 'opacity 0.2s ease, transform 0.2s ease',
         pointerEvents: 'auto',
-        maxWidth: '280px',
-        minWidth: '200px',
+        maxWidth: isReactionCall ? '360px' : '280px',
+        minWidth: isReactionCall ? '240px' : '200px',
       }}
     >
       <div
         className="px-5 py-3 rounded-xl shadow-2xl text-center bg-dh-surface/90 border-2 border-dh-strong text-dh"
         style={BANNER_CARD_SCROLL_STYLE}
       >
-        {displayName && (
+        {displayName && !isReactionCall && (
           <div className="text-[11px] uppercase tracking-widest text-dh-muted mb-1">{displayName}</div>
         )}
         <div className="text-base font-bold text-dh mb-1">{actionTitle}</div>
-        {roll.actionText && (
+        {roll.actionText && !isReactionCall && (
           <MarkdownText text={roll.actionText} className="text-[12px] text-dh mb-2 text-left dh-md" />
         )}
         {(roll.tags || []).length > 0 && (
@@ -699,6 +726,72 @@ function ActionBanner({ roll, onAcknowledge, onCancel, disableDismiss, lifeSuppo
                   );
                 })}
               </div>
+            )}
+          </div>
+        )}
+        {isReactionCall && (
+          <div className="mb-2 flex flex-col gap-1 text-left">
+            {reactionCallRoster.length === 0 ? (
+              <div className="text-[10px] text-dh-muted italic">No characters selected</div>
+            ) : (
+              reactionCallRoster.map((row) => {
+                const badge = formatReactionCallResultBadge(row.subRoll, roll._reactionDifficulty);
+                const proceeding = reactionProceedingInstanceId === row.instanceId;
+                const canProceed = typeof canReactionProceed === 'function'
+                  ? canReactionProceed(row.instanceId)
+                  : !disableDismiss;
+                if (badge) {
+                  const resultCls = badge.success === true
+                    ? 'text-emerald-400'
+                    : badge.success === false
+                      ? 'text-red-400'
+                      : 'text-dh';
+                  return (
+                    <div
+                      key={row.instanceId}
+                      className="flex items-center justify-between gap-2 rounded border border-dh-strong bg-dh-raised/50 px-2 py-1"
+                    >
+                      <span className="text-[11px] font-semibold text-dh truncate">{row.name}</span>
+                      <span className={`text-[11px] font-semibold tabular-nums shrink-0 ${resultCls}`}>
+                        {row.subRoll.total} — {badge.label}
+                      </span>
+                    </div>
+                  );
+                }
+                if (proceeding) {
+                  return (
+                    <div
+                      key={row.instanceId}
+                      className="flex items-center justify-between gap-2 rounded border border-dh-strong bg-dh-raised/50 px-2 py-1"
+                    >
+                      <span className="text-[11px] font-semibold text-dh truncate">{row.name}</span>
+                      <span className="text-[10px] text-sky-300 shrink-0">Preparing…</span>
+                    </div>
+                  );
+                }
+                if (canProceed && onReactionProceed) {
+                  return (
+                    <button
+                      key={row.instanceId}
+                      type="button"
+                      onClick={() => onReactionProceed(row.instanceId)}
+                      className="flex items-center justify-between gap-2 rounded border border-sky-700/60 bg-sky-950/40 px-2 py-1 text-left hover:bg-sky-900/50 transition-colors"
+                    >
+                      <span className="text-[11px] font-semibold text-dh truncate">{row.name}</span>
+                      <span className="text-[10px] font-semibold text-sky-300 shrink-0">Proceed</span>
+                    </button>
+                  );
+                }
+                return (
+                  <div
+                    key={row.instanceId}
+                    className="flex items-center justify-between gap-2 rounded border border-dh-strong bg-dh-raised/30 px-2 py-1"
+                  >
+                    <span className="text-[11px] font-semibold text-dh-muted truncate">{row.name}</span>
+                    <span className="text-[10px] text-dh-muted shrink-0">Awaiting</span>
+                  </div>
+                );
+              })
             )}
           </div>
         )}
@@ -1362,8 +1455,10 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
   const needsPcWeaponRangeTarget = roll._attackerInstanceId && roll._weaponRangeFt != null && roll._attackerType !== 'adversary' && !hasDamage;
   const needsInteraction = (canShowTargetRow || roll._featureNeedsTarget) && (hasDamage || hasInteractiveTags || roll._featureNeedsTarget || needsPcWeaponRangeTarget);
 
-  // Whether to show action buttons (Acknowledge / Apply damage)
-  const showActions = !disableDismiss;
+  // Whether to show action buttons (Acknowledge / Apply damage).
+  // Sub-rolls owned by a GM-called reaction marquee are dismissed with the marquee, not independently.
+  const ownedByReactionCall = roll._reactionCallRollDbId != null;
+  const showActions = !disableDismiss && !ownedByReactionCall;
   // Show action row (target selection, toggles) to GM or to the initiating player; only GM sees Acknowledge/Skip.
   const showActionRow = showActions || (isPlayer && isInitiator);
 
@@ -2641,7 +2736,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
           );
         })()}
         {/* Player self-cancel: shown outside showActions when the player is the initiator */}
-        {!showActions && onCancel != null && (
+        {!showActions && onCancel != null && !ownedByReactionCall && (
           <div className="mt-2.5 pt-2 border-t border-white/10 flex justify-center">
             <button
               onClick={onCancel}
@@ -2799,6 +2894,10 @@ export const DiceRoller = forwardRef(function DiceRoller({
   diceCanvasHidden = false,
   getV2PendingMoveBlockInfo,
   sessionRole,
+  onReactionProceed,
+  reactionCallRosterByRollDbId = {},
+  canReactionProceed,
+  reactionProceedingInstanceId = null,
 }, ref) {
   const diceCanvasHiddenRef = useRef(diceCanvasHidden);
   useEffect(() => {
@@ -3297,6 +3396,12 @@ export const DiceRoller = forwardRef(function DiceRoller({
                 onActionAdversarySelect={onActionAdversarySelect && entry.roll._rollDbId != null ? (instanceId) => onActionAdversarySelect(entry.roll._rollDbId, instanceId) : undefined}
                 actionAdversaryTargets={actionAdversaryTargets}
                 targets={targets}
+                onReactionProceed={onReactionProceed && entry.roll._reactionCall && entry.roll._rollDbId != null
+                  ? (instanceId) => onReactionProceed(instanceId, entry.roll)
+                  : undefined}
+                reactionCallRoster={entry.roll._rollDbId != null ? (reactionCallRosterByRollDbId[entry.roll._rollDbId] || []) : []}
+                canReactionProceed={canReactionProceed}
+                reactionProceedingInstanceId={reactionProceedingInstanceId}
                 onAcknowledge={!isPlayer ? (extra) => {
                   onBannerAcknowledgeRef.current?.(entry._bannerId, entry.roll, extra);
                   dismissBannerById(entry._bannerId);
@@ -3312,11 +3417,11 @@ export const DiceRoller = forwardRef(function DiceRoller({
                 key={entry._bannerId}
                 roll={{ ...entry.roll, _bannerId: entry._bannerId }}
                 resolved={entry.resolved}
-                onAcknowledge={!isPlayer ? (opts) => {
+                onAcknowledge={!isPlayer && entry.roll._reactionCallRollDbId == null ? (opts) => {
                   onBannerAcknowledgeRef.current?.(entry._bannerId, entry.roll, opts);
                   dismissBannerById(entry._bannerId);
                 } : undefined}
-                onCancel={!isPlayer ? () => {
+                onCancel={!isPlayer && entry.roll._reactionCallRollDbId == null ? () => {
                   onBannerCancelRef.current?.(entry._bannerId, entry.roll);
                   dismissBannerById(entry._bannerId);
                 } : undefined}
@@ -3326,7 +3431,7 @@ export const DiceRoller = forwardRef(function DiceRoller({
                 onApplyDamage={onApplyDamage}
                 onApplyVulnerable={onApplyVulnerable}
                 onConcussiveKnock={onConcussiveKnock}
-                disableDismiss={isPlayer}
+                disableDismiss={isPlayer || entry.roll._reactionCallRollDbId != null}
                 canApplyDamage={canApplyDamage}
                 onQuickTarget={onQuickTarget}
                 onDoubledUpTarget={onDoubledUpTarget}

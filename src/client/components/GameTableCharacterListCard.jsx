@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { User, AlertTriangle, X, Trash2, Tag } from 'lucide-react';
+import { User, AlertTriangle, X, Trash2, Tag, Zap } from 'lucide-react';
 import { CheckboxTrack } from './DetailCardContent.jsx';
 import { ConditionsEditor } from './ConditionsEditor.jsx';
 import { Tooltip } from './Tooltip.jsx';
@@ -33,6 +33,7 @@ import { WARDEN_OF_THE_ELEMENTS_SCOPE_KEY } from '../../features-v2/engine/featu
  * @param {{ uid?: string, email?: string, name?: string }[]} [props.connectedPlayers]
  * @param {(instanceId: string, email: string | undefined) => void} [props.onAssignPlayerEmail]
  * @param {(instanceId: string) => void} [props.onRemoveFromTable] — GM sidebar remove from table
+ * @param {(instanceId: string) => void} [props.onCallReaction] — GM: open Call for Reaction seeded with this character
  * @param {object} [props.cardRootProps] — spread on outer card (e.g. `characterOverlay.triggerProps` on sidebar)
  * @param {import('react').ReactNode} [props.trailingHeaderActions] — e.g. map pin close + remove from map
  * @param {object | null} [props.v2Registry]
@@ -61,6 +62,7 @@ export function GameTableCharacterListCard({
   connectedPlayers = [],
   onAssignPlayerEmail,
   onRemoveFromTable,
+  onCallReaction,
   cardRootProps = {},
   trailingHeaderActions,
   v2Registry,
@@ -121,16 +123,28 @@ export function GameTableCharacterListCard({
         {el.playerName && (
           <span className="text-[10px] text-dh-muted truncate max-w-[5rem] group-hover/char:hidden">{el.playerName}</span>
         )}
-        {!isPlayer && onRemoveFromTable && (
+        {!isPlayer && (onRemoveFromTable || onCallReaction) && (
           <div className="hidden group-hover/char:flex items-center gap-1 shrink-0" onClick={stopSheetOpenFromInteractive} onMouseDown={stopSheetOpenFromInteractive}>
-            <button
-              type="button"
-              onClick={() => onRemoveFromTable(el.instanceId)}
-              className="text-dh-muted hover:text-red-400 transition-colors"
-              title="Remove from table"
-            >
-              <Trash2 size={11} />
-            </button>
+            {onCallReaction && (
+              <button
+                type="button"
+                onClick={() => onCallReaction(el.instanceId)}
+                className="text-dh-muted hover:text-sky-300 transition-colors"
+                title="Call for Reaction"
+              >
+                <Zap size={11} />
+              </button>
+            )}
+            {onRemoveFromTable && (
+              <button
+                type="button"
+                onClick={() => onRemoveFromTable(el.instanceId)}
+                className="text-dh-muted hover:text-red-400 transition-colors"
+                title="Remove from table"
+              >
+                <Trash2 size={11} />
+              </button>
+            )}
           </div>
         )}
       </div>

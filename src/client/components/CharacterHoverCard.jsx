@@ -20,7 +20,6 @@ import {
   CharacterAbilityList,
   CharacterVaultAbilityList,
   CharacterInventory,
-  DefenseReactionRollGrid,
   TRAIT_FULL,
   formatGold,
   parseBeastformBonus,
@@ -68,6 +67,7 @@ import {
   getLifeSupportPendingHealSlots,
 } from '../lib/manual-track-action-loop.js';
 import { buildWeaponRollText } from '../lib/weapon-roll-text.js';
+import { buildTraitRollText } from '../lib/trait-roll-text.js';
 import { WARDEN_OF_THE_ELEMENTS_SCOPE_KEY } from '../../features-v2/engine/feature-scope-keys.js';
 
 // formatGold is re-exported from CharacterDisplay; re-export it for callers that
@@ -91,25 +91,6 @@ function appendVulnerableTargetToRollText(rollText) {
   const bracket = rollText.substring(bracketStart);
   const n = bracket === ' [d6]' ? 1 : parseInt(bracket.match(/\d+/)[0], 10);
   return rollText.substring(0, lastIdx) + ' ' + label + ' and Vulnerable Target [' + (n + 1) + 'd6kh]';
-}
-
-// ─── Roll text builders ───────────────────────────────────────────────────────
-
-/**
- * Build a roll string for a Daggerheart action roll.
- * Hope [d12] / Fear [d12] are separate expressions so the server can detect
- * which die is dominant.
- */
-function buildTraitRollText(charName, traitKey, traitScore, expName, experienceModifier = 2) {
-  const traitName = TRAIT_FULL[traitKey] || traitKey;
-  const parts = [`${charName} ${traitName} Hope [d12] Fear [d12]`];
-  if (traitScore !== 0) {
-    parts.push(`${traitName} [${traitScore}]`);
-  }
-  if (expName) {
-    parts.push(`${expName} [${experienceModifier}]`);
-  }
-  return parts.join(' ');
 }
 
 // ─── Collapsible JSON tree (for debug panel) ──────────────────────────────────
@@ -784,11 +765,8 @@ export function CharacterHoverCard({
   const getBeastformTraitBonus = (traitKey) =>
     (beastformTraitBonus?.stat === traitKey ? beastformTraitBonus.bonus : 0);
 
-  // ── Trait click handler (used by both trait chips and Reaction row) ───────────
-  // Same roll text (trait in roll), same meta (_traitKey, _attackerInstanceId, experience/mod/advantage).
-  // Only difference for Reaction: displayName and _isReaction flag.
-  const handleTraitClick = onRoll ? (traitKey, opts) => {
-    const isReaction = opts?.isReaction === true;
+  // ── Trait click handler ───────────────────────────────────────────────────────
+  const handleTraitClick = onRoll ? (traitKey) => {
     const baseScore = traits[traitKey] ?? 0;
     const rollModBonus = getRollModBonus(rollModifiers, activeRollMod, traitKey);
     const effectiveScore = baseScore + getBeastformTraitBonus(traitKey) + rollModBonus;
@@ -796,11 +774,10 @@ export function CharacterHoverCard({
     if (selectedMod?.mode === 'roll' && selectedMod.dice) {
       rollText += ` ${selectedMod.name} [${selectedMod.dice}]`;
     }
-    const displayName = isReaction ? `${el.name} — Reaction (${TRAIT_FULL[traitKey]})` : `${el.name} ${TRAIT_FULL[traitKey]}`;
+    const displayName = `${el.name} ${TRAIT_FULL[traitKey]}`;
     const traitRollMeta = {
       _attackerInstanceId: el.instanceId,
       _traitKey: traitKey,
-      ...(isReaction && { _isReaction: true }),
       ...(selectedMod?.consumeOnUse && { _usedModifierId: selectedMod.id }),
       _intentPanelForActionRoll: true,
       _deferExperienceToPreRoll: true,
@@ -1195,9 +1172,6 @@ export function CharacterHoverCard({
                 srdData={srdData}
                 hideHope
                 defenseTrackInteraction={defenseTrackInteraction}
-                defenseFooter={
-                  <DefenseReactionRollGrid el={displayEl} compact onTraitClick={handleTraitClick} />
-                }
               />
             </div>
 

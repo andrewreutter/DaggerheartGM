@@ -160,13 +160,11 @@ doubt (the webServer command runs `node server.js` directly, it does **not** reb
    trait and weapon rolls) — after clicking a trait/weapon chip, `expect(page.getByText('Before you
    roll')).toBeVisible()` then click the **Proceed** button before the roll actually posts and a
    banner appears.
-9. **The Defense card's "Reaction Rolls" grid shares the same `title`/name text as the main
-   Traits grid** (both use `Roll ${TRAIT_FULL[trait]}` / `${trait} +N`). A bare
-   `getByTitle('Roll Agility')` or `getByRole('button', { name: 'Agility +2' })` resolves to both
-   and `.first()` may pick the **wrong one** (the Reaction cell, which posts `_isReaction: true`
-   and produces a reaction-labeled banner instead of a normal action roll). Disambiguate using the
-   main grid's verb-hint suffix in the accessible name, e.g.
-   `getByRole('button', { name: /Agility.*Sprint/i })` (`TRAIT_VERBS`, `CharacterDisplay.jsx`).
+9. **Reaction rolls are GM-called, not sheet buttons.** The Defense card no longer has a
+   "Reaction Rolls" trait grid. The GM opens **Call for Reaction** (Encounter panel or a Zap on a
+   character card) → `ReactionCallModal` → pending marquee; **Proceed** on a target posts
+   `_isReaction: true` via `handlePlayerOwnRoll`. Trait chips on the sheet are ordinary action
+   rolls (`getByRole('button', { name: /Agility.*Sprint/i })` still works via `TRAIT_VERBS`).
 10. **Cross-sheet `isSelect` chips cannot be activated (known gap).**
     `activateV2CrossSheetChip` (`src/client/lib/v2-cross-sheet-lifecycle.js`) doesn't accept
     `selectOpts`, so any cross-sheet chip with `isSelect: true` (e.g. Bard Maestro's "after Rally"

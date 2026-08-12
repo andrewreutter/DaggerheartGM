@@ -5,8 +5,9 @@
  * styling or "with Hope"/"with Fear" messaging for these rolls even though a Hope
  * and Fear die were rolled.
  *
- * Rolls are flagged via `_isReaction` in roll meta (see `CharacterHoverCard.jsx`
- * `handleTraitClick`), which is persisted onto the roll object end-to-end.
+ * Rolls are flagged via `_isReaction` in roll meta (GM-called reaction Proceed
+ * in `GMTableView.jsx`, which reuses `handlePlayerOwnRoll`), persisted onto the
+ * roll object end-to-end.
  */
 
 /** True when Hope/Fear-specific messaging and color styling should be suppressed for this roll. */
