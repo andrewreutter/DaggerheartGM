@@ -652,7 +652,7 @@ export const fetchAdminAiUsage = async (query = {}) => {
 
 /**
  * Admin: paginated list of bug reports (newest-first).
- * @param {{ limit?: number, offset?: number, status?: 'triage'|'bug'|'feature'|'completed' }} [query]
+ * @param {{ limit?: number, offset?: number, status?: 'triage'|'bug'|'feature'|'completed'|'shipped'|'cancelled' }} [query]
  */
 export const fetchAdminBugReports = async (query = {}) => {
   const token = await getAuthToken();
@@ -670,7 +670,7 @@ export const fetchAdminBugReports = async (query = {}) => {
   return body;
 };
 
-/** Moves a bug report to a different status (Triage / Bug / Feature / Completed) — one click, any tab to any tab. */
+/** Moves a bug report to a different status (Triage / Bug / Feature / Completed / Shipped / Cancelled) — one click, any tab to any tab. */
 export const postAdminBugReportStatus = async (id, status) => {
   const token = await getAuthToken();
   if (!token) throw new Error('Not signed in');

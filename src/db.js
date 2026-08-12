@@ -1770,7 +1770,7 @@ export async function queryAiUsageAggregates(appId, opts) {
 }
 
 /** Valid `bug_reports.status` values (admin Problem reports page tabs). */
-export const BUG_REPORT_STATUSES = ['triage', 'bug', 'feature', 'completed'];
+export const BUG_REPORT_STATUSES = ['triage', 'bug', 'feature', 'completed', 'shipped', 'cancelled'];
 
 /**
  * Returns the total number of bug reports for this app (across all GMs/tables).
@@ -1818,8 +1818,8 @@ export async function getBugReportsPaginated(appId, { limit = 50, offset = 0, st
 }
 
 /**
- * Moves a bug report to a different status (Triage / Bug / Feature / Completed) — a single-click
- * transition between any two tabs on the admin Problem reports page.
+ * Moves a bug report to a different status (Triage / Bug / Feature / Completed / Shipped / Cancelled) —
+ * a single-click transition between any two tabs on the admin Problem reports page.
  * @param {string} appId
  * @param {number} id
  * @param {{ status: string, changedByEmail?: string }} opts

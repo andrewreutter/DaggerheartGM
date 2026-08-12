@@ -1,7 +1,26 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowDown, ArrowUp, Bug, Check, Copy, Inbox, Lightbulb, RefreshCw, ShieldOff } from 'lucide-react';
+import {
+  ArrowDown,
+  ArrowUp,
+  Ban,
+  Bug,
+  Check,
+  Copy,
+  Inbox,
+  Lightbulb,
+  RefreshCw,
+  Rocket,
+  ShieldOff,
+} from 'lucide-react';
 import { fetchAdminBugReports, postAdminBugReportStatus } from '../lib/api.js';
 import { buildBugReportDebugText } from '../lib/bug-report-debug-text.js';
+import {
+  BUG_REPORT_STATUS_ORDER,
+  bugReportSelectionState,
+  otherBugReportStatuses,
+  setBugReportVisibleSelection,
+  toggleBugReportSelection,
+} from '../lib/bug-report-admin.js';
 
 const PAGE_SIZE = 50;
 
@@ -11,8 +30,10 @@ const STATUS_CONFIG = {
   bug: { label: 'Bug', icon: Bug, emptyText: 'No bug reports yet.' },
   feature: { label: 'Feature', icon: Lightbulb, emptyText: 'No feature requests yet.' },
   completed: { label: 'Completed', icon: Check, emptyText: 'No completed reports yet.' },
+  shipped: { label: 'Shipped', icon: Rocket, emptyText: 'No shipped reports yet.' },
+  cancelled: { label: 'Cancelled', icon: Ban, emptyText: 'No cancelled reports yet.' },
 };
-const STATUS_ORDER = ['triage', 'bug', 'feature', 'completed'];
+const STATUS_ORDER = BUG_REPORT_STATUS_ORDER;
 
 function formatTimestamp(ts) {
   if (!ts) return '—';
@@ -82,8 +103,9 @@ function CopyButton({ row }) {
   );
 }
 
-function MoveButtons({ row, onMove, isPending }) {
-  const otherStatuses = STATUS_ORDER.filter(s => s !== row.status);
+function StatusMoveButtons({ currentStatus, onMove, isPending, size = 'sm' }) {
+  const otherStatuses = otherBugReportStatuses(currentStatus);
+  const pad = size === 'sm' ? 'px-2 py-1' : 'px-2.5 py-1.5';
   return (
     <div className="flex items-center gap-1.5 flex-wrap">
       {otherStatuses.map(status => {
@@ -92,10 +114,10 @@ function MoveButtons({ row, onMove, isPending }) {
           <button
             key={status}
             type="button"
-            onClick={() => onMove(row, status)}
+            onClick={() => onMove(status)}
             disabled={isPending}
             title={`Move to ${label}`}
-            className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs font-medium bg-dh-raised border border-dh-border text-dh-muted hover:text-dh hover:border-dh-strong hover:bg-dh-hover disabled:opacity-50"
+            className={`inline-flex items-center gap-1 rounded ${pad} text-xs font-medium bg-dh-raised border border-dh-border text-dh-muted hover:text-dh hover:border-dh-strong hover:bg-dh-hover disabled:opacity-50`}
           >
             <Icon size={12} className={isPending ? 'animate-spin' : ''} />
             {label}
@@ -138,8 +160,11 @@ export function AdminBugReportsPage({ navigate }) {
   const [error, setError] = useState(null);
   const [pendingIds, setPendingIds] = useState(() => new Set());
   const [expandedIds, setExpandedIds] = useState(() => new Set());
+  const [selectedIds, setSelectedIds] = useState(() => new Set());
+  const [bulkPending, setBulkPending] = useState(false);
   const [sortColumn, setSortColumn] = useState(null); // 'time' | 'reporter'
   const [sortDir, setSortDir] = useState('desc');
+  const selectAllRef = useRef(null);
 
   const load = useCallback(async ({ replace = true, offset: offsetOverride, currentLength = 0 } = {}) => {
     if (replace) {
@@ -153,6 +178,7 @@ export function AdminBugReportsPage({ navigate }) {
       const json = await fetchAdminBugReports({ limit: PAGE_SIZE, offset, status: tab });
       setTotalCount(json.totalCount ?? null);
       setItems(prev => (replace ? json.items : [...prev, ...json.items]));
+      if (replace) setSelectedIds(new Set());
     } catch (e) {
       setError(e?.message || String(e));
     } finally {
@@ -201,6 +227,18 @@ export function AdminBugReportsPage({ navigate }) {
     return withKey.map(x => x.row);
   }, [items, sortColumn, sortDir]);
 
+  const visibleIds = useMemo(() => sortedItems.map(row => row.id), [sortedItems]);
+  const { selectedCount, allSelected, someSelected } = useMemo(
+    () => bugReportSelectionState(selectedIds, visibleIds),
+    [selectedIds, visibleIds]
+  );
+
+  useEffect(() => {
+    if (selectAllRef.current) {
+      selectAllRef.current.indeterminate = someSelected;
+    }
+  }, [someSelected]);
+
   const toggleExpanded = useCallback((id) => {
     setExpandedIds(prev => {
       const next = new Set(prev);
@@ -210,22 +248,82 @@ export function AdminBugReportsPage({ navigate }) {
     });
   }, []);
 
+  const toggleRowSelected = useCallback((id) => {
+    setSelectedIds(prev => toggleBugReportSelection(prev, id));
+  }, []);
+
+  const handleSelectAllChange = useCallback((e) => {
+    const selectAll = e.target.checked;
+    setSelectedIds(prev => setBugReportVisibleSelection(prev, visibleIds, selectAll));
+  }, [visibleIds]);
+
+  const removeRowsByIds = useCallback((ids) => {
+    const idSet = ids instanceof Set ? ids : new Set(ids);
+    setItems(prev => prev.filter(r => !idSet.has(r.id)));
+    setTotalCount(prev => (prev != null ? Math.max(0, prev - idSet.size) : prev));
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      for (const id of idSet) next.delete(id);
+      return next;
+    });
+    setPendingIds(prev => {
+      const next = new Set(prev);
+      for (const id of idSet) next.delete(id);
+      return next;
+    });
+  }, []);
+
   const handleMove = useCallback(async (row, nextStatus) => {
     setPendingIds(prev => new Set(prev).add(row.id));
     try {
       await postAdminBugReportStatus(row.id, nextStatus);
-      setItems(prev => prev.filter(r => r.id !== row.id));
-      setTotalCount(prev => (prev != null ? Math.max(0, prev - 1) : prev));
+      removeRowsByIds([row.id]);
     } catch (e) {
       setError(e?.message || String(e));
-    } finally {
       setPendingIds(prev => {
         const next = new Set(prev);
         next.delete(row.id);
         return next;
       });
     }
-  }, []);
+  }, [removeRowsByIds]);
+
+  const handleBulkMove = useCallback(async (nextStatus) => {
+    const ids = [...selectedIds];
+    if (ids.length === 0) return;
+    setBulkPending(true);
+    setPendingIds(prev => {
+      const next = new Set(prev);
+      for (const id of ids) next.add(id);
+      return next;
+    });
+    try {
+      const results = await Promise.allSettled(
+        ids.map(id => postAdminBugReportStatus(id, nextStatus))
+      );
+      const succeeded = new Set();
+      const failures = [];
+      results.forEach((result, i) => {
+        if (result.status === 'fulfilled') succeeded.add(ids[i]);
+        else failures.push(result.reason?.message || String(result.reason));
+      });
+      if (succeeded.size > 0) removeRowsByIds(succeeded);
+      if (failures.length > 0) {
+        setError(
+          failures.length === ids.length
+            ? failures[0]
+            : `Moved ${succeeded.size} of ${ids.length}; ${failures.length} failed: ${failures[0]}`
+        );
+      }
+    } finally {
+      setBulkPending(false);
+      setPendingIds(prev => {
+        const next = new Set(prev);
+        for (const id of ids) next.delete(id);
+        return next;
+      });
+    }
+  }, [selectedIds, removeRowsByIds]);
 
   return (
     <div className="flex-1 overflow-auto flex flex-col bg-dh-canvas text-dh">
@@ -262,7 +360,7 @@ export function AdminBugReportsPage({ navigate }) {
 
       <div className="p-4 max-w-7xl mx-auto w-full space-y-4">
         {/* Tabs */}
-        <div className="flex items-center gap-1 border-b border-dh-border">
+        <div className="flex items-center gap-1 border-b border-dh-border flex-wrap">
           {STATUS_ORDER.map(key => {
             const { label, icon: Icon } = STATUS_CONFIG[key];
             return (
@@ -299,17 +397,40 @@ export function AdminBugReportsPage({ navigate }) {
 
         {items.length > 0 && (
           <>
-            <p className="text-xs text-dh-muted">
-              Showing {items.length}{totalCount != null ? ` of ${totalCount}` : ''} {STATUS_CONFIG[tab].label.toLowerCase()} reports
-            </p>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <p className="text-xs text-dh-muted">
+                Showing {items.length}{totalCount != null ? ` of ${totalCount}` : ''} {STATUS_CONFIG[tab].label.toLowerCase()} reports
+                {selectedCount > 0 ? ` · ${selectedCount} selected` : ''}
+              </p>
+              {selectedCount > 0 && (
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-xs font-medium text-dh-muted whitespace-nowrap">Move selected to</span>
+                  <StatusMoveButtons
+                    currentStatus={tab}
+                    onMove={handleBulkMove}
+                    isPending={bulkPending}
+                    size="md"
+                  />
+                </div>
+              )}
+            </div>
             <div className="border border-dh-border rounded-lg overflow-hidden">
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="text-left text-dh-muted border-b border-dh-border bg-dh-surface/50">
+                      <th className="px-3 py-2 w-10">
+                        <input
+                          ref={selectAllRef}
+                          type="checkbox"
+                          checked={allSelected}
+                          onChange={handleSelectAllChange}
+                          aria-label="Select all reports on this page"
+                          className="rounded border-dh-border bg-dh-raised text-red-500 focus:ring-red-500/40"
+                        />
+                      </th>
                       <SortableHeader label="Time" columnKey="time" sortColumn={sortColumn} sortDir={sortDir} onSort={handleSort} />
                       <SortableHeader label="Reporter" columnKey="reporter" sortColumn={sortColumn} sortDir={sortDir} onSort={handleSort} />
-                      <th className="px-3 py-2 font-medium whitespace-nowrap">Table ID</th>
                       <th className="px-3 py-2 font-medium">Notes</th>
                       <th className="px-3 py-2 font-medium whitespace-nowrap">Copy</th>
                       <th className="px-3 py-2 font-medium whitespace-nowrap">Move to</th>
@@ -320,11 +441,23 @@ export function AdminBugReportsPage({ navigate }) {
                       const { _reportedByEmail, _reportedByRole, notes } = row.payload ?? {};
                       const isExpanded = expandedIds.has(row.id);
                       const isPending = pendingIds.has(row.id);
+                      const isSelected = selectedIds.has(row.id);
                       return (
                         <tr
                           key={row.id}
-                          className="border-b border-dh-border/60 hover:bg-dh-hover/30 align-top"
+                          className={`border-b border-dh-border/60 hover:bg-dh-hover/30 align-top ${
+                            isSelected ? 'bg-red-950/20' : ''
+                          }`}
                         >
+                          <td className="px-3 py-2">
+                            <input
+                              type="checkbox"
+                              checked={isSelected}
+                              onChange={() => toggleRowSelected(row.id)}
+                              aria-label={`Select report #${row.id}`}
+                              className="rounded border-dh-border bg-dh-raised text-red-500 focus:ring-red-500/40"
+                            />
+                          </td>
                           <td className="px-3 py-2 font-mono text-xs whitespace-nowrap text-dh-muted">
                             {formatTimestamp(row.createdAt)}
                           </td>
@@ -335,9 +468,6 @@ export function AdminBugReportsPage({ navigate }) {
                               </span>
                               <RoleBadge role={_reportedByRole} />
                             </div>
-                          </td>
-                          <td className="px-3 py-2 font-mono text-xs text-dh-muted whitespace-nowrap">
-                            {row.tableId ?? '—'}
                           </td>
                           <td className="px-3 py-2 text-xs text-dh max-w-xs">
                             {notes ? (
@@ -357,7 +487,11 @@ export function AdminBugReportsPage({ navigate }) {
                             <CopyButton row={row} />
                           </td>
                           <td className="px-3 py-2">
-                            <MoveButtons row={row} onMove={handleMove} isPending={isPending} />
+                            <StatusMoveButtons
+                              currentStatus={row.status ?? tab}
+                              onMove={(status) => handleMove(row, status)}
+                              isPending={isPending}
+                            />
                           </td>
                         </tr>
                       );

@@ -362,7 +362,7 @@ app.get('/api/admin/bug-reports', requireAuth, requireAdmin, async (req, res) =>
   }
 });
 
-/** Admin: move a bug report to a different status (Triage / Bug / Feature / Completed). */
+/** Admin: move a bug report to a different status (Triage / Bug / Feature / Completed / Shipped / Cancelled). */
 app.patch('/api/admin/bug-reports/:id', requireAuth, requireAdmin, async (req, res) => {
   if (!process.env.DATABASE_URL) {
     return res.status(503).json({ error: 'Database required for bug reports' });
