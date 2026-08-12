@@ -6,6 +6,10 @@ import {
 } from './session-countdowns.js';
 import { normalizeConditionsToList, serializeConditionsList } from './conditions-utils.js';
 import {
+  addConditionsHistoryEntry,
+  removeConditionsHistoryEntry,
+} from './conditions-history.js';
+import {
   DEFAULT_LEGACY_MAP_ID,
   deriveMapConfigFromState,
   newMapId,
@@ -212,6 +216,14 @@ export function applyTableOp(op, state) {
     }
     case 'set-fear':
       return { fearCount: op.fearCount };
+    case 'add-conditions-history-entry':
+      return {
+        conditionsHistory: addConditionsHistoryEntry(state.conditionsHistory, op.entry),
+      };
+    case 'remove-conditions-history-entry':
+      return {
+        conditionsHistory: removeConditionsHistoryEntry(state.conditionsHistory, op.entry),
+      };
     case 'set-countdown': {
       const key = op.key;
       const value = op.value;

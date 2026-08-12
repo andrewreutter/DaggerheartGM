@@ -9,7 +9,7 @@ import { readFile } from 'fs/promises';
 import { initializeApp, getApps } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import cron from 'node-cron';
-import { runMigrations, getPool, getItems, getPublicItems, upsertItem, deleteItem, countItems, getItemsPaginated, countCommunityItems, getCommunityItemsPaginated, getItemsByIds, getItem, recordClone, recordPlay, upsertMirror, findAutoClone, getUnifiedItems, getUnifiedLibraryAll, getUnifiedLibraryAllBranchCounts, getExternalCacheByIds, getTableStatesByPlayerEmail, getTableStateById, listTableStates, appendDiceRoll, ackDiceRoll, getRecentDiceRolls, setBannerStatus, getPendingBanners, getDiceRollById, updateDiceRollData, resolveCharacterElements as resolveCharacterElementsDb, stripCharacterElementsForDb, getResolvedTableState, setTableStateNotifyHook, getUserPreferences, upsertUserPreferences, queryAiUsageAggregates, stampFreeTrialStart, checkTableIsLive, extendTableCampaignPass, recordCampaignPassPurchase, markStripeEventProcessed, recordCharacterTablePlacement, removeCharacterTablePlacementsForTable, countUserAiCallsThisMonth, getBugReportsPaginated, countBugReports, setBugReportStatus, updateBugReportNotes, BUG_REPORT_STATUSES } from './src/db.js';
+import { runMigrations, getPool, getItems, getPublicItems, upsertItem, deleteItem, countItems, getItemsPaginated, countCommunityItems, getCommunityItemsPaginated, getItemsByIds, getItem, recordClone, recordPlay, upsertMirror, findAutoClone, getUnifiedItems, getUnifiedLibraryAll, getUnifiedLibraryAllBranchCounts, getExternalCacheByIds, getTableStatesByPlayerEmail, getTableStateById, listTableStates, appendDiceRoll, ackDiceRoll, getRecentDiceRolls, setBannerStatus, getPendingBanners, getDiceRollById, updateDiceRollData, resolveCharacterElements as resolveCharacterElementsDb, stripCharacterElementsForDb, getResolvedTableState, setTableStateNotifyHook, getUserPreferences, upsertUserPreferences, queryAiUsageAggregates, stampFreeTrialStart, checkTableIsLive, extendTableCampaignPass, recordCampaignPassPurchase, markStripeEventProcessed, recordCharacterTablePlacement, removeCharacterTablePlacementsForTable, countUserAiCallsThisMonth, getBugReportsPaginated, countBugReports, setBugReportStatus, updateBugReportNotes, BUG_REPORT_STATUSES, getCharacterById, upsertCharacterForTable, deleteCharacterForTable, stampCharacterTableId } from './src/db.js';
 import { isStripeConfigured, getStripe, constructWebhookEvent, CAMPAIGN_PASS_PRICE_CENTS, getCampaignPassPriceId } from './src/stripe.js';
 import { srdRouter, warmCache, getItem as getSrdItem } from './src/srd/index.js';
 import { fetchHoDFoundryDetail } from './src/hod-search.js';
@@ -917,31 +917,6 @@ function getOrCreateRoom(tableId) {
   if (!tableId) return null;
   if (!rooms.has(tableId)) rooms.set(tableId, { players: new Map(), gmClients: new Set() });
   return rooms.get(tableId);
-}
-
-/**
- * Notify the `table_state` subscription for every currently-connected room (table) where `uid`
- * is either the table owner or a connected player, so `resolveCharacterElements` re-runs and
- * pushes fresh character data (e.g. after a character library/image save) without a reload.
- *
- * `rooms` is keyed by tableId, NOT the owner's Firebase uid — legacy tables happen to have
- * `id === ownerUid` so a naive `tableId === uid` check works for those, but tables created via
- * `POST /api/my-tables` use a UUID id, so that check silently never matches for the table
- * owner's own session on those tables. Resolve owned table ids via `listTableStates` instead.
- */
-async function notifyCharacterTableRoomsForUid(uid) {
-  if (!rooms.size) return;
-  let ownedTableIds;
-  try {
-    ownedTableIds = new Set((await listTableStates(APP_ID, uid)).map((t) => t.id));
-  } catch {
-    ownedTableIds = new Set();
-  }
-  for (const [tableId, room] of rooms) {
-    if (ownedTableIds.has(tableId) || room.players?.has(uid)) {
-      subscriptionManager.notifyChange('table_state', tableId);
-    }
-  }
 }
 
 /**
@@ -2451,11 +2426,48 @@ app.put('/api/data/:collection/:id/image', requireAuth, async (req, res) => {
   if (!COLLECTIONS.includes(collection)) {
     return res.status(400).json({ error: 'Unknown collection' });
   }
-  const { imageUrl, _additionalImages, path: jsonPath } = req.body || {};
+  const { imageUrl, _additionalImages, path: jsonPath, tableId: bodyTableId } = req.body || {};
   if (imageUrl === undefined && _additionalImages === undefined) {
     return res.status(400).json({ error: 'imageUrl or _additionalImages required' });
   }
   try {
+    // Characters use the canonical user-agnostic write path.
+    if (collection === 'characters') {
+      if (!bodyTableId) return res.status(400).json({ error: 'tableId required for character image saves' });
+      const ctx = await resolveTableAccess(APP_ID, bodyTableId, req);
+      if (ctx.error) return res.status(ctx.error).json({ error: ctx.message });
+      const current = await getCharacterById(APP_ID, id);
+      if (!current) return res.status(404).json({ error: 'Character not found' });
+      const pathParts = (jsonPath || '').split('.').filter(Boolean);
+      const sanitized = await sanitizeImageFields(req.uid, { imageUrl, _additionalImages });
+      const imageUpdates = {};
+      if (imageUrl !== undefined) imageUpdates.imageUrl = sanitized.imageUrl;
+      if (_additionalImages !== undefined) imageUpdates._additionalImages = sanitized._additionalImages;
+      let merged;
+      if (pathParts.length === 0) {
+        merged = { ...current, ...imageUpdates };
+      } else {
+        merged = JSON.parse(JSON.stringify(current));
+        let ptr = merged;
+        for (let i = 0; i < pathParts.length - 1; i++) {
+          const part = pathParts[i];
+          const key = /^\d+$/.test(part) ? parseInt(part, 10) : part;
+          ptr = ptr?.[key];
+          if (!ptr) break;
+        }
+        const lastPart = pathParts[pathParts.length - 1];
+        const lastKey = /^\d+$/.test(lastPart) ? parseInt(lastPart, 10) : lastPart;
+        if (ptr && typeof ptr === 'object') {
+          ptr[lastKey] = { ...(ptr[lastKey] || {}), ...imageUpdates };
+        }
+      }
+      const { id: _mid, user_id: _uid, table_id: _tid, is_public, _source, _owner, ...rest } = merged;
+      await upsertCharacterForTable(APP_ID, { requesterUid: req.uid, tableId: bodyTableId, id, data: rest, isPublic: Boolean(is_public) });
+      res.json({ id, ...rest, is_public: Boolean(is_public), _source: 'own' });
+      subscriptionManager.notifyChange('table_state', bodyTableId);
+      return;
+    }
+
     const current = await getItem(APP_ID, req.uid, collection, id);
     if (!current) {
       return res.status(404).json({ error: 'Item not found' });
@@ -2489,13 +2501,9 @@ app.put('/api/data/:collection/:id/image', requireAuth, async (req, res) => {
     const { id: _id, is_public, _source, _owner, ...rest } = merged;
     await upsertItem(APP_ID, req.uid, collection, id, rest, Boolean(merged.is_public));
     res.json({ id, ...rest, is_public: Boolean(merged.is_public), _source: 'own' });
-    // Broadcast to active rooms so character tokens update immediately without a page reload.
-    if (collection === 'characters') {
-      await notifyCharacterTableRoomsForUid(req.uid);
-    }
   } catch (err) {
     console.error(`PUT /api/data/${collection}/${id}/image error:`, err);
-    res.status(500).json({ error: 'Failed to save image' });
+    res.status(err?.statusCode || 500).json({ error: err?.statusCode === 409 ? err.message : 'Failed to save image' });
   }
 });
 
@@ -2528,6 +2536,33 @@ app.put('/api/data/:collection', requireAuth, async (req, res) => {
     return res.status(400).json({ error: 'Invalid item body' });
   }
   const id = item.id || crypto.randomUUID();
+
+  // Characters use the canonical user-agnostic write path to prevent shadow rows.
+  if (collection === 'characters') {
+    const { _tableId, id: _id, is_public, _source, _owner, _clientId, ...incoming } = item;
+    if (!_tableId) return res.status(400).json({ error: 'tableId required for character saves' });
+    try {
+      const ctx = await resolveTableAccess(APP_ID, _tableId, req);
+      if (ctx.error) return res.status(ctx.error).json({ error: ctx.message });
+      let dataToSave = incoming;
+      const existing = await getCharacterById(APP_ID, id);
+      if (existing) {
+        const { id: _cid, user_id: _cuid, table_id: _ctid, is_public: _cp, _source: _cs, _owner: _co, ...currentData } = existing;
+        dataToSave = deepMergePreservingImages(currentData, incoming);
+      }
+      dataToSave = await sanitizeItemImageDataUrlsDeep(req.uid, dataToSave);
+      await upsertCharacterForTable(APP_ID, { requesterUid: req.uid, tableId: _tableId, id, data: dataToSave, isPublic: Boolean(is_public) });
+      const saved = { id, ...dataToSave, is_public: Boolean(is_public), _source: 'own' };
+      res.json(saved);
+      subscriptionManager.notifyChange('table_state', _tableId);
+    } catch (err) {
+      if (err?.statusCode === 409) return res.status(409).json({ error: err.message });
+      console.error('PUT /api/data/characters error:', err);
+      res.status(500).json({ error: 'Failed to save character' });
+    }
+    return;
+  }
+
   const { id: _id, is_public, _source, _owner, _clientId, ...incoming } = item;
   try {
     let dataToSave = incoming;
@@ -2549,14 +2584,6 @@ app.put('/api/data/:collection', requireAuth, async (req, res) => {
     await upsertItem(APP_ID, req.uid, collection, id, dataToSave, Boolean(is_public));
     const saved = { id, ...dataToSave, is_public: Boolean(is_public), _source: 'own' };
     res.json(saved);
-
-    // When a character is saved, notify the table_state subscription for any active room
-    // where the saving user is the GM or a connected player. The subscription re-queries
-    // getResolvedTableState which calls resolveCharacterElements, so all clients receive
-    // fresh character data without a separate op type.
-    if (collection === 'characters' && saved.id) {
-      await notifyCharacterTableRoomsForUid(req.uid);
-    }
 
     // Notify table_state subscribers when the table_state record itself is saved.
     if (collection === 'table_state') {
@@ -4109,6 +4136,16 @@ app.post('/api/room/my/op', requireAuth, async (req, res) => {
         } catch (err) {
           console.error('[billing] character placement recording error:', err.message);
         }
+        // Stamp table_id on the library row for each character being placed.
+        try {
+          await Promise.all(charIds.map(cid =>
+            stampCharacterTableId(APP_ID, cid, tableId).catch(err =>
+              console.error('[char] stampCharacterTableId error in add-elements:', err.message),
+            ),
+          ));
+        } catch (err) {
+          console.error('[char] stampCharacterTableId batch error:', err.message);
+        }
       }
     }
 
@@ -4639,6 +4676,12 @@ app.post('/api/room/:tableId/add-character', requireAuth, async (req, res) => {
         await recordCharacterTablePlacement(APP_ID, charOwnerUid, charId, tableId);
       } catch (placErr) {
         console.error('[billing] recordCharacterTablePlacement error:', placErr.message);
+      }
+      // Stamp table_id on the library row so we track which table this character belongs to.
+      try {
+        await stampCharacterTableId(APP_ID, charId, tableId);
+      } catch (stampErr) {
+        console.error('[char] stampCharacterTableId error in add-character:', stampErr.message);
       }
     }
 

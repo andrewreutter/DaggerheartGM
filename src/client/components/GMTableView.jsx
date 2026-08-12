@@ -104,7 +104,8 @@ import { TRAIT_FULL } from './CharacterDisplay.jsx';
 import { FeatureResourceCostIcons } from './FeatureResourceCostIcons.jsx';
 import { FrequencyCycleChipSuffix, getFrequencyCycleWord } from '../lib/frequency-cycle-ui.jsx';
 import { DiceRoller } from './DiceRoller.jsx';
-import { ConditionsTextInput } from './ConditionsTextInput.jsx';
+import { ConditionsEditor } from './ConditionsEditor.jsx';
+import { normalizeConditionsToList } from '../lib/conditions-utils.js';
 import { Tooltip } from './Tooltip.jsx';
 import { usePortalHoverTooltip, PortalHoverTooltipLayer } from '../lib/portal-hover-tooltip.jsx';
 import {
@@ -538,7 +539,7 @@ function buildGameTableNewEnvironmentStub(tier = 1, type = 'exploration') {
   };
 }
 
-export function GMTableView({ tableId, activeElements, updateActiveElement: pushTableElementUpdate, removeActiveElement, updateActiveElementsBaseData, data, saveItem, saveImage, addToTable, sendDoAddToTable, onMergeAdversary, user, route, navigate, featureCountdowns = {}, sessionCountdowns = [], updateCountdown, partySize = 1, partyTier = 1, characters = [], tableBattleMods, setTableBattleMods, fearCount = 0, setFearCount, tableName = '', gmDisplayName = '', tableStateReady = false, onTableNameChange, onDeleteTable, ensureScenesLoaded, ensureAdventuresLoaded, ensureCharactersLoaded, clearTable, isPlayer = false, playerEmail, connectedPlayers = [], playerEmails = [], setPlayerEmails, gmUid, onPlayerAddCharacter, pendingBanners = [], pendingPlayerIntent = null, onFeatureRequestSuccess, onFeatureRequestCancel, rangerFocusRequestedBannerIds, onRangerFocusRerollRequestSuccess, onRangerFocusRerollRequestCancel, previewAsPlayerEmail = null, onPreviewAsPlayer, onExitPreview, actionLog = [], setActionLog, mapConfig, maps = [], activeMapId = null, gmMapView = null, onSetActiveMap, onAddMap, onAddMapWithImage, onRemoveMap, onRenameMap, onMapConfigChange, onMapViewSync, lifeSupportSelections = {}, onLifeSupportSelect, onLifeSupportClear, restMovesSelections = {}, onRestMoveSelect, onRestMoveClear, tableFeatureState = {}, sessionPlayAllowed = true, sessionStarted = true, sessionPaused = false, mapPings = [], onDismissMapPing = () => {}, appendMapPing = () => {},
+export function GMTableView({ tableId, activeElements, updateActiveElement: pushTableElementUpdate, removeActiveElement, updateActiveElementsBaseData, data, saveItem, saveImage, addToTable, sendDoAddToTable, onMergeAdversary, user, route, navigate, featureCountdowns = {}, sessionCountdowns = [], updateCountdown, partySize = 1, partyTier = 1, characters = [], tableBattleMods, setTableBattleMods, fearCount = 0, setFearCount, conditionsHistory = [], onAddConditionsHistoryEntry, onRemoveConditionsHistoryEntry, tableName = '', gmDisplayName = '', tableStateReady = false, onTableNameChange, onDeleteTable, ensureScenesLoaded, ensureAdventuresLoaded, ensureCharactersLoaded, clearTable, isPlayer = false, playerEmail, connectedPlayers = [], playerEmails = [], setPlayerEmails, gmUid, onPlayerAddCharacter, pendingBanners = [], pendingPlayerIntent = null, onFeatureRequestSuccess, onFeatureRequestCancel, rangerFocusRequestedBannerIds, onRangerFocusRerollRequestSuccess, onRangerFocusRerollRequestCancel, previewAsPlayerEmail = null, onPreviewAsPlayer, onExitPreview, actionLog = [], setActionLog, mapConfig, maps = [], activeMapId = null, gmMapView = null, onSetActiveMap, onAddMap, onAddMapWithImage, onRemoveMap, onRenameMap, onMapConfigChange, onMapViewSync, lifeSupportSelections = {}, onLifeSupportSelect, onLifeSupportClear, restMovesSelections = {}, onRestMoveSelect, onRestMoveClear, tableFeatureState = {}, sessionPlayAllowed = true, sessionStarted = true, sessionPaused = false, mapPings = [], onDismissMapPing = () => {}, appendMapPing = () => {},
   mapScribbles = [],
   mapViews = [], gmActiveViewId = null, onSetActiveView, onAddMapViewOp, onRemoveMapView, onRenameMapView, onSetViewBroadcast, onSetViewLocked, onSetMapShare,
   onSetMapOverlay,
@@ -4930,6 +4931,9 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
             onV2CardChipFactory={handleCharacterPanelV2CardChip}
             pendingBanners={pendingBanners}
             onOpenImageLightbox={setLightboxUrl}
+            conditionsHistory={conditionsHistory}
+            onAddConditionsHistoryEntry={onAddConditionsHistoryEntry}
+            onRemoveConditionsHistoryEntry={!isPlayer ? onRemoveConditionsHistoryEntry : undefined}
           />
         </AnchoredFloatingPanel>
       );
@@ -4946,6 +4950,9 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
       removeActiveElement,
       playerEmails,
       connectedPlayers,
+      conditionsHistory,
+      onAddConditionsHistoryEntry,
+      onRemoveConditionsHistoryEntry,
       isPlayer,
       playerEmail,
       sessionPlayAllowed,
@@ -5978,6 +5985,9 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                 onV2CardChipFactory={handleCharacterPanelV2CardChip}
                 pendingBanners={pendingBanners}
                 onOpenImageLightbox={setLightboxUrl}
+                conditionsHistory={conditionsHistory}
+                onAddConditionsHistoryEntry={onAddConditionsHistoryEntry}
+                onRemoveConditionsHistoryEntry={!isPlayer ? onRemoveConditionsHistoryEntry : undefined}
               />
             );
           })}
@@ -6706,6 +6716,9 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
             onUpdateMapImageObject={onUpdateMapImageObject}
             onRemoveMapImageObject={onRemoveMapImageObject}
             onOpenImageLightbox={setLightboxUrl}
+            conditionsHistory={conditionsHistory}
+            onAddConditionsHistoryEntry={onAddConditionsHistoryEntry}
+            onRemoveConditionsHistoryEntry={!isPlayer ? onRemoveConditionsHistoryEntry : undefined}
             className="flex-1 min-h-0"
             renderPinnedCharacterPanel={renderPinnedCharacterPanel}
             renderAdversaryTargetAid={renderAdversaryTargetAid}
@@ -7217,7 +7230,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                               label="HP"
                               verbs={['Mark', 'Clear']}
                             />
-                            {(displayEl.stress_max || 0) === 0 && !inst.conditions && !openConditions.has(inst.instanceId) && (
+                            {(displayEl.stress_max || 0) === 0 && normalizeConditionsToList(inst.conditions).length === 0 && !openConditions.has(inst.instanceId) && (
                               <button
                                 onClick={() => setOpenConditions(prev => new Set([...prev, inst.instanceId]))}
                                 className="ml-1 text-dh-muted hover:text-dh transition-colors shrink-0"
@@ -7238,7 +7251,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                               label="Stress"
                               verbs={['Mark', 'Clear']}
                             />
-                            {!inst.conditions && !openConditions.has(inst.instanceId) && (
+                            {normalizeConditionsToList(inst.conditions).length === 0 && !openConditions.has(inst.instanceId) && (
                               <button
                                 onClick={() => setOpenConditions(prev => new Set([...prev, inst.instanceId]))}
                                 className="ml-1 text-dh-muted hover:text-dh transition-colors shrink-0"
@@ -7247,19 +7260,22 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                             )}
                           </div>
                         )}
-                        {(inst.conditions || openConditions.has(inst.instanceId)) && (
-                          <ConditionsTextInput
+                        {(normalizeConditionsToList(inst.conditions).length > 0 || openConditions.has(inst.instanceId)) && (
+                          <ConditionsEditor
                             instanceId={inst.instanceId}
-                            placeholder="Conditions..."
-                            autoFocus={openConditions.has(inst.instanceId) && !inst.conditions}
+                            placeholder="Add condition…"
+                            autoFocus={openConditions.has(inst.instanceId) && normalizeConditionsToList(inst.conditions).length === 0}
                             value={inst.conditions || ''}
                             onCommit={(v) => updateActiveElement(inst.instanceId, { conditions: v })}
+                            suggestions={conditionsHistory}
+                            onAddSuggestion={onAddConditionsHistoryEntry}
+                            onRemoveSuggestion={!isPlayer ? onRemoveConditionsHistoryEntry : undefined}
                             onBlur={() => {
-                              if (!inst.conditions) {
+                              if (normalizeConditionsToList(inst.conditions).length === 0) {
                                 setOpenConditions(prev => { const s = new Set(prev); s.delete(inst.instanceId); return s; });
                               }
                             }}
-                            className="w-full bg-dh-raised/50 border border-dh-strong rounded px-1.5 py-0.5 text-xs text-dh outline-none focus:border-blue-500 placeholder-dh-muted"
+                            className="w-full flex flex-wrap items-center gap-1 bg-dh-raised/50 border border-dh-strong rounded px-1.5 py-0.5 text-xs text-dh focus-within:border-blue-500"
                           />
                         )}
                         {idx < instances.length - 1 && (

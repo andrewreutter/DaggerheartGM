@@ -20,6 +20,10 @@ import { playerCanAccessMapViewSelection } from './lib/map-view-player-sync.js';
 import { reconcileElementsById } from './lib/reconcile-active-elements.js';
 import { reconcileMapsById, reconcileMapViewsById, reconcileMapConfig } from './lib/reconcile-map-state.js';
 import { shouldOptimisticallyPatch } from './lib/optimistic-update-fields.js';
+import {
+  addConditionsHistoryEntry,
+  removeConditionsHistoryEntry,
+} from './lib/conditions-history.js';
 const NON_PAGINATED_COLLECTIONS = ['scenes', 'adventures', 'characters'];
 
 import { useRouter, legacyGmTableToCanonical, DEFAULT_LIBRARY_TAB } from './lib/router.js';
@@ -114,6 +118,7 @@ function App() {
   const DEFAULT_BATTLE_MODS = { lessDifficult: false, slightlyMoreDangerous: false, damageBoostPlusOne: false, damageBoostD4: false, damageBoostStatic: false, moreDangerous: false };
   const [tableBattleMods, setTableBattleMods] = useState(DEFAULT_BATTLE_MODS);
   const [fearCount, setFearCount] = useState(0);
+  const [conditionsHistory, setConditionsHistory] = useState([]);
   const [tableName, setTableName] = useState('');
   const [tableGmDisplayName, setTableGmDisplayName] = useState('');
   /** Billing status for the primary/current table (used by ambient nav indicator). */
@@ -693,6 +698,7 @@ function App() {
     if (prevTableIdRef.current !== null && prevTableIdRef.current !== route.tableId) {
       setActiveElements([]);
       setFearCount(0);
+      setConditionsHistory([]);
       setFeatureCountdowns({});
       setSessionCountdowns([]);
       setTableBattleMods({});
@@ -732,6 +738,7 @@ function App() {
         setSessionCountdowns([]);
         setTableBattleMods(DEFAULT_BATTLE_MODS);
         setFearCount(0);
+        setConditionsHistory([]);
         setPlayerEmails([]);
         setTableName('');
         setMapConfig(DEFAULT_MAP_CONFIG);
@@ -756,6 +763,7 @@ function App() {
       setSessionCountdowns(Array.isArray(tableState.sessionCountdowns) ? tableState.sessionCountdowns : []);
       if (tableState.tableBattleMods) setTableBattleMods(tableState.tableBattleMods);
       if (tableState.fearCount != null) setFearCount(tableState.fearCount);
+      setConditionsHistory(Array.isArray(tableState.conditionsHistory) ? tableState.conditionsHistory : []);
       if (Array.isArray(tableState.playerEmails)) setPlayerEmails(tableState.playerEmails);
       if (tableState.tableName != null) setTableName(tableState.tableName);
       if (tableState.gmDisplayName != null) setTableGmDisplayName(tableState.gmDisplayName);
@@ -820,6 +828,7 @@ function App() {
           setActiveElements(prev => reconcileElementsById(prev, state.elements));
         }
         if (state.fearCount != null) setFearCount(state.fearCount);
+        if (Array.isArray(state.conditionsHistory)) setConditionsHistory(state.conditionsHistory);
         if (state.featureCountdowns != null) setFeatureCountdowns(state.featureCountdowns);
         if (Array.isArray(state.sessionCountdowns)) setSessionCountdowns(state.sessionCountdowns);
         if (state.tableBattleMods != null) setTableBattleMods(state.tableBattleMods);
@@ -928,6 +937,7 @@ function App() {
           setActiveElements(prev => reconcileElementsById(prev, state.elements));
         }
         if (state.fearCount != null) setFearCount(state.fearCount);
+        if (Array.isArray(state.conditionsHistory)) setConditionsHistory(state.conditionsHistory);
         if (state.featureCountdowns != null) setFeatureCountdowns(state.featureCountdowns);
         if (Array.isArray(state.sessionCountdowns)) setSessionCountdowns(state.sessionCountdowns);
         if (state.tableBattleMods != null) setTableBattleMods(state.tableBattleMods);
@@ -1386,6 +1396,16 @@ function App() {
     setFearCount(resolved);
     postTableOp({ op: 'set-fear', fearCount: resolved }, tableId);
   };
+
+  const sendAddConditionsHistoryEntry = useCallback((entry) => {
+    setConditionsHistory((prev) => addConditionsHistoryEntry(prev, entry));
+    postTableOp({ op: 'add-conditions-history-entry', entry }, tableId);
+  }, [tableId]);
+
+  const sendRemoveConditionsHistoryEntry = useCallback((entry) => {
+    setConditionsHistory((prev) => removeConditionsHistoryEntry(prev, entry));
+    postTableOp({ op: 'remove-conditions-history-entry', entry }, tableId);
+  }, [tableId]);
 
   const sendSetTableName = (valueOrFn) => {
     const resolved = typeof valueOrFn === 'function' ? valueOrFn(tableName) : valueOrFn;
@@ -2031,8 +2051,14 @@ function App() {
                 removeActiveElement={effectiveIsPlayer ? () => {} : sendRemoveActiveElement}
                 updateActiveElementsBaseData={effectiveIsPlayer ? () => {} : sendUpdateActiveElementsBaseData}
                 data={data}
-                saveItem={effectiveIsPlayer ? (col, item) => col === 'characters' ? saveItem(col, item) : undefined : saveItem}
-                saveImage={effectiveIsPlayer ? (col, id, url, opts) => col === 'characters' ? saveImage(col, id, url, opts) : undefined : saveImage}
+                saveItem={effectiveIsPlayer
+                  ? (col, item) => col === 'characters' ? saveItem(col, { ...item, _tableId: tableId }) : undefined
+                  : (col, item) => col === 'characters' ? saveItem(col, { ...item, _tableId: tableId }) : saveItem(col, item)
+                }
+                saveImage={effectiveIsPlayer
+                  ? (col, id, url, opts) => col === 'characters' ? saveImage(col, id, url, { ...opts, tableId }) : undefined
+                  : (col, id, url, opts) => col === 'characters' ? saveImage(col, id, url, { ...opts, tableId }) : saveImage(col, id, url, opts)
+                }
                 addToTable={effectiveIsPlayer ? () => {} : sendAddToTable}
                 sendDoAddToTable={effectiveIsPlayer ? undefined : sendDoAddToTable}
                 onMergeAdversary={mergeAdversaryIntoData}
@@ -2052,6 +2078,9 @@ function App() {
                 setTableBattleMods={effectiveIsPlayer ? () => {} : sendSetTableBattleMods}
                 fearCount={fearCount}
                 setFearCount={effectiveIsPlayer ? () => {} : sendSetFearCount}
+                conditionsHistory={conditionsHistory}
+                onAddConditionsHistoryEntry={effectiveIsPlayer ? undefined : sendAddConditionsHistoryEntry}
+                onRemoveConditionsHistoryEntry={effectiveIsPlayer ? undefined : sendRemoveConditionsHistoryEntry}
                 tableName={tableName}
                 gmDisplayName={tableGmDisplayName || (user?.displayName || user?.email || '')}
                 tableStateReady={tableStateReady}

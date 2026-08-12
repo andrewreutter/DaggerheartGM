@@ -409,8 +409,11 @@ export function ItemPickerModal({
           </div>
         )}
 
-        {/* Daggerstack import — only for characters; collapsible, collapsed by default; right under Create. Hidden on Game Table Add Character via showDaggerstackImport={false}. */}
-        {collection === 'characters' && showBrowse && showDaggerstackImport && (
+        {/* Daggerstack import — only for characters; collapsible, collapsed by default; right under Create.
+            Hidden on Game Table Add Character via showDaggerstackImport={false}.
+            Note: this path (showDaggerstackImport=true) is only reachable from library contexts;
+            since /library/characters is removed, this block is unreachable but kept for safety. */}
+        {collection === 'characters' && showBrowse && showDaggerstackImport && false && (
           <div className="border-b border-dh-border shrink-0">
             <button
               type="button"

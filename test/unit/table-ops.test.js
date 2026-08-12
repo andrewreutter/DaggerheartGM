@@ -104,6 +104,24 @@ describe('applyTableOp', () => {
     expect(result.fearCount).toBe(5);
   });
 
+  it('add-conditions-history-entry prepends and dedupes', () => {
+    const state = { conditionsHistory: ['Vulnerable', 'Hidden'] };
+    const result = applyTableOp(
+      { op: 'add-conditions-history-entry', entry: 'vulnerable' },
+      state,
+    );
+    expect(result.conditionsHistory).toEqual(['vulnerable', 'Hidden']);
+  });
+
+  it('remove-conditions-history-entry removes by case-insensitive match', () => {
+    const state = { conditionsHistory: ['Vulnerable', 'Hidden'] };
+    const result = applyTableOp(
+      { op: 'remove-conditions-history-entry', entry: 'HIDDEN' },
+      state,
+    );
+    expect(result.conditionsHistory).toEqual(['Vulnerable']);
+  });
+
   it('set-countdown merges countdown value', () => {
     const state = { featureCountdowns: { 'a|b|0': 1 } };
     const result = applyTableOp({ op: 'set-countdown', key: 'c|d|0', value: 3 }, state);

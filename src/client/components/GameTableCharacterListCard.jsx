@@ -1,7 +1,10 @@
-import { User, AlertTriangle, X, Trash2 } from 'lucide-react';
+import { useState } from 'react';
+import { User, AlertTriangle, X, Trash2, Tag } from 'lucide-react';
 import { CheckboxTrack } from './DetailCardContent.jsx';
+import { ConditionsEditor } from './ConditionsEditor.jsx';
 import { Tooltip } from './Tooltip.jsx';
 import { effectiveThresholds, getEvasionModifierTotal } from '../lib/helpers.js';
+import { normalizeConditionsToList } from '../lib/conditions-utils.js';
 import { GuideFeatureCardChips } from './features/GuideFeatureCard.jsx';
 import { WidthSortedFlexWrap } from './WidthSortedFlexWrap.jsx';
 import {
@@ -37,6 +40,9 @@ import { WARDEN_OF_THE_ELEMENTS_SCOPE_KEY } from '../../features-v2/engine/featu
  * @param {(characterEl: object, displayEl: object) => (payload: object) => void} [props.onV2CardChipFactory]
  * @param {object[]} [props.pendingBanners]
  * @param {(url: string) => void} [props.onOpenImageLightbox] — when provided, portrait thumb becomes click-to-fullscreen
+ * @param {string[]} [props.conditionsHistory]
+ * @param {(entry: string) => void} [props.onAddConditionsHistoryEntry]
+ * @param {(entry: string) => void} [props.onRemoveConditionsHistoryEntry]
  */
 export function GameTableCharacterListCard({
   el,
@@ -62,8 +68,18 @@ export function GameTableCharacterListCard({
   onV2CardChipFactory,
   pendingBanners,
   onOpenImageLightbox,
+  conditionsHistory = [],
+  onAddConditionsHistoryEntry,
+  onRemoveConditionsHistoryEntry,
 }) {
   const isIncomplete = !charComplete.complete;
+  const [openOwnConditions, setOpenOwnConditions] = useState(false);
+  const [openCompanionConditions, setOpenCompanionConditions] = useState(false);
+  const ownConditions = el.conditions || '';
+  const ownHasConditions = normalizeConditionsToList(ownConditions).length > 0;
+  const companionConditions = el.companion?.conditions || '';
+  const companionHasConditions = normalizeConditionsToList(companionConditions).length > 0;
+  const canEditConditions = typeof cardTrackUpdateFn === 'function';
 
   const stopSheetOpenFromInteractive = (e) => {
     e.stopPropagation();
@@ -294,7 +310,41 @@ export function GameTableCharacterListCard({
                   slotTypeTooltip
                   stopSlotClickPropagation
                 />
+                {canEditConditions && !ownHasConditions && !openOwnConditions && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setOpenOwnConditions(true);
+                    }}
+                    className="ml-1 text-dh-muted hover:text-dh transition-colors shrink-0"
+                    title="Add conditions"
+                  >
+                    <Tag size={10} />
+                  </button>
+                )}
               </div>
+            )}
+            {canEditConditions && (ownHasConditions || openOwnConditions) && (
+              <div onClick={stopSheetOpenFromInteractive} onPointerDown={stopSheetOpenFromInteractive}>
+                <ConditionsEditor
+                  instanceId={el.instanceId}
+                  value={ownConditions}
+                  onCommit={(v) => cardTrackUpdateFn(el.instanceId, { conditions: v })}
+                  placeholder="Add condition…"
+                  autoFocus={openOwnConditions && !ownHasConditions}
+                  suggestions={conditionsHistory}
+                  onAddSuggestion={onAddConditionsHistoryEntry}
+                  onRemoveSuggestion={onRemoveConditionsHistoryEntry}
+                  onBlur={() => {
+                    if (!ownHasConditions) setOpenOwnConditions(false);
+                  }}
+                  className="w-full flex flex-wrap items-center gap-1 bg-dh-raised/50 border border-dh-strong rounded px-1.5 py-0.5 text-xs text-dh focus-within:border-blue-500"
+                />
+              </div>
+            )}
+            {!canEditConditions && ownHasConditions && (
+              <ConditionsEditor value={ownConditions} readOnly className="flex flex-wrap gap-1" />
             )}
             {el.companion && (el.companion.maxStress || 0) > 0 && (
               <div className="mt-0.5 pt-1.5 border-t border-dh-border/50 flex flex-col gap-0.5">
@@ -318,13 +368,43 @@ export function GameTableCharacterListCard({
                     slotTypeTooltip
                     stopSlotClickPropagation
                   />
+                  {canEditConditions && !companionHasConditions && !openCompanionConditions && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setOpenCompanionConditions(true);
+                      }}
+                      className="ml-1 text-dh-muted hover:text-dh transition-colors shrink-0"
+                      title="Add conditions"
+                    >
+                      <Tag size={10} />
+                    </button>
+                  )}
                 </div>
-              </div>
-            )}
-            {el.conditions && (
-              <div className="text-[10px] text-dh leading-snug">
-                <span className="font-semibold text-dh-muted">Conditions: </span>
-                {el.conditions}
+                {canEditConditions && (companionHasConditions || openCompanionConditions) && (
+                  <div onClick={stopSheetOpenFromInteractive} onPointerDown={stopSheetOpenFromInteractive}>
+                    <ConditionsEditor
+                      instanceId={`${el.instanceId}-companion-conditions`}
+                      value={companionConditions}
+                      onCommit={(v) =>
+                        cardTrackUpdateFn(el.instanceId, { companion: { ...el.companion, conditions: v } })
+                      }
+                      placeholder="Add condition…"
+                      autoFocus={openCompanionConditions && !companionHasConditions}
+                      suggestions={conditionsHistory}
+                      onAddSuggestion={onAddConditionsHistoryEntry}
+                      onRemoveSuggestion={onRemoveConditionsHistoryEntry}
+                      onBlur={() => {
+                        if (!companionHasConditions) setOpenCompanionConditions(false);
+                      }}
+                      className="w-full flex flex-wrap items-center gap-1 bg-dh-raised/50 border border-dh-strong rounded px-1.5 py-0.5 text-xs text-dh focus-within:border-blue-500"
+                    />
+                  </div>
+                )}
+                {!canEditConditions && companionHasConditions && (
+                  <ConditionsEditor value={companionConditions} readOnly className="flex flex-wrap gap-1" />
+                )}
               </div>
             )}
             {(!isPlayer || isMyCharacter) &&

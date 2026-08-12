@@ -1,10 +1,10 @@
 import { useState, useEffect, useCallback } from 'react';
 import { SRD_UNIFIED_COLLECTIONS } from './library-filter-config.js';
 
-const VALID_TABS = new Set(['assistant', 'all', ...SRD_UNIFIED_COLLECTIONS, 'scenes', 'adventures', 'characters']);
-const VALID_COLLECTIONS = new Set([...SRD_UNIFIED_COLLECTIONS, 'scenes', 'adventures', 'characters']);
-/** Table deep-link modals only — includes encounter notes (not a library tab). */
-const TABLE_MODAL_COLLECTIONS = new Set([...VALID_COLLECTIONS, 'notes']);
+const VALID_TABS = new Set(['assistant', 'all', ...SRD_UNIFIED_COLLECTIONS, 'scenes', 'adventures']);
+const VALID_COLLECTIONS = new Set([...SRD_UNIFIED_COLLECTIONS, 'scenes', 'adventures']);
+/** Table deep-link modals only — includes encounter notes (not a library tab) and characters (table-only, no library tab). */
+const TABLE_MODAL_COLLECTIONS = new Set([...VALID_COLLECTIONS, 'notes', 'characters']);
 
 /** Default tab when URL is `/library` or `/library/` without a segment (and invalid tab names). */
 export const DEFAULT_LIBRARY_TAB = 'all';
@@ -23,7 +23,9 @@ export function legacyGmTableToCanonical(pathname, userUid = null) {
     return `/table/${userUid}`;
   }
 
-  if (VALID_COLLECTIONS.has(parts[1])) {
+  // Legacy shortcut: /gm-table/:collection/:id — collection is at index 1
+  // Check VALID_COLLECTIONS (library tabs) OR characters (table-only modal collection)
+  if (VALID_COLLECTIONS.has(parts[1]) || parts[1] === 'characters') {
     if (!userUid) return null;
     const col = parts[1];
     const id = parts[2] || '';
@@ -45,7 +47,7 @@ export function legacyGmTableToCanonical(pathname, userUid = null) {
 }
 
 function parseGmTableParts(parts) {
-  if (VALID_COLLECTIONS.has(parts[1])) {
+  if (VALID_COLLECTIONS.has(parts[1]) || parts[1] === 'characters') {
     return {
       tableId: null,
       modalCollection: parts[1],

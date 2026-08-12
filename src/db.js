@@ -458,6 +458,91 @@ export async function deleteItem(appId, userId, collection, id) {
   if (collection === 'characters') invalidateCharacterLibraryCache(appId, id);
 }
 
+// --- Canonical character helpers (table-scoped, user-agnostic) ---
+
+/**
+ * Fetch a single character row by id, ignoring user_id.
+ * Returns the merged item object (id + data fields) or null if not found.
+ * When multiple rows exist for the same id (legacy duplicates), returns the most recently updated.
+ */
+export async function getCharacterById(appId, id) {
+  const db = getPool();
+  const { rows } = await db.query(
+    `SELECT id, user_id, table_id, data, is_public, updated_at
+     FROM items
+     WHERE app_id = $1 AND collection = 'characters' AND id = $2
+     ORDER BY updated_at DESC NULLS LAST, user_id
+     LIMIT 1`,
+    [appId, id]
+  );
+  if (!rows.length) return null;
+  const r = rows[0];
+  return { id: r.id, user_id: r.user_id, table_id: r.table_id, ...r.data, is_public: r.is_public };
+}
+
+/**
+ * Upsert a character row using a single canonical row per id (user-agnostic).
+ *
+ * - If a row exists for this (app_id, collection='characters', id): updates data + table_id in place,
+ *   regardless of which user_id owns the row. Returns 409-style error if table_id is already set
+ *   to a *different* non-null value.
+ * - If no row exists: inserts under requesterUid with table_id = tableId.
+ *
+ * This prevents the "shadow row" bug where player saves create a second row under their own uid.
+ */
+export async function upsertCharacterForTable(appId, { requesterUid, tableId, id, data, isPublic = false }) {
+  const db = getPool();
+  const existing = await getCharacterById(appId, id);
+  if (existing) {
+    if (existing.table_id && existing.table_id !== tableId) {
+      const err = new Error(`Character ${id} belongs to table ${existing.table_id}, not ${tableId}`);
+      err.statusCode = 409;
+      throw err;
+    }
+    await db.query(
+      `UPDATE items
+       SET data = $1, is_public = $2, table_id = $3, updated_at = now()
+       WHERE app_id = $4 AND collection = 'characters' AND id = $5`,
+      [data, isPublic, tableId, appId, id]
+    );
+  } else {
+    await db.query(
+      `INSERT INTO items (id, app_id, user_id, collection, data, is_public, table_id)
+       VALUES ($1, $2, $3, 'characters', $4, $5, $6)`,
+      [id, appId, requesterUid, data, isPublic, tableId]
+    );
+  }
+  invalidateCharacterLibraryCache(appId, id);
+}
+
+/**
+ * Delete a character row by id, ignoring user_id (canonical unscoped delete).
+ */
+export async function deleteCharacterForTable(appId, id) {
+  const db = getPool();
+  await db.query(
+    `DELETE FROM items WHERE app_id = $1 AND collection = 'characters' AND id = $2`,
+    [appId, id]
+  );
+  invalidateCharacterLibraryCache(appId, id);
+}
+
+/**
+ * Stamp table_id on a character row if it is not already set (or already matches).
+ * Safe to call any time a character is placed on a table; never overwrites an existing table_id
+ * with a different value — returns false if there was a conflict (existing different table_id).
+ */
+export async function stampCharacterTableId(appId, id, tableId) {
+  const db = getPool();
+  const { rowCount } = await db.query(
+    `UPDATE items SET table_id = $1
+     WHERE app_id = $2 AND collection = 'characters' AND id = $3
+       AND (table_id IS NULL OR table_id = $1)`,
+    [tableId, appId, id]
+  );
+  return rowCount > 0;
+}
+
 // --- Admin: blocked Reddit posts ---
 
 /**

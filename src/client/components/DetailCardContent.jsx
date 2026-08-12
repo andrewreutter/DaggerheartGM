@@ -3,7 +3,7 @@ import { stripHtml } from '../lib/helpers.js';
 import { GuideFeatureCard } from './features/GuideFeatureCard.jsx';
 import { normalizePotentialAdversaries } from './forms/EnvironmentForm.jsx';
 import { MarkdownText } from '../lib/markdown.js';
-import { ConditionsTextInput } from './ConditionsTextInput.jsx';
+import { ConditionsEditor } from './ConditionsEditor.jsx';
 import { applyDamageBoost } from '../lib/battle-points.js';
 import { libraryTierBodyLine, libraryTierSubtitleText } from '../lib/library-tier-subtitle.js';
 import { TierShieldBadge } from './TierShieldBadge.jsx';
@@ -411,12 +411,12 @@ export function AdversaryCardContent({
                         />
                       </div>
                     )}
-                    <ConditionsTextInput
+                    <ConditionsEditor
                       instanceId={inst.instanceId}
-                      placeholder="Conditions..."
+                      placeholder="Add condition…"
                       value={inst.conditions || ''}
                       onCommit={(v) => updateFn(inst.instanceId, { conditions: v })}
-                      className="w-full bg-dh-raised/80 border border-dh-border rounded px-2 py-1 text-sm text-dh outline-none focus:border-blue-500"
+                      className="w-full flex flex-wrap items-center gap-1 bg-dh-raised/80 border border-dh-border rounded px-2 py-1 text-sm text-dh focus-within:border-blue-500"
                     />
                   </div>
 

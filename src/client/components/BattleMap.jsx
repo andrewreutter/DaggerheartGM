@@ -56,10 +56,12 @@ import {
   Lock,
   LockOpen,
   Hand,
+  Tag,
 } from 'lucide-react';
 import { Tooltip } from './Tooltip.jsx';
 import { CheckboxTrack } from './DetailCardContent.jsx';
-import { ConditionsTextInput } from './ConditionsTextInput.jsx';
+import { ConditionsEditor } from './ConditionsEditor.jsx';
+import { normalizeConditionsToList } from '../lib/conditions-utils.js';
 import { AnchoredFloatingPanel } from './AnchoredFloatingPanel.jsx';
 import { getAuthToken, postMapPing, postMapScribble, postBannerAck, CLIENT_ID, imageGenEnabled } from '../lib/api.js';
 import { useAiUiPreference } from '../lib/ai-ui-preference-context.jsx';
@@ -1435,6 +1437,9 @@ function TokenDetailPanel({
   parentCharacterEl,
   /** Called with (rollText, displayName, rollMeta, opts) when the attack button is clicked. */
   onRoll,
+  conditionsHistory = [],
+  onAddConditionsHistoryEntry,
+  onRemoveConditionsHistoryEntry,
 }) {
   const isAdv = element.elementType === 'adversary';
   const isBoard = element.elementType === 'boardToken';
@@ -1455,9 +1460,13 @@ function TokenDetailPanel({
     })();
   };
 
+  const [openCompanionConditions, setOpenCompanionConditions] = useState(false);
+
   if (isBoard) {
     const companion = parentCharacterEl?.companion;
     const canEditCompanion = !isPlayer;
+    const companionConditions = companion?.conditions || '';
+    const companionHasConditions = normalizeConditionsToList(companionConditions).length > 0;
     const onCompanionStressChange = companion && canEditCompanion
       ? (s) => {
           const target = parentCharacterEl;
@@ -1466,6 +1475,18 @@ function TokenDetailPanel({
             queueManualTrackEdit(target, { companion: { ...companion, currentStress: s } });
           } else {
             updateActiveElement(target.instanceId, { companion: { ...companion, currentStress: s } });
+          }
+        }
+      : undefined;
+    const onCompanionConditionsCommit = companion && canEditCompanion
+      ? (v) => {
+          const target = parentCharacterEl;
+          if (!target) return;
+          const next = { ...companion, conditions: v };
+          if (queueManualTrackEdit) {
+            queueManualTrackEdit(target, { companion: next });
+          } else {
+            updateActiveElement(target.instanceId, { companion: next });
           }
         }
       : undefined;
@@ -1568,14 +1589,51 @@ function TokenDetailPanel({
 
             {/* Stress track */}
             {(companion.maxStress || 0) > 0 && (
-              <CheckboxTrack
-                total={companion.maxStress || 0}
-                filled={companion.currentStress ?? 0}
-                onSetFilled={onCompanionStressChange}
-                trackKind="stress"
-                label="Stress"
-                verbs={['Mark', 'Clear']}
-              />
+              <div className="flex items-center gap-1">
+                <CheckboxTrack
+                  total={companion.maxStress || 0}
+                  filled={companion.currentStress ?? 0}
+                  onSetFilled={onCompanionStressChange}
+                  trackKind="stress"
+                  label="Stress"
+                  verbs={['Mark', 'Clear']}
+                />
+                {canEditCompanion && !companionHasConditions && !openCompanionConditions && (
+                  <button
+                    type="button"
+                    onClick={() => setOpenCompanionConditions(true)}
+                    className="ml-1 text-dh-muted hover:text-dh transition-colors shrink-0"
+                    title="Add conditions"
+                  >
+                    <Tag size={10} />
+                  </button>
+                )}
+              </div>
+            )}
+            {canEditCompanion && (companionHasConditions || openCompanionConditions) && (
+              <div>
+                <div className="text-xs text-dh-muted mb-0.5">Conditions</div>
+                <ConditionsEditor
+                  instanceId={`${parentCharacterEl?.instanceId || 'companion'}-companion-conditions`}
+                  value={companionConditions}
+                  onCommit={onCompanionConditionsCommit}
+                  placeholder="Add condition…"
+                  autoFocus={openCompanionConditions && !companionHasConditions}
+                  suggestions={conditionsHistory}
+                  onAddSuggestion={onAddConditionsHistoryEntry}
+                  onRemoveSuggestion={onRemoveConditionsHistoryEntry}
+                  onBlur={() => {
+                    if (!companionHasConditions) setOpenCompanionConditions(false);
+                  }}
+                  className="w-full flex flex-wrap items-center gap-1 px-1.5 py-0.5 rounded bg-dh-hover border border-dh-strong text-dh text-xs focus-within:border-sky-500"
+                />
+              </div>
+            )}
+            {!canEditCompanion && companionHasConditions && (
+              <div>
+                <div className="text-xs text-dh-muted mb-0.5">Conditions</div>
+                <ConditionsEditor value={companionConditions} readOnly />
+              </div>
             )}
 
             {/* Attack */}
@@ -1733,20 +1791,23 @@ function TokenDetailPanel({
           {(canEdit || canEditAdv) && (
             <div>
               <div className="text-xs text-dh-muted mb-0.5">Conditions</div>
-              <ConditionsTextInput
+              <ConditionsEditor
                 instanceId={element.instanceId}
                 value={element.conditions ?? ''}
                 onCommit={(v) => updateActiveElement(element.instanceId, { conditions: v })}
-                placeholder="none"
-                className="w-full px-1.5 py-0.5 rounded bg-dh-hover border border-dh-strong text-dh text-xs focus:outline-none focus:border-sky-500"
+                placeholder="Add condition…"
+                suggestions={conditionsHistory}
+                onAddSuggestion={onAddConditionsHistoryEntry}
+                onRemoveSuggestion={onRemoveConditionsHistoryEntry}
+                className="w-full flex flex-wrap items-center gap-1 px-1.5 py-0.5 rounded bg-dh-hover border border-dh-strong text-dh text-xs focus-within:border-sky-500"
               />
             </div>
           )}
           {/* Read-only conditions for player on enemy */}
-          {isPlayer && isAdv && element.conditions && (
+          {isPlayer && isAdv && normalizeConditionsToList(element.conditions).length > 0 && (
             <div>
               <div className="text-xs text-dh-muted mb-0.5">Conditions</div>
-              <div className="text-xs text-dh">{element.conditions}</div>
+              <ConditionsEditor value={element.conditions ?? ''} readOnly />
             </div>
           )}
         </>
@@ -2429,6 +2490,10 @@ export function BattleMap({
   onRemoveAdversaryFromTable,
   /** Called when a roll is initiated from the companion token panel (attack button). Same signature as CharacterHoverCard's onRoll. */
   onRoll,
+  /** Shared per-table conditions suggestion history (`table_state.conditionsHistory`). */
+  conditionsHistory = [],
+  onAddConditionsHistoryEntry,
+  onRemoveConditionsHistoryEntry,
 }) {
   const { hideAiUi } = useAiUiPreference();
   const showImageGenAiUi = shouldShowImageGenAiUi(imageGenEnabled, hideAiUi);
@@ -6924,6 +6989,9 @@ export function BattleMap({
                 : null
             }
             adversaryPinInstanceNum={advPinInstanceNum}
+            conditionsHistory={conditionsHistory}
+            onAddConditionsHistoryEntry={onAddConditionsHistoryEntry}
+            onRemoveConditionsHistoryEntry={onRemoveConditionsHistoryEntry}
           />
         );
       })()}

@@ -63,13 +63,13 @@ export function formatFeatScopeLabel(val) {
 
 /**
  * Library tabs where the user can create a new item and edit/delete own items (Mine).
- * All 13 SRD unified collections plus scenes, adventures, and characters.
+ * All 13 SRD unified collections plus scenes and adventures.
+ * Characters are excluded — they live inside tables, not in the library.
  */
 export const LIBRARY_USER_EDITABLE_COLLECTIONS = new Set([
   ...SRD_UNIFIED_COLLECTIONS.filter(c => !LIBRARY_READONLY_SRD_COLLECTIONS.has(c)),
   'scenes',
   'adventures',
-  'characters',
 ]);
 
 /** localStorage key — bumped when default source filters change */
@@ -168,7 +168,7 @@ export function getLibraryFilterConfig(collection) {
 }
 
 /** Collections with custom detail panes in ItemDetailModal (not generic JSON) */
-export const LIBRARY_CUSTOM_DETAIL_COLLECTIONS = new Set(['adversaries', 'environments', 'scenes', 'adventures', 'characters']);
+export const LIBRARY_CUSTOM_DETAIL_COLLECTIONS = new Set(['adversaries', 'environments', 'scenes', 'adventures']);
 
 /** SRD unified tabs that use the generic structured read-only detail view */
 export const LIBRARY_GENERIC_DETAIL_COLLECTIONS = SRD_UNIFIED_COLLECTIONS.filter(

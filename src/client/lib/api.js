@@ -487,13 +487,15 @@ export function stripImageFields(obj) {
 /**
  * Save image fields via the dedicated endpoint. Use when images change (AI generate, import).
  * path: optional JSON path for nested updates, e.g. "adversaries.2.data" for inline copy in scene.
+ * tableId: required for characters (canonical write path).
  */
-export const saveImage = async (collectionName, id, imageUrl, { _additionalImages, path } = {}) => {
+export const saveImage = async (collectionName, id, imageUrl, { _additionalImages, path, tableId } = {}) => {
   const token = await getAuthToken();
   if (!token || !id) return null;
   const bodyObj = { imageUrl };
   if (_additionalImages !== undefined) bodyObj._additionalImages = _additionalImages;
   if (path) bodyObj.path = path;
+  if (tableId) bodyObj.tableId = tableId;
   // Pasted/AI-generated images are frequently multi-MB base64 data: URLs — the single largest
   // payloads this app sends. Compress like saveItem() does; uncompressed multi-MB JSON bodies are
   // far more likely to hit a proxy/host body-size limit or time out on a real network (production)
@@ -548,10 +550,13 @@ export const saveMirrorItem = async (collectionName, item) => {
   return res.json();
 };
 
-export const deleteItem = async (collectionName, id) => {
+export const deleteItem = async (collectionName, id, { tableId } = {}) => {
   const token = await getAuthToken();
   if (!token) return;
-  const res = await fetch(`/api/data/${collectionName}/${id}`, {
+  const url = collectionName === 'characters' && tableId
+    ? `/api/data/${collectionName}/${id}?tableId=${encodeURIComponent(tableId)}`
+    : `/api/data/${collectionName}/${id}`;
+  const res = await fetch(url, {
     method: 'DELETE',
     headers: apiHeaders({ Authorization: `Bearer ${token}` }),
   });
