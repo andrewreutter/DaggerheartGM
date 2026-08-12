@@ -1071,7 +1071,8 @@ const CHARACTER_RUNTIME_KEYS_DB = new Set([
   'mapId',
   'assignedPlayerEmail', 'assignedPlayerUid', 'playerName',
   'reinforcedActive', 'selectedExperienceIndex',
-  'featureUsage', 'activeModifiers', 'focusTargetId', 'focusTargetInstanceId', 'rangerFocusOnNextAttack',
+  'featureUsage', 'activeModifiers', 'focusTargetId', 'focusTargetInstanceId',   'rangerFocusOnNextAttack',
+  'companion', // Beastbound: { name, species, evasion, maxStress, currentStress }; table stress preserved
   'activeBeastform', 'selectedBeastformAdvantage',
   'faerieWingsFlying',
   'retractedActive',
