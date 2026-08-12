@@ -23,6 +23,11 @@ import { usePortalHoverTooltip, PortalHoverTooltipLayer } from '../lib/portal-ho
 import { FeatureResourceCostIcons } from './FeatureResourceCostIcons.jsx';
 import { ACTION_LOOP_PHASE_UI } from '../lib/action-loop-phase-ui-icons.js';
 import { shouldClearDiceCanvasOnBannerDismiss } from '../lib/dice-roller-clear-canvas.js';
+import {
+  BANNER_CARD_SCROLL_STYLE,
+  BANNER_STRIP_BOTTOM,
+  DICE_BOTTOM_RESERVE,
+} from '../lib/dice-banner-layout.js';
 import { isReactionRoll as getIsReactionRoll, resolveDualityBannerSchemeKey } from '../lib/reaction-roll-display.js';
 import { BannerSheetDisplayNameLine } from '../lib/sheet-display-label-inline.jsx';
 import { getGmHelperBannerSuffix, getGmHelperBannerTooltip } from '../lib/v2-chip-session-view.js';
@@ -314,7 +319,10 @@ function RestBanner({
         minWidth: '560px',
       }}
     >
-      <div className="px-4 py-3 rounded-xl shadow-2xl bg-dh-surface/90 border-2 border-dh-strong text-dh">
+      <div
+        className="px-4 py-3 rounded-xl shadow-2xl bg-dh-surface/90 border-2 border-dh-strong text-dh"
+        style={BANNER_CARD_SCROLL_STYLE}
+      >
         <div className="text-base font-bold text-dh mb-2">{duration} Rest - Choose Your Moves</div>
         <div className="flex items-center gap-4 mb-3 flex-wrap">
           {(roll.subItems || []).length > 0 && (
@@ -329,7 +337,7 @@ function RestBanner({
           )}
           <span className="text-sm font-semibold text-dh-hope-soft">+{fearN} Fear</span>
         </div>
-        <div className="flex flex-col gap-2 overflow-y-auto max-h-[40vh] pb-1">
+        <div className="flex flex-col gap-2 pb-1">
           {characters.map(char => {
             const data = movesPerCharacter[char.instanceId];
             const moves = data && Array.isArray(data.moves) ? data.moves : defaultMoves;
@@ -558,6 +566,7 @@ function ActionBanner({ roll, onAcknowledge, onCancel, disableDismiss, lifeSuppo
     >
       <div
         className="px-5 py-3 rounded-xl shadow-2xl text-center bg-dh-surface/90 border-2 border-dh-strong text-dh"
+        style={BANNER_CARD_SCROLL_STYLE}
       >
         {displayName && (
           <div className="text-[11px] uppercase tracking-widest text-dh-muted mb-1">{displayName}</div>
@@ -1563,6 +1572,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
       <div style={{ pointerEvents: resolved ? undefined : 'none' }}>
       <div
         className={`px-5 py-3 rounded-xl shadow-2xl text-center ${scheme.card}`}
+        style={BANNER_CARD_SCROLL_STYLE}
       >
         {bannerTitlePlain && (
           <div
@@ -3220,9 +3230,7 @@ export const DiceRoller = forwardRef(function DiceRoller({
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
-  // Reserve bottom space so dice tumble above the banner strip and don't land under it
-  const DICE_BOTTOM_RESERVE = '10rem';
-
+  // Canvas bottom inset is BANNER_MAX_HEIGHT + BANNER_STRIP_BOTTOM so dice settle above banners.
   return (
     <>
     <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 15 }}>
@@ -3242,7 +3250,7 @@ export const DiceRoller = forwardRef(function DiceRoller({
         <div
           style={{
             position: 'absolute',
-            bottom: '2.5rem',
+            bottom: BANNER_STRIP_BOTTOM,
             left: bannerStripLeftOffset,
             right: 0,
             marginLeft: '16px',
