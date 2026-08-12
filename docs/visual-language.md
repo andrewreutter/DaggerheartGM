@@ -82,6 +82,7 @@ Single-row chrome lives in `CharacterIdentityTitleRow` (used by `CharacterIdenti
 | **Adversary — social** | Pink (`bg-pink-500`) | |
 | **Adversary — minion** | Rose (`bg-rose-400`) | Lighter; minions are common/weak |
 | **Defeated adversary** | Black | |
+| **Conditions** | Dark circular marks with name-stable text glyphs (`*` `†` `‡` `§` …) | Extra group on the token border pip ring at the same pip radius as HP / Stress / Armor; omitted when the token has no conditions. Glyph is keyed by condition name (not per-character order). Instant tooltip shows the condition name. Same glyphs are left-hand icons on `ConditionsEditor` chips and suggestion rows |
 
 **Image-border rule**: when a token has a portrait image, its border adopts the *role/type color* above (e.g. `border-red-800` for a solo adversary) instead of the default `border-black`. Defeated adversaries always keep a black border.
 

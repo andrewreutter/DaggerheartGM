@@ -2,7 +2,9 @@ import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 import { normalizeConditionsToList, serializeConditionsList } from '../lib/conditions-utils.js';
-import { filterConditionsSuggestions } from '../lib/conditions-history.js';
+import { conditionMarks, conditionSymbolForName } from '../lib/condition-symbols.js';
+import { filterConditionsSuggestions, mergeConditionSuggestionLists } from '../lib/conditions-history.js';
+import { ConditionSymbolIcon } from './ConditionSymbolIcon.jsx';
 
 const DROPDOWN_MAX_HEIGHT = 220;
 const DROPDOWN_GAP = 2;
@@ -24,10 +26,20 @@ export function ConditionsEditor({
   onBlur: onBlurProp,
   'aria-label': ariaLabel,
   suggestions,
+  extraSuggestions,
   onAddSuggestion,
   onRemoveSuggestion,
 }) {
   const chips = normalizeConditionsToList(value);
+  const marks = conditionMarks(chips);
+  const displaySuggestions = mergeConditionSuggestionLists(suggestions, extraSuggestions);
+  const historyHas = (entry) => {
+    const lower = String(entry ?? '').trim().toLowerCase();
+    if (!lower) return false;
+    return (Array.isArray(suggestions) ? suggestions : []).some(
+      (s) => String(s).trim().toLowerCase() === lower,
+    );
+  };
   const editable = !readOnly && typeof onCommit === 'function' && !disabled;
   const [draft, setDraft] = useState('');
   const [suggestionsOpen, setSuggestionsOpen] = useState(false);
@@ -49,8 +61,8 @@ export function ConditionsEditor({
   }, [autoFocus, editable, instanceId]);
 
   const filtered =
-    Array.isArray(suggestions) && suggestions.length > 0
-      ? filterConditionsSuggestions(suggestions, draft, chips)
+    displaySuggestions.length > 0
+      ? filterConditionsSuggestions(displaySuggestions, draft, chips, 50)
       : [];
 
   useLayoutEffect(() => {
@@ -106,11 +118,7 @@ export function ConditionsEditor({
 
   const maybeAddSuggestion = (entry) => {
     if (!onAddSuggestion) return;
-    const lower = entry.toLowerCase();
-    const already = (Array.isArray(suggestions) ? suggestions : []).some(
-      (s) => String(s).trim().toLowerCase() === lower,
-    );
-    if (!already) onAddSuggestion(entry);
+    if (!historyHas(entry)) onAddSuggestion(entry);
   };
 
   const addChip = (raw) => {
@@ -171,12 +179,13 @@ export function ConditionsEditor({
         aria-label={ariaLabel}
         aria-readonly="true"
       >
-        {chips.map((chip) => (
+        {marks.map((m) => (
           <span
-            key={chip}
-            className="inline-flex items-center gap-0.5 max-w-full px-1.5 py-0.5 rounded bg-dh-hover border border-dh-strong text-xs text-dh"
+            key={`${m.index}-${m.name}`}
+            className="inline-flex items-center gap-1 max-w-full px-1.5 py-0.5 rounded bg-dh-hover border border-dh-strong text-xs text-dh"
           >
-            <span className="truncate">{chip}</span>
+            <ConditionSymbolIcon symbol={m.symbol} size={12} />
+            <span className="truncate">{m.name}</span>
           </span>
         ))}
       </div>
@@ -193,18 +202,19 @@ export function ConditionsEditor({
       aria-label={ariaLabel}
       onBlur={handleBlur}
     >
-      {chips.map((chip, index) => (
+      {marks.map((m) => (
         <span
-          key={`${chip}-${index}`}
-          className="inline-flex items-center gap-0.5 max-w-full px-1.5 py-0.5 rounded bg-dh-hover border border-dh-strong text-xs text-dh"
+          key={`${m.index}-${m.name}`}
+          className="inline-flex items-center gap-1 max-w-full px-1.5 py-0.5 rounded bg-dh-hover border border-dh-strong text-xs text-dh"
         >
-          <span className="truncate">{chip}</span>
+          <ConditionSymbolIcon symbol={m.symbol} size={12} />
+          <span className="truncate">{m.name}</span>
           <button
             type="button"
             className="shrink-0 p-0.5 rounded text-dh-muted hover:text-dh hover:bg-dh-canvas/40"
-            title={`Remove ${chip}`}
+            title={`Remove ${m.name}`}
             onMouseDown={(e) => e.preventDefault()}
-            onClick={() => removeChip(index)}
+            onClick={() => removeChip(m.index)}
           >
             <X size={10} />
           </button>
@@ -218,7 +228,7 @@ export function ConditionsEditor({
         disabled={disabled}
         value={draft}
         onFocus={() => {
-          if (Array.isArray(suggestions) && suggestions.length > 0) setSuggestionsOpen(true);
+          if (displaySuggestions.length > 0) setSuggestionsOpen(true);
         }}
         onChange={(e) => {
           const v = e.target.value;
@@ -230,7 +240,7 @@ export function ConditionsEditor({
           } else {
             setDraft(v);
           }
-          if (Array.isArray(suggestions) && suggestions.length > 0) setSuggestionsOpen(true);
+          if (displaySuggestions.length > 0) setSuggestionsOpen(true);
         }}
         onKeyDown={handleDraftKeyDown}
       />
@@ -257,8 +267,9 @@ export function ConditionsEditor({
             {filtered.map((entry) => (
               <div
                 key={entry}
-                className="flex items-center gap-1 px-2 py-1.5 text-xs text-dh hover:bg-dh-hover cursor-pointer"
+                className="flex items-center gap-1.5 px-2 py-1.5 text-xs text-dh hover:bg-dh-hover cursor-pointer"
               >
+                <ConditionSymbolIcon symbol={conditionSymbolForName(entry)} size={12} />
                 <button
                   type="button"
                   className="flex-1 min-w-0 text-left truncate"
@@ -270,7 +281,7 @@ export function ConditionsEditor({
                 >
                   {entry}
                 </button>
-                {onRemoveSuggestion && (
+                {onRemoveSuggestion && historyHas(entry) && (
                   <button
                     type="button"
                     className="shrink-0 p-0.5 rounded text-dh-muted hover:text-red-300"

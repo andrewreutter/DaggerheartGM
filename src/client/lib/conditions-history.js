@@ -1,7 +1,9 @@
 /**
  * Pure helpers for shared per-table conditions suggestion history
- * (`table_state.conditionsHistory`). No React/DOM dependency.
+ * (`table_state.conditionsHistory`) plus live names currently on the table.
  */
+
+import { normalizeConditionsToList } from './conditions-utils.js';
 
 /**
  * @param {unknown} list
@@ -53,6 +55,51 @@ export function filterConditionsSuggestions(list, query, excludeList, max = 8) {
     if (q && !lower.includes(q)) continue;
     out.push(s);
     if (out.length >= max) break;
+  }
+  return out;
+}
+
+/**
+ * Unique condition names currently applied on characters, adversaries, and companions.
+ * First-seen casing wins (table order).
+ * @param {unknown} activeElements
+ * @returns {string[]}
+ */
+export function collectLiveConditionNames(activeElements) {
+  const seen = new Set();
+  const out = [];
+  const add = (raw) => {
+    for (const name of normalizeConditionsToList(raw)) {
+      const lower = name.toLowerCase();
+      if (seen.has(lower)) continue;
+      seen.add(lower);
+      out.push(name);
+    }
+  };
+  for (const el of Array.isArray(activeElements) ? activeElements : []) {
+    const type = el?.elementType;
+    if (type === 'character' || type === 'adversary') add(el.conditions);
+    if (type === 'character' && el.companion) add(el.companion.conditions);
+  }
+  return out;
+}
+
+/**
+ * History (MRU) first, then any live names not already present (case-insensitive).
+ * @param {unknown} history
+ * @param {unknown} live
+ * @returns {string[]}
+ */
+export function mergeConditionSuggestionLists(history, live) {
+  const seen = new Set();
+  const out = [];
+  for (const raw of [...(Array.isArray(history) ? history : []), ...(Array.isArray(live) ? live : [])]) {
+    const s = String(raw ?? '').trim();
+    if (!s) continue;
+    const lower = s.toLowerCase();
+    if (seen.has(lower)) continue;
+    seen.add(lower);
+    out.push(s);
   }
   return out;
 }

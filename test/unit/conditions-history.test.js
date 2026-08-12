@@ -3,6 +3,8 @@ import {
   addConditionsHistoryEntry,
   removeConditionsHistoryEntry,
   filterConditionsSuggestions,
+  collectLiveConditionNames,
+  mergeConditionSuggestionLists,
 } from '../../src/client/lib/conditions-history.js';
 
 describe('addConditionsHistoryEntry', () => {
@@ -56,6 +58,33 @@ describe('filterConditionsSuggestions', () => {
     expect(filterConditionsSuggestions(list, '', ['Vulnerable', 'Restrained'])).toEqual([
       'Hidden',
       'Hidden Ally',
+    ]);
+  });
+});
+
+describe('collectLiveConditionNames', () => {
+  it('collects unique names from characters, adversaries, and companions', () => {
+    expect(
+      collectLiveConditionNames([
+        { elementType: 'character', conditions: 'Vulnerable, Hidden', companion: { conditions: 'Restrained' } },
+        { elementType: 'adversary', conditions: 'vulnerable, On Fire' },
+        { elementType: 'mapImage', conditions: 'Ignored' },
+      ]),
+    ).toEqual(['Vulnerable', 'Hidden', 'Restrained', 'On Fire']);
+  });
+
+  it('returns empty when nothing is applied', () => {
+    expect(collectLiveConditionNames([])).toEqual([]);
+    expect(collectLiveConditionNames(null)).toEqual([]);
+  });
+});
+
+describe('mergeConditionSuggestionLists', () => {
+  it('keeps history order and appends live-only names', () => {
+    expect(mergeConditionSuggestionLists(['Hidden', 'Vulnerable'], ['Vulnerable', 'On Fire'])).toEqual([
+      'Hidden',
+      'Vulnerable',
+      'On Fire',
     ]);
   });
 });

@@ -11,6 +11,7 @@ import {
   computePanToCenterInnerPointPx,
   computeZoomAndPanToFitInnerBounds,
   scrollAfterZoomTowardPoint,
+  computeCameraViewportFt,
 } from '../../src/client/lib/battle-map-zoom.js';
 
 describe('battle-map-zoom', () => {
@@ -255,5 +256,25 @@ describe('battle-map-zoom', () => {
     });
     expect(r.scrollLeft).toBeGreaterThanOrEqual(0);
     expect(r.scrollTop).toBeGreaterThanOrEqual(0);
+  });
+
+  it('computeCameraViewportFt converts pan/zoom into a feet rectangle', () => {
+    expect(computeCameraViewportFt({
+      viewPanLeft: 100,
+      viewPanTop: 50,
+      viewZoom: 2,
+      pxPerFt: 10,
+      containerWidth: 400,
+      containerHeight: 300,
+      mapId: 'm-1',
+    })).toEqual({ x: 5, y: 2.5, width: 20, height: 15, mapId: 'm-1' });
+    expect(computeCameraViewportFt({
+      viewPanLeft: 0,
+      viewPanTop: 0,
+      viewZoom: 0,
+      pxPerFt: 10,
+      containerWidth: 400,
+      containerHeight: 300,
+    })).toBeNull();
   });
 });

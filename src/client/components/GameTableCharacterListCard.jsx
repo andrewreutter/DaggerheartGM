@@ -42,6 +42,7 @@ import { WARDEN_OF_THE_ELEMENTS_SCOPE_KEY } from '../../features-v2/engine/featu
  * @param {object[]} [props.pendingBanners]
  * @param {(url: string) => void} [props.onOpenImageLightbox] — when provided, portrait thumb becomes click-to-fullscreen
  * @param {string[]} [props.conditionsHistory]
+ * @param {string[]} [props.extraConditionSuggestions]
  * @param {(entry: string) => void} [props.onAddConditionsHistoryEntry]
  * @param {(entry: string) => void} [props.onRemoveConditionsHistoryEntry]
  */
@@ -71,6 +72,7 @@ export function GameTableCharacterListCard({
   pendingBanners,
   onOpenImageLightbox,
   conditionsHistory = [],
+  extraConditionSuggestions,
   onAddConditionsHistoryEntry,
   onRemoveConditionsHistoryEntry,
 }) {
@@ -348,6 +350,7 @@ export function GameTableCharacterListCard({
                   placeholder="Add condition…"
                   autoFocus={openOwnConditions && !ownHasConditions}
                   suggestions={conditionsHistory}
+                  extraSuggestions={extraConditionSuggestions}
                   onAddSuggestion={onAddConditionsHistoryEntry}
                   onRemoveSuggestion={onRemoveConditionsHistoryEntry}
                   onBlur={() => {
@@ -407,6 +410,7 @@ export function GameTableCharacterListCard({
                       placeholder="Add condition…"
                       autoFocus={openCompanionConditions && !companionHasConditions}
                       suggestions={conditionsHistory}
+                      extraSuggestions={extraConditionSuggestions}
                       onAddSuggestion={onAddConditionsHistoryEntry}
                       onRemoveSuggestion={onRemoveConditionsHistoryEntry}
                       onBlur={() => {

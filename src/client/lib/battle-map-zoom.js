@@ -376,3 +376,38 @@ export function computeZoomAndPanToFitInnerBounds({
   });
   return { mapZoom, scrollLeft: pan.scrollLeft, scrollTop: pan.scrollTop };
 }
+
+/**
+ * Visible camera rectangle in map feet (top-left + size), matching BattleMap's
+ * place-on-map viewport math.
+ *
+ * @param {{
+ *   viewPanLeft: number,
+ *   viewPanTop: number,
+ *   viewZoom: number,
+ *   pxPerFt: number,
+ *   containerWidth: number,
+ *   containerHeight: number,
+ *   mapId?: string|null,
+ * }} p
+ * @returns {{ x: number, y: number, width: number, height: number, mapId: string|null }|null}
+ */
+export function computeCameraViewportFt({
+  viewPanLeft,
+  viewPanTop,
+  viewZoom,
+  pxPerFt,
+  containerWidth,
+  containerHeight,
+  mapId,
+}) {
+  if (!(pxPerFt > 0) || !(viewZoom > 0)) return null;
+  const scale = viewZoom * pxPerFt;
+  return {
+    x: viewPanLeft / scale,
+    y: viewPanTop / scale,
+    width: containerWidth > 0 ? containerWidth / scale : 0,
+    height: containerHeight > 0 ? containerHeight / scale : 0,
+    mapId: mapId ?? null,
+  };
+}

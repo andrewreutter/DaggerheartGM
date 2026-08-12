@@ -4,6 +4,7 @@ import {
   applyViewportWheelPanZoom,
   clampMapZoom,
   clampPanScroll,
+  computeCameraViewportFt,
   computeDragDropTopLeftLocalPx,
   computeDragGhostCenterClientPx,
   computeMapZoomBounds,
@@ -58,10 +59,12 @@ import {
   Hand,
   Tag,
 } from 'lucide-react';
+import { ConditionsEditor } from './ConditionsEditor.jsx';
 import { Tooltip } from './Tooltip.jsx';
 import { CheckboxTrack } from './DetailCardContent.jsx';
-import { ConditionsEditor } from './ConditionsEditor.jsx';
 import { normalizeConditionsToList } from '../lib/conditions-utils.js';
+import { conditionMarks } from '../lib/condition-symbols.js';
+import { layoutTokenDotRing } from '../lib/token-dot-ring.js';
 import { AnchoredFloatingPanel } from './AnchoredFloatingPanel.jsx';
 import { getAuthToken, postMapPing, postMapScribble, postBannerAck, CLIENT_ID, imageGenEnabled } from '../lib/api.js';
 import { useAiUiPreference } from '../lib/ai-ui-preference-context.jsx';
@@ -203,9 +206,10 @@ function withResolvedTokenImage(element, parentByInstanceId) {
 }
 
 /**
- * Return `element` with `maxStress` and `currentStress` merged from the parent character's
- * `companion` object for Beastbound companion boardTokens, so `TokenCircle` can show pip rings
- * without any extra prop threading. Preserves object reference when values are unchanged.
+ * Return `element` with `maxStress`, `currentStress`, and `conditions` merged from the parent
+ * character's `companion` object for Beastbound companion boardTokens, so `TokenCircle` can show
+ * pip rings and condition marks without extra prop threading. Preserves object reference when
+ * values are unchanged.
  */
 function withResolvedCompanionStress(element, parentByInstanceId) {
   if (!element) return element;
@@ -215,8 +219,13 @@ function withResolvedCompanionStress(element, parentByInstanceId) {
   if (!companion) return element;
   const maxStress = companion.maxStress ?? 3;
   const currentStress = companion.currentStress ?? 0;
-  if (element.maxStress === maxStress && element.currentStress === currentStress) return element;
-  return { ...element, maxStress, currentStress };
+  const conditions = companion.conditions ?? '';
+  if (
+    element.maxStress === maxStress &&
+    element.currentStress === currentStress &&
+    (element.conditions ?? '') === conditions
+  ) return element;
+  return { ...element, maxStress, currentStress, conditions };
 }
 
 function isInsideRect(clientX, clientY, rect) {
@@ -697,74 +706,93 @@ const MapViewStripTile = memo(function MapViewStripTileRaw({
 
 /**
  * Renders colored dot indicators around a token's border.
- * groups: [{ color, total, filled }] — empty groups already filtered out.
+ * groups: [{ color, total, filled, kind?, marks? }] — empty groups already filtered out.
  * Each group's center is equally spaced around the ring (clockwise from 12 o'clock).
- * Within a group, filled dots come first, then empty (outline) dots.
+ * Within a resource group, filled dots come first, then empty (outline) dots.
+ * A `kind: 'condition'` group is one pip per applied condition (symbols + instant tooltip)
+ * and is omitted entirely when the token has no conditions, so it takes no ring space.
  */
 function TokenDotRing({ sizeW, sizeH, groups }) {
-  const numGroups = groups.length;
-  if (numGroups === 0) return null;
-  const totalDots = groups.reduce((s, g) => s + g.total, 0);
-  if (totalDots === 0) return null;
-
-  const cx = sizeW / 2;
-  const cy = sizeH / 2;
-  const rx = Math.max(1, sizeW / 2 - 1);
-  const ry = Math.max(1, sizeH / 2 - 1);
-  // Average radius drives dot size/spacing math (exact for circles — the default 1×1 token —
-  // and a reasonable visual approximation for ellipses).
-  const rr = (rx + ry) / 2;
-
-  const minSize = Math.min(sizeW, sizeH);
-  const preferredDr = Math.max(2, Math.round(minSize * 0.09));
-  // Max dr where the gap between groups fits one empty dot slot (2×dotSpacing center-to-center):
-  // totalArc = (totalDots−numGroups)·ds + numGroups·2·ds = (totalDots+numGroups)·ds = 2π
-  // ds = (2dr+1)/rr → dr = (2π·rr/(totalDots+numGroups) − 1) / 2
-  const maxDr = (2 * Math.PI * rr / (totalDots + numGroups) - 1) / 2;
-  const dr = Math.max(1, Math.min(preferredDr, maxDr));
-
-  const dotSpacing = (2 * dr + 1) / rr;
-  const groupWidths = groups.map(g => Math.max(0, g.total - 1) * dotSpacing);
-  const totalGroupArc = groupWidths.reduce((s, w) => s + w, 0);
-  const gap = (2 * Math.PI - totalGroupArc) / numGroups;
-
-  const dots = [];
-  let cursor = -Math.PI / 2 - groupWidths[0] / 2;
-  groups.forEach((group, gi) => {
-    for (let i = 0; i < group.total; i++) {
-      const angle = cursor + i * dotSpacing;
-      const x = cx + rx * Math.cos(angle);
-      const y = cy + ry * Math.sin(angle);
-      const isFilled = i < group.filled;
-      dots.push({ x, y, color: group.color, filled: isFilled, key: `${gi}-${i}` });
-    }
-    cursor += groupWidths[gi] + gap;
-  });
+  const layout = layoutTokenDotRing(sizeW, sizeH, groups);
+  if (!layout) return null;
+  const { dr, dots } = layout;
+  const resourceDots = dots.filter((d) => d.kind !== 'condition');
+  const conditionDots = dots.filter((d) => d.kind === 'condition');
+  const markDiameter = Math.max(1, dr * 2);
+  const markFont = Math.max(4, dr * 1.55);
 
   const filledSw = Math.min(0.5, dr * 0.3);
   const emptySw = Math.min(1, dr * 0.5);
 
   return (
-    <svg
-      className="absolute pointer-events-none"
-      width={sizeW}
-      height={sizeH}
-      viewBox={`0 0 ${sizeW} ${sizeH}`}
-      style={{ overflow: 'visible', top: -2, left: -2 }}
+    <div
+      className="absolute pointer-events-none z-20"
+      style={{ overflow: 'visible', top: -2, left: -2, width: sizeW, height: sizeH }}
     >
-      {dots.map(d => (
-        <circle
+      <svg
+        className="absolute pointer-events-none"
+        width={sizeW}
+        height={sizeH}
+        viewBox={`0 0 ${sizeW} ${sizeH}`}
+        style={{ overflow: 'visible' }}
+      >
+        {resourceDots.map((d) => (
+          <circle
+            key={d.key}
+            cx={d.x}
+            cy={d.y}
+            r={dr}
+            fill={d.filled ? d.color : 'rgba(15,15,20,0.85)'}
+            stroke={d.color}
+            strokeWidth={d.filled ? filledSw : emptySw}
+            opacity={d.filled ? 1 : 0.55}
+          />
+        ))}
+        {conditionDots.map((d) => (
+          <g key={d.key}>
+            <circle
+              cx={d.x}
+              cy={d.y}
+              r={dr}
+              fill="rgba(15,15,20,0.92)"
+              stroke="rgba(255,255,255,0.55)"
+              strokeWidth={emptySw}
+            />
+            <text
+              x={d.x}
+              y={d.y}
+              textAnchor="middle"
+              dominantBaseline="central"
+              fill="#f8fafc"
+              fontSize={markFont}
+              fontWeight="700"
+              style={{ pointerEvents: 'none' }}
+            >
+              {d.symbol}
+            </text>
+          </g>
+        ))}
+      </svg>
+      {conditionDots.map((d) => (
+        <div
           key={d.key}
-          cx={d.x}
-          cy={d.y}
-          r={dr}
-          fill={d.filled ? d.color : 'rgba(15,15,20,0.85)'}
-          stroke={d.color}
-          strokeWidth={d.filled ? filledSw : emptySw}
-          opacity={d.filled ? 1 : 0.55}
-        />
+          className="absolute pointer-events-auto"
+          style={{
+            left: d.x,
+            top: d.y,
+            width: markDiameter,
+            height: markDiameter,
+            transform: 'translate(-50%, -50%)',
+          }}
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <Tooltip label={d.name} placement="top" className="relative block w-full h-full">
+            <span className="block w-full h-full" data-condition-mark={d.name} aria-label={d.name} />
+          </Tooltip>
+        </div>
       ))}
-    </svg>
+    </div>
   );
 }
 
@@ -1070,8 +1098,9 @@ function TokenCircle({
   const instLabel = isAdv && instanceNum != null ? `#${instanceNum}` : null;
 
   // Build dot groups for border ring indicator. Skipped for dim tray proxies (`isProxy`) — the GM
-  // already sees live HP/Stress/Armor pips on the actual placed token, so building + rendering a
-  // second full `TokenDotRing` per proxy (up to ~15 adversaries when most are on-map) is wasted work.
+  // already sees live HP/Stress/Armor pips (and condition marks) on the actual placed token, so
+  // building + rendering a second full `TokenDotRing` per proxy (up to ~15 adversaries when most
+  // are on-map) is wasted work.
   const dotGroups = [];
   if (!isProxy) {
     if (isBoard) {
@@ -1104,6 +1133,10 @@ function TokenCircle({
         if (hpMax > 0) dotGroups.push({ color: '#ef4444', total: hpMax, filled: hpDamage });
         if (stressMax > 0) dotGroups.push({ color: '#f97316', total: stressMax, filled: Math.min(stressMarked, stressMax) });
       }
+    }
+    const marks = conditionMarks(element.conditions);
+    if (marks.length > 0) {
+      dotGroups.push({ kind: 'condition', total: marks.length, filled: marks.length, marks });
     }
   }
 
@@ -1228,7 +1261,8 @@ function tokenElementFieldsEqual(pE, nE) {
     pE.tokenSizeWidth === nE.tokenSizeWidth &&
     pE.tokenSizeLength === nE.tokenSizeLength &&
     pE.tokenSizeLinked === nE.tokenSizeLinked &&
-    pE.imageUrl === nE.imageUrl
+    pE.imageUrl === nE.imageUrl &&
+    pE.conditions === nE.conditions
   );
 }
 
@@ -1438,6 +1472,7 @@ function TokenDetailPanel({
   /** Called with (rollText, displayName, rollMeta, opts) when the attack button is clicked. */
   onRoll,
   conditionsHistory = [],
+  extraConditionSuggestions,
   onAddConditionsHistoryEntry,
   onRemoveConditionsHistoryEntry,
 }) {
@@ -1620,6 +1655,7 @@ function TokenDetailPanel({
                   placeholder="Add condition…"
                   autoFocus={openCompanionConditions && !companionHasConditions}
                   suggestions={conditionsHistory}
+                  extraSuggestions={extraConditionSuggestions}
                   onAddSuggestion={onAddConditionsHistoryEntry}
                   onRemoveSuggestion={onRemoveConditionsHistoryEntry}
                   onBlur={() => {
@@ -1797,6 +1833,7 @@ function TokenDetailPanel({
                 onCommit={(v) => updateActiveElement(element.instanceId, { conditions: v })}
                 placeholder="Add condition…"
                 suggestions={conditionsHistory}
+                extraSuggestions={extraConditionSuggestions}
                 onAddSuggestion={onAddConditionsHistoryEntry}
                 onRemoveSuggestion={onRemoveConditionsHistoryEntry}
                 className="w-full flex flex-wrap items-center gap-1 px-1.5 py-0.5 rounded bg-dh-hover border border-dh-strong text-dh text-xs focus-within:border-sky-500"
@@ -2474,9 +2511,10 @@ export function BattleMap({
   /** Live map viewport width/height ratio (scroll wrapper) — for import map camera rectangles matching the table. */
   onViewportAspectChange,
   /**
-   * Called with `{ xFt, yFt }` whenever the viewport center in map-feet changes (pan/zoom/resize).
-   * Lets callers (e.g. app.jsx) store the latest center so paste/drop placement of new mapImage
-   * objects defaults to the visible viewport center rather than map coordinate (0, 0).
+   * Called with `{ xFt, yFt, mapId, viewId, viewportFt }` whenever the viewport in map-feet
+   * changes (pan/zoom/resize). `viewportFt` is the visible camera rect (top-left + size).
+   * Lets callers store the latest center for paste/drop placement, and GM Moves for
+   * in-camera vs off-camera adversary grouping.
    */
   onViewportCenterChange,
   /**
@@ -2492,6 +2530,7 @@ export function BattleMap({
   onRoll,
   /** Shared per-table conditions suggestion history (`table_state.conditionsHistory`). */
   conditionsHistory = [],
+  extraConditionSuggestions,
   onAddConditionsHistoryEntry,
   onRemoveConditionsHistoryEntry,
 }) {
@@ -2800,11 +2839,21 @@ export function BattleMap({
   // have direct access to BattleMap's internal pan/zoom state).
   useEffect(() => {
     if (!onViewportCenterChange || !containerWidth || !containerHeight || !pxPerFt || !viewZoom) return;
+    const viewportFt = computeCameraViewportFt({
+      viewPanLeft,
+      viewPanTop,
+      viewZoom,
+      pxPerFt,
+      containerWidth,
+      containerHeight,
+      mapId: activeMapIdResolved,
+    });
     onViewportCenterChange({
       xFt: (containerWidth / 2 + viewPanLeft) / (viewZoom * pxPerFt),
       yFt: (containerHeight / 2 + viewPanTop) / (viewZoom * pxPerFt),
       mapId: activeMapIdResolved,
       viewId: !isPlayer && gmActiveViewId ? gmActiveViewId : null,
+      viewportFt,
     });
   }, [onViewportCenterChange, containerWidth, containerHeight, viewPanLeft, viewPanTop, viewZoom, pxPerFt, activeMapIdResolved, isPlayer, gmActiveViewId]);
 
@@ -6992,6 +7041,7 @@ export function BattleMap({
             }
             adversaryPinInstanceNum={advPinInstanceNum}
             conditionsHistory={conditionsHistory}
+            extraConditionSuggestions={extraConditionSuggestions}
             onAddConditionsHistoryEntry={onAddConditionsHistoryEntry}
             onRemoveConditionsHistoryEntry={onRemoveConditionsHistoryEntry}
           />

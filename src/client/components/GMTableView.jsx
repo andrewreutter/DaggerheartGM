@@ -109,6 +109,7 @@ import { FrequencyCycleChipSuffix, getFrequencyCycleWord } from '../lib/frequenc
 import { DiceRoller } from './DiceRoller.jsx';
 import { ConditionsEditor } from './ConditionsEditor.jsx';
 import { normalizeConditionsToList } from '../lib/conditions-utils.js';
+import { collectLiveConditionNames } from '../lib/conditions-history.js';
 import { Tooltip } from './Tooltip.jsx';
 import { usePortalHoverTooltip, PortalHoverTooltipLayer } from '../lib/portal-hover-tooltip.jsx';
 import {
@@ -130,6 +131,13 @@ import { applyRangerFocusV2IntentToPending } from '../lib/ranger-focus-v2-intent
 import { extractDetailsValues } from '../lib/dice-utils.js';
 import { getCharactersWithinFarRange, getCharactersWithinCloseRangeWithMarkedHp, getAdversariesWithinMeleeRange, getAdversariesWithinRangeFt, getCharactersWithinRangeFt, getCharactersWithinRangeOfAny, rangeBandNameToFt, rangeFtToLabel, RANGE_BANDS_FT, tokenDistanceFtForElements, positionAtDistanceFt, getTokenFootprintFt } from '../lib/map-range.js';
 import { mapConfigHasImage } from '../lib/map-table-state.js';
+import {
+  arrangeGmMovesSection,
+  encounterSourceOrder,
+  inCameraAdversaryCardKeys,
+  livingAdversaryCardKeys,
+  pickTallestGmSection,
+} from '../lib/gm-moves-layout.js';
 import { useCharacterSrdData } from '../lib/useCharacterSrdData.js';
 import { recomputeCharacter, isCharacterComplete, getEffectiveWeaponRange, projectCharacterFormToLevel } from '../lib/character-calc.js';
 import { mergeV2DeclarativeSheetOverlay, buildV2RegistryWithSrdItems } from '../lib/v2-declarative-sheet.js';
@@ -413,13 +421,6 @@ function enrichRollWithDamage(roll, elements) {
   roll.damageTotal = dmg.total;
   roll.hpLoss = computeHpLoss(dmg.total, effectiveThresholds(targetEl));
   roll.dmgType = dmg.type;
-}
-
-function pickTallestGmSection(prLen, actionsLen, fearLen) {
-  const max = Math.max(prLen, actionsLen, fearLen);
-  if (prLen === max) return 'pr';
-  if (actionsLen === max) return 'actions';
-  return 'fear';
 }
 
 /** Portaled GM Moves preview: full adversary/environment sheet with feature highlight (PCs: compact preview). */
@@ -712,6 +713,34 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
   const potAdvOverlay     = useHoverOverlay({ hideDelay: 120, isTouch });
   const gmMovesOverlay    = useHoverOverlay({ hideDelay: 150, isTouch, mode: 'click', getClickToggleKey: () => 'gm-moves' });
   const gmMovesPortalTooltip = usePortalHoverTooltip();
+  const [gmMovesOffCameraOpen, setGmMovesOffCameraOpen] = useState(false);
+  const activeElementsRef = useRef(activeElements);
+  activeElementsRef.current = activeElements;
+  const mapViewportFtRef = useRef(null);
+  const inViewAdvSigRef = useRef('');
+  const [inViewAdvCardKeys, setInViewAdvCardKeys] = useState(() => new Set());
+  const [mapViewportKnown, setMapViewportKnown] = useState(false);
+
+  const syncGmMovesInViewKeys = useCallback(() => {
+    const vp = mapViewportFtRef.current;
+    const known = !!(vp && vp.width > 0 && vp.height > 0);
+    const keys = known ? inCameraAdversaryCardKeys(activeElementsRef.current, vp) : new Set();
+    const sig = `${known ? '1' : '0'}:${[...keys].sort().join(',')}`;
+    if (sig === inViewAdvSigRef.current) return;
+    inViewAdvSigRef.current = sig;
+    setMapViewportKnown(known);
+    setInViewAdvCardKeys(keys);
+  }, []);
+
+  const handleBattleMapViewportCenterChange = useCallback((center) => {
+    onBattleMapViewportCenterChange?.(center);
+    mapViewportFtRef.current = center?.viewportFt ?? null;
+    syncGmMovesInViewKeys();
+  }, [onBattleMapViewportCenterChange, syncGmMovesInViewKeys]);
+
+  useEffect(() => {
+    syncGmMovesInViewKeys();
+  }, [activeElements, syncGmMovesInViewKeys]);
 
   // GM Feature hover (multi-trigger within GM Moves panel — managed separately)
   const [hoveredFeature, setHoveredFeature] = useState(null);
@@ -4618,10 +4647,30 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
   );
   const gmMovesActionFeatures = consolidatedMenu.Actions ?? [];
   const gmMovesFearFeatures = consolidatedMenu['Fear Actions'] ?? [];
+  const gmMovesSourceOrder = useMemo(() => encounterSourceOrder(activeElements), [activeElements]);
+  const gmMovesAdversaryCardKeys = useMemo(() => livingAdversaryCardKeys(activeElements), [activeElements]);
+  const gmMovesArrangeOpts = useMemo(() => ({
+    sourceOrder: gmMovesSourceOrder,
+    inViewAdvKeys: inViewAdvCardKeys,
+    adversaryCardKeys: gmMovesAdversaryCardKeys,
+    viewportKnown: mapViewportKnown,
+  }), [gmMovesSourceOrder, inViewAdvCardKeys, gmMovesAdversaryCardKeys, mapViewportKnown]);
+  const gmMovesPrArranged = useMemo(
+    () => arrangeGmMovesSection(gmMovesPrFeatures, gmMovesArrangeOpts),
+    [gmMovesPrFeatures, gmMovesArrangeOpts],
+  );
+  const gmMovesActionsArranged = useMemo(
+    () => arrangeGmMovesSection(gmMovesActionFeatures, gmMovesArrangeOpts),
+    [gmMovesActionFeatures, gmMovesArrangeOpts],
+  );
+  const gmMovesFearArranged = useMemo(
+    () => arrangeGmMovesSection(gmMovesFearFeatures, gmMovesArrangeOpts),
+    [gmMovesFearFeatures, gmMovesArrangeOpts],
+  );
   const tallGmSection = pickTallestGmSection(
-    gmMovesPrFeatures.length,
-    gmMovesActionFeatures.length,
-    gmMovesFearFeatures.length,
+    gmMovesPrArranged.inView.length,
+    gmMovesActionsArranged.inView.length,
+    gmMovesFearArranged.inView.length,
   );
 
   const removeGroup = (instances) => {
@@ -4829,6 +4878,10 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     () => activeElements.filter(e => e.elementType === 'character'),
     [activeElements]
   );
+  const extraConditionSuggestions = useMemo(
+    () => collectLiveConditionNames(activeElements),
+    [activeElements],
+  );
   /** Session role + assigned PC + `viewer` for {@link collectV2ReviewActionChips} (single source of truth). */
   const chipViewer = useMemo(
     () => buildV2ChipViewer({ isPlayer, user, playerEmail, previewAsPlayerEmail, tableCharacters }),
@@ -5011,6 +5064,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
             pendingBanners={pendingBanners}
             onOpenImageLightbox={setLightboxUrl}
             conditionsHistory={conditionsHistory}
+            extraConditionSuggestions={extraConditionSuggestions}
             onAddConditionsHistoryEntry={onAddConditionsHistoryEntry}
             onRemoveConditionsHistoryEntry={!isPlayer ? onRemoveConditionsHistoryEntry : undefined}
           />
@@ -5030,6 +5084,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
       playerEmails,
       connectedPlayers,
       conditionsHistory,
+      extraConditionSuggestions,
       onAddConditionsHistoryEntry,
       onRemoveConditionsHistoryEntry,
       isPlayer,
@@ -5723,26 +5778,64 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     );
   };
 
+  const renderGmMovesOffCameraFold = (offCamera, renderItem, listClassName) => {
+    if (offCamera.length === 0) return null;
+    return (
+      <div className="mt-1.5">
+        <button
+          type="button"
+          onClick={() => setGmMovesOffCameraOpen((o) => !o)}
+          className="flex w-full items-center gap-1 rounded px-0.5 py-0.5 text-left text-[10px] font-semibold uppercase tracking-wider text-dh-muted hover:bg-dh-hover/40 hover:text-dh"
+        >
+          {gmMovesOffCameraOpen
+            ? <ChevronDown size={11} className="shrink-0" />
+            : <ChevronRight size={11} className="shrink-0" />}
+          Off camera
+          <span className="font-normal normal-case tracking-normal tabular-nums">({offCamera.length})</span>
+        </button>
+        {gmMovesOffCameraOpen && (
+          <div className={listClassName}>{offCamera.map(renderItem)}</div>
+        )}
+      </div>
+    );
+  };
+
   const gmMovesPrSection = (
     <CharacterSheetEmphasisCard title="Passives & Reactions" compact>
       <div className="pr-0.5">
-        <div className="flex flex-wrap gap-1.5">
-          {gmMovesPrFeatures.length === 0 ? (
-            <span className="text-xs text-dh-muted">—</span>
-          ) : (
-            gmMovesPrFeatures.map(renderGmMovesPassiveChip)
-          )}
-        </div>
+        {gmMovesPrArranged.inView.length === 0 && gmMovesPrArranged.offCamera.length === 0 ? (
+          <span className="text-xs text-dh-muted">—</span>
+        ) : (
+          <>
+            {gmMovesPrArranged.inView.length > 0 && (
+              <div className="flex flex-wrap gap-1.5">
+                {gmMovesPrArranged.inView.map(renderGmMovesPassiveChip)}
+              </div>
+            )}
+            {renderGmMovesOffCameraFold(
+              gmMovesPrArranged.offCamera,
+              renderGmMovesPassiveChip,
+              'mt-1 flex flex-wrap gap-1.5',
+            )}
+          </>
+        )}
       </div>
     </CharacterSheetEmphasisCard>
   );
   const gmMovesActionsSection = (
     <CharacterSheetEmphasisCard title="Actions" compact>
       <div className="space-y-1.5 pr-0.5">
-        {gmMovesActionFeatures.length === 0 ? (
+        {gmMovesActionsArranged.inView.length === 0 && gmMovesActionsArranged.offCamera.length === 0 ? (
           <span className="text-xs text-dh-muted">—</span>
         ) : (
-          gmMovesActionFeatures.map((f) => renderGmMovesFeatureCardRow(f, 'Actions'))
+          <>
+            {gmMovesActionsArranged.inView.map((f) => renderGmMovesFeatureCardRow(f, 'Actions'))}
+            {renderGmMovesOffCameraFold(
+              gmMovesActionsArranged.offCamera,
+              (f) => renderGmMovesFeatureCardRow(f, 'Actions'),
+              'mt-1 space-y-1.5',
+            )}
+          </>
         )}
       </div>
     </CharacterSheetEmphasisCard>
@@ -5750,10 +5843,17 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
   const gmMovesFearSection = (
     <CharacterSheetEmphasisCard title="Fear Actions" compact>
       <div className="space-y-1.5 pr-0.5">
-        {gmMovesFearFeatures.length === 0 ? (
+        {gmMovesFearArranged.inView.length === 0 && gmMovesFearArranged.offCamera.length === 0 ? (
           <span className="text-xs text-dh-muted">—</span>
         ) : (
-          gmMovesFearFeatures.map((f) => renderGmMovesFeatureCardRow(f, 'Fear Actions'))
+          <>
+            {gmMovesFearArranged.inView.map((f) => renderGmMovesFeatureCardRow(f, 'Fear Actions'))}
+            {renderGmMovesOffCameraFold(
+              gmMovesFearArranged.offCamera,
+              (f) => renderGmMovesFeatureCardRow(f, 'Fear Actions'),
+              'mt-1 space-y-1.5',
+            )}
+          </>
         )}
       </div>
     </CharacterSheetEmphasisCard>
@@ -5765,8 +5865,8 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
         <>
           <div className="flex min-w-0 flex-1 flex-col gap-2">{gmMovesPrSection}</div>
           <div className="flex min-w-0 flex-1 flex-col gap-2">
-            {gmMovesActionsSection}
             {gmMovesFearSection}
+            {gmMovesActionsSection}
           </div>
         </>
       )}
@@ -6081,6 +6181,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                 pendingBanners={pendingBanners}
                 onOpenImageLightbox={setLightboxUrl}
                 conditionsHistory={conditionsHistory}
+                extraConditionSuggestions={extraConditionSuggestions}
                 onAddConditionsHistoryEntry={onAddConditionsHistoryEntry}
                 onRemoveConditionsHistoryEntry={!isPlayer ? onRemoveConditionsHistoryEntry : undefined}
               />
@@ -6839,13 +6940,14 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
             onSetMapOverlay={onSetMapOverlay}
             onSetMapViewOverlay={onSetMapViewOverlay}
             onViewportAspectChange={onBattleMapViewportAspectChange}
-            onViewportCenterChange={onBattleMapViewportCenterChange}
+            onViewportCenterChange={handleBattleMapViewportCenterChange}
             onAddMapImageObject={onAddMapImageObject}
             onAddMapDrawShape={onAddMapDrawShape}
             onUpdateMapImageObject={onUpdateMapImageObject}
             onRemoveMapImageObject={onRemoveMapImageObject}
             onOpenImageLightbox={setLightboxUrl}
             conditionsHistory={conditionsHistory}
+            extraConditionSuggestions={extraConditionSuggestions}
             onAddConditionsHistoryEntry={onAddConditionsHistoryEntry}
             onRemoveConditionsHistoryEntry={!isPlayer ? onRemoveConditionsHistoryEntry : undefined}
             className="flex-1 min-h-0"
@@ -7406,6 +7508,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                             value={inst.conditions || ''}
                             onCommit={(v) => updateActiveElement(inst.instanceId, { conditions: v })}
                             suggestions={conditionsHistory}
+                            extraSuggestions={extraConditionSuggestions}
                             onAddSuggestion={onAddConditionsHistoryEntry}
                             onRemoveSuggestion={!isPlayer ? onRemoveConditionsHistoryEntry : undefined}
                             onBlur={() => {
