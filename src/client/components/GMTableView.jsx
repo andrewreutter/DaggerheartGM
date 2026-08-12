@@ -777,13 +777,6 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
       }
       setPickerLoading(true);
       ensureAdventuresLoaded().finally(() => setPickerLoading(false));
-    } else if (modalOpen === 'characters' && ensureCharactersLoaded) {
-      if ((data.characters || []).length > 0) {
-        setPickerLoading(false);
-        return;
-      }
-      setPickerLoading(true);
-      ensureCharactersLoaded().finally(() => setPickerLoading(false));
     } else {
       setPickerLoading(false);
     }
@@ -3338,11 +3331,12 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
   const openTableCharacterEditor = useCallback((liveEl) => {
     if (!liveEl) return;
     if (liveEl.id) {
-      const libraryItem = data.characters?.find(i => i.id === liveEl.id) || liveEl;
+      // Characters are now resolved server-side into a single canonical row;
+      // liveEl already contains the full merged library data — no data.characters lookup needed.
       navigate(`${gameTableBasePath}/characters/${liveEl.id}`);
       setEditState({
         step: 'form',
-        item: libraryItem,
+        item: liveEl,
         collection: 'characters',
         mode: 'original',
         instances: [liveEl],
@@ -3361,7 +3355,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
         presentation: 'rightDrawer',
       });
     }
-  }, [data.characters, gameTableBasePath, navigate]);
+  }, [gameTableBasePath, navigate]);
 
   const handleAddPotentialAdversary = async (adversaryId) => {
     try {
