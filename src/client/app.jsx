@@ -1622,15 +1622,15 @@ function App() {
     if (!uploaded?.url) throw new Error('Map image upload did not return a URL');
     const { width, height } = await loadImageNaturalSizeFromUrl(uploaded.url);
     const defaultWidthFt = 20;
-    // Fall back to the last known viewport center (kept current by BattleMap's onViewportCenterChange)
-    // so paste/drop placement also lands in the visible area rather than at map coord (0, 0).
+    // Fall back to the last known viewport context (kept current by BattleMap's onViewportCenterChange)
+    // so paste/drop placement lands in the visible area on the correct map/view.
     const centerX = opts.centerXFt ?? mapViewportCenterRef.current?.xFt ?? null;
     const centerY = opts.centerYFt ?? mapViewportCenterRef.current?.yFt ?? null;
     const el = {
       instanceId: generateId(),
       elementType: 'mapImage',
-      mapId: opts.mapId ?? null,
-      viewId: opts.viewId ?? null,
+      mapId: opts.mapId ?? mapViewportCenterRef.current?.mapId ?? null,
+      viewId: opts.viewId ?? mapViewportCenterRef.current?.viewId ?? null,
       createdByUid: user?.uid ?? null,
       imageUrl: uploaded.url,
       imageNaturalWidth: width,

@@ -2803,8 +2803,10 @@ export function BattleMap({
     onViewportCenterChange({
       xFt: (containerWidth / 2 + viewPanLeft) / (viewZoom * pxPerFt),
       yFt: (containerHeight / 2 + viewPanTop) / (viewZoom * pxPerFt),
+      mapId: activeMapIdResolved,
+      viewId: !isPlayer && gmActiveViewId ? gmActiveViewId : null,
     });
-  }, [onViewportCenterChange, containerWidth, containerHeight, viewPanLeft, viewPanTop, viewZoom, pxPerFt]);
+  }, [onViewportCenterChange, containerWidth, containerHeight, viewPanLeft, viewPanTop, viewZoom, pxPerFt, activeMapIdResolved, isPlayer, gmActiveViewId]);
 
   /** Clips map to shared `mapViewVisibleNorm` rect (players / saved cameras); null for GM live view. */
   const [mapLetterboxClipPx, setMapLetterboxClipPx] = useState(null);
