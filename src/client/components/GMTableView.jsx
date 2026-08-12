@@ -205,7 +205,7 @@ import {
   legacyBeastformFeaturesLookFragile,
   shouldDropBeastformFromDamage,
 } from '../lib/beastform-vtt-drop.js';
-import { getRestMovesForCharacter } from '../lib/rest-moves.js';
+import { getRestMovesForCharacter, applyRestMoveSelections } from '../lib/rest-moves.js';
 import {
   buildManualTrackActionRoll,
   findPendingManualTrackBanner,
@@ -2043,31 +2043,8 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     if (roll._rest && roll._rollDbId) {
       postBannerAck(roll._rollDbId, 'acknowledge', { tableId }).catch(() => {});
       const perRoll = restMovesSelections[roll._rollDbId] || {};
-      const restContext = {};
-      for (const instanceId of Object.keys(perRoll)) {
-        const charEl = activeElements.find(e => e.elementType === 'character' && e.instanceId === instanceId);
-        if (!charEl) continue;
-        const sel = perRoll[instanceId] || {};
-        const charWrapped = wrapEntity(charEl, updateActiveElement);
-        const slots = Object.keys(sel)
-          .filter(k => /^move\d+$/.test(k) && sel[k])
-          .map(k => parseInt(k.replace('move', ''), 10))
-          .sort((a, b) => a - b);
-        for (const slot of slots) {
-          const moveId = sel['move' + slot];
-          if (!moveId) continue;
-          const def = getRestMoveDefinition(moveId);
-          if (typeof def?.onApply !== 'function') continue;
-          const targetInstanceId = sel['move' + slot + 'TargetInstanceId'];
-          const targetEl = targetInstanceId
-            ? activeElements.find(e => e.elementType === 'character' && e.instanceId === targetInstanceId)
-            : charEl;
-          const targetWrapped = targetEl ? wrapEntity(targetEl, updateActiveElement) : charWrapped;
-          const rollResult = sel['move' + slot + 'RollResult'];
-          const rollArg = rollResult ? { dice: rollResult.dice, value: rollResult.value } : {};
-          def.onApply(restContext, rollArg, targetWrapped, charWrapped);
-        }
-      }
+      const characters = activeElements.filter((e) => e.elementType === 'character');
+      applyRestMoveSelections(perRoll, characters, (el) => wrapEntity(el, updateActiveElement));
       if (onRestMoveClear) onRestMoveClear(roll._rollDbId);
       const cyclesToClear = roll._restDuration === 'long' ? ['rest', 'longRest'] : ['rest'];
       runRestCycleClear(cyclesToClear);

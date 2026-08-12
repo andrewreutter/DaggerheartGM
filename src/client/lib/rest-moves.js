@@ -103,6 +103,40 @@ export function getRestMoveDefinition(moveId) {
 }
 
 /**
+ * Run `onApply` for every selected rest move on a rest banner ack.
+ * @param {Record<string, Record<string, unknown>>} perRoll — `restMovesSelections[rollDbId]`
+ * @param {object[]} characters — character elements (with instanceId)
+ * @param {(el: object) => object} wrapCharacter — entity wrapper with clearHp/clearStress/etc.
+ */
+export function applyRestMoveSelections(perRoll, characters, wrapCharacter) {
+  if (!perRoll || typeof wrapCharacter !== 'function') return;
+  const byId = new Map((characters || []).map((c) => [c.instanceId, c]));
+  const restContext = {};
+  for (const instanceId of Object.keys(perRoll)) {
+    const charEl = byId.get(instanceId);
+    if (!charEl) continue;
+    const sel = perRoll[instanceId] || {};
+    const charWrapped = wrapCharacter(charEl);
+    const slots = Object.keys(sel)
+      .filter((k) => /^move\d+$/.test(k) && sel[k])
+      .map((k) => parseInt(k.replace('move', ''), 10))
+      .sort((a, b) => a - b);
+    for (const slot of slots) {
+      const moveId = sel['move' + slot];
+      if (!moveId) continue;
+      const def = getRestMoveDefinition(moveId);
+      if (typeof def?.onApply !== 'function') continue;
+      const targetInstanceId = sel['move' + slot + 'TargetInstanceId'];
+      const targetEl = targetInstanceId ? byId.get(targetInstanceId) : charEl;
+      const targetWrapped = targetEl ? wrapCharacter(targetEl) : charWrapped;
+      const rollResult = sel['move' + slot + 'RollResult'];
+      const rollArg = rollResult ? { dice: rollResult.dice, value: rollResult.value } : {};
+      def.onApply(restContext, rollArg, targetWrapped, charWrapped);
+    }
+  }
+}
+
+/**
  * Apply V2 ancestry passive rest modifiers (CONV-011) from src/features-v2/ancestries/index.js.
  * Registry keys are `{AncestryName}.{FeatureName}` (e.g. `Clank.Efficient`).
  */
