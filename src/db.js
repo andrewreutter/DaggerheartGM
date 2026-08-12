@@ -1849,3 +1849,42 @@ export async function setBugReportStatus(appId, id, { status, changedByEmail } =
     statusChangedBy: r.status_changed_by,
   };
 }
+
+/**
+ * Updates the admin-visible notes on a bug report by merging into the payload JSONB.
+ * An empty or blank notes string removes the key.
+ * @param {string} appId
+ * @param {number} id
+ * @param {string} notes
+ */
+export async function updateBugReportNotes(appId, id, notes) {
+  const db = getPool();
+  const trimmed = typeof notes === 'string' ? notes.trim() : '';
+  let query, params;
+  if (trimmed === '') {
+    query = `UPDATE bug_reports
+     SET payload = payload - 'notes'
+     WHERE app_id = $1 AND id = $2
+     RETURNING id, gm_uid, table_id, payload, created_at, status, status_changed_at, status_changed_by`;
+    params = [appId, id];
+  } else {
+    query = `UPDATE bug_reports
+     SET payload = jsonb_set(payload, '{notes}', $3::jsonb)
+     WHERE app_id = $1 AND id = $2
+     RETURNING id, gm_uid, table_id, payload, created_at, status, status_changed_at, status_changed_by`;
+    params = [appId, id, JSON.stringify(trimmed)];
+  }
+  const { rows } = await db.query(query, params);
+  const r = rows[0];
+  if (!r) return null;
+  return {
+    id: r.id,
+    gmUid: r.gm_uid,
+    tableId: r.table_id,
+    payload: r.payload,
+    createdAt: r.created_at,
+    status: r.status,
+    statusChangedAt: r.status_changed_at,
+    statusChangedBy: r.status_changed_by,
+  };
+}

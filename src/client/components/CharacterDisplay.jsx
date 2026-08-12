@@ -2070,23 +2070,23 @@ export function CharacterSheetDeclarativeCards({
           onFieldRoll={companionHandlers ? onFieldRoll : undefined}
           onTrackedSetFilled={companionHandlers?.onStressChange}
           onOpenImageLightbox={onOpenImageLightbox}
+          chipsSlot={
+            shapeChips.length > 0 ? (
+              <GuideFeatureCardChips
+                model={{ name: feature.name, displayName: feature.name, cardChips: shapeChips }}
+                tableForChips={tableForShapeChips}
+                featRow={feature}
+                el={el}
+                featureKey={featureKey}
+                v2TableContext={v2TableContext}
+                interactionMode={preview ? 'preview' : 'interactive'}
+                onV2CardChip={onV2CardChip}
+                placementShape={shape}
+                actionsStripLayout
+              />
+            ) : null
+          }
         />
-        {shapeChips.length > 0 && (
-          <div className="mt-2 pt-2 border-t border-dh-border/50 space-y-1.5">
-            <GuideFeatureCardChips
-              model={{ name: feature.name, displayName: feature.name, cardChips: shapeChips }}
-              tableForChips={tableForShapeChips}
-              featRow={feature}
-              el={el}
-              featureKey={featureKey}
-              v2TableContext={v2TableContext}
-              interactionMode={preview ? 'preview' : 'interactive'}
-              onV2CardChip={onV2CardChip}
-              placementShape={shape}
-              actionsStripLayout
-            />
-          </div>
-        )}
       </div>,
     );
   }

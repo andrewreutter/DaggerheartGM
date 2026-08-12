@@ -8,11 +8,13 @@ import {
   Copy,
   Inbox,
   Lightbulb,
+  Pencil,
   RefreshCw,
   Rocket,
   ShieldOff,
+  X,
 } from 'lucide-react';
-import { fetchAdminBugReports, postAdminBugReportStatus } from '../lib/api.js';
+import { fetchAdminBugReports, postAdminBugReportNotes, postAdminBugReportStatus } from '../lib/api.js';
 import { buildBugReportDebugText } from '../lib/bug-report-debug-text.js';
 import {
   BUG_REPORT_STATUS_ORDER,
@@ -148,6 +150,115 @@ function SortableHeader({ label, columnKey, sortColumn, sortDir, onSort }) {
   );
 }
 
+function NotesCell({ row, onSaved }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState(null);
+  const textareaRef = useRef(null);
+
+  const notes = row.payload?.notes ?? '';
+
+  const startEdit = useCallback(() => {
+    setDraft(notes);
+    setSaveError(null);
+    setEditing(true);
+  }, [notes]);
+
+  useEffect(() => {
+    if (editing && textareaRef.current) {
+      textareaRef.current.focus();
+      const len = textareaRef.current.value.length;
+      textareaRef.current.setSelectionRange(len, len);
+    }
+  }, [editing]);
+
+  const handleCancel = useCallback(() => {
+    setEditing(false);
+    setSaveError(null);
+  }, []);
+
+  const handleSave = useCallback(async () => {
+    setSaving(true);
+    setSaveError(null);
+    try {
+      const { item } = await postAdminBugReportNotes(row.id, draft);
+      onSaved(row.id, item);
+      setEditing(false);
+    } catch (e) {
+      setSaveError(e?.message || String(e));
+    } finally {
+      setSaving(false);
+    }
+  }, [row.id, draft, onSaved]);
+
+  const handleKeyDown = useCallback((e) => {
+    if (e.key === 'Escape') handleCancel();
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) handleSave();
+  }, [handleCancel, handleSave]);
+
+  if (editing) {
+    return (
+      <div className="flex flex-col gap-1.5 min-w-[16rem]">
+        <textarea
+          ref={textareaRef}
+          value={draft}
+          onChange={e => setDraft(e.target.value)}
+          onKeyDown={handleKeyDown}
+          rows={3}
+          placeholder="Add admin notes…"
+          className="w-full rounded border border-dh-border bg-dh-raised text-dh text-xs px-2 py-1 resize-y focus:outline-none focus:border-dh-strong focus:ring-1 focus:ring-dh-strong/40"
+        />
+        {saveError && (
+          <p className="text-xs text-red-400">{saveError}</p>
+        )}
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={handleSave}
+            disabled={saving}
+            title="Save notes (Ctrl+Enter)"
+            className="inline-flex items-center gap-1 rounded px-2 py-0.5 text-xs font-medium bg-emerald-800/60 text-emerald-300 border border-emerald-700/60 hover:bg-emerald-700/60 disabled:opacity-50"
+          >
+            <Check size={11} />
+            {saving ? 'Saving…' : 'Save'}
+          </button>
+          <button
+            type="button"
+            onClick={handleCancel}
+            disabled={saving}
+            title="Cancel (Escape)"
+            className="inline-flex items-center gap-1 rounded px-2 py-0.5 text-xs font-medium bg-dh-raised border border-dh-border text-dh-muted hover:text-dh hover:border-dh-strong disabled:opacity-50"
+          >
+            <X size={11} />
+            Cancel
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="group/notes flex items-start gap-1.5 max-w-xs">
+      <div className="flex-1 min-w-0">
+        {notes ? (
+          <span className="text-xs text-dh whitespace-pre-wrap break-words">{notes}</span>
+        ) : (
+          <span className="text-xs text-dh-muted italic">no notes</span>
+        )}
+      </div>
+      <button
+        type="button"
+        onClick={startEdit}
+        title="Edit notes"
+        className="shrink-0 opacity-0 group-hover/notes:opacity-100 focus:opacity-100 transition-opacity rounded p-0.5 text-dh-muted hover:text-dh hover:bg-dh-hover"
+      >
+        <Pencil size={12} />
+      </button>
+    </div>
+  );
+}
+
 /**
  * @param {{ navigate: (path: string, opts?: object) => void }} props
  */
@@ -159,7 +270,6 @@ export function AdminBugReportsPage({ navigate }) {
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState(null);
   const [pendingIds, setPendingIds] = useState(() => new Set());
-  const [expandedIds, setExpandedIds] = useState(() => new Set());
   const [selectedIds, setSelectedIds] = useState(() => new Set());
   const [bulkPending, setBulkPending] = useState(false);
   const [sortColumn, setSortColumn] = useState(null); // 'time' | 'reporter'
@@ -239,15 +349,6 @@ export function AdminBugReportsPage({ navigate }) {
     }
   }, [someSelected]);
 
-  const toggleExpanded = useCallback((id) => {
-    setExpandedIds(prev => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  }, []);
-
   const toggleRowSelected = useCallback((id) => {
     setSelectedIds(prev => toggleBugReportSelection(prev, id));
   }, []);
@@ -271,6 +372,10 @@ export function AdminBugReportsPage({ navigate }) {
       for (const id of idSet) next.delete(id);
       return next;
     });
+  }, []);
+
+  const handleNotesSaved = useCallback((id, updatedItem) => {
+    setItems(prev => prev.map(r => (r.id === id ? updatedItem : r)));
   }, []);
 
   const handleMove = useCallback(async (row, nextStatus) => {
@@ -438,8 +543,7 @@ export function AdminBugReportsPage({ navigate }) {
                   </thead>
                   <tbody>
                     {sortedItems.map((row) => {
-                      const { _reportedByEmail, _reportedByRole, notes } = row.payload ?? {};
-                      const isExpanded = expandedIds.has(row.id);
+                      const { _reportedByEmail, _reportedByRole } = row.payload ?? {};
                       const isPending = pendingIds.has(row.id);
                       const isSelected = selectedIds.has(row.id);
                       return (
@@ -470,18 +574,7 @@ export function AdminBugReportsPage({ navigate }) {
                             </div>
                           </td>
                           <td className="px-3 py-2 text-xs text-dh max-w-xs">
-                            {notes ? (
-                              <button
-                                type="button"
-                                onClick={() => toggleExpanded(row.id)}
-                                title={isExpanded ? 'Click to collapse' : 'Click to expand full text'}
-                                className={`text-left w-full hover:text-dh-muted transition-colors ${isExpanded ? 'whitespace-pre-wrap' : 'line-clamp-2'}`}
-                              >
-                                {notes}
-                              </button>
-                            ) : (
-                              <span className="text-dh-muted italic">no notes</span>
-                            )}
+                            <NotesCell row={row} onSaved={handleNotesSaved} />
                           </td>
                           <td className="px-3 py-2 whitespace-nowrap">
                             <CopyButton row={row} />

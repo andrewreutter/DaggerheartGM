@@ -6692,6 +6692,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
             onCancelAllBanners={!isPlayer ? handleCancelAllBanners : undefined}
             onTokenDragEnd={!isPlayer ? handleTokenDragEnd : undefined}
             onRemoveAdversaryFromTable={!isPlayer ? removeActiveElement : undefined}
+            onRoll={sessionPlayAllowed ? handlePlayerOwnRoll : undefined}
             mapPings={mapPings}
             onDismissMapPing={onDismissMapPing}
             appendMapPing={appendMapPing}

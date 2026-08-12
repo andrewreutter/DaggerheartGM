@@ -363,6 +363,8 @@ export function DeclarativeSchemaSheetCard({
   onFieldRoll,
   onTrackedSetFilled,
   onOpenImageLightbox,
+  /** Optional ReactNode rendered inside the card border, below the body — use for action chips. */
+  chipsSlot,
 }) {
   const clean = omitShapeId(data);
   const headerName = typeof clean.name === 'string' ? clean.name : '';
@@ -403,6 +405,11 @@ export function DeclarativeSchemaSheetCard({
           skipKeys={new Set(['name', 'species', 'imageUrl', '_additionalImages'])}
         />
       </div>
+      {chipsSlot && (
+        <div className="px-3 pb-3 pt-1 border-t border-dh-border/50">
+          {chipsSlot}
+        </div>
+      )}
     </div>
   );
 }

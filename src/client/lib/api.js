@@ -684,6 +684,20 @@ export const postAdminBugReportStatus = async (id, status) => {
   return body;
 };
 
+/** Updates the admin notes on a bug report. Pass an empty string to clear notes. */
+export const postAdminBugReportNotes = async (id, notes) => {
+  const token = await getAuthToken();
+  if (!token) throw new Error('Not signed in');
+  const res = await fetch(`/api/admin/bug-reports/${id}`, {
+    method: 'PATCH',
+    headers: apiHeaders({ Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ notes }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+  return body;
+};
+
 /** Persist user preferences (server JSON merge). */
 export const putUserPreferences = async (body) => {
   const token = await getAuthToken();

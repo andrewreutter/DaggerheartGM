@@ -296,6 +296,31 @@ export function GameTableCharacterListCard({
                 />
               </div>
             )}
+            {el.companion && (el.companion.maxStress || 0) > 0 && (
+              <div className="mt-0.5 pt-1.5 border-t border-dh-border/50 flex flex-col gap-0.5">
+                <div className="text-[10px] font-medium text-dh-muted leading-none mb-0.5 truncate select-none">
+                  {el.companion.name || 'Companion'}
+                </div>
+                <div className="flex items-center gap-1 min-w-0">
+                  <CheckboxTrack
+                    total={el.companion.maxStress || 0}
+                    filled={el.companion.currentStress || 0}
+                    onSetFilled={
+                      cardQueueManualTracks
+                        ? (s) => cardQueueManualTracks(el, { companion: { ...el.companion, currentStress: s } })
+                        : cardTrackUpdateFn
+                          ? (s) => cardTrackUpdateFn(el.instanceId, { companion: { ...el.companion, currentStress: s } })
+                          : undefined
+                    }
+                    trackKind="stress"
+                    label={`${el.companion.name || 'Companion'} Stress`}
+                    verbs={['Mark', 'Clear']}
+                    slotTypeTooltip
+                    stopSlotClickPropagation
+                  />
+                </div>
+              </div>
+            )}
             {el.conditions && (
               <div className="text-[10px] text-dh leading-snug">
                 <span className="font-semibold text-dh-muted">Conditions: </span>

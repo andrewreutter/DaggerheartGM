@@ -1804,7 +1804,7 @@ function App() {
         <nav className="bg-dh-canvas border-b border-dh-border p-4 flex items-center justify-between shadow-md z-[70]">
           <div className="flex items-center gap-6">
             <h1 className="text-xl font-bold text-red-500 tracking-wider flex items-center gap-2">
-              <Swords size={24} /> DAGGERTOP
+              <img src="/assets/daggertop-logo.png" alt="Daggertop" className="w-8 h-8 object-contain" /> DAGGERTOP
             </h1>
             <div className="flex items-center gap-2">
               <NavImportBtn />

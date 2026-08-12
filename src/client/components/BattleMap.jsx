@@ -200,6 +200,23 @@ function withResolvedTokenImage(element, parentByInstanceId) {
   return { ...element, imageUrl: url ?? undefined };
 }
 
+/**
+ * Return `element` with `maxStress` and `currentStress` merged from the parent character's
+ * `companion` object for Beastbound companion boardTokens, so `TokenCircle` can show pip rings
+ * without any extra prop threading. Preserves object reference when values are unchanged.
+ */
+function withResolvedCompanionStress(element, parentByInstanceId) {
+  if (!element) return element;
+  if (element.elementType !== 'boardToken' || element.tokenKind !== 'companion') return element;
+  const parent = parentByInstanceId?.get(element.parentInstanceId);
+  const companion = parent?.companion;
+  if (!companion) return element;
+  const maxStress = companion.maxStress ?? 3;
+  const currentStress = companion.currentStress ?? 0;
+  if (element.maxStress === maxStress && element.currentStress === currentStress) return element;
+  return { ...element, maxStress, currentStress };
+}
+
 function isInsideRect(clientX, clientY, rect) {
   if (!rect) return false;
   return clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= rect.bottom;
@@ -1056,7 +1073,10 @@ function TokenCircle({
   const dotGroups = [];
   if (!isProxy) {
     if (isBoard) {
-      // Stress lives on the parent character sheet — ring optional later
+      // Stress lives on the companion data merged onto the boardToken via withResolvedCompanionStress
+      const stressMax = element.maxStress || 0;
+      const stressMarked = Math.max(0, element.currentStress || 0);
+      if (stressMax > 0) dotGroups.push({ color: '#f97316', total: stressMax, filled: Math.min(stressMarked, stressMax) });
     } else if (isChar) {
       const hpMax = element.maxHp || 0;
       const hpDamage = Math.max(0, hpMax - (element.currentHp ?? hpMax));
@@ -1411,6 +1431,10 @@ function TokenDetailPanel({
   /** Adversary pin: Encounter-panel-style marked stats + party target aid (replaces HP/Stress checkbox tracks). */
   adversaryTargetAid = null,
   adversaryPinInstanceNum = null,
+  /** For boardToken companion panels: the parent character element (carries companion data and traits). */
+  parentCharacterEl,
+  /** Called with (rollText, displayName, rollMeta, opts) when the attack button is clicked. */
+  onRoll,
 }) {
   const isAdv = element.elementType === 'adversary';
   const isBoard = element.elementType === 'boardToken';
@@ -1432,13 +1456,72 @@ function TokenDetailPanel({
   };
 
   if (isBoard) {
+    const companion = parentCharacterEl?.companion;
+    const canEditCompanion = !isPlayer;
+    const onCompanionStressChange = companion && canEditCompanion
+      ? (s) => {
+          const target = parentCharacterEl;
+          if (!target) return;
+          if (queueManualTrackEdit) {
+            queueManualTrackEdit(target, { companion: { ...companion, currentStress: s } });
+          } else {
+            updateActiveElement(target.instanceId, { companion: { ...companion, currentStress: s } });
+          }
+        }
+      : undefined;
+    const handleAttackRoll = onRoll && companion?.attackName?.trim() && parentCharacterEl
+      ? () => {
+          const spellcastKey = (parentCharacterEl.spellcastTrait || 'presence').toLowerCase();
+          const spellcastScore = parentCharacterEl.traits?.[spellcastKey] ?? 0;
+          const parts = [`${companion.name} ${companion.attackName} Hope [d12] Fear [d12]`];
+          if (spellcastScore !== 0) parts.push(`${spellcastKey} [${spellcastScore}]`);
+          parts.push('damage [d6] melee');
+          onRoll(
+            parts.join(' '),
+            `${parentCharacterEl.name} (${companion.name})`,
+            {
+              _attackerInstanceId: parentCharacterEl.instanceId,
+              _traitKey: spellcastKey,
+              _intentPanelForActionRoll: true,
+              _deferExperienceToPreRoll: true,
+              _companionExperienceForRoll: true,
+              _isSpellcastRoll: true,
+            },
+            { characterEl: parentCharacterEl },
+          );
+        }
+      : null;
+    const handleCompanionActRoll = onRoll && parentCharacterEl
+      ? () => {
+          const charName = parentCharacterEl.name != null ? String(parentCharacterEl.name) : 'Character';
+          const spellcastKey = (parentCharacterEl.spellcastTrait || 'presence').toLowerCase();
+          const spellcastScore = parentCharacterEl.traits?.[spellcastKey] ?? 0;
+          const parts = [`${charName} Companion Act Hope [d12] Fear [d12]`];
+          if (spellcastScore !== 0) parts.push(`${spellcastKey} [${spellcastScore}]`);
+          onRoll(
+            parts.join(' '),
+            `${charName} Companion Act`,
+            {
+              _attackerInstanceId: parentCharacterEl.instanceId,
+              _traitKey: spellcastKey,
+              _intentPanelForActionRoll: true,
+              _deferExperienceToPreRoll: true,
+              _companionExperienceForRoll: true,
+              _isSpellcastRoll: true,
+            },
+            { characterEl: parentCharacterEl },
+          );
+        }
+      : null;
+
     return (
       <AnchoredFloatingPanel anchorX={anchorX} anchorY={anchorY} onEscape={onClose}>
       <div
-        className="bg-dh-raised border border-dh-strong rounded-lg shadow-2xl p-3 min-w-[160px] max-w-[220px]"
+        className="bg-dh-raised border border-dh-strong rounded-lg shadow-2xl min-w-[200px] max-w-[260px] overflow-hidden"
         onPointerDown={e => e.stopPropagation()}
       >
-        <div className="flex items-start justify-between gap-2 mb-1">
+        {/* Header */}
+        <div className="px-3 py-2 border-b dh-tint-spellcast-strip flex items-center justify-between gap-2">
           <div className="flex items-center gap-2 min-w-0">
             {element.imageUrl && (
               <button
@@ -1448,14 +1531,16 @@ function TokenDetailPanel({
                 style={{ width: 32, height: 32 }}
                 title="View portrait"
               >
-                <img src={element.imageUrl} alt={element.label || element.name || 'Companion'} className="w-full h-full object-cover" draggable={false} />
+                <img src={element.imageUrl} alt={companion?.name || 'Companion'} className="w-full h-full object-cover" draggable={false} />
               </button>
             )}
             <div className="min-w-0">
-              <div className="font-semibold text-white text-sm truncate">
-                {element.label || element.name || 'Companion'}
-              </div>
-              <div className="text-xs text-dh-muted">Companion token</div>
+              <div className="font-semibold text-dh text-sm truncate">{companion?.name || element.label || 'Companion'}</div>
+              {companion?.species ? (
+                <div className="text-[11px] text-dh-muted truncate">{companion.species}</div>
+              ) : (
+                <div className="text-[11px] text-dh-muted">Companion</div>
+              )}
             </div>
           </div>
           <div className="flex items-center gap-1 shrink-0">
@@ -1470,6 +1555,73 @@ function TokenDetailPanel({
             </button>
           </div>
         </div>
+
+        {/* Body */}
+        {companion && (
+          <div className="p-3 space-y-2">
+            {/* Evasion */}
+            {companion.evasion != null && (
+              <div className="text-[11px] text-dh-muted">
+                Evasion <span className="font-bold text-cyan-400">{companion.evasion}</span>
+              </div>
+            )}
+
+            {/* Stress track */}
+            {(companion.maxStress || 0) > 0 && (
+              <CheckboxTrack
+                total={companion.maxStress || 0}
+                filled={companion.currentStress ?? 0}
+                onSetFilled={onCompanionStressChange}
+                trackKind="stress"
+                label="Stress"
+                verbs={['Mark', 'Clear']}
+              />
+            )}
+
+            {/* Attack */}
+            {companion.attackName?.trim() && (
+              <div className="flex items-center gap-1.5">
+                <span className="text-[11px] text-dh flex-1 min-w-0 truncate">
+                  <span className="text-dh-muted">Attack: </span>{companion.attackName}
+                </span>
+                {handleAttackRoll && (
+                  <button
+                    type="button"
+                    onClick={handleAttackRoll}
+                    className="shrink-0 text-[10px] font-semibold px-2 py-0.5 rounded border border-sky-700/60 bg-sky-900/30 text-sky-300 hover:bg-sky-800/50 hover:border-sky-500 transition-colors"
+                  >
+                    Roll
+                  </button>
+                )}
+              </div>
+            )}
+
+            {/* Take an action — Companion Act spellcast roll */}
+            {handleCompanionActRoll && (
+              <div className="pt-1 border-t border-dh-border/50">
+                <button
+                  type="button"
+                  onClick={handleCompanionActRoll}
+                  className="w-full text-[11px] font-semibold px-2 py-1 rounded border border-violet-700/60 bg-violet-900/30 text-violet-300 hover:bg-violet-800/50 hover:border-violet-500 transition-colors"
+                >
+                  Take an action
+                </button>
+              </div>
+            )}
+
+            {/* Experiences */}
+            {Array.isArray(companion.experiences) && companion.experiences.length > 0 && (
+              <div className="space-y-0.5">
+                {companion.experiences.map((exp, i) => (
+                  <div key={exp.id ?? i} className="flex items-center gap-1 text-[11px]">
+                    <span className="text-dh-muted shrink-0 tabular-nums">{exp.score != null ? `+${exp.score}` : ''}</span>
+                    <span className="text-dh truncate">{exp.name}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </div>
       </AnchoredFloatingPanel>
     );
@@ -2275,6 +2427,8 @@ export function BattleMap({
   renderAdversaryTargetAid,
   /** GM-only. Called with `instanceId` when the GM deletes an adversary from the table via the map token panel. */
   onRemoveAdversaryFromTable,
+  /** Called when a roll is initiated from the companion token panel (attack button). Same signature as CharacterHoverCard's onRoll. */
+  onRoll,
 }) {
   const { hideAiUi } = useAiUiPreference();
   const showImageGenAiUi = shouldShowImageGenAiUi(imageGenEnabled, hideAiUi);
@@ -3516,7 +3670,13 @@ export function BattleMap({
         boardTokens,
         activeMapIdResolved,
         (el) => isMyCharacter(parentByInstanceId.get(el.parentInstanceId) || {}),
-      ).map((entry) => ({ ...entry, element: withResolvedTokenImage(entry.element, parentByInstanceId) })),
+      ).map((entry) => ({
+        ...entry,
+        element: withResolvedCompanionStress(
+          withResolvedTokenImage(entry.element, parentByInstanceId),
+          parentByInstanceId,
+        ),
+      })),
     [boardTokens, parentByInstanceId, isMyCharacter, activeMapIdResolved],
   );
 
@@ -3546,7 +3706,10 @@ export function BattleMap({
       boardTokens
         .filter((el) => el.tokenX != null && effectiveTokenMapId(el.mapId) === activeMapIdResolved)
         .map((el) => ({
-          element: withResolvedTokenImage(el, parentByInstanceId),
+          element: withResolvedCompanionStress(
+            withResolvedTokenImage(el, parentByInstanceId),
+            parentByInstanceId,
+          ),
           instanceNum: null,
           isMyCharacter: isMyCharacter(parentByInstanceId.get(el.parentInstanceId) || {}),
         })),
@@ -6753,6 +6916,8 @@ export function BattleMap({
             anchorY={pinnedToken.anchorY}
             tableId={tableId}
             onOpenImageLightbox={onOpenImageLightbox}
+            onRoll={onRoll}
+            parentCharacterEl={el.elementType === 'boardToken' ? parentByInstanceId.get(el.parentInstanceId) : undefined}
             adversaryTargetAid={
               el.elementType === 'adversary' && typeof renderAdversaryTargetAid === 'function'
                 ? renderAdversaryTargetAid(el)

@@ -9,7 +9,7 @@ import { readFile } from 'fs/promises';
 import { initializeApp, getApps } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import cron from 'node-cron';
-import { runMigrations, getPool, getItems, getPublicItems, upsertItem, deleteItem, countItems, getItemsPaginated, countCommunityItems, getCommunityItemsPaginated, getItemsByIds, getItem, recordClone, recordPlay, upsertMirror, findAutoClone, getUnifiedItems, getUnifiedLibraryAll, getUnifiedLibraryAllBranchCounts, getExternalCacheByIds, getTableStatesByPlayerEmail, getTableStateById, listTableStates, appendDiceRoll, ackDiceRoll, getRecentDiceRolls, setBannerStatus, getPendingBanners, getDiceRollById, updateDiceRollData, resolveCharacterElements as resolveCharacterElementsDb, stripCharacterElementsForDb, getResolvedTableState, setTableStateNotifyHook, getUserPreferences, upsertUserPreferences, queryAiUsageAggregates, stampFreeTrialStart, checkTableIsLive, extendTableCampaignPass, recordCampaignPassPurchase, markStripeEventProcessed, recordCharacterTablePlacement, removeCharacterTablePlacementsForTable, countUserAiCallsThisMonth, getBugReportsPaginated, countBugReports, setBugReportStatus, BUG_REPORT_STATUSES } from './src/db.js';
+import { runMigrations, getPool, getItems, getPublicItems, upsertItem, deleteItem, countItems, getItemsPaginated, countCommunityItems, getCommunityItemsPaginated, getItemsByIds, getItem, recordClone, recordPlay, upsertMirror, findAutoClone, getUnifiedItems, getUnifiedLibraryAll, getUnifiedLibraryAllBranchCounts, getExternalCacheByIds, getTableStatesByPlayerEmail, getTableStateById, listTableStates, appendDiceRoll, ackDiceRoll, getRecentDiceRolls, setBannerStatus, getPendingBanners, getDiceRollById, updateDiceRollData, resolveCharacterElements as resolveCharacterElementsDb, stripCharacterElementsForDb, getResolvedTableState, setTableStateNotifyHook, getUserPreferences, upsertUserPreferences, queryAiUsageAggregates, stampFreeTrialStart, checkTableIsLive, extendTableCampaignPass, recordCampaignPassPurchase, markStripeEventProcessed, recordCharacterTablePlacement, removeCharacterTablePlacementsForTable, countUserAiCallsThisMonth, getBugReportsPaginated, countBugReports, setBugReportStatus, updateBugReportNotes, BUG_REPORT_STATUSES } from './src/db.js';
 import { isStripeConfigured, getStripe, constructWebhookEvent, CAMPAIGN_PASS_PRICE_CENTS, getCampaignPassPriceId } from './src/stripe.js';
 import { srdRouter, warmCache, getItem as getSrdItem } from './src/srd/index.js';
 import { fetchHoDFoundryDetail } from './src/hod-search.js';
@@ -362,7 +362,7 @@ app.get('/api/admin/bug-reports', requireAuth, requireAdmin, async (req, res) =>
   }
 });
 
-/** Admin: move a bug report to a different status (Triage / Bug / Feature / Completed / Shipped / Cancelled). */
+/** Admin: update a bug report — move to a different status and/or edit admin notes. */
 app.patch('/api/admin/bug-reports/:id', requireAuth, requireAdmin, async (req, res) => {
   if (!process.env.DATABASE_URL) {
     return res.status(503).json({ error: 'Database required for bug reports' });
@@ -371,12 +371,26 @@ app.patch('/api/admin/bug-reports/:id', requireAuth, requireAdmin, async (req, r
   if (!Number.isFinite(id)) {
     return res.status(400).json({ error: 'Invalid id' });
   }
-  const status = req.body?.status;
-  if (!BUG_REPORT_STATUSES.includes(status)) {
+  const { status, notes } = req.body ?? {};
+  const hasStatus = status !== undefined;
+  const hasNotes = notes !== undefined;
+  if (!hasStatus && !hasNotes) {
+    return res.status(400).json({ error: 'Provide status and/or notes to update' });
+  }
+  if (hasStatus && !BUG_REPORT_STATUSES.includes(status)) {
     return res.status(400).json({ error: `status must be one of: ${BUG_REPORT_STATUSES.join(', ')}` });
   }
+  if (hasNotes && typeof notes !== 'string') {
+    return res.status(400).json({ error: 'notes must be a string' });
+  }
   try {
-    const item = await setBugReportStatus(APP_ID, id, { status, changedByEmail: req.email });
+    let item;
+    if (hasStatus) {
+      item = await setBugReportStatus(APP_ID, id, { status, changedByEmail: req.email });
+    }
+    if (hasNotes) {
+      item = await updateBugReportNotes(APP_ID, id, notes);
+    }
     if (!item) {
       return res.status(404).json({ error: 'Not found' });
     }
