@@ -4,6 +4,10 @@ import DiceBox from '@3d-dice/dice-box-threejs';
 import { renderColoredDiceGroups, DEFAULT_COLORSET } from '../lib/dice-color-groups.js';
 import { MANUAL_DICE_SIZES, buildManualRollText, buildPreviewGroups } from '../lib/manual-dice-roll-text.js';
 import { readSavedDiceRolls, buildSavedDiceRoll, addSavedDiceRoll, removeSavedDiceRoll } from '../lib/saved-dice-rolls.js';
+import {
+  DIE_CONTROL_COLUMN_MIN_WIDTH_CLASS,
+  DIE_TYPE_LABEL_HEIGHT_CLASS,
+} from '../lib/action-log-layout.js';
 
 /** Preview dice count per size is capped so a huge input (e.g. 99) doesn't blow up the physics sim. */
 const TRAY_PREVIEW_CAP = 8;
@@ -84,7 +88,7 @@ function DiceCountStepper({ value, onChange, max = 99 }) {
         type="button"
         disabled={value <= 0}
         onClick={() => onChange(Math.max(0, value - 1))}
-        className="flex-1 flex items-center justify-center disabled:opacity-30 disabled:cursor-not-allowed hover:bg-dh-surface text-dh-muted transition-colors"
+        className="w-7 shrink-0 flex items-center justify-center disabled:opacity-30 disabled:cursor-not-allowed hover:bg-dh-surface text-dh-muted transition-colors"
         aria-label="Decrease"
       >
         <Minus size={12} />
@@ -95,13 +99,13 @@ function DiceCountStepper({ value, onChange, max = 99 }) {
         max={max}
         value={value}
         onChange={(e) => onChange(Math.max(0, Math.min(max, parseInt(e.target.value, 10) || 0)))}
-        className="flex-1 min-w-0 border-x border-dh-strong bg-transparent text-center text-dh text-base tabular-nums outline-none"
+        className="flex-1 min-w-[1.5rem] border-x border-dh-strong bg-transparent text-center text-dh text-base tabular-nums outline-none"
       />
       <button
         type="button"
         disabled={value >= max}
         onClick={() => onChange(Math.min(max, value + 1))}
-        className="flex-1 flex items-center justify-center disabled:opacity-30 disabled:cursor-not-allowed hover:bg-dh-surface text-dh-muted transition-colors"
+        className="w-7 shrink-0 flex items-center justify-center disabled:opacity-30 disabled:cursor-not-allowed hover:bg-dh-surface text-dh-muted transition-colors"
         aria-label="Increase"
       >
         <Plus size={12} />
@@ -114,7 +118,7 @@ function DiceCountStepper({ value, onChange, max = 99 }) {
  * Redesigned Action Log manual dice builder: a single shared live preview tray showing
  * whatever is currently selected (Duality's Hope/Fear d12s plus any active die columns),
  * with a title/control column per die type — Duality's checkbox alongside the die count
- * steppers, all in one aligned row.
+ * steppers. Columns use a min-width and wrap to a second row on narrow layouts.
  *
  * State (dualityOn, counts, modifier) is owned by the parent (ActionLog) so it persists
  * across open/close cycles. This component is fully controlled for those three values.
@@ -194,12 +198,13 @@ export function ManualDiceBuilder({
         <div ref={tray.containerRef} className="absolute inset-0" />
       </div>
 
-      {/* Titles row + controls row, all columns aligned: Duality, then die sizes, then modifier */}
-      <div className="flex items-stretch justify-between gap-1.5">
+      {/* Titles + steppers: min-width per column so −/count/+ stays readable; wraps to a
+          second row on narrow center columns instead of squishing the count away. */}
+      <div className="flex flex-wrap items-stretch gap-1.5">
         {/* Duality checkbox column */}
-        <div className="flex flex-col items-center gap-1 flex-1 min-w-0">
+        <div className={`flex flex-col items-center gap-1 flex-1 ${DIE_CONTROL_COLUMN_MIN_WIDTH_CLASS}`}>
           <div
-            className="w-full h-9 rounded-md border flex items-center justify-center text-[10px] font-bold leading-tight text-center transition-opacity"
+            className={`w-full ${DIE_TYPE_LABEL_HEIGHT_CLASS} rounded-md border flex items-center justify-center text-[10px] font-bold leading-none text-center transition-opacity px-0.5`}
             style={{
               background:  DEFAULT_COLORSET.background,
               color:       DEFAULT_COLORSET.foreground,
@@ -223,9 +228,9 @@ export function ManualDiceBuilder({
         {MANUAL_DICE_SIZES.map((size) => {
           const active = (counts[size] || 0) > 0;
           return (
-            <div key={size} className="flex flex-col items-center gap-1 flex-1 min-w-0">
+            <div key={size} className={`flex flex-col items-center gap-1 flex-1 ${DIE_CONTROL_COLUMN_MIN_WIDTH_CLASS}`}>
               <div
-                className="w-full h-9 rounded-md border flex items-center justify-center text-[11px] font-bold tabular-nums transition-opacity"
+                className={`w-full ${DIE_TYPE_LABEL_HEIGHT_CLASS} rounded-md border flex items-center justify-center text-[11px] font-bold leading-none tabular-nums transition-opacity`}
                 style={{
                   background:  DEFAULT_COLORSET.background,
                   color:       DEFAULT_COLORSET.foreground,
@@ -244,9 +249,9 @@ export function ManualDiceBuilder({
         })}
 
         {/* Flat +/- modifier column (e.g. "+3" in "2d6+3") — not a die, left as plain input */}
-        <div className="flex flex-col items-center gap-1 flex-1 min-w-0">
+        <div className={`flex flex-col items-center gap-1 flex-1 ${DIE_CONTROL_COLUMN_MIN_WIDTH_CLASS}`}>
           <div
-            className="w-full h-9 rounded-md border flex items-center justify-center text-[11px] font-bold tabular-nums transition-opacity"
+            className={`w-full ${DIE_TYPE_LABEL_HEIGHT_CLASS} rounded-md border flex items-center justify-center text-[11px] font-bold leading-none tabular-nums transition-opacity`}
             style={{
               background:  DEFAULT_COLORSET.background,
               color:       DEFAULT_COLORSET.foreground,

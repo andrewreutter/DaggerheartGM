@@ -3,6 +3,11 @@ import { Dices, ChevronUp, RotateCcw } from 'lucide-react';
 import { ManualDiceBuilder } from './ManualDiceBuilder.jsx';
 import { MANUAL_DICE_SIZES } from '../lib/manual-dice-roll-text.js';
 import { isReactionRoll } from '../lib/reaction-roll-display.js';
+import {
+  ACTION_LOG_DICE_BUILDER_MAX_HEIGHT,
+  ACTION_LOG_LIST_MAX_HEIGHT,
+  ACTION_LOG_PANEL_MAX_HEIGHT,
+} from '../lib/action-log-layout.js';
 
 // Per-sub-item accent colors: Hope → amber, Fear → purple, damage → red, else sky/green
 // Reaction rolls (SRD: Reaction Rolls) don't generate Hope or Fear, so their Hope/Fear dice
@@ -280,6 +285,7 @@ export function ActionLog({ rolls = [], rollBuilder }) {
           className={`absolute bottom-full left-0 right-0 z-30 bg-dh-canvas rounded-t-lg flex flex-col overflow-hidden transition-[border-color,box-shadow] duration-200 border ${
             panelVisible ? 'border-dh-strong border-b-0 shadow-2xl' : 'border-transparent shadow-none'
           }`}
+          style={{ maxHeight: panelVisible ? ACTION_LOG_PANEL_MAX_HEIGHT : undefined }}
         >
           {/* Dice builder — stays mounted and visible whenever the log is open OR "keep dice
               open" is checked, so it never remounts (and reinitializes its 3D preview) merely
@@ -287,7 +293,7 @@ export function ActionLog({ rolls = [], rollBuilder }) {
           {rollBuilder && (
             <div
               className="overflow-hidden shrink-0 transition-[max-height] duration-200 ease-out"
-              style={{ maxHeight: showDiceBuilder ? '20rem' : '0px' }}
+              style={{ maxHeight: showDiceBuilder ? ACTION_LOG_DICE_BUILDER_MAX_HEIGHT : '0px' }}
               aria-hidden={!showDiceBuilder}
             >
               <div ref={diceContentRef} className={`px-3 py-2 bg-dh-surface/50 ${open ? 'border-b border-dh-border' : ''}`}>
@@ -305,16 +311,17 @@ export function ActionLog({ rolls = [], rollBuilder }) {
             </div>
           )}
 
-          {/* Full scrollable log — visible only in the fully-expanded state */}
+          {/* Full scrollable log — height-capped so the dice builder above stays on-screen;
+              entries scroll inside this region instead of growing the floating panel forever. */}
           <div
-            className="overflow-hidden transition-[max-height] duration-200 ease-out"
-            style={{ maxHeight: open ? 'min(680px, 85vh)' : '0px' }}
+            className="overflow-hidden min-h-0 transition-[max-height] duration-200 ease-out"
+            style={{ maxHeight: open ? ACTION_LOG_LIST_MAX_HEIGHT : '0px' }}
             aria-hidden={!open}
           >
             <div
               ref={scrollRef}
               className="overflow-y-auto px-2 py-1.5 space-y-0.5"
-              style={{ maxHeight: 'min(680px, 85vh)' }}
+              style={{ maxHeight: ACTION_LOG_LIST_MAX_HEIGHT }}
             >
               {rolls.length === 0 ? (
                 <div className="flex items-center justify-center h-24 text-[10px] text-dh-muted italic">
