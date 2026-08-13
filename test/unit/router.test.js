@@ -85,6 +85,41 @@ describe('parseRoute /library', () => {
   });
 });
 
+describe('parseRoute /', () => {
+  it('parses bare home with null auth query params', () => {
+    expect(parseRoute('/')).toEqual({
+      view: 'home',
+      tab: null,
+      itemId: null,
+      librarySemantic: null,
+      librarySearchQuery: null,
+      authMode: null,
+      returnTo: null,
+    });
+  });
+
+  it('reads authMode and returnTo query params', () => {
+    expect(parseRoute('/?authMode=signin&returnTo=%2Flibrary%2Fall')).toEqual({
+      view: 'home',
+      tab: null,
+      itemId: null,
+      librarySemantic: null,
+      librarySearchQuery: null,
+      authMode: 'signin',
+      returnTo: '/library/all',
+    });
+    expect(parseRoute('/?authMode=signup&returnTo=%2Ftable%2Fabc')).toMatchObject({
+      view: 'home',
+      authMode: 'signup',
+      returnTo: '/table/abc',
+    });
+  });
+
+  it('treats unknown authMode as null', () => {
+    expect(parseRoute('/?authMode=forgot').authMode).toBe(null);
+  });
+});
+
 describe('parseRoute /admin', () => {
   it('parses /admin/ai-usage', () => {
     expect(parseRoute('/admin/ai-usage')).toEqual({

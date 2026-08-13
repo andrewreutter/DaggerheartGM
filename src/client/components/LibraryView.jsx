@@ -159,6 +159,8 @@ const DEFAULT_ASSISTANT_SCOPE = {
   includeHod: false,
 };
 
+const noopRequireAuth = () => {};
+
 export function LibraryView({
   data,
   saveItem,
@@ -180,12 +182,23 @@ export function LibraryView({
   userUid,
   /** Owned game tables for "Add to Game Table" picker */
   myTables = [],
+  /** Signed-in vs anonymous. Falsy/omitted → not authenticated. */
+  isAuthenticated = false,
+  /** Navigate to sign-in (with return-to). No-op if omitted. */
+  onRequireAuth = noopRequireAuth,
+  /** Home-page embed: All tab only, no sidebar, Mine-only ephemeral search. */
+  embedded = false,
 }) {
   const { srdData: libraryCharacterSrdData } = useCharacterSrdData();
   const { hideAiUi } = useAiUiPreference();
   const assistantAvailable = shouldShowConceptAiUi(conceptAiEnabled, hideAiUi);
-  const activeTab = route.tab || DEFAULT_LIBRARY_TAB;
+  const activeTab = embedded ? 'all' : (route.tab || DEFAULT_LIBRARY_TAB);
   const isAssistantTab = activeTab === 'assistant';
+
+  const guardedAddToTable = useCallback((...args) => {
+    if (!isAuthenticated) { onRequireAuth?.(); return; }
+    return addToTable?.(...args);
+  }, [isAuthenticated, onRequireAuth, addToTable]);
 
   // Redirect stale deep-links to /library/assistant when AI is disabled.
   useEffect(() => {
@@ -286,16 +299,31 @@ export function LibraryView({
     maxItems: 500,
   });
 
+  // Embedded must pass `null` (not omit/`undefined`) — this hook's defaults are the
+  // real localStorage keys, so undefined would still persist to the standalone Library.
   const allLibrarySearch = useLibraryAllSearch({
     limit: PAGE_SIZE,
     debounceMs: LOAD_DEBOUNCE_MS,
-    persistKey: LIBRARY_FILTERS_PERSIST_KEY,
-    sharedSearchKey: LIBRARY_SEARCH_GLOBAL_KEY,
-    sharedIncludesKey: LIBRARY_INCLUDES_GLOBAL_KEY,
+    persistKey: embedded ? null : LIBRARY_FILTERS_PERSIST_KEY,
+    sharedSearchKey: embedded ? null : LIBRARY_SEARCH_GLOBAL_KEY,
+    sharedIncludesKey: embedded ? null : LIBRARY_INCLUDES_GLOBAL_KEY,
+    defaultFilters: embedded ? { includes: ['own'] } : undefined,
     enabled: activeTab === 'all',
     infinite: true,
     maxItems: 500,
   });
+
+  // useLibraryAllSearch does not currently honor `defaultFilters`; seed Mine-only once.
+  const embeddedIncludesSeededRef = useRef(false);
+  useEffect(() => {
+    if (!embedded || embeddedIncludesSeededRef.current) return;
+    embeddedIncludesSeededRef.current = true;
+    const inc = allLibrarySearch.filters.includes;
+    if (Array.isArray(inc) && inc.length === 1 && inc[0] === 'own') return;
+    allLibrarySearch.setFilter('includes', ['own']);
+    // Seed once on embed mount; setFilter is recreated each render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [embedded]);
 
   const search = activeTab === 'all' ? allLibrarySearch : collectionSearch;
   const semanticFilterActive = isPaginatedTab && assistantAvailable && !!String(search.filters.semantic || '').trim();
@@ -319,6 +347,7 @@ export function LibraryView({
 
   /** Library “All” tab: counts piggyback on list response; cache + fallback when counts not yet loaded. */
   useEffect(() => {
+    if (embedded) return;
     if (semanticFilterActive) {
       setNavCounts(null);
       return;
@@ -339,10 +368,11 @@ export function LibraryView({
     } else {
       setNavCounts(null);
     }
-  }, [activeTab, filterSig, allLibrarySearch.countsByCollection, allLibrarySearch.totalCount, semanticFilterActive]);
+  }, [embedded, activeTab, filterSig, allLibrarySearch.countsByCollection, allLibrarySearch.totalCount, semanticFilterActive]);
 
   /** Other SRD tabs: one debounced `library-all-counts` request per filter change (not per nav item). */
   useEffect(() => {
+    if (embedded) return;
     if (semanticFilterActive) {
       setNavCounts(null);
       setNavCountsLoading(false);
@@ -381,7 +411,7 @@ export function LibraryView({
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [filterSig, activeTab, semanticFilterActive]);
+  }, [embedded, filterSig, activeTab, semanticFilterActive]);
 
   const navCountForTab = useCallback(
     (tabId) => {
@@ -564,13 +594,15 @@ export function LibraryView({
   };
 
   const openNew = useCallback(() => {
+    if (!isAuthenticated) { onRequireAuth?.(); return; }
     setNewItemMenuOpen(false);
     setNewItemMenuPos(null);
     navigate(`/library/${activeTab}/new`);
-  }, [activeTab, navigate]);
+  }, [isAuthenticated, onRequireAuth, activeTab, navigate]);
 
   const openNewForCollection = useCallback(
     (col) => {
+      if (!isAuthenticated) { onRequireAuth?.(); return; }
       setNewItemMenuOpen(false);
       setNewItemMenuPos(null);
       if (activeTab === 'all') {
@@ -583,7 +615,7 @@ export function LibraryView({
       }
       navigate(`/library/${col}/new`);
     },
-    [activeTab, navigate]
+    [isAuthenticated, onRequireAuth, activeTab, navigate]
   );
 
   const toggleNewItemMenu = useCallback(() => {
@@ -641,6 +673,7 @@ export function LibraryView({
   };
 
   const handleClone = async (item) => {
+    if (!isAuthenticated) { onRequireAuth?.(); return; }
     const cloned = await cloneItem(modalCollection, item);
     if (isPaginatedTab) search.refresh();
     closeModal();
@@ -881,7 +914,7 @@ export function LibraryView({
 
   return (
     <div className="flex-1 flex min-h-0 flex-col overflow-hidden">
-      {isPaginatedTab && (
+      {isPaginatedTab && !embedded && (
         <div className="shrink-0 border-b border-dh-border/50 bg-dh-canvas pl-4 pr-9 py-3">
           <LibrarySearchIncludeStrip
             filters={search.filters}
@@ -935,10 +968,10 @@ export function LibraryView({
           saveImage={saveImage}
           onDelete={modalItemIsOwn ? () => handleDelete(modalCollection, resolvedModalItem?.id) : null}
           onClone={LIBRARY_NON_CLONEABLE_COLLECTIONS.has(modalCollection) ? undefined : () => handleClone(resolvedModalItem)}
-          onAddToTable={TABLE_ADDABLE_COLLECTIONS.has(modalCollection) && !ownedTablesForPicker.length ? () => addToTable(resolvedModalItem, modalCollection) : undefined}
+          onAddToTable={TABLE_ADDABLE_COLLECTIONS.has(modalCollection) && !ownedTablesForPicker.length ? () => guardedAddToTable(resolvedModalItem, modalCollection) : undefined}
           addToTableMenu={TABLE_ADDABLE_COLLECTIONS.has(modalCollection) && ownedTablesForPicker.length ? {
             tables: ownedTablesForPicker,
-            onPick: (tableId) => addToTable(resolvedModalItem, modalCollection, tableId),
+            onPick: (tableId) => guardedAddToTable(resolvedModalItem, modalCollection, tableId),
           } : undefined}
           onEdit={modalItemIsOwn ? () => {} : null}
           isAdmin={isAdmin}
@@ -952,6 +985,7 @@ export function LibraryView({
 
       <div className="flex min-h-0 flex-1 overflow-hidden">
         {/* Sidebar tabs */}
+        {!embedded && (
         <div className="w-64 bg-dh-surface border-r border-dh-border flex flex-col min-h-0 h-full">
           <div className="flex-1 min-h-0 overflow-y-auto">
             {(assistantAvailable ? LIBRARY_NAV_SIDEBAR : LIBRARY_NAV_SIDEBAR.filter(t => t.id !== 'assistant')).map(tab => (
@@ -981,6 +1015,7 @@ export function LibraryView({
             ))}
           </div>
         </div>
+        )}
 
         {/* Content Area */}
         <div className="flex-1 flex flex-col overflow-hidden bg-dh-canvas">
@@ -1187,7 +1222,7 @@ export function LibraryView({
               navigate={navigate}
               onOpenItem={openModal}
               onCloneItem={cloneItem ? handleClone : null}
-              onAddToTableItem={addToTable}
+              onAddToTableItem={guardedAddToTable}
               ownedTables={ownedTablesForPicker}
               partySize={partySize}
               partyTier={partyTier}
@@ -1237,7 +1272,7 @@ export function LibraryView({
                               onEdit={isOwnItem(item) ? (i) => openModal(i) : null}
                               onDelete={isOwnItem(item) ? handleDelete : null}
                               onClone={LIBRARY_NON_CLONEABLE_COLLECTIONS.has(cardCol) ? undefined : () => handleClone(item)}
-                              onAddToTable={TABLE_ADDABLE_COLLECTIONS.has(activeTab === 'all' ? item._collection : activeTab) ? addToTable : undefined}
+                              onAddToTable={TABLE_ADDABLE_COLLECTIONS.has(activeTab === 'all' ? item._collection : activeTab) ? guardedAddToTable : undefined}
                               ownedTables={ownedTablesForPicker}
                               partySize={partySize}
                               partyTier={partyTier}
@@ -1308,7 +1343,7 @@ export function LibraryView({
                   onEdit={isOwnItem(item) ? (item) => openModal(item) : null}
                   onDelete={isOwnItem(item) ? handleDelete : null}
                   onClone={LIBRARY_NON_CLONEABLE_COLLECTIONS.has(cardCol) ? undefined : () => handleClone(item)}
-                  onAddToTable={TABLE_ADDABLE_COLLECTIONS.has(activeTab === 'all' ? item._collection : activeTab) ? addToTable : undefined}
+                  onAddToTable={TABLE_ADDABLE_COLLECTIONS.has(activeTab === 'all' ? item._collection : activeTab) ? guardedAddToTable : undefined}
                   ownedTables={ownedTablesForPicker}
                   partySize={partySize}
                   partyTier={partyTier}

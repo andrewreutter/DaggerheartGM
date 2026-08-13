@@ -1125,6 +1125,21 @@ export async function getTableStatesByPlayerEmail(appId, email) {
   return rows.map(r => ({ tableId: r.id, userId: r.user_id, data: r.data }));
 }
 
+/**
+ * Summarize invited players on a table_state `data` object for roster display.
+ * Returns `{ count, players: [{ email, name }] }` with `name` from a matching
+ * assigned character's `playerName`, falling back to the email.
+ */
+export function summarizeTablePlayerRoster(data) {
+  const emails = data?.playerEmails || [];
+  const elements = data?.elements || [];
+  const players = emails.map(email => {
+    const match = elements.find(el => el.assignedPlayerEmail === email && el.playerName);
+    return { email, name: match?.playerName || email };
+  });
+  return { count: players.length, players };
+}
+
 export async function getWhiteboardSnapshot(appId, gmUid) {
   const db = getPool();
   const { rows } = await db.query(

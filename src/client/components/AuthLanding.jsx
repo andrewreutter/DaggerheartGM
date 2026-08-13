@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { auth } from '../lib/api.js';
 import {
   signInWithGoogleAuth,
@@ -14,8 +14,8 @@ import {
 } from '../lib/firebase-account-linking.js';
 import { getEmailFromAuthError } from '../lib/firebase-auth-messages.js';
 
-/** @param {{ disabled?: boolean }} props */
-export function AuthLanding({ disabled = false }) {
+/** @param {{ disabled?: boolean, initialMode?: string }} props */
+export function AuthLanding({ disabled = false, initialMode }) {
   const [mode, setMode] = useState('signin'); // 'signin' | 'signup' | 'forgot'
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -24,6 +24,7 @@ export function AuthLanding({ disabled = false }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [info, setInfo] = useState('');
+  useEffect(() => setMode(initialMode || 'signin'), [initialMode]);
 
   const resetMessages = useCallback(() => {
     setError('');

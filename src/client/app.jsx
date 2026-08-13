@@ -37,6 +37,7 @@ import { SessionBlockedBanner } from './components/SessionBlockedBanner.jsx';
 import { AppRoot } from './components/AppRoot.jsx';
 import { UnifiedImportProvider, useUnifiedImport } from './lib/unified-import-context.jsx';
 import { AuthLanding } from './components/AuthLanding.jsx';
+import { HomeAuthenticated } from './components/HomeAuthenticated.jsx';
 import { AdminAiUsagePage } from './components/AdminAiUsagePage.jsx';
 import { AdminBugReportsPage } from './components/AdminBugReportsPage.jsx';
 import { buildLibraryModalPath } from './lib/library-modal-path.js';
@@ -177,8 +178,8 @@ function App() {
   const [adminPrivilegesKnown, setAdminPrivilegesKnown] = useState(false);
   /** When true, hide concept-AI and image-gen AI entry points (persisted via `PUT /api/me/preferences`). */
   const [hideAiUi, setHideAiUi] = useState(false);
-  const [myRooms, setMyRooms] = useState([]); // [{ tableId, gmUid, gmName, tableName }] — tables user is invited to
-  const [myTables, setMyTables] = useState([]); // [{ id, name }] — tables user owns
+  const [myRooms, setMyRooms] = useState([]); // [{ tableId, gmUid, gmName, tableName, playerCount, players }] — tables user is invited to
+  const [myTables, setMyTables] = useState([]); // [{ id, name, playerCount, players }] — tables user owns
   const [connectedPlayers, setConnectedPlayers] = useState([]); // [{ uid, name, email, photoURL }]
   // pendingBanners: authoritative list from the 'banners' subscription channel
   const [pendingBanners, setPendingBanners] = useState([]);
@@ -431,6 +432,21 @@ function App() {
     });
   }, []);
 
+  const requireAuthRedirect = useCallback((mode = 'signin') => {
+    const current = window.location.pathname + window.location.search;
+    navigate(`/?authMode=${mode}&returnTo=${encodeURIComponent(current)}`);
+  }, [navigate]);
+
+  const handleCreateTable = useCallback(async () => {
+    try {
+      const { id, name } = await createTable('New Table');
+      setMyTables(prev => [...prev, { id, name }]);
+      navigate(`/table/${id}`);
+    } catch (err) {
+      console.error('Create table failed:', err);
+    }
+  }, [navigate]);
+
   useEffect(() => {
     if (!auth) { setLoading(false); return; }
 
@@ -439,8 +455,12 @@ function App() {
       setUser(currentUser);
       setLoading(false);
       if (currentUser) {
-        if (window.location.pathname === '/' || window.location.pathname === '') {
-          navigate(`/library/${DEFAULT_LIBRARY_TAB}`, { replace: true });
+        const params = new URLSearchParams(window.location.search);
+        const returnTo = params.get('returnTo');
+        if (returnTo) {
+          navigate(decodeURIComponent(returnTo), { replace: true });
+        } else if (window.location.pathname === '/' && window.location.search) {
+          navigate('/', { replace: true });
         }
         fetchMe()
           .then(({ isAdmin: admin, preferences }) => {
@@ -515,12 +535,19 @@ function App() {
     (tableOwnerUid == null && isInvitedPlayerHeuristic)
   );
 
-  // Redirect to library when user has no tables and is on game-table view (e.g. after deleting last table)
+  // Redirect to home when user has no tables and is on game-table view (e.g. after deleting last table)
   useEffect(() => {
     if (myTablesFetchedRef.current && myTables.length === 0 && route.view === 'table' && user && !isPlayer) {
-      navigate(`/library/${DEFAULT_LIBRARY_TAB}`, { replace: true });
+      navigate('/', { replace: true });
     }
   }, [myTables.length, route.view, user, isPlayer, navigate]);
+
+  useEffect(() => {
+    if (loading || user) return;
+    if (route.view === 'table' || route.view === 'adminAiUsage' || route.view === 'adminBugReports') {
+      requireAuthRedirect('signin');
+    }
+  }, [loading, user, route.view, requireAuthRedirect]);
 
   useEffect(() => {
     if (!user || route.view !== 'adminAiUsage' || !adminPrivilegesKnown) return;
@@ -1812,8 +1839,6 @@ function App() {
     navigate(buildLibraryModalPath('all', collection, item.id));
   }, [navigate]);
 
-  if (loading) return <div className="min-h-screen bg-dh-surface flex items-center justify-center text-dh">Loading...</div>;
-
   return (
     <AiUiPreferenceProvider hideAiUi={hideAiUi} setHideAiUi={setHideAiUi}>
     <UnifiedImportProvider
@@ -1843,16 +1868,20 @@ function App() {
         />,
         document.body
       )}
-      {user && (
-        <nav className="bg-dh-canvas border-b border-dh-border p-4 flex items-center justify-between shadow-md z-[70]">
+      <nav className="bg-dh-canvas border-b border-dh-border p-4 flex items-center justify-between shadow-md z-[70]">
           <div className="flex items-center gap-6">
-            <h1 className="text-xl font-bold text-red-500 tracking-wider flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => navigate('/')}
+              className="text-xl font-bold text-red-500 tracking-wider flex items-center gap-2"
+            >
               <img src="/assets/daggertop-logo.png" alt="Daggertop" className="w-8 h-8 object-contain" /> DAGGERTOP
-            </h1>
+            </button>
             <div className="flex items-center gap-2">
               <NavImportBtn />
               <NavBtn icon={<BookOpen />} label="Library" active={route.view === 'library'} onClick={() => navigate(lastLibraryPathRef.current)} />
               <NavAssistantBtn active={libraryAssistantOpen} onClick={() => setLibraryAssistantOpen(true)} />
+              {user && (<>
               {myTables.map((t) => (
                 <NavBtn
                   key={t.id}
@@ -1879,23 +1908,17 @@ function App() {
                   icon={<Plus size={16} />}
                   label="New Table"
                   active={false}
-                  onClick={async () => {
-                    try {
-                      const { id, name } = await createTable('New Table');
-                      setMyTables(prev => [...prev, { id, name }]);
-                      navigate(`/table/${id}`);
-                    } catch (err) {
-                      console.error('Create table failed:', err);
-                    }
-                  }}
+                  onClick={handleCreateTable}
                 />
               )}
+              </>)}
             </div>
           </div>
           <div className="flex items-center gap-4 text-sm text-dh-muted">
             {(importStatus || onboardingFlash) && (
               <span className="text-xs text-green-400 font-medium">{importStatus || onboardingFlash}</span>
             )}
+            {user ? (
             <div className="relative" ref={userMenuRef}>
               <button
                 onClick={() => setUserMenuOpen(o => !o)}
@@ -1996,12 +2019,59 @@ function App() {
                 </div>
               )}
             </div>
+            ) : (
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => requireAuthRedirect('signin')}
+                className="flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium text-dh-muted hover:text-dh hover:bg-dh-raised/50 transition-all duration-300"
+              >
+                Sign In
+              </button>
+              <button
+                type="button"
+                onClick={() => requireAuthRedirect('signup')}
+                className="flex items-center gap-2 px-3 py-2 rounded-md text-sm font-semibold bg-red-600 hover:bg-red-700 text-white transition-all duration-300"
+              >
+                Sign Up
+              </button>
+            </div>
+            )}
           </div>
         </nav>
-      )}
 
       <main className="flex-1 overflow-hidden flex flex-col">
-        {!user || route.view === 'home' ? (
+        {loading ? (
+          <div className="flex-1 flex items-center justify-center text-dh">Loading...</div>
+        ) : (
+          <>
+        {route.view === 'home' && (user ? (
+          <HomeAuthenticated
+            myTables={myTables}
+            myRooms={myRooms}
+            onCreateTable={handleCreateTable}
+            navigate={navigate}
+            data={data}
+            saveItem={saveItem}
+            saveImage={saveImage}
+            deleteItem={deleteItem}
+            cloneItem={cloneItem}
+            addToTable={sendAddToTable}
+            route={route}
+            isAdmin={isAdmin}
+            partySize={partySize}
+            partyTier={partyTier}
+            characters={characters}
+            userUid={user?.uid}
+            onItemsChange={syncDataToApp}
+            onMergeAdversary={mergeAdversaryIntoData}
+            ensureScenesLoaded={ensureScenesLoaded}
+            ensureAdventuresLoaded={ensureAdventuresLoaded}
+            ensureCharactersLoaded={ensureCharactersLoaded}
+            libraryKey={libraryKey}
+            onRequireAuth={() => requireAuthRedirect('signin')}
+          />
+        ) : (
           <div className="flex-1 flex flex-col items-center justify-center p-8 bg-gradient-to-b from-dh-surface to-dh-canvas">
             <img src="/assets/daggertop-logo.png" alt="Daggertop" className="w-40 h-40 object-contain mb-4" />
             <h1 className="text-5xl font-bold text-red-500 tracking-wider mb-3 flex items-center gap-3">DAGGERTOP</h1>
@@ -2012,10 +2082,11 @@ function App() {
             <li className="flex gap-2"><span className="text-red-500 mt-0.5 shrink-0">•</span><span>Character builder with full support through level 10 and easy renaming of features for flavor.</span></li>
               <li className="flex gap-2"><span className="text-red-500 mt-0.5 shrink-0">•</span><span>Library of adversaries, environments, and more — pick up and play or dive deep into homebrew built by you and other creators.</span></li>
             </ul>
-            <AuthLanding />
+            <AuthLanding initialMode={route.authMode || 'signin'} />
           </div>
-        ) : (
-          <>
+        ))}
+            {user && (
+            <>
             <div
               className="flex-1 overflow-hidden flex flex-col"
               style={{ display: route.view === 'adminAiUsage' ? 'flex' : 'none' }}
@@ -2030,6 +2101,8 @@ function App() {
             >
               {route.view === 'adminBugReports' && isAdmin && <AdminBugReportsPage navigate={navigate} />}
             </div>
+            </>
+            )}
             <div
               className="flex-1 overflow-hidden flex flex-col"
               style={{ display: route.view === 'library' ? 'flex' : 'none' }}
@@ -2037,6 +2110,8 @@ function App() {
             >
               <LibraryView
                 key={libraryKey}
+                isAuthenticated={!!user}
+                onRequireAuth={() => requireAuthRedirect('signin')}
                 userUid={user?.uid}
                 data={data}
                 saveItem={saveItem}
@@ -2068,6 +2143,7 @@ function App() {
                 myTables={myTables}
               />
             </div>
+            {user && (
             <div
               className="flex-1 overflow-hidden flex flex-col"
               style={{ display: route.view === 'table' ? 'flex' : 'none' }}
@@ -2220,6 +2296,7 @@ function App() {
                 isAdmin={isAdmin}
               />}
             </div>
+            )}
           </>
         )}
       </main>
@@ -2310,7 +2387,7 @@ function App() {
                     setMyTables(next);
                     if (route.tableId === id) {
                       if (next.length) navigate(`/table/${next[0].id}`);
-                      else navigate(`/library/${DEFAULT_LIBRARY_TAB}`);
+                      else navigate('/');
                     }
                   } catch (err) {
                     console.error('Delete table failed:', err);

@@ -9,7 +9,7 @@ import { readFile } from 'fs/promises';
 import { initializeApp, getApps } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import cron from 'node-cron';
-import { runMigrations, getPool, getItems, getPublicItems, upsertItem, deleteItem, countItems, getItemsPaginated, countCommunityItems, getCommunityItemsPaginated, getItemsByIds, getItem, recordClone, recordPlay, upsertMirror, findAutoClone, getUnifiedItems, getUnifiedLibraryAll, getUnifiedLibraryAllBranchCounts, getExternalCacheByIds, getTableStatesByPlayerEmail, getTableStateById, listTableStates, appendDiceRoll, ackDiceRoll, getRecentDiceRolls, setBannerStatus, getPendingBanners, getDiceRollById, updateDiceRollData, resolveCharacterElements as resolveCharacterElementsDb, stripCharacterElementsForDb, getResolvedTableState, setTableStateNotifyHook, getUserPreferences, upsertUserPreferences, queryAiUsageAggregates, stampFreeTrialStart, checkTableIsLive, extendTableCampaignPass, recordCampaignPassPurchase, markStripeEventProcessed, recordCharacterTablePlacement, removeCharacterTablePlacementsForTable, countUserAiCallsThisMonth, getBugReportsPaginated, countBugReports, setBugReportStatus, updateBugReportNotes, BUG_REPORT_STATUSES, getCharacterById, upsertCharacterForTable, deleteCharacterForTable, stampCharacterTableId } from './src/db.js';
+import { runMigrations, getPool, getItems, getPublicItems, upsertItem, deleteItem, countItems, getItemsPaginated, countCommunityItems, getCommunityItemsPaginated, getItemsByIds, getItem, recordClone, recordPlay, upsertMirror, findAutoClone, getUnifiedItems, getUnifiedLibraryAll, getUnifiedLibraryAllBranchCounts, getExternalCacheByIds, getTableStatesByPlayerEmail, getTableStateById, listTableStates, summarizeTablePlayerRoster, appendDiceRoll, ackDiceRoll, getRecentDiceRolls, setBannerStatus, getPendingBanners, getDiceRollById, updateDiceRollData, resolveCharacterElements as resolveCharacterElementsDb, stripCharacterElementsForDb, getResolvedTableState, setTableStateNotifyHook, getUserPreferences, upsertUserPreferences, queryAiUsageAggregates, stampFreeTrialStart, checkTableIsLive, extendTableCampaignPass, recordCampaignPassPurchase, markStripeEventProcessed, recordCharacterTablePlacement, removeCharacterTablePlacementsForTable, countUserAiCallsThisMonth, getBugReportsPaginated, countBugReports, setBugReportStatus, updateBugReportNotes, BUG_REPORT_STATUSES, getCharacterById, upsertCharacterForTable, deleteCharacterForTable, stampCharacterTableId } from './src/db.js';
 import { isStripeConfigured, getStripe, constructWebhookEvent, CAMPAIGN_PASS_PRICE_CENTS, getCampaignPassPriceId } from './src/stripe.js';
 import { srdRouter, warmCache, getItem as getSrdItem } from './src/srd/index.js';
 import { fetchHoDFoundryDetail } from './src/hod-search.js';
@@ -130,18 +130,17 @@ if (!getApps().length) {
 }
 
 // --- Auth middleware ---
-async function requireAuth(req, res, next) {
-  const header = req.headers.authorization;
-  if (!header?.startsWith('Bearer ')) {
-    return res.status(401).json({ error: 'Missing auth token' });
-  }
-  const token = header.slice(7);
+/**
+ * Verify a Firebase ID token (or NODE_ENV=test bypass tokens).
+ * @param {string} token
+ * @returns {Promise<{ uid: string, email: string }>}
+ * @throws on invalid/expired tokens
+ */
+async function decodeAuthToken(token) {
   if (process.env.NODE_ENV === 'test') {
     // Bare test-token: legacy single-identity bypass (backward-compat with existing tests).
     if (token === 'test-token') {
-      req.uid = 'test-user-uid';
-      req.email = 'test@example.com';
-      return next();
+      return { uid: 'test-user-uid', email: 'test@example.com' };
     }
     // Multi-identity pattern: "test-token:<uid>:<email>"  (T12 multi-actor action-loop tests).
     // Only active under NODE_ENV=test; never reaches production.
@@ -149,20 +148,35 @@ async function requireAuth(req, res, next) {
       const rest = token.slice('test-token:'.length);
       const colonIdx = rest.indexOf(':');
       if (colonIdx > 0) {
-        req.uid = rest.slice(0, colonIdx);
-        req.email = rest.slice(colonIdx + 1);
-        return next();
+        return { uid: rest.slice(0, colonIdx), email: rest.slice(colonIdx + 1) };
       }
     }
   }
+  const decoded = await getAuth().verifyIdToken(token);
+  return { uid: decoded.uid, email: decoded.email || '' };
+}
+
+async function requireAuth(req, res, next) {
+  const header = req.headers.authorization;
+  if (!header?.startsWith('Bearer ')) {
+    return res.status(401).json({ error: 'Missing auth token' });
+  }
   try {
-    const decoded = await getAuth().verifyIdToken(token);
-    req.uid = decoded.uid;
-    req.email = decoded.email || '';
+    const { uid, email } = await decodeAuthToken(header.slice(7));
+    req.uid = uid;
+    req.email = email;
     next();
   } catch {
     res.status(401).json({ error: 'Invalid auth token' });
   }
+}
+
+/** Like requireAuth, but missing Authorization is allowed (anonymous). Invalid/expired tokens still 401. */
+async function optionalAuth(req, res, next) {
+  if (!req.headers.authorization) {
+    return next();
+  }
+  return requireAuth(req, res, next);
 }
 
 function requireAdmin(req, res, next) {
@@ -1340,7 +1354,7 @@ async function fetchDbItems(appId, uid, collection, { includeMine, includePublic
 
 /** Shared query parsing for Library “All” merged browse + branch counts */
 function parseLibraryAllQuery(req) {
-  const includeMine = req.query.includeMine !== '0';
+  const includeMine = !!req.uid && req.query.includeMine !== '0';
   const includePublic = req.query.includePublic === '1';
   const includeSrd = req.query.includeSrd === '1';
   const includeHod = req.query.includeHod === '1';
@@ -1386,7 +1400,7 @@ function parseLibraryAllQuery(req) {
 }
 
 /** Per-collection counts for Library nav (same filters as library-all; COUNT only) */
-app.get('/api/data/library-all-counts', requireAuth, async (req, res) => {
+app.get('/api/data/library-all-counts', optionalAuth, async (req, res) => {
   const q = parseLibraryAllQuery(req);
   if (q.semantic) {
     return res.json({
@@ -1425,7 +1439,7 @@ app.get('/api/data/library-all-counts', requireAuth, async (req, res) => {
 });
 
 /** Merged SRD unified collections for Library “All” tab — see `getUnifiedLibraryAll` in db.js */
-app.get('/api/data/library-all', requireAuth, async (req, res) => {
+app.get('/api/data/library-all', optionalAuth, async (req, res) => {
   const q = parseLibraryAllQuery(req);
 
   try {
@@ -1473,7 +1487,7 @@ app.get('/api/data/library-all', requireAuth, async (req, res) => {
   }
 });
 
-app.get('/api/data/:collection', requireAuth, async (req, res) => {
+app.get('/api/data/:collection', optionalAuth, async (req, res) => {
   const { collection } = req.params;
 
   if (collection === 'table_state') {
@@ -1522,7 +1536,7 @@ app.get('/api/data/:collection', requireAuth, async (req, res) => {
     return res.status(400).json({ error: 'Unknown collection' });
   }
 
-  const includeMine = req.query.includeMine !== '0';
+  const includeMine = !!req.uid && req.query.includeMine !== '0';
   const includePublic = req.query.includePublic === '1';
   const search = req.query.search || '';
   const includeScaledUp = req.query.includeScaledUp === '1';
@@ -2626,12 +2640,17 @@ app.delete('/api/data/:collection/:id', requireAuth, async (req, res) => {
 app.get('/api/my-rooms', requireAuth, async (req, res) => {
   try {
     const rows = await getTableStatesByPlayerEmail(APP_ID, req.email);
-    res.json(rows.map(r => ({
-      tableId: r.tableId,
-      gmUid: r.userId,
-      gmName: r.data?.gmDisplayName || '',
-      tableName: r.data?.tableName || (r.tableId === r.userId ? 'My Game Table' : 'Table'),
-    })));
+    res.json(rows.map(r => {
+      const roster = summarizeTablePlayerRoster(r.data);
+      return {
+        tableId: r.tableId,
+        gmUid: r.userId,
+        gmName: r.data?.gmDisplayName || '',
+        tableName: r.data?.tableName || (r.tableId === r.userId ? 'My Game Table' : 'Table'),
+        playerCount: roster.count,
+        players: roster.players,
+      };
+    }));
   } catch (err) {
     console.error('GET /api/my-rooms error:', err);
     res.status(500).json({ error: 'Failed to fetch rooms' });
@@ -2642,10 +2661,15 @@ app.get('/api/my-rooms', requireAuth, async (req, res) => {
 app.get('/api/my-tables', requireAuth, async (req, res) => {
   try {
     const rows = await listTableStates(APP_ID, req.uid);
-    res.json(rows.map(r => ({
-      id: r.id,
-      name: r.data?.tableName || (r.id === req.uid ? 'My Game Table' : 'Table'),
-    })));
+    res.json(rows.map(r => {
+      const roster = summarizeTablePlayerRoster(r.data);
+      return {
+        id: r.id,
+        name: r.data?.tableName || (r.id === req.uid ? 'My Game Table' : 'Table'),
+        playerCount: roster.count,
+        players: roster.players,
+      };
+    }));
   } catch (err) {
     console.error('GET /api/my-tables error:', err);
     res.status(500).json({ error: 'Failed to fetch tables' });

@@ -77,7 +77,8 @@ export function pathnameOnly(fullPath) {
  * Parses a pathname into a structured route descriptor.
  *
  * Supported patterns:
- *   /                              -> { view: 'home' }
+ *   /                              -> { view: 'home', authMode, returnTo }
+ *   /?authMode=signin|signup&returnTo=…  -> home with optional auth query params
  *   /library                        -> { view: 'library', tab: DEFAULT_LIBRARY_TAB (all), itemId: null }
  *   /library/:tab                  -> { view: 'library', tab, itemId: null }
  *   /library/:tab/new              -> { view: 'library', tab, itemId: 'new' }
@@ -109,7 +110,7 @@ export function parseRoute(pathWithOptionalQuery) {
   const parts = pathname.replace(/^\//, '').split('/').filter(Boolean);
 
   if (parts.length === 0 || parts[0] === '') {
-    return { view: 'home', tab: null, itemId: null, librarySemantic: null, librarySearchQuery: null };
+    return homeRoute(searchParams);
   }
 
   if (parts[0] === 'admin' && parts[1] === 'ai-usage') {
@@ -143,7 +144,22 @@ export function parseRoute(pathWithOptionalQuery) {
     return { view: 'library', tab, itemId, libraryNewCollection, librarySemantic, librarySearchQuery };
   }
 
-  return { view: 'home', tab: null, itemId: null, librarySemantic: null, librarySearchQuery: null };
+  return homeRoute(searchParams);
+}
+
+function homeRoute(searchParams) {
+  const authModeRaw = searchParams.get('authMode');
+  const authMode = authModeRaw === 'signin' || authModeRaw === 'signup' ? authModeRaw : null;
+  const returnTo = searchParams.get('returnTo');
+  return {
+    view: 'home',
+    tab: null,
+    itemId: null,
+    librarySemantic: null,
+    librarySearchQuery: null,
+    authMode,
+    returnTo,
+  };
 }
 
 function getInitialPath() {

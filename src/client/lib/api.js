@@ -180,7 +180,6 @@ export const postEncounterDropImport = async (file, kind) => {
  */
 export const loadCollection = async (collection, { includeMine = true, includeSrd = false, includePublic = false, includeHod = false, search = '', semantic = '', tier = null, tiers = [], type = null, types = [], extraTypes = [], includeScaledUp = false, sort = 'popularity', offset = 0, limit = 20, id = null } = {}) => {
   const token = await getAuthToken();
-  if (!token) throw new Error('Not signed in');
   const params = new URLSearchParams({ offset: String(offset), limit: String(limit) });
   if (!includeMine) params.set('includeMine', '0');
   if (includeSrd) params.set('includeSrd', '1');
@@ -208,7 +207,7 @@ export const loadCollection = async (collection, { includeMine = true, includeSr
   if (includeScaledUp) params.set('includeScaledUp', '1');
   if (sort) params.set('sort', sort);
   const res = await fetch(`/api/data/${collection}?${params}`, {
-    headers: apiHeaders({ Authorization: `Bearer ${token}` }),
+    headers: apiHeaders(token ? { Authorization: `Bearer ${token}` } : {}),
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
@@ -221,10 +220,9 @@ export { buildLibraryAllSearchParams };
  */
 export const loadLibraryAll = async (opts = {}) => {
   const token = await getAuthToken();
-  if (!token) throw new Error('Not signed in');
   const params = buildLibraryAllSearchParams(opts);
   const res = await fetch(`/api/data/library-all?${params}`, {
-    headers: apiHeaders({ Authorization: `Bearer ${token}` }),
+    headers: apiHeaders(token ? { Authorization: `Bearer ${token}` } : {}),
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
@@ -235,10 +233,9 @@ export const loadLibraryAll = async (opts = {}) => {
  */
 export const loadLibraryAllCounts = async (opts = {}) => {
   const token = await getAuthToken();
-  if (!token) throw new Error('Not signed in');
   const params = buildLibraryAllSearchParams({ ...opts, offset: 0, limit: 20 });
   const res = await fetch(`/api/data/library-all-counts?${params}`, {
-    headers: apiHeaders({ Authorization: `Bearer ${token}` }),
+    headers: apiHeaders(token ? { Authorization: `Bearer ${token}` } : {}),
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
@@ -890,7 +887,7 @@ export const generateImage = async (prompt) => {
   return res.json();
 };
 
-/** Returns [{ tableId, gmUid, gmName, tableName }] for all tables the current user is invited to. */
+/** Returns [{ tableId, gmUid, gmName, tableName, playerCount, players: Array<{email, name}> }] for all tables the current user is invited to. */
 export const fetchMyRooms = async () => {
   const token = await getAuthToken();
   if (!token) throw new Error('Not signed in');
@@ -901,7 +898,7 @@ export const fetchMyRooms = async () => {
   return res.json();
 };
 
-/** Returns [{ id, name }] for all tables the current user owns. */
+/** Returns [{ id, name, playerCount, players: Array<{email, name}> }] for all tables the current user owns. */
 export const fetchMyTables = async () => {
   const token = await getAuthToken();
   if (!token) throw new Error('Not signed in');
