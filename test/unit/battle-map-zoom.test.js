@@ -10,6 +10,8 @@ import {
   normalizeWheelDeltaPixels,
   computePanToCenterInnerPointPx,
   computeZoomAndPanToFitInnerBounds,
+  collectPlacedTokenInnerBounds,
+  ZOOM_FIT_KIND_TYPES,
   scrollAfterZoomTowardPoint,
   computeCameraViewportFt,
 } from '../../src/client/lib/battle-map-zoom.js';
@@ -124,6 +126,47 @@ describe('battle-map-zoom', () => {
     expect(r.mapZoom).toBe(3);
     expect(r.scrollLeft).toBeGreaterThanOrEqual(0);
     expect(r.scrollTop).toBeGreaterThanOrEqual(0);
+  });
+
+  describe('collectPlacedTokenInnerBounds', () => {
+    const tokenMapId = (el) => el.mapId ?? 'm-default';
+    const baseOpts = { pxPerFt: 10, tokenSizePx: 50, activeMapId: 'm-1', tokenMapId };
+    const party = { elementType: 'character', tokenX: 0, tokenY: 0, mapId: 'm-1' };
+    const companion = { elementType: 'boardToken', tokenX: 10, tokenY: 0, mapId: 'm-1' };
+    const foe = { elementType: 'adversary', tokenX: 20, tokenY: 10, mapId: 'm-1' };
+    const otherMap = { elementType: 'character', tokenX: 0, tokenY: 0, mapId: 'm-2' };
+    const tray = { elementType: 'character', tokenX: null, tokenY: null, mapId: 'm-1' };
+
+    it('fits all actors and ignores tray / other-map tokens', () => {
+      const b = collectPlacedTokenInnerBounds(
+        [party, companion, foe, otherMap, tray],
+        { ...baseOpts, types: ZOOM_FIT_KIND_TYPES.actors },
+      );
+      expect(b).toEqual({ minInnerX: 0, minInnerY: 0, maxInnerX: 250, maxInnerY: 150 });
+    });
+
+    it('party excludes adversaries', () => {
+      const b = collectPlacedTokenInnerBounds(
+        [party, companion, foe],
+        { ...baseOpts, types: ZOOM_FIT_KIND_TYPES.party },
+      );
+      expect(b).toEqual({ minInnerX: 0, minInnerY: 0, maxInnerX: 150, maxInnerY: 50 });
+    });
+
+    it('adversaries excludes party tokens', () => {
+      const b = collectPlacedTokenInnerBounds(
+        [party, companion, foe],
+        { ...baseOpts, types: ZOOM_FIT_KIND_TYPES.adversaries },
+      );
+      expect(b).toEqual({ minInnerX: 200, minInnerY: 100, maxInnerX: 250, maxInnerY: 150 });
+    });
+
+    it('returns null when no matching placed tokens', () => {
+      expect(collectPlacedTokenInnerBounds([tray, otherMap], {
+        ...baseOpts,
+        types: ZOOM_FIT_KIND_TYPES.actors,
+      })).toBeNull();
+    });
   });
 
   it('computeImageViewportZoomBounds fits image and allows zoom-in headroom', () => {

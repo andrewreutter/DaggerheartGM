@@ -10,6 +10,8 @@ import {
   computeMapZoomBounds,
   computePanToCenterInnerPointPx,
   computeZoomAndPanToFitInnerBounds,
+  collectPlacedTokenInnerBounds,
+  ZOOM_FIT_KIND_TYPES,
   scrollAfterZoomTowardPoint,
 } from '../lib/battle-map-zoom.js';
 import {
@@ -43,6 +45,8 @@ import {
   Trash2,
   CircleX,
   Focus,
+  Users,
+  Swords,
   Camera,
   Radio,
   Paintbrush,
@@ -2148,6 +2152,98 @@ function TrayBulkActionsHeader({ trayDirection, onPlaceAll, canPlaceAll, onRetur
   );
 }
 
+const ZOOM_FIT_CONTROL_ITEMS = [
+  {
+    kind: 'actors',
+    ariaLabel: 'Zoom to Actors',
+    tooltip: 'Fit everyone on the map at the closest zoom',
+    labeledText: <>Zoom to<br />Actors</>,
+    Icon: Focus,
+    labeledClassName: 'text-violet-200/95 border-violet-500/35 bg-violet-950/25 hover:bg-violet-900/35',
+    iconClassName: 'text-dh-muted hover:text-dh',
+  },
+  {
+    kind: 'party',
+    ariaLabel: 'Zoom to Party',
+    tooltip: 'Fit the party on the map at the closest zoom',
+    labeledText: <>Zoom to<br />Party</>,
+    Icon: Users,
+    labeledClassName: 'text-sky-200/95 border-sky-500/35 bg-sky-950/25 hover:bg-sky-900/35',
+    iconClassName: 'text-sky-400 hover:text-sky-300',
+  },
+  {
+    kind: 'adversaries',
+    ariaLabel: 'Zoom to Adversaries',
+    tooltip: 'Fit adversaries on the map at the closest zoom',
+    labeledText: <>Zoom to<br />adver-<br />saries</>,
+    Icon: Swords,
+    labeledClassName: 'text-amber-200/95 border-amber-500/35 bg-amber-950/25 hover:bg-amber-900/35',
+    iconClassName: 'text-amber-400 hover:text-amber-300',
+  },
+];
+
+/**
+ * Zoom-to-fit trio (Actors / Party / Adversaries). Labeled variant sits in a row;
+ * each button uses the same `CHARACTER_TRAY_WIDTH_PX` footprint as Zoom to Actors.
+ */
+function ZoomToFitControls({
+  variant = 'labeled',
+  iconSize,
+  onZoomToFit,
+  hasPlacedByKind,
+  extraDisabled = false,
+  tooltipPlacement = 'left',
+}) {
+  return (
+    <div
+      className={
+        variant === 'labeled'
+          ? 'flex shrink-0 flex-row items-stretch gap-1 min-w-0 self-stretch'
+          : 'flex flex-row items-stretch gap-1'
+      }
+    >
+      {ZOOM_FIT_CONTROL_ITEMS.map((item) => {
+        const disabled = extraDisabled || !hasPlacedByKind[item.kind];
+        if (variant === 'icon') {
+          return (
+            <Tooltip key={item.kind} label={item.tooltip}>
+              <button
+                type="button"
+                aria-label={item.ariaLabel}
+                onClick={() => onZoomToFit(item.kind)}
+                disabled={disabled}
+                className={`pointer-events-auto shrink-0 p-1.5 rounded border border-dh-strong bg-dh-raised/90 shadow-md hover:bg-dh-hover disabled:opacity-40 disabled:pointer-events-none ${item.iconClassName}`}
+              >
+                <item.Icon size={iconSize} />
+              </button>
+            </Tooltip>
+          );
+        }
+        return (
+          <Tooltip
+            key={item.kind}
+            label={item.tooltip}
+            placement={tooltipPlacement}
+            className="relative block min-w-0 h-full"
+          >
+            <button
+              type="button"
+              onClick={() => onZoomToFit(item.kind)}
+              disabled={disabled}
+              aria-label={item.ariaLabel}
+              className={`w-full h-full max-w-full min-w-0 flex flex-col items-center justify-center gap-0.5 rounded px-1 py-1 text-[10px] leading-tight text-center border disabled:opacity-40 disabled:pointer-events-none box-border ${item.labeledClassName}`}
+              style={{ width: CHARACTER_TRAY_WIDTH_PX, maxWidth: CHARACTER_TRAY_WIDTH_PX }}
+            >
+              <item.Icon size={iconSize} strokeWidth={1.25} aria-hidden />
+              <span className="px-0.5 font-medium">{item.labeledText}</span>
+            </button>
+          </Tooltip>
+        );
+      })}
+    </div>
+  );
+}
+
 // ─── Shared map-object primitives (MapImageObject + DrawShapeObject) ────────
 
 /** Shared four-corner resize grip styling. */
@@ -3790,39 +3886,26 @@ export function BattleMap({
     centerMapOnPlacedActor(el);
   }, [activeMapIdResolved, activeElements, centerMapOnPlacedActor]);
 
-  const applyZoomToFitActors = useCallback(() => {
+  const applyZoomToFit = useCallback((kind) => {
     if (!canControlMapView) return;
     if (mapAiGenPreviewUrlRef.current) return;
+    const types = ZOOM_FIT_KIND_TYPES[kind];
+    if (!types) return;
     const wrap = scrollContainerRef.current;
     if (!wrap) return;
     const vw = wrap.clientWidth;
     const vh = wrap.clientHeight;
     if (vw <= 0 || vh <= 0) return;
-    let minX = Infinity;
-    let minY = Infinity;
-    let maxX = -Infinity;
-    let maxY = -Infinity;
-    for (const el of activeElements) {
-      if (el.elementType !== 'character' && el.elementType !== 'adversary' && el.elementType !== 'boardToken') {
-        continue;
-      }
-      if (el.tokenX == null || el.tokenY == null) continue;
-      if (effectiveTokenMapId(el.mapId) !== activeMapIdResolved) continue;
-      const left = el.tokenX * pxPerFt;
-      const top = el.tokenY * pxPerFt;
-      const right = left + tokenSizePx;
-      const bottom = top + tokenSizePx;
-      minX = Math.min(minX, left);
-      minY = Math.min(minY, top);
-      maxX = Math.max(maxX, right);
-      maxY = Math.max(maxY, bottom);
-    }
-    if (!Number.isFinite(minX)) return;
+    const bounds = collectPlacedTokenInnerBounds(activeElements, {
+      pxPerFt,
+      tokenSizePx,
+      types,
+      activeMapId: activeMapIdResolved,
+      tokenMapId: (el) => effectiveTokenMapId(el.mapId),
+    });
+    if (!bounds) return;
     const result = computeZoomAndPanToFitInnerBounds({
-      minInnerX: minX,
-      minInnerY: minY,
-      maxInnerX: maxX,
-      maxInnerY: maxY,
+      ...bounds,
       paddingPx: 12,
       minZoom: minZoomRef.current,
       maxZoom: maxZoomRef.current,
@@ -4204,19 +4287,19 @@ export function BattleMap({
     [adversaries, activeMapIdResolved],
   );
 
-  const hasPlacedActorsOnMap = useMemo(
-    () =>
-      activeElements.some(
-        (el) =>
-          (el.elementType === 'character' ||
-            el.elementType === 'adversary' ||
-            el.elementType === 'boardToken') &&
-          el.tokenX != null &&
-          el.tokenY != null &&
-          effectiveTokenMapId(el.mapId) === activeMapIdResolved,
-      ),
-    [activeElements, activeMapIdResolved],
-  );
+  const hasPlacedByKind = useMemo(() => {
+    const opts = {
+      pxPerFt: 1,
+      tokenSizePx: 1,
+      activeMapId: activeMapIdResolved,
+      tokenMapId: (el) => effectiveTokenMapId(el.mapId),
+    };
+    return {
+      actors: collectPlacedTokenInnerBounds(activeElements, { ...opts, types: ZOOM_FIT_KIND_TYPES.actors }) != null,
+      party: collectPlacedTokenInnerBounds(activeElements, { ...opts, types: ZOOM_FIT_KIND_TYPES.party }) != null,
+      adversaries: collectPlacedTokenInnerBounds(activeElements, { ...opts, types: ZOOM_FIT_KIND_TYPES.adversaries }) != null,
+    };
+  }, [activeElements, activeMapIdResolved]);
 
   // Convert client coordinates to map feet, accounting for pan offset and display zoom
   const clientToFt = useCallback((clientX, clientY) => {
@@ -6276,23 +6359,12 @@ export function BattleMap({
                   </button>
                 </Tooltip>
               ) : null}
-              <Tooltip
-                label="Fit everyone on the map at the closest zoom"
-                placement="left"
-                className="relative block min-w-0"
-              >
-                <button
-                  type="button"
-                  onClick={applyZoomToFitActors}
-                  disabled={!hasPlacedActorsOnMap || mapAiPreviewActive}
-                  className="w-full max-w-full min-w-0 flex flex-col items-center justify-center gap-0.5 rounded px-1 py-1 text-[10px] leading-tight text-center text-violet-200/95 border border-violet-500/35 bg-violet-950/25 hover:bg-violet-900/35 disabled:opacity-40 disabled:pointer-events-none box-border"
-                  aria-label="Zoom to Actors"
-                  style={{ width: CHARACTER_TRAY_WIDTH_PX, maxWidth: CHARACTER_TRAY_WIDTH_PX }}
-                >
-                  <Focus size={Math.max(12, trayTokenSizePx - 8)} strokeWidth={1.25} aria-hidden />
-                  <span className="px-0.5 font-medium">Zoom to Actors</span>
-                </button>
-              </Tooltip>
+              <ZoomToFitControls
+                iconSize={Math.max(12, trayTokenSizePx - 8)}
+                onZoomToFit={applyZoomToFit}
+                hasPlacedByKind={hasPlacedByKind}
+                extraDisabled={mapAiPreviewActive}
+              />
             </div>
           ) : null}
         </div>
@@ -6360,23 +6432,12 @@ export function BattleMap({
               ))}
             </div>
             {canControlMapView ? (
-              <div
-                className="flex shrink-0 flex-col items-stretch pt-0.5 box-border overflow-hidden self-start"
-                style={{ width: CHARACTER_TRAY_WIDTH_PX, maxWidth: CHARACTER_TRAY_WIDTH_PX }}
-              >
-                <Tooltip label="Fit everyone on the map at the closest zoom" placement="left" className="relative block w-full min-w-0">
-                  <button
-                    type="button"
-                    onClick={applyZoomToFitActors}
-                    disabled={!hasPlacedActorsOnMap || mapAiPreviewActive}
-                    className="w-full max-w-full min-w-0 flex flex-col items-center justify-center gap-0.5 rounded px-1 py-1 text-[10px] leading-tight text-center text-violet-200/95 border border-violet-500/35 bg-violet-950/25 hover:bg-violet-900/35 disabled:opacity-40 disabled:pointer-events-none box-border"
-                    aria-label="Zoom to Actors"
-                  >
-                    <Focus size={Math.max(12, trayTokenSizePx - 8)} strokeWidth={1.25} aria-hidden />
-                    <span className="px-0.5 font-medium">Zoom to Actors</span>
-                  </button>
-                </Tooltip>
-              </div>
+              <ZoomToFitControls
+                iconSize={Math.max(12, trayTokenSizePx - 8)}
+                onZoomToFit={applyZoomToFit}
+                hasPlacedByKind={hasPlacedByKind}
+                extraDisabled={mapAiPreviewActive}
+              />
             ) : null}
           </div>
         )}
@@ -7193,17 +7254,13 @@ export function BattleMap({
                   </button>
                 </Tooltip>
               )}
-              <Tooltip label="Zoom to actors — fit everyone on the map at the closest zoom">
-                <button
-                  type="button"
-                  aria-label="Zoom to Actors"
-                  onClick={applyZoomToFitActors}
-                  disabled={!hasPlacedActorsOnMap || mapAiPreviewActive}
-                  className="pointer-events-auto shrink-0 p-1.5 rounded border border-dh-strong bg-dh-raised/90 shadow-md hover:bg-dh-hover text-dh-muted hover:text-dh disabled:opacity-40 disabled:pointer-events-none"
-                >
-                  <Focus size={14} />
-                </button>
-              </Tooltip>
+              <ZoomToFitControls
+                variant="icon"
+                iconSize={14}
+                onZoomToFit={applyZoomToFit}
+                hasPlacedByKind={hasPlacedByKind}
+                extraDisabled={mapAiPreviewActive}
+              />
             </div>
           )}
           </div>

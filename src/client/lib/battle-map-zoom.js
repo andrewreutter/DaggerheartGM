@@ -341,6 +341,54 @@ export function computeDragDropTopLeftLocalPx({
   };
 }
 
+/** Element types included in each zoom-to-fit control. */
+export const ZOOM_FIT_KIND_TYPES = Object.freeze({
+  actors: Object.freeze(['character', 'adversary', 'boardToken']),
+  party: Object.freeze(['character', 'boardToken']),
+  adversaries: Object.freeze(['adversary']),
+});
+
+/**
+ * Inner-map pixel AABB of placed tokens matching `types` on `activeMapId`.
+ * Uses a uniform `tokenSizePx` footprint (same as Zoom to Actors historically).
+ *
+ * @param {Array<{ elementType?: string, tokenX?: number|null, tokenY?: number|null, mapId?: string|null }>} elements
+ * @param {{
+ *   pxPerFt: number,
+ *   tokenSizePx: number,
+ *   types: Iterable<string>,
+ *   activeMapId: string,
+ *   tokenMapId: (el: object) => string,
+ * }} opts
+ * @returns {{ minInnerX: number, minInnerY: number, maxInnerX: number, maxInnerY: number } | null}
+ */
+export function collectPlacedTokenInnerBounds(elements, {
+  pxPerFt,
+  tokenSizePx,
+  types,
+  activeMapId,
+  tokenMapId,
+}) {
+  const typeSet = types instanceof Set ? types : new Set(types);
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const el of elements) {
+    if (!typeSet.has(el.elementType)) continue;
+    if (el.tokenX == null || el.tokenY == null) continue;
+    if (tokenMapId(el) !== activeMapId) continue;
+    const left = el.tokenX * pxPerFt;
+    const top = el.tokenY * pxPerFt;
+    minX = Math.min(minX, left);
+    minY = Math.min(minY, top);
+    maxX = Math.max(maxX, left + tokenSizePx);
+    maxY = Math.max(maxY, top + tokenSizePx);
+  }
+  if (!Number.isFinite(minX)) return null;
+  return { minInnerX: minX, minInnerY: minY, maxInnerX: maxX, maxInnerY: maxY };
+}
+
 export function computeZoomAndPanToFitInnerBounds({
   minInnerX,
   minInnerY,
