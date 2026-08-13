@@ -3,6 +3,8 @@ import {
   ALTITUDE_CONTROL_GAP_PX,
   ALTITUDE_CONTROL_WIDTH_PX,
   ALTITUDE_STEP_FT,
+  altitudeDragPxPerStep,
+  altitudeStemOffsetPx,
   computeAltitudeStepsFromDragDeltaPx,
   formatAltitudeFt,
   isPointInExpandedHoverZone,
@@ -47,6 +49,35 @@ describe('computeAltitudeStepsFromDragDeltaPx', () => {
   });
 });
 
+describe('altitudeStemOffsetPx', () => {
+  it('is altitude feet times map scale (1 ft of height = 1 ft on the map)', () => {
+    expect(altitudeStemOffsetPx(50, 6.6)).toBeCloseTo(330);
+    expect(altitudeStemOffsetPx(-20, 6.6)).toBeCloseTo(-132);
+    expect(altitudeStemOffsetPx(0, 6.6)).toBe(0);
+  });
+
+  it('returns 0 for invalid scale or altitude', () => {
+    expect(altitudeStemOffsetPx(50, 0)).toBe(0);
+    expect(altitudeStemOffsetPx(50, -1)).toBe(0);
+    expect(altitudeStemOffsetPx(NaN, 6.6)).toBe(0);
+  });
+});
+
+describe('altitudeDragPxPerStep', () => {
+  it('one 5′ step of pointer travel equals one 5′ of stem in screen pixels', () => {
+    const pxPerFt = 6.6;
+    const viewZoom = 1.5;
+    expect(altitudeDragPxPerStep(pxPerFt, viewZoom)).toBeCloseTo(
+      altitudeStemOffsetPx(ALTITUDE_STEP_FT, pxPerFt) * viewZoom,
+    );
+  });
+
+  it('returns 0 for invalid scale', () => {
+    expect(altitudeDragPxPerStep(0, 1)).toBe(0);
+    expect(altitudeDragPxPerStep(6.6, 0)).toBe(0);
+  });
+});
+
 describe('isPointInExpandedHoverZone', () => {
   const token = {
     tokenLeftPx: 100,
@@ -73,5 +104,17 @@ describe('isPointInExpandedHoverZone', () => {
   it('is false for a point above or below the token', () => {
     expect(isPointInExpandedHoverZone({ pointX: 110, pointY: 40, ...token })).toBe(false);
     expect(isPointInExpandedHoverZone({ pointX: 110, pointY: 90, ...token })).toBe(false);
+  });
+
+  it('extends upward to a positive stem tip', () => {
+    const withStem = { ...token, stemOffsetPx: 80 };
+    expect(isPointInExpandedHoverZone({ pointX: 110, pointY: 10, ...withStem })).toBe(true);
+    expect(isPointInExpandedHoverZone({ pointX: 110, pointY: -20, ...withStem })).toBe(false);
+  });
+
+  it('extends downward to a negative stem tip', () => {
+    const withStem = { ...token, stemOffsetPx: -80 };
+    expect(isPointInExpandedHoverZone({ pointX: 110, pointY: 140, ...withStem })).toBe(true);
+    expect(isPointInExpandedHoverZone({ pointX: 110, pointY: 180, ...withStem })).toBe(false);
   });
 });

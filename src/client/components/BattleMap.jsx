@@ -92,8 +92,9 @@ import { pickRandomPlaceOnMapSpot, pickRandomPlaceOnMapSpots, getTokenTrayDirect
 import {
   ALTITUDE_CONTROL_GAP_PX,
   ALTITUDE_CONTROL_WIDTH_PX,
-  ALTITUDE_PX_PER_STEP,
   ALTITUDE_STEP_FT,
+  altitudeDragPxPerStep,
+  altitudeStemOffsetPx,
   computeAltitudeStepsFromDragDeltaPx,
   formatAltitudeFt,
   isPointInExpandedHoverZone,
@@ -1084,6 +1085,25 @@ const ALLY_TOKEN_PALETTE = [
   { bg: 'bg-cyan-700',    border: 'border-cyan-700' },
 ];
 
+/** Role / ally { bg, border } pair — same source TokenCircle and altitude stems use. */
+function resolveTokenColorClasses(element, { isMyCharacter = false, allyColorClasses = null } = {}) {
+  if (element.elementType === 'boardToken') return allyColorClasses ?? COMPANION_TOKEN_CLASSES;
+  if (element.elementType === 'character') {
+    return allyColorClasses ?? (isMyCharacter ? CHAR_MINE_TOKEN_CLASSES : CHAR_OTHER_TOKEN_CLASSES);
+  }
+  if (element.elementType === 'adversary' && isAdversaryDefeated(element)) return DEFEATED_TOKEN_CLASSES;
+  return ADVERSARY_ROLE_TOKEN_CLASSES[element.role] ?? ADVERSARY_ROLE_TOKEN_CLASSES.standard;
+}
+
+/**
+ * Fill class for the altitude stem: always the ally/role color (same `bg-*` as the
+ * token), ignoring range-band glow and whether the token has a portrait. Tokens
+ * without a portrait still use a black *border*; the stem uses the fill color.
+ */
+function tokenBaseBorderFillClass(element, opts) {
+  return resolveTokenColorClasses(element, opts).bg;
+}
+
 // ─── TokenCircle ─────────────────────────────────────────────────────────────
 
 function TokenCircle({
@@ -1160,19 +1180,10 @@ function TokenCircle({
     ? { boxShadow: `0 0 0 ${3 * glowScale}px ${rangeBand.tokenRing}, 0 0 ${18 * glowScale}px ${6 * glowScale}px ${rangeBand.tokenGlow}` }
     : {};
 
-  const advDefeated = isAdv && isAdversaryDefeated(element);
-
   // Pick the { bg, border } class pair for this token type. Characters and companions use their
   // rotating ally-palette assignment when provided; the mine/other/companion constants remain as
   // fallbacks for render paths without an assignment map.
-  const tokenColorClasses = isBoard
-    ? (allyColorClasses ?? COMPANION_TOKEN_CLASSES)
-    : isChar
-      ? (allyColorClasses ?? (isMyCharacter ? CHAR_MINE_TOKEN_CLASSES : CHAR_OTHER_TOKEN_CLASSES))
-      : advDefeated
-        ? DEFEATED_TOKEN_CLASSES
-        : (ADVERSARY_ROLE_TOKEN_CLASSES[element.role] ?? ADVERSARY_ROLE_TOKEN_CLASSES.standard);
-
+  const tokenColorClasses = resolveTokenColorClasses(element, { isMyCharacter, allyColorClasses });
   const hasImage = !!element.imageUrl;
   // When the token has an image, use the role/type color as the border instead of black.
   const borderClass = hasImage ? tokenColorClasses.border : 'border-black';
@@ -1182,6 +1193,7 @@ function TokenCircle({
     : tokenColorClasses.bg;
 
   const minSize = Math.min(sizeW, sizeH);
+  const advDefeated = isAdv && isAdversaryDefeated(element);
 
   return (
     <div
@@ -1309,33 +1321,52 @@ const placedTokenPropsAreEqual = (prev, next) => {
  * bails out of diffing/rendering every placed token's subtree entirely.
  */
 /**
- * Floating altitude HUD to the left of a placed token: optional Δ chip (hover range vs
- * bullseye origin) then the token's own altitude label. Drag the label vertically to
- * change altitude (5' steps); double-click resets to ground. Permission mirrors `canDrag`.
+ * Floating altitude HUD: a map-scale stem from the token center (positive = up the
+ * screen, colored to the token's ally/role fill) with a compact always-on value
+ * at the tip; the interactive control (and Δ chip) sits to the left of the token
+ * and is hover-only. Drag the hover control vertically to change altitude (5' steps,
+ * 1:1 with stem growth at the current map scale × zoom — pointer capture keeps the
+ * drag even though the control stays put); double-click resets to ground. Permission
+ * mirrors `canDrag`.
  */
 function TokenAltitudeControl({
   element,
+  tokenSizeWpx,
   tokenSizeHpx,
   pxPerFt,
+  viewZoom,
   zIndex,
   altitudeDeltaFt = 0,
   showDelta = false,
   hoverFocused = false,
   positionDragActive = false,
   canAdjust = false,
+  isMyCharacter = false,
+  allyColorClasses = null,
   onChangeAltitude,
 }) {
   const altitude = element.altitude ?? 0;
 
-  // Local display altitude during drag. Kept in state so the label updates live
-  // without sending a server op on every pointer move (which causes SSE round-trips
+  // Local display altitude during drag. Kept in state so the label *and* stem update
+  // live without sending a server op on every pointer move (which causes SSE round-trips
   // to snap the value back to earlier in-flight results).
   const [dragDisplayAltitude, setDragDisplayAltitude] = useState(null);
   const isDraggingRef = useRef(false);
 
   // Use the drag-local value while dragging; fall back to authoritative element value.
   const displayAltitude = dragDisplayAltitude ?? altitude;
-  const showOwn = displayAltitude !== 0 || (hoverFocused && !positionDragActive);
+  const dragging = dragDisplayAltitude != null;
+  const showInteractive = (hoverFocused && !positionDragActive) || dragging;
+  const showTip = displayAltitude !== 0;
+  const stemOffsetPx = altitudeStemOffsetPx(displayAltitude, pxPerFt);
+  const stemAbsPx = Math.abs(stemOffsetPx);
+  const centerX = element.tokenX * pxPerFt + tokenSizeWpx / 2;
+  const centerY = element.tokenY * pxPerFt + tokenSizeHpx / 2;
+  const tipY = centerY - stemOffsetPx;
+  const stemFillClass = tokenBaseBorderFillClass(element, { isMyCharacter, allyColorClasses });
+  const tipLabelTransform = stemOffsetPx >= 0
+    ? 'translate(-50%, calc(-100% - 2px))'
+    : 'translate(-50%, 2px)';
 
   const lastPointerDownTimeRef = useRef(0);
   const dragRef = useRef(null);
@@ -1374,12 +1405,13 @@ function TokenAltitudeControl({
       d.moved = true;
       isDraggingRef.current = true;
     }
-    const steps = computeAltitudeStepsFromDragDeltaPx(d.startClientY - e.clientY, ALTITUDE_PX_PER_STEP);
+    const pxPerStep = altitudeDragPxPerStep(pxPerFt, viewZoom);
+    const steps = computeAltitudeStepsFromDragDeltaPx(d.startClientY - e.clientY, pxPerStep);
     const newAlt = d.startAltitude + steps * ALTITUDE_STEP_FT;
     d.latestAltitude = newAlt;
-    // Update the visual display locally — no server op yet.
+    // Update the visual display locally — no server op yet. Stem length uses this same value.
     setDragDisplayAltitude(newAlt);
-  }, []);
+  }, [pxPerFt, viewZoom]);
 
   const onPointerUp = useCallback((e) => {
     const d = dragRef.current;
@@ -1394,42 +1426,77 @@ function TokenAltitudeControl({
     setDragDisplayAltitude(null);
   }, [onChangeAltitude]);
 
-  if (!showOwn && !showDelta) return null;
+  if (!showTip && !showInteractive && !showDelta) return null;
 
   return (
-    <div
-      className="absolute flex items-center justify-end gap-0.5"
-      style={{
-        left: element.tokenX * pxPerFt,
-        top: element.tokenY * pxPerFt + tokenSizeHpx / 2,
-        transform: 'translate(-100%, -50%)',
-        paddingRight: ALTITUDE_CONTROL_GAP_PX,
-        zIndex,
-        pointerEvents: 'none',
-      }}
-    >
-      {showDelta && (
-        <div className="rounded border border-sky-700/60 bg-sky-950/85 px-1 py-0.5 text-[10px] font-semibold tabular-nums leading-none text-sky-200 shadow-sm">
-          Δ{formatAltitudeFt(altitudeDeltaFt)}
-        </div>
-      )}
-      {showOwn && (
+    <>
+      {stemAbsPx > 0.5 && (
         <div
-          className={`flex flex-col items-center rounded border border-dh-border bg-dh-canvas/90 px-1 py-0.5 text-[10px] font-semibold tabular-nums leading-none text-dh shadow-sm select-none ${canAdjust ? 'cursor-ns-resize' : ''}`}
+          aria-hidden
+          className={`absolute pointer-events-none ${stemFillClass}`}
           style={{
-            width: ALTITUDE_CONTROL_WIDTH_PX,
-            pointerEvents: canAdjust ? 'auto' : 'none',
-            touchAction: canAdjust ? 'none' : undefined,
+            left: centerX,
+            top: Math.min(centerY, tipY),
+            width: 2,
+            height: stemAbsPx,
+            marginLeft: -1,
+            boxShadow: '0 0 0 1px rgb(0 0 0 / 0.45)',
+            zIndex: Math.max(1, zIndex - 1),
           }}
-          onPointerDown={onPointerDown}
-          onPointerMove={onPointerMove}
-          onPointerUp={onPointerUp}
+        />
+      )}
+      {showTip && (
+        <div
+          aria-hidden
+          className="absolute pointer-events-none rounded border border-dh-border bg-dh-canvas/90 px-1 py-0.5 text-[10px] font-semibold tabular-nums leading-none text-dh shadow-sm whitespace-nowrap"
+          style={{
+            left: centerX,
+            top: tipY,
+            transform: tipLabelTransform,
+            width: 'fit-content',
+            zIndex,
+          }}
         >
-          {canAdjust && <ArrowUpDown size={10} className="mb-0.5 text-dh-muted" />}
           {formatAltitudeFt(displayAltitude)}
         </div>
       )}
-    </div>
+      {(showDelta || showInteractive) && (
+        <div
+          className="absolute flex items-center justify-end gap-0.5"
+          style={{
+            left: element.tokenX * pxPerFt,
+            top: centerY,
+            transform: 'translate(-100%, -50%)',
+            paddingRight: ALTITUDE_CONTROL_GAP_PX,
+            zIndex,
+            pointerEvents: 'none',
+          }}
+        >
+          {showDelta && (
+            <div className="rounded border border-sky-700/60 bg-sky-950/85 px-1 py-0.5 text-[10px] font-semibold tabular-nums leading-none text-sky-200 shadow-sm">
+              Δ{formatAltitudeFt(altitudeDeltaFt)}
+            </div>
+          )}
+          {showInteractive && (
+            <div
+              className={`flex flex-col items-center rounded border border-dh-border bg-dh-canvas/90 px-1 py-0.5 text-[10px] font-semibold tabular-nums leading-none text-dh shadow-sm select-none ${canAdjust ? 'cursor-ns-resize' : ''}`}
+              style={{
+                width: ALTITUDE_CONTROL_WIDTH_PX,
+                pointerEvents: canAdjust ? 'auto' : 'none',
+                touchAction: canAdjust ? 'none' : undefined,
+              }}
+              onPointerDown={onPointerDown}
+              onPointerMove={onPointerMove}
+              onPointerUp={onPointerUp}
+              onPointerCancel={onPointerUp}
+            >
+              {canAdjust && <ArrowUpDown size={10} className="mb-0.5 text-dh-muted" />}
+              {formatAltitudeFt(displayAltitude)}
+            </div>
+          )}
+        </div>
+      )}
+    </>
   );
 }
 
@@ -5322,6 +5389,7 @@ export function BattleMap({
             tokenWidthPx: footprint.halfWidth * 2 * pxPerFt,
             tokenHeightPx: footprint.halfLength * 2 * pxPerFt,
             expandLeftPx: ALTITUDE_CONTROL_WIDTH_PX + ALTITUDE_CONTROL_GAP_PX,
+            stemOffsetPx: altitudeStemOffsetPx(prev.altitude ?? 0, pxPerFt),
           })) {
             overToken = prev;
           }
@@ -5716,21 +5784,25 @@ export function BattleMap({
   /** Keep the stable proxy callbacks (declared earlier) pointed at the latest handler closures. */
   handlersRef.current = { handlePointerDown, handlePointerMove, handlePointerUp };
 
-  const renderTokenAltitudeHud = (element, tokenSizeHpx, zIndex) => {
+  const renderTokenAltitudeHud = (element, tokenSizeWpx, tokenSizeHpx, zIndex, { isMyCharacter = false, allyColorClasses = null } = {}) => {
     const bandInfo = tokenRangeBands[element.instanceId];
     const bandIdx = bandInfo?.bandIdx;
     const altitudeDeltaFt = bandInfo?.altitudeDeltaFt ?? 0;
     return (
       <TokenAltitudeControl
         element={element}
+        tokenSizeWpx={tokenSizeWpx}
         tokenSizeHpx={tokenSizeHpx}
         pxPerFt={pxPerFt}
+        viewZoom={viewZoom}
         zIndex={zIndex}
         altitudeDeltaFt={altitudeDeltaFt}
         showDelta={bandIdx != null && bandIdx >= 0 && altitudeDeltaFt !== 0}
         hoverFocused={bullseyeFt?.excludeInstanceId === element.instanceId}
         positionDragActive={!!dragGhost}
         canAdjust={canDrag(element)}
+        isMyCharacter={isMyCharacter}
+        allyColorClasses={allyColorClasses}
         onChangeAltitude={(ft) => updateActiveElement(element.instanceId, { altitude: ft })}
       />
     );
@@ -6951,7 +7023,10 @@ export function BattleMap({
                       onPointerMove={stableOnPointerMove}
                       onPointerUp={stableOnPointerUp}
                     />
-                    {renderTokenAltitudeHud(element, renderPx.heightPx, zIndex)}
+                    {renderTokenAltitudeHud(element, renderPx.widthPx, renderPx.heightPx, zIndex, {
+                      isMyCharacter: myChar,
+                      allyColorClasses: allyColorsByInstanceId.get(element.instanceId) ?? null,
+                    })}
                   </Fragment>
                 );
               })}
@@ -6981,7 +7056,10 @@ export function BattleMap({
                       onPointerMove={stableOnPointerMove}
                       onPointerUp={stableOnPointerUp}
                     />
-                    {renderTokenAltitudeHud(element, renderPx.heightPx, zIndex)}
+                    {renderTokenAltitudeHud(element, renderPx.widthPx, renderPx.heightPx, zIndex, {
+                      isMyCharacter: myChar,
+                      allyColorClasses: allyColorsByInstanceId.get(element.instanceId) ?? null,
+                    })}
                   </Fragment>
                 );
               })}
@@ -7011,7 +7089,7 @@ export function BattleMap({
                       onPointerMove={stableOnPointerMove}
                       onPointerUp={stableOnPointerUp}
                     />
-                    {renderTokenAltitudeHud(element, renderPx.heightPx, zIndex)}
+                    {renderTokenAltitudeHud(element, renderPx.widthPx, renderPx.heightPx, zIndex)}
                   </Fragment>
                 );
               })}
