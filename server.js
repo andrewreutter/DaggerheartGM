@@ -1029,15 +1029,26 @@ async function resolveDisplayNameForMapPing(req) {
 }
 
 // In-memory pending player intents (pre-roll banner state): tableId → intent object
-// Intent shape: { characterName, characterInstanceId, rollText, chips, timestamp }
+// Intent shape: { characterName, characterInstanceId, rollText, chips, intentId, needsDifficulty,
+//   difficulty, difficultyFinalized, timestamp }
 // chips are display-only (no functions): [{ label, description, hopeCost, stressCost, frequency, isToggle }]
 const pendingIntents = new Map();
 
-function broadcastIntentToGm(tableId, intent) {
+/** Broadcast a pending intent (or its finalize update) to every GM + player SSE connection for this table. */
+function broadcastIntentToRoom(tableId, intent) {
   const room = rooms.get(tableId);
   if (!room) return;
   const msg = `event: intent\ndata: ${JSON.stringify(intent)}\n\n`;
-  for (const clientRes of room.gmClients) { clientRes.write(msg); clientRes.flush?.(); }
+  for (const clientRes of room.gmClients) {
+    try {
+      if (!clientRes.writableEnded) { clientRes.write(msg); clientRes.flush?.(); }
+    } catch { /* ignore */ }
+  }
+  for (const [, p] of room.players) {
+    try {
+      if (p?.res && !p.res.writableEnded) { p.res.write(msg); p.res.flush?.(); }
+    } catch { /* ignore */ }
+  }
 }
 
 /** Resolve table by tableId and validate requester has access (owner or in playerEmails). Returns { tableId, gmUid, tableState } or { error, message }. */
@@ -4166,16 +4177,24 @@ app.post('/api/room/my/op', requireAuth, async (req, res) => {
 });
 
 
-// POST /api/room/:tableId/intent — Player (or GM) broadcasts a pre-roll intent banner to the GM.
-// Body: { characterName, characterInstanceId, rollText, chips }
+// POST /api/room/:tableId/intent — Player (or GM) broadcasts a pre-roll intent banner to the whole room.
+// Body: { characterName, characterInstanceId, rollText, chips, intentId?, needsDifficulty? }
 // chips must be plain serializable objects (no functions).
 app.post('/api/room/:tableId/intent', requireAuth, async (req, res) => {
   const ctx = await resolveTableAccess(APP_ID, req.params.tableId, req);
   if (ctx.error) return res.status(ctx.error).json({ error: ctx.message });
-  const { characterName, characterInstanceId, rollText, chips } = req.body;
-  const intent = { characterName, characterInstanceId, rollText, chips: chips || [], timestamp: Date.now() };
+  const { characterName, characterInstanceId, rollText, chips, intentId, needsDifficulty } = req.body;
+  const intent = {
+    characterName,
+    characterInstanceId,
+    rollText,
+    chips: chips || [],
+    intentId: intentId || null,
+    needsDifficulty: !!needsDifficulty,
+    timestamp: Date.now(),
+  };
   pendingIntents.set(req.params.tableId, intent);
-  broadcastIntentToGm(req.params.tableId, intent);
+  broadcastIntentToRoom(req.params.tableId, intent);
   res.json({ ok: true });
 });
 
@@ -4184,7 +4203,25 @@ app.delete('/api/room/:tableId/intent', requireAuth, async (req, res) => {
   const ctx = await resolveTableAccess(APP_ID, req.params.tableId, req);
   if (ctx.error) return res.status(ctx.error).json({ error: ctx.message });
   pendingIntents.delete(req.params.tableId);
-  broadcastIntentToGm(req.params.tableId, null);
+  broadcastIntentToRoom(req.params.tableId, null);
+  res.json({ ok: true });
+});
+
+// POST /api/room/:tableId/intent/difficulty — GM finalizes the difficulty for the pending player intent.
+// Body: { intentId, difficulty }. GM-only (403 if requester isn't the table owner).
+app.post('/api/room/:tableId/intent/difficulty', requireAuth, async (req, res) => {
+  const ctx = await resolveTableAccess(APP_ID, req.params.tableId, req);
+  if (ctx.error) return res.status(ctx.error).json({ error: ctx.message });
+  if (req.uid !== ctx.gmUid) return res.status(403).json({ error: 'Only the GM can finalize difficulty' });
+  const { intentId, difficulty } = req.body;
+  const existing = pendingIntents.get(req.params.tableId);
+  if (!existing || existing.intentId !== intentId) {
+    return res.status(409).json({ error: 'Intent no longer pending' });
+  }
+  const clamped = Math.max(5, Math.min(30, Number(difficulty) || 15));
+  const updated = { ...existing, difficulty: clamped, difficultyFinalized: true };
+  pendingIntents.set(req.params.tableId, updated);
+  broadcastIntentToRoom(req.params.tableId, updated);
   res.json({ ok: true });
 });
 

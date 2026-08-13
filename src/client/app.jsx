@@ -188,6 +188,9 @@ function App() {
   const [mapScribbles, setMapScribbles] = useState([]);
   // pendingPlayerIntent: pre-roll intent broadcast by a player before dice are rolled (GM sees this)
   const [pendingPlayerIntent, setPendingPlayerIntent] = useState(null);
+  // intentDifficultyUpdate: latest `intent` SSE payload as seen by a player — used to detect when the
+  // GM has finalized the difficulty for that player's own pending pre-roll banner.
+  const [intentDifficultyUpdate, setIntentDifficultyUpdate] = useState(null);
   // Player-only: banner IDs for which a feature reroll was requested, keyed by reaction stateKey (optimistic feedback)
   const [featureRequestedBannerIdsByKey, setFeatureRequestedBannerIdsByKey] = useState(() => ({}));
   // Player-only: banner IDs for which Ranger's Focus reroll was requested
@@ -211,6 +214,8 @@ function App() {
   const myTablesFetchedRef = useRef(false);
   /** Firebase uid of the table owner; set from GET table_state (ownerUid). Undefined until first load for this tableId. */
   const [tableOwnerUid, setTableOwnerUid] = useState(undefined);
+  /** Set to 'not-found' when the table doesn't exist or the user isn't invited (403/404 from loadTableState). */
+  const [tableAccessError, setTableAccessError] = useState(null);
 
   useEffect(() => {
     const handleClickOutside = (e) => {
@@ -502,7 +507,10 @@ function App() {
 
   const isInvitedPlayerHeuristic = !!(user && route.tableId && myRooms.some(r => r.tableId === route.tableId) && !myTables.some(t => t.id === route.tableId));
   // Player mode: invited guest on another GM's table (derived from ownerUid and myRooms while loading).
+  // tableOwnerUid===undefined means still loading — optimistically treat as player until ownership is confirmed,
+  // so a player never briefly sees the GM view while the table state fetch is in flight.
   const isPlayer = route.view === 'table' && !!user && !!route.tableId && (
+    tableOwnerUid === undefined ||
     (tableOwnerUid != null && tableOwnerUid !== user.uid) ||
     (tableOwnerUid == null && isInvitedPlayerHeuristic)
   );
@@ -687,6 +695,7 @@ function App() {
   const prevTableIdRef = useRef(null);
   useEffect(() => {
     setTableOwnerUid(undefined);
+    setTableAccessError(null);
   }, [route.tableId]);
 
   useEffect(() => {
@@ -804,7 +813,16 @@ function App() {
       }
       setTableStateReady(true);
       tableStateReadyRef.current = true;
-    }).catch(err => console.error('Failed to load table state:', err));
+    }).catch(err => {
+      console.error('Failed to load table state:', err);
+      const status = parseInt(err?.message?.match(/HTTP (\d+)/)?.[1] || '0', 10);
+      if (status === 403 || status === 404) {
+        setTableOwnerUid(null);
+        setTableAccessError('not-found');
+        setTableStateReady(true);
+        tableStateReadyRef.current = true;
+      }
+    });
   }, [user?.uid, route.view, route.tableId]);
 
   // GM SSE: receive player presence, table state snapshots, banners, and dice roll events
@@ -1006,6 +1024,11 @@ function App() {
           if (!id || seenLogDbIdsRef.current.has(id)) return;
           seenLogDbIdsRef.current.add(id);
           setActionLog(prev => [...prev.slice(-49), { ...normalizeRoll(roll), _logId: `log-${id}` }]);
+        } catch { /* ignore */ }
+      });
+      es.addEventListener('intent', (e) => {
+        try {
+          setIntentDifficultyUpdate(JSON.parse(e.data));
         } catch { /* ignore */ }
       });
       es.addEventListener('map_ping', (e) => {
@@ -2044,7 +2067,14 @@ function App() {
               style={{ display: route.view === 'table' ? 'flex' : 'none' }}
               aria-hidden={route.view !== 'table'}
             >
-              <GMTableView
+              {tableAccessError === 'not-found' && route.view === 'table' && (
+                <div className="flex-1 flex flex-col items-center justify-center gap-3 text-dh-muted">
+                  <span className="text-5xl">🗺️</span>
+                  <p className="text-lg font-semibold text-dh">Table not found</p>
+                  <p className="text-sm">This table doesn't exist or you haven't been invited.</p>
+                </div>
+              )}
+              {!tableAccessError && <GMTableView
                 tableId={tableId}
                 activeElements={activeElements}
                 updateActiveElement={isPlayer ? handlePlayerCharacterUpdate : sendUpdateActiveElement}
@@ -2100,6 +2130,7 @@ function App() {
                 onPlayerAddCharacter={isPlayer ? handlePlayerAddCharacter : (isPreviewMode ? handleGmImpersonateAddCharacter : undefined)}
                 pendingBanners={pendingBanners}
                 pendingPlayerIntent={pendingPlayerIntent}
+                intentDifficultyUpdate={intentDifficultyUpdate}
                 onFeatureRequestSuccess={effectiveIsPlayer ? (bannerId, stateKey) => {
                   if (stateKey == null) return;
                   setFeatureRequestedBannerIdsByKey(prev => ({
@@ -2181,7 +2212,7 @@ function App() {
                 onBattleMapViewportAspectChange={setBattleMapViewportAspect}
                 onBattleMapViewportCenterChange={(center) => { mapViewportCenterRef.current = center; }}
                 isAdmin={isAdmin}
-              />
+              />}
             </div>
           </>
         )}

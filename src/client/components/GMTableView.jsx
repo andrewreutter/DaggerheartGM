@@ -31,6 +31,7 @@ import { withActionBannerSuppression } from '../lib/action-notification-banner.j
 import { isReactionRoll } from '../lib/reaction-roll-display.js';
 import { buildTraitRollText, buildPreRollPanelTitle } from '../lib/trait-roll-text.js';
 import { buildReactionCallRoster, canViewerProceedReaction } from '../lib/reaction-call-roster.js';
+import { requiresGmFinalizedDifficulty, resolveFinalizedIntentDifficulty } from '../lib/action-roll-difficulty.js';
 import {
   postRoll as postRollToServer,
   postTableOp,
@@ -57,6 +58,7 @@ import {
   postPlayerIntent,
   postPlayerV2ReviewChip,
   clearPlayerIntent,
+  postFinalizeIntentDifficulty,
   syncDaggerstackCharacter,
   resolveItems,
   requestGoogleContactsAccess,
@@ -551,7 +553,7 @@ function buildGameTableNewEnvironmentStub(tier = 1, type = 'exploration') {
   };
 }
 
-export function GMTableView({ tableId, activeElements, updateActiveElement: pushTableElementUpdate, removeActiveElement, updateActiveElementsBaseData, data, saveItem, saveImage, addToTable, sendDoAddToTable, onMergeAdversary, user, route, navigate, featureCountdowns = {}, sessionCountdowns = [], updateCountdown, partySize = 1, partyTier = 1, characters = [], tableBattleMods, setTableBattleMods, fearCount = 0, setFearCount, conditionsHistory = [], onAddConditionsHistoryEntry, onRemoveConditionsHistoryEntry, tableName = '', gmDisplayName = '', tableStateReady = false, onTableNameChange, onDeleteTable, ensureScenesLoaded, ensureAdventuresLoaded, ensureCharactersLoaded, clearTable, isPlayer = false, playerEmail, connectedPlayers = [], playerEmails = [], setPlayerEmails, gmUid, onPlayerAddCharacter, pendingBanners = [], pendingPlayerIntent = null, onFeatureRequestSuccess, onFeatureRequestCancel, rangerFocusRequestedBannerIds, onRangerFocusRerollRequestSuccess, onRangerFocusRerollRequestCancel, previewAsPlayerEmail = null, onPreviewAsPlayer, onExitPreview, actionLog = [], setActionLog, mapConfig, maps = [], activeMapId = null, gmMapView = null, onSetActiveMap, onAddMap, onAddMapWithImage, onRemoveMap, onRenameMap, onMapConfigChange, onMapViewSync, lifeSupportSelections = {}, onLifeSupportSelect, onLifeSupportClear, restMovesSelections = {}, onRestMoveSelect, onRestMoveClear, tableFeatureState = {}, sessionPlayAllowed = true, sessionStarted = true, sessionPaused = false, mapPings = [], onDismissMapPing = () => {}, appendMapPing = () => {},
+export function GMTableView({ tableId, activeElements, updateActiveElement: pushTableElementUpdate, removeActiveElement, updateActiveElementsBaseData, data, saveItem, saveImage, addToTable, sendDoAddToTable, onMergeAdversary, user, route, navigate, featureCountdowns = {}, sessionCountdowns = [], updateCountdown, partySize = 1, partyTier = 1, characters = [], tableBattleMods, setTableBattleMods, fearCount = 0, setFearCount, conditionsHistory = [], onAddConditionsHistoryEntry, onRemoveConditionsHistoryEntry, tableName = '', gmDisplayName = '', tableStateReady = false, onTableNameChange, onDeleteTable, ensureScenesLoaded, ensureAdventuresLoaded, ensureCharactersLoaded, clearTable, isPlayer = false, playerEmail, connectedPlayers = [], playerEmails = [], setPlayerEmails, gmUid, onPlayerAddCharacter, pendingBanners = [], pendingPlayerIntent = null, intentDifficultyUpdate = null, onFeatureRequestSuccess, onFeatureRequestCancel, rangerFocusRequestedBannerIds, onRangerFocusRerollRequestSuccess, onRangerFocusRerollRequestCancel, previewAsPlayerEmail = null, onPreviewAsPlayer, onExitPreview, actionLog = [], setActionLog, mapConfig, maps = [], activeMapId = null, gmMapView = null, onSetActiveMap, onAddMap, onAddMapWithImage, onRemoveMap, onRenameMap, onMapConfigChange, onMapViewSync, lifeSupportSelections = {}, onLifeSupportSelect, onLifeSupportClear, restMovesSelections = {}, onRestMoveSelect, onRestMoveClear, tableFeatureState = {}, sessionPlayAllowed = true, sessionStarted = true, sessionPaused = false, mapPings = [], onDismissMapPing = () => {}, appendMapPing = () => {},
   mapScribbles = [],
   mapViews = [], gmActiveViewId = null, onSetActiveView, onAddMapViewOp, onRemoveMapView, onRenameMapView, onSetViewBroadcast, onSetViewLocked, onSetMapShare,
   onSetMapOverlay,
@@ -893,7 +895,17 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
   const [preRollExperienceIndex, setPreRollExperienceIndex] = useState(null); // intent panel: PC experience for action roll
   const [preRollCompanionExperienceIndex, setPreRollCompanionExperienceIndex] = useState(null);
   const [selectedPreRollChips, setSelectedPreRollChips] = useState([]); // one boolean per chip when preRollBanner is set
-  const [preRollDifficulty, setPreRollDifficulty] = useState(15); // DC 5–30 when GM shows difficulty chip
+  const readLastDifficulty = () => {
+    try { const v = parseInt(localStorage.getItem('dh_gm_last_difficulty') || '', 10); return (v >= 5 && v <= 30) ? v : 15; } catch { return 15; }
+  };
+  const writeLastDifficulty = (val) => {
+    try { localStorage.setItem('dh_gm_last_difficulty', String(val)); } catch {}
+  };
+  const [preRollDifficulty, setPreRollDifficulty] = useState(readLastDifficulty); // DC 5–30 when GM shows difficulty chip
+  const [intentDifficultyDraft, setIntentDifficultyDraft] = useState(readLastDifficulty); // DC 5–30 draft for GM-finalized player-intent difficulty
+  useEffect(() => {
+    setIntentDifficultyDraft(pendingPlayerIntent?.difficulty ?? readLastDifficulty());
+  }, [pendingPlayerIntent?.intentId]);
   const [preRollAdvantages, setPreRollAdvantages] = useState([]); // string[]: optional name per advantage ('' = default "Advantage")
   const [preRollDisadvantages, setPreRollDisadvantages] = useState([]); // string[]: optional name per disadvantage ('' = default "Disadvantage")
   /** Intent panel: review/change attack target (same list as in-sheet target menu). */
@@ -3795,8 +3807,12 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     // Skip for attack rolls (weapon/beastform/feature-with-target); those use the target's difficulty or evasion.
     const isAttackRoll = (meta) => (meta._weaponRangeFt != null || meta._featureNeedsTarget === true);
     if (!isPlayer && !isAttackRoll(meta) && meta._reactionCallRollDbId == null) {
-      canvas.chips.push({ _difficultyChip: true, label: 'Difficulty (optional)' });
+      canvas.chips.push({ _difficultyChip: true, label: 'Difficulty' });
     }
+    // Player-initiated action roll (non-attack, non-reaction): the GM must finalize a difficulty
+    // via the Intent banner before this player's own pre-roll sheet can Proceed.
+    const requiresGmDifficulty = isPlayer && requiresGmFinalizedDifficulty(meta);
+    const intentId = requiresGmDifficulty ? generateId() : null;
 
     const getFeatureStateFor = (el, featureName) => {
       const get = (key, defaultVal) => {
@@ -3921,7 +3937,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     dismissAllHoverCards();
     setPreRollExperienceIndex(null);
     setPreRollCompanionExperienceIndex(null);
-    setPreRollBanner({ rollWrapper, chips: canvas.chips, characterEl, onProceed, getFeatureStateFor, pending });
+    setPreRollBanner({ rollWrapper, chips: canvas.chips, characterEl, onProceed, getFeatureStateFor, pending, requiresGmDifficulty, intentId });
     setSelectedPreRollChips(canvas.chips.map(() => false));
 
     // Broadcast the intent to the GM so they can see the pre-roll banner too.
@@ -3943,6 +3959,8 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
         characterInstanceId: characterEl?.instanceId || '',
         rollText: pending.rollText,
         chips: serializableChips,
+        intentId,
+        needsDifficulty: requiresGmDifficulty,
       });
     }
   };
@@ -4125,8 +4143,12 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     setPreRollTargetInstanceId(id ?? null);
   }, [preRollBanner]);
 
+  // GM-finalized difficulty for the current player's own pre-roll banner (null until the GM sets it).
+  const preRollFinalizedGmDifficulty = resolveFinalizedIntentDifficulty(preRollBanner, intentDifficultyUpdate);
+
   const handlePreRollProceed = async () => {
     if (!preRollBanner) return;
+    if (preRollBanner.requiresGmDifficulty && preRollFinalizedGmDifficulty == null) return;
     const intentUsedLog = [];
     const { rollWrapper, chips, characterEl, onProceed, getFeatureStateFor, pending } = preRollBanner;
     // Clear the GM's intent banner as dice are now rolling
@@ -4202,6 +4224,8 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
         rollWrapper.addDisadvantage((name && name.trim()) || 'Disadvantage');
         intentUsedLog.push((name && name.trim()) ? `Disadvantage: ${name.trim()}` : 'Disadvantage');
       }
+    } else if (preRollBanner.requiresGmDifficulty) {
+      rollWrapper.meta._difficulty = preRollFinalizedGmDifficulty;
     }
                     const onRollCtxProceed = {
                       roll: rollWrapper,
@@ -6456,6 +6480,18 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                 );
               })()}
               <p className="text-xs text-dh mb-2">Choose experience and optional toggles, then Proceed.</p>
+              {preRollBanner.requiresGmDifficulty && (
+                <div className="mb-3 w-full rounded border border-dh-strong bg-dh-raised/40 px-2.5 py-1.5">
+                  {preRollFinalizedGmDifficulty == null ? (
+                    <p className="text-[11px] text-dh-muted italic">Waiting for the GM to set the difficulty&hellip;</p>
+                  ) : (
+                    <p className="text-[11px] text-dh">
+                      Difficulty: <span className="font-bold">DC {preRollFinalizedGmDifficulty}</span>{' '}
+                      <span className="text-dh-muted">({getDifficultyLabel(preRollFinalizedGmDifficulty)}) — set by GM</span>
+                    </p>
+                  )}
+                </div>
+              )}
               {preRollBanner.pending?.meta?._deferExperienceToPreRoll && (() => {
                 const cel = activeElements.find(e => e.instanceId === preRollBanner.characterEl.instanceId) || preRollBanner.characterEl;
                 const meta = preRollBanner.pending.meta;
@@ -6636,7 +6672,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                             max={30}
                             step={1}
                             value={preRollDifficulty}
-                            onChange={(e) => setPreRollDifficulty(Number(e.target.value))}
+                            onChange={(e) => { const v = Number(e.target.value); setPreRollDifficulty(v); writeLastDifficulty(v); }}
                             className="flex-1 h-2 rounded-full appearance-none bg-gradient-to-r from-slate-600 to-slate-900 cursor-pointer accent-sky-500"
                             aria-label="Difficulty (DC 5–30)"
                           />
@@ -6770,7 +6806,9 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                 <button
                   type="button"
                   onClick={handlePreRollProceed}
-                  className="px-3 py-1.5 rounded text-[11px] font-semibold border border-dh-strong bg-dh-hover text-dh hover:bg-dh-strong"
+                  disabled={preRollBanner.requiresGmDifficulty && preRollFinalizedGmDifficulty == null}
+                  title={preRollBanner.requiresGmDifficulty && preRollFinalizedGmDifficulty == null ? 'Waiting for the GM to set the difficulty' : undefined}
+                  className="px-3 py-1.5 rounded text-[11px] font-semibold border border-dh-strong bg-dh-hover text-dh hover:bg-dh-strong disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-dh-hover"
                 >
                   Proceed
                 </button>
@@ -6785,9 +6823,9 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
             </div>
           </div>
         )}
-        {/* GM read-only intent banner: shown when a player has opened their pre-roll banner */}
+        {/* GM intent banner: shown when a player has opened their pre-roll banner. Interactive (Difficulty slider + Finalize) when the roll needs a GM-set DC. */}
         {!isPlayer && pendingPlayerIntent && createPortal(
-          <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 max-w-sm w-full px-3 py-2.5 rounded-xl shadow-2xl bg-dh-surface/95 border border-dh-strong text-dh flex flex-col gap-1.5 pointer-events-none">
+          <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 max-w-sm w-full px-3 py-2.5 rounded-xl shadow-2xl bg-dh-surface/95 border border-dh-strong text-dh flex flex-col gap-1.5 pointer-events-auto">
             <div className="flex items-center gap-2">
               <span className="text-[10px] font-bold uppercase tracking-wide text-dh-muted">Intent</span>
               <span className="text-[11px] font-semibold text-dh truncate">{pendingPlayerIntent.characterName}</span>
@@ -6805,7 +6843,41 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                 ))}
               </div>
             )}
-            <p className="text-[9px] text-dh-muted italic">Player is deciding — dice haven't rolled yet.</p>
+            {pendingPlayerIntent.needsDifficulty ? (
+              <div className="flex flex-col gap-1.5 pt-0.5">
+                <label className="text-[10px] font-semibold text-dh" htmlFor="intent-difficulty">Difficulty</label>
+                <div className="flex items-center gap-2">
+                  <input
+                    id="intent-difficulty"
+                    type="range"
+                    min={5}
+                    max={30}
+                    step={1}
+                    value={intentDifficultyDraft}
+                    onChange={(e) => { const v = Number(e.target.value); setIntentDifficultyDraft(v); writeLastDifficulty(v); }}
+                    className="flex-1 h-2 rounded-full appearance-none bg-gradient-to-r from-slate-600 to-slate-900 cursor-pointer accent-sky-500"
+                    aria-label="Difficulty (DC 5–30)"
+                  />
+                  <span className="text-sm font-bold tabular-nums text-dh shrink-0 w-8" aria-live="polite">
+                    {intentDifficultyDraft}
+                  </span>
+                </div>
+                <span className="text-[10px] text-dh-muted">{getDifficultyLabel(intentDifficultyDraft)}</span>
+                {pendingPlayerIntent.difficultyFinalized ? (
+                  <span className="self-start text-[10px] font-semibold text-emerald-400">Locked: DC {pendingPlayerIntent.difficulty}</span>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => { writeLastDifficulty(intentDifficultyDraft); postFinalizeIntentDifficulty(tableId, { intentId: pendingPlayerIntent.intentId, difficulty: intentDifficultyDraft }); }}
+                    className="self-start px-2.5 py-1 rounded text-[11px] font-semibold border border-sky-600 bg-sky-900/50 text-sky-100 hover:bg-sky-800/60"
+                  >
+                    Finalize
+                  </button>
+                )}
+              </div>
+            ) : (
+              <p className="text-[9px] text-dh-muted italic">Player is deciding — dice haven't rolled yet.</p>
+            )}
           </div>,
           document.body
         )}

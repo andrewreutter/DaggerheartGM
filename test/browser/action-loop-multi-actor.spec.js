@@ -1073,3 +1073,134 @@ test.describe('M5 — Cross-sheet chip affecting another player\'s sheet in real
     await playerBPage.close();
   });
 });
+
+// GM-finalized difficulty for player action rolls (docs/plans:
+// gm_difficulty_finalization_for_player_action_rolls)
+//
+// Player A's trait roll (a non-attack, non-reaction action roll) opens their own "Before you
+// roll" pre-roll sheet, which is blocked on Proceed until the GM sets a DC → the real, room-wide
+// `intent` SSE broadcast surfaces an interactive Intent banner on the GM's client (Difficulty
+// slider + Finalize button, real DOM elements, real clicks — no direct API calls) → the GM drags
+// the slider and clicks Finalize → the same SSE channel echoes the finalized DC back to Player A,
+// unlocking Proceed with the GM-set DC shown → Player A clicks Proceed and the roll is posted with
+// `_difficulty` attached, which is verified end-to-end by the resulting banner rendering a real
+// Success/Failure label (DiceRoller only shows that label when `roll._difficulty != null`).
+
+test.describe('GM-finalized difficulty for player action rolls (trait roll)', () => {
+  let tableId;
+  let charAInstanceId;
+
+  test.beforeAll(async () => {
+    tableId = await setupTestTable({ playerEmails: [ACTOR_PLAYER_A.email] });
+
+    charAInstanceId = `char-a-diff-${Date.now()}`;
+    await addElementsToTable(tableId, [
+      {
+        instanceId: charAInstanceId,
+        elementType: 'character',
+        id: `nonexistent-char-diff-${Date.now()}`,
+        name: 'Difficulty Test PC',
+        currentHp: 6, maxHp: 6, currentStress: 0, maxStress: 6, hope: 2, maxHope: 6,
+        conditions: '',
+        assignedPlayerUid: ACTOR_PLAYER_A.uid,
+        assignedPlayerEmail: ACTOR_PLAYER_A.email,
+      },
+    ]);
+
+    await setTableTop(tableId, { sessionStarted: true });
+  });
+
+  test.afterAll(async () => {
+    if (tableId) await deleteTestTable(tableId);
+  });
+
+  test('player trait roll blocks on GM-finalized DC via the real Intent banner; Proceed unlocks and the roll carries that difficulty', async ({ page }) => {
+    const consoleErrors = [];
+    page.on('console', (msg) => { if (msg.type() === 'error') consoleErrors.push(msg.text()); });
+
+    await authenticateActor(page, ACTOR_GM);
+    await page.goto(`/table/${tableId}`);
+    await expect(page.locator('button', { hasText: 'Add Character' })).toBeVisible({ timeout: 15000 });
+
+    const playerAPage = await page.context().newPage();
+    playerAPage.on('console', (msg) => { if (msg.type() === 'error') consoleErrors.push(`[A] ${msg.text()}`); });
+    await authenticateActor(playerAPage, ACTOR_PLAYER_A);
+    await playerAPage.goto(`/table/${tableId}`);
+
+    await expect(playerAPage.locator('text=Difficulty Test PC').first()).toBeVisible({ timeout: 15000 });
+
+    // Hide the 3D dice canvas on both clients (same pattern as M2/M4/M5) so the eventual roll
+    // banner resolves immediately and its Acknowledge button is reliably clickable.
+    for (const p of [page, playerAPage]) {
+      await p.getByLabel('Hide dice').click();
+    }
+
+    // Player A opens their own character sheet (real click on their own sidebar card).
+    await playerAPage.locator('text=Difficulty Test PC').first().click();
+
+    // Real click on the "Roll Agility" trait chip — a non-attack, non-reaction action roll,
+    // which sets `_intentPanelForActionRoll: true` and therefore requires a GM-finalized DC
+    // (isAttackRollMeta / requiresGmFinalizedDifficulty in action-roll-difficulty.js).
+    const agilityChip = playerAPage.getByTitle('Roll Agility');
+    await expect(agilityChip).toBeVisible({ timeout: 8000 });
+    await agilityChip.click();
+
+    // Player A's own pre-roll sheet opens and blocks the real Proceed button until the GM sets
+    // a difficulty — no slider is offered on the player's own sheet for this roll type.
+    await expect(playerAPage.getByText('Waiting for the GM to set the difficulty')).toBeVisible({ timeout: 8000 });
+    const proceedBtn = playerAPage.getByRole('button', { name: 'Proceed' });
+    await expect(proceedBtn).toBeDisabled();
+
+    // The real Intent banner appears on the GM's client via the room-wide `intent` SSE broadcast,
+    // and — because this roll needsDifficulty — is interactive with a Difficulty slider and a
+    // Finalize button (not the old read-only "Player is deciding" copy).
+    const difficultySlider = page.locator('#intent-difficulty');
+    await expect(difficultySlider).toBeVisible({ timeout: 8000 });
+    const finalizeBtn = page.getByRole('button', { name: 'Finalize' });
+    await expect(finalizeBtn).toBeVisible();
+
+    // GM drags the real slider to DC 20. React tracks the native input value on the DOM node
+    // itself (to detect genuine changes), so a plain `el.value = '20'` gets silently absorbed by
+    // that tracker and no onChange fires — set the value through the native HTMLInputElement
+    // setter (bypassing React's tracked instance property) before dispatching 'input', which is
+    // the standard way to simulate a real value change on a React-controlled input.
+    await difficultySlider.evaluate((el) => {
+      const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+      nativeSetter.call(el, '20');
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await expect(difficultySlider).toHaveValue('20');
+    await finalizeBtn.click();
+
+    // The finalize POST re-broadcasts room-wide; the GM's own banner locks in place...
+    await expect(page.getByText('Locked: DC 20')).toBeVisible({ timeout: 8000 });
+    // ...and Player A's pre-roll sheet, which shares the same SSE `intent` listener, unlocks
+    // Proceed and shows the GM-set DC — with no reload or further interaction on Player A's side.
+    await expect(playerAPage.getByText('DC 20')).toBeVisible({ timeout: 8000 });
+    await expect(proceedBtn).toBeEnabled();
+
+    // Player A clicks the real "Proceed" button — the roll is posted with `_difficulty: 20`.
+    await proceedBtn.click();
+    await expect(playerAPage.getByText('Before you roll')).not.toBeVisible({ timeout: 5000 });
+
+    // The resulting roll banner appears on both clients and shows a real Success/Failure label —
+    // DiceRoller only renders that label when `roll._difficulty != null`, so this is direct,
+    // end-to-end confirmation that the GM-finalized DC actually rode along on the posted roll
+    // (rather than a pure UI-state assertion stopping at the pre-roll sheet).
+    const bannerTitle = 'Difficulty Test PC Agility';
+    const gmBanner = page.locator('.dice-result-banner', { hasText: bannerTitle });
+    const playerABanner = playerAPage.locator('.dice-result-banner', { hasText: bannerTitle });
+    await expect(gmBanner).toBeVisible({ timeout: 8000 });
+    await expect(playerABanner).toBeVisible({ timeout: 8000 });
+    await expect(gmBanner.getByText(/^(Success|Failure)$/)).toBeVisible({ timeout: 8000 });
+
+    // GM acknowledges the roll (real click) — cleans up the banner on all clients.
+    await gmBanner.getByRole('button', { name: 'Acknowledge' }).first().click();
+    await expect(gmBanner).not.toBeVisible({ timeout: 5000 });
+
+    const seriousErrors = consoleErrors.filter((e) => !/favicon|manifest|WebGL|\[DiceRoller\] init failed|Failed to load resource.*403/i.test(e));
+    expect(seriousErrors, `Unexpected console errors:\n${seriousErrors.join('\n')}`).toEqual([]);
+
+    await playerAPage.close();
+  });
+});

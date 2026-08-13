@@ -1634,11 +1634,16 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
         ? (hitCount === 1 ? 'Hit' : 'Miss')
         : [hitCount > 0 && `${hitCount} hit${hitCount > 1 ? 's' : ''}`, missCount > 0 && `${missCount} miss${missCount > 1 ? 'es' : ''}`].filter(Boolean).join(', '))
     : null;
-  // Non-attack duality rolls with a difficulty: show Success/Failure (like Hit/Miss for attacks).
+  // Non-attack duality rolls with a difficulty: show the DC immediately, then Success/Failure once resolved.
   // Critical (Hope/Fear doubles) is always a success per Daggerheart rules.
-  const showSuccessFailure = hasDuality && resolved && roll._difficulty != null && !showHitMiss;
+  const showDcTarget = roll._difficulty != null && hasDuality && !showHitMiss;
+  const showSuccessFailure = showDcTarget && resolved;
   const difficultySuccess = showSuccessFailure && (isCritical || effectiveAttackTotal >= roll._difficulty);
-  const successFailureLabel = showSuccessFailure ? (difficultySuccess ? 'Success' : 'Failure') : null;
+  const successFailureLabel = showDcTarget
+    ? (showSuccessFailure
+        ? `DC ${roll._difficulty} — ${difficultySuccess ? 'Success' : 'Failure'}`
+        : `DC ${roll._difficulty}`)
+    : null;
   const resultLabel = hitMissLabel || successFailureLabel;
   const resultSuccess = showHitMiss ? (hitCount > 0 && missCount === 0) : (showSuccessFailure && difficultySuccess);
   const resultFailure = showHitMiss ? (hitCount === 0 && missCount > 0) : (showSuccessFailure && !difficultySuccess);

@@ -1049,6 +1049,17 @@ export const clearPlayerIntent = async (tableId) => {
   }).catch(() => {});
 };
 
+/** GM: finalize the difficulty for a pending player intent so their pre-roll sheet can Proceed. */
+export const postFinalizeIntentDifficulty = async (tableId, { intentId, difficulty }) => {
+  const token = await getAuthToken();
+  if (!token) return;
+  fetch(`/api/room/${tableId}/intent/difficulty`, {
+    method: 'POST',
+    headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
+    body: JSON.stringify({ intentId, difficulty }),
+  }).catch(() => {});
+};
+
 /** GM: broadcast a table operation to all room clients (best-effort, fire-and-forget). */
 /**
  * Broadcast an action notification banner to all room clients via SSE.
