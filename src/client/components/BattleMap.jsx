@@ -1445,7 +1445,7 @@ function TokenAltitudeControl({
             height: stemAbsPx,
             marginLeft: -1,
             boxShadow: '0 0 0 1px rgb(0 0 0 / 0.45)',
-            zIndex: Math.max(1, zIndex - 1),
+            zIndex,
           }}
         />
       )}
