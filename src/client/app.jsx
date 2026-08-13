@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import ReactDOM from 'react-dom/client';
 import { createPortal } from 'react-dom';
 import { signOut, onAuthStateChanged } from 'firebase/auth';
-import { Swords, BookOpen, LayoutDashboard, ChevronDown, LogOut, Upload, Download, Trash2, Circle, Plus, ScrollText, Sparkles, Bot, ShieldOff, Bug } from 'lucide-react';
+import { BookOpen, LayoutDashboard, ChevronDown, LogOut, Upload, Download, Trash2, Circle, Plus, ScrollText, Sparkles, Bot, ShieldOff, Bug } from 'lucide-react';
 
 import { auth, getAuthToken, CLIENT_ID, loadCollection, loadTableState, resolveItems, saveItem as apiSaveItem, saveImage as apiSaveImage, deleteItem as apiDeleteItem, cloneItemToLibrary, recordPlay, fetchMe, fetchMyRooms, fetchMyTables, createTable, postCharacterUpdate, postAddCharacter, postTableOp, postLifeSupportSelect, postRestMoveSelect, normalizeRoll, conceptAiEnabled, imageGenEnabled, fetchTableBillingStatus, postMapImageFile, postMapImageFileForTable, postMapImageObject } from './lib/api.js';
 import { dataUrlToFile, loadImageNaturalSizeFromUrl } from './lib/map-image-data-url.js';
@@ -2003,9 +2003,15 @@ function App() {
       <main className="flex-1 overflow-hidden flex flex-col">
         {!user || route.view === 'home' ? (
           <div className="flex-1 flex flex-col items-center justify-center p-8 bg-gradient-to-b from-dh-surface to-dh-canvas">
-            <Swords size={64} className="text-red-500 mb-6" />
-            <h1 className="text-4xl font-bold text-dh mb-2">Daggertop</h1>
-            <p className="text-dh-muted mb-8 text-center max-w-md">Build adversaries, environments, and run your encounters seamlessly with integrated action tracking.</p>
+            <img src="/assets/daggertop-logo.png" alt="Daggertop" className="w-40 h-40 object-contain mb-4" />
+            <h1 className="text-5xl font-bold text-red-500 tracking-wider mb-3 flex items-center gap-3">DAGGERTOP</h1>
+            <p className="text-lg text-dh-muted mb-4 text-center max-w-lg">The best way to play the Daggerheart RPG.</p>
+            <ul className="text-dh-muted text-sm text-left max-w-lg mb-8 space-y-2 list-none">
+            <li className="flex gap-2"><span className="text-red-500 mt-0.5 shrink-0">•</span><span>Virtual tabletop (VTT) built specifically for Daggerheart, with Hope, Fear, and range tracking, multiple maps and cameras, a dice roller and action log, and more!</span></li>
+            <li className="flex gap-2"><span className="text-red-500 mt-0.5 shrink-0">•</span><span>Full mechanical support for every class, subclass, ancestry, and community in the SRD.</span></li>
+            <li className="flex gap-2"><span className="text-red-500 mt-0.5 shrink-0">•</span><span>Character builder with full support through level 10 and easy renaming of features for flavor.</span></li>
+              <li className="flex gap-2"><span className="text-red-500 mt-0.5 shrink-0">•</span><span>Library of adversaries, environments, and more — pick up and play or dive deep into homebrew built by you and other creators.</span></li>
+            </ul>
             <AuthLanding />
           </div>
         ) : (
