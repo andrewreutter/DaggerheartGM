@@ -302,6 +302,13 @@ export const formatTargetSummary = (t, opts = {}) => {
   const raw = (t.conditions ?? '').trim();
   const conditions = raw.length > 40 ? raw.slice(0, 37) + '...' : raw;
 
+  if (t.type === 'companion') {
+    const stress = opts.hideMax
+      ? `${currentStress} Stress`
+      : `${currentStress}/${maxStress || 3} Stress`;
+    return { hp: '', stress, conditions };
+  }
+
   if (opts.hideMax) {
     const hpMarked = Math.max(0, maxHp - currentHp);
     const hp = `${hpMarked} HP`;

@@ -3,6 +3,7 @@ import {
   BEASTBOUND_COMPANION_VIRTUAL_TOKEN_ID,
   collectMissingCompanionBoardTokenElements,
   hasCompanionBoardToken,
+  isCompanionBoardToken,
 } from '../../src/client/lib/board-token-utils.js';
 
 describe('board-token-utils', () => {
@@ -58,5 +59,14 @@ describe('board-token-utils', () => {
         { elementType: 'character', instanceId: 'b', subclassId: 'srd-sub-beastbound' },
       ]),
     ).toHaveLength(0);
+  });
+
+  it('isCompanionBoardToken matches virtualTokenId or tokenKind', () => {
+    expect(isCompanionBoardToken({
+      elementType: 'boardToken',
+      virtualTokenId: BEASTBOUND_COMPANION_VIRTUAL_TOKEN_ID,
+    })).toBe(true);
+    expect(isCompanionBoardToken({ elementType: 'boardToken', tokenKind: 'companion' })).toBe(true);
+    expect(isCompanionBoardToken({ elementType: 'character' })).toBe(false);
   });
 });

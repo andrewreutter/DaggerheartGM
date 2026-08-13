@@ -455,6 +455,31 @@ export function AdversaryCardContent({
         )}
       </div>
 
+      <AdversaryCardAttackAndFeatures
+        element={el}
+        cardKey={cardKey}
+        hoveredFeature={hoveredFeature}
+        onRollAttack={onRollAttack}
+        damageBoost={dmgBoost}
+      />
+    </>
+  );
+}
+
+/**
+ * Attack line + feature list with roll actions — used by library/hover `AdversaryCardContent`
+ * and the GM map-token pin (Encounter sidebar card + these actions).
+ */
+export function AdversaryCardAttackAndFeatures({
+  element: el,
+  cardKey,
+  hoveredFeature,
+  onRollAttack,
+  damageBoost,
+}) {
+  const dmgBoost = damageBoost || el._damageBoost || null;
+  return (
+    <>
       {el.attack && el.attack.name && (
         <div className="space-y-1 mb-4">
           <h5 className="text-xs font-semibold text-dh-muted uppercase border-b border-dh-border pb-1 flex items-center gap-1">

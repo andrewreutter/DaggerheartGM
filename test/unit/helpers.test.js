@@ -8,6 +8,7 @@ import {
   formatStatModsTooltip,
   extractGmFeatureWhenClause,
   dedupeAbilitiesById,
+  formatTargetSummary,
 } from '../../src/client/lib/helpers.js';
 
 describe('isAdversaryDefeated', () => {
@@ -178,5 +179,18 @@ describe('dedupeAbilitiesById', () => {
 
   it('skips entries without id', () => {
     expect(dedupeAbilitiesById([{ name: 'No id' }, { id: 'z', name: 'Z' }])).toEqual([{ id: 'z', name: 'Z' }]);
+  });
+});
+
+describe('formatTargetSummary', () => {
+  it('omits HP for companion targets and shows stress only', () => {
+    expect(formatTargetSummary({
+      type: 'companion',
+      maxHp: 0,
+      currentHp: 0,
+      maxStress: 3,
+      currentStress: 1,
+      conditions: '',
+    })).toEqual({ hp: '', stress: '1/3 Stress', conditions: '' });
   });
 });

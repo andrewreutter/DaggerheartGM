@@ -10,6 +10,7 @@ import { parseSubDetails as _parseSubDetails, extractDetailsValues } from '../li
 import { rangeFtToLabel } from '../lib/map-range.js';
 import { rollShouldUseMapFilteredTargets, rollIsHitMissEligibleAttack } from '../lib/banner-target-roll.js';
 import { formatTargetSummary, computeHpLoss } from '../lib/helpers.js';
+import { isAdversaryAttackPartyTarget } from '../lib/companion-attack-targets.js';
 import {
   wrapRoll,
   getWeaponTagAutomatedForBanner,
@@ -1524,7 +1525,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
     : false);
   const filteredTargets = isCharacterRoll
     ? allTargets.filter(t => t.type === 'adversary')
-    : allTargets.filter(t => t.type === 'character');
+    : allTargets.filter(t => isAdversaryAttackPartyTarget(t));
 
   // Selected target(s) for banner title.
   const selectedTargetIdForTitle = roll._featureNeedsTarget ? featureTargetSelectedId : (isMultiTargetMode ? null : selectedDamageTargetId);
@@ -2174,7 +2175,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                   <div className="flex flex-col gap-2">
                     <div className="flex flex-wrap justify-center items-center gap-1">
                       {roll._attackerType === 'adversary' && roll._attackRangeFt != null && filteredTargets.length === 0 ? (
-                        <span className="text-[10px] text-dh-muted italic">No characters in range</span>
+                        <span className="text-[10px] text-dh-muted italic">No targets in range</span>
                       ) : roll._featureNeedsTarget ? (
                         filteredTargets.length === 0 ? (
                           <span className="text-[10px] text-dh-muted italic">No valid targets in range</span>
@@ -2285,7 +2286,9 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                                       <div key={id} className="flex items-center justify-between gap-2 text-[11px] w-full">
                                         <span className="font-medium text-dh truncate min-w-0">{t.name}</span>
                                         <span className="flex items-center gap-1.5 shrink-0">
-                                          {hasDamage && (resolved && hpLoss != null ? <span className="text-red-400 font-semibold tabular-nums">{hpLoss} HP</span> : hasDamage && resolved ? <span className="text-dh-muted">—</span> : hasDamage ? <Spinner /> : null)}
+                                          {hasDamage && (t.type === 'companion'
+                                            ? (resolved ? <span className="text-orange-400 font-semibold tabular-nums">1 Stress</span> : <Spinner />)
+                                            : (resolved && hpLoss != null ? <span className="text-red-400 font-semibold tabular-nums">{hpLoss} HP</span> : hasDamage && resolved ? <span className="text-dh-muted">—</span> : hasDamage ? <Spinner /> : null))}
                                           {hasArmor ? (
                                             <label className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium border border-cyan-700 bg-cyan-900/40 text-cyan-200 cursor-pointer hover:bg-cyan-800/50">
                                               <input
@@ -2353,7 +2356,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                                           >
                                             <div className="flex items-center justify-between gap-2">
                                               <span>{isSelected ? <Check size={10} className="inline mr-1 shrink-0" /> : null}{t.name}</span>
-                                              {hpLoss != null ? <span className="text-red-400 font-semibold tabular-nums shrink-0">{hpLoss} HP</span> : null}
+                                              {t.type === 'companion' && resolved ? <span className="text-orange-400 font-semibold tabular-nums shrink-0">1 Stress</span> : hpLoss != null ? <span className="text-red-400 font-semibold tabular-nums shrink-0">{hpLoss} HP</span> : null}
                                             </div>
                                             <div className="text-[10px] text-dh-muted mt-0.5">
                                               {[sum.hp, sum.stress].filter(Boolean).join(' · ')}
@@ -2491,7 +2494,9 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                                 <div className="mt-1 flex items-center justify-between gap-2 text-[11px] w-full">
                                   <span className="font-medium text-dh truncate min-w-0">{t.name}</span>
                                   <span className="shrink-0">
-                                    {resolved && hpLoss != null ? <span className="text-red-400 font-semibold tabular-nums">{hpLoss} HP</span> : resolved ? <span className="text-dh-muted">—</span> : <Spinner />}
+                                    {t.type === 'companion'
+                                      ? (resolved ? <span className="text-orange-400 font-semibold tabular-nums">1 Stress</span> : <Spinner />)
+                                      : resolved && hpLoss != null ? <span className="text-red-400 font-semibold tabular-nums">{hpLoss} HP</span> : resolved ? <span className="text-dh-muted">—</span> : <Spinner />}
                                   </span>
                                 </div>
                               );

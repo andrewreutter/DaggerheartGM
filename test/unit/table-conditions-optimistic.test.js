@@ -92,6 +92,7 @@ describe('shouldOptimisticallyPatch', () => {
   it('returns true for currentStress', () => expect(shouldOptimisticallyPatch({ currentStress: 1 })).toBe(true));
   it('returns true for hope', () => expect(shouldOptimisticallyPatch({ hope: 3 })).toBe(true));
   it('returns true for currentArmor', () => expect(shouldOptimisticallyPatch({ currentArmor: 0 })).toBe(true));
+  it('returns true for companion', () => expect(shouldOptimisticallyPatch({ companion: { currentStress: 1 } })).toBe(true));
   it('returns false for unrecognized fields', () => expect(shouldOptimisticallyPatch({ name: 'x' })).toBe(false));
   it('returns false for empty object', () => expect(shouldOptimisticallyPatch({})).toBe(false));
 });

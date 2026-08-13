@@ -2,7 +2,7 @@ import { useMemo, useState, useEffect, useLayoutEffect, useRef, useCallback } fr
 import { createPortal } from 'react-dom';
 import { useTouchDevice } from '../lib/useTouchDevice.js';
 import { useHoverOverlay } from '../lib/useHoverOverlay.js';
-import { Zap, Trash2, Dices, ChevronDown, ChevronRight, X, Plus, Camera, Swords, AlertTriangle, Tag, Flame, Edit, Users, RefreshCw, ExternalLink, Eye, EyeOff, Circle, Square, CheckSquare, StickyNote, Heart } from 'lucide-react';
+import { Zap, Trash2, Dices, ChevronDown, ChevronRight, X, Plus, Camera, Swords, AlertTriangle, Flame, Edit, Users, RefreshCw, ExternalLink, Eye, EyeOff, Circle, Square, CheckSquare, StickyNote, Heart } from 'lucide-react';
 import { BattleMap, CHARACTER_TRAY_WIDTH_PX, TokenTrayActionButton } from './BattleMap.jsx';
 import { EncounterAdversaryInstancePlayerSummary } from './EncounterAdversaryMarkedSummary.jsx';
 import { playerEncounterInstanceRowVisible } from '../lib/encounter-adversary-player-summary.js';
@@ -14,7 +14,8 @@ import { parseFeatureCategory, parseAllCountdownValues, generateId, effectiveThr
 import { findSessionCountdownBySource } from '../lib/session-countdowns.js';
 import { SessionCountdownsPanel, buildTrackedSessionEntryFromFeature, buildLinkedPairFromFeatureCountdowns } from './SessionCountdownsPanel.jsx';
 import { FeatureDescription } from './FeatureDescription.jsx';
-import { EnvironmentCardContent, AdversaryCardContent, CheckboxTrack } from './DetailCardContent.jsx';
+import { EnvironmentCardContent, AdversaryCardContent, AdversaryCardAttackAndFeatures, CheckboxTrack } from './DetailCardContent.jsx';
+import { EncounterAdversaryDifficultyRow, EncounterAdversaryInstanceCard } from './EncounterAdversaryInstanceCard.jsx';
 import { CharacterSheetEmphasisCard } from './CharacterStatBlockGraphic.jsx';
 import { EditChoiceDialog } from './modals/EditChoiceDialog.jsx';
 import { ItemDetailModal } from './modals/ItemDetailModal.jsx';
@@ -79,7 +80,7 @@ import {
   gmResourceTrackCheckboxEditsAllowed,
   isPrepModeElementUpdateBlocked,
 } from '../lib/table-session-gate.js';
-import { isOwnItem, ROLE_BP_COST, DEFAULT_CHARACTER_STARTING_HOPE, ROLES } from '../lib/constants.js';
+import { isOwnItem, DEFAULT_CHARACTER_STARTING_HOPE, ROLES } from '../lib/constants.js';
 import {
   characterDrawerEditMismatch as computeCharacterDrawerEditMismatch,
   shouldSuppressCharacterOverlayOutsideDismiss,
@@ -129,7 +130,14 @@ import {
 import { buildAdvantageTriggerPrerollChips } from '../lib/advantage-trigger-preroll.js';
 import { applyRangerFocusV2IntentToPending } from '../lib/ranger-focus-v2-intent.js';
 import { extractDetailsValues } from '../lib/dice-utils.js';
-import { getCharactersWithinFarRange, getCharactersWithinCloseRangeWithMarkedHp, getAdversariesWithinMeleeRange, getAdversariesWithinRangeFt, getCharactersWithinRangeFt, getCharactersWithinRangeOfAny, rangeBandNameToFt, rangeFtToLabel, RANGE_BANDS_FT, tokenDistanceFtForElements, positionAtDistanceFt, getTokenFootprintFt } from '../lib/map-range.js';
+import { getCharactersWithinFarRange, getCharactersWithinCloseRangeWithMarkedHp, getAdversariesWithinMeleeRange, getAdversariesWithinRangeFt, rangeBandNameToFt, rangeFtToLabel, RANGE_BANDS_FT, tokenDistanceFtForElements, positionAtDistanceFt, getTokenFootprintFt } from '../lib/map-range.js';
+import {
+  collectCompanionDamageTargets,
+  filterPartyDamageTargetsByIds,
+  getAdversaryAttackTargetsWithinRangeFt,
+  getAdversaryAttackTargetsWithinRangeOfAny,
+  markCompanionHitStress,
+} from '../lib/companion-attack-targets.js';
 import { mapConfigHasImage } from '../lib/map-table-state.js';
 import {
   arrangeGmMovesSection,
@@ -948,7 +956,6 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
   };
 
   // gmMovesOverlay — handled by useHoverOverlay hook declared above
-  const [openConditions, setOpenConditions] = useState(() => new Set()); // instanceIds with conditions input open
   // Roll IDs where onChipAck called roll.setWithHope() — persisted until banner ack or banner removal.
   const [chipHopeConvertedIds, setChipHopeConvertedIds] = useState(() => new Set());
   /** Pending `_rollDbId` → Set of activation keys (`v2BannerChipActivationKey`) for one-shot `onUse` review chips. */
@@ -1309,6 +1316,14 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
   // dmgType: 'phy' | 'mag' | '' — damage type extracted from the roll (Phase 3)
   const handleApplyDamage = async (target, dmgTotal, tags = [], roll = null, dmgType = '') => {
     if (roll?._treatAsMissForTarget === target.instanceId) return;
+    if (target.type === 'companion') {
+      const parentId = target.parentInstanceId;
+      const parentEl = parentId
+        ? activeElements.find((e) => e.instanceId === parentId)
+        : null;
+      if (parentEl?.companion) markCompanionHitStress(parentEl, updateActiveElement);
+      return;
+    }
     const tagNames = new Set((tags || []).map(t => t.name));
     let effectiveDmgTotal = dmgTotal;
 
@@ -3567,10 +3582,9 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
           if (onMap.length === 1) rollMeta._attackerInstanceId = onMap[0].instanceId;
           else rollMeta._attackerInstanceIds = onMap.map(i => i.instanceId);
           const inRange = rollMeta._attackerInstanceIds?.length > 0
-            ? getCharactersWithinRangeOfAny(activeElements, rollMeta._attackerInstanceIds, rangeFt)
-            : getCharactersWithinRangeFt(activeElements, rollMeta._attackerInstanceId, rangeFt);
-          const ids = new Set(inRange.map(c => c.instanceId));
-          const validTargets = damageTargets.filter(t => t.type === 'character' && ids.has(t.instanceId));
+            ? getAdversaryAttackTargetsWithinRangeOfAny(activeElements, rollMeta._attackerInstanceIds, rangeFt)
+            : getAdversaryAttackTargetsWithinRangeFt(activeElements, rollMeta._attackerInstanceId, rangeFt);
+          const validTargets = filterPartyDamageTargetsByIds(damageTargets, inRange);
           const anchorRect = event?.currentTarget?.getBoundingClientRect() ?? null;
           setAdversaryTargetMenu({ anchorRect, rollText, displayName, rollMeta, validTargets, rolledKey: `${feature.cardKey}|${feature.featureKey}` });
           return;
@@ -3614,10 +3628,9 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     }
     if (rollMeta._attackRangeFt != null) {
       const inRange = rollMeta._attackerInstanceIds?.length > 0
-        ? getCharactersWithinRangeOfAny(activeElements, rollMeta._attackerInstanceIds, rollMeta._attackRangeFt)
-        : getCharactersWithinRangeFt(activeElements, rollMeta._attackerInstanceId, rollMeta._attackRangeFt);
-      const ids = new Set(inRange.map(c => c.instanceId));
-      const validTargets = damageTargets.filter(t => t.type === 'character' && ids.has(t.instanceId));
+        ? getAdversaryAttackTargetsWithinRangeOfAny(activeElements, rollMeta._attackerInstanceIds, rollMeta._attackRangeFt)
+        : getAdversaryAttackTargetsWithinRangeFt(activeElements, rollMeta._attackerInstanceId, rollMeta._attackRangeFt);
+      const validTargets = filterPartyDamageTargetsByIds(damageTargets, inRange);
       const anchorRect = event?.currentTarget?.getBoundingClientRect() ?? null;
       setAdversaryTargetMenu({ anchorRect, rollText, displayName, rollMeta, validTargets });
       return;
@@ -4429,7 +4442,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     [consolidatedElements]);
   actionAdversaryTargetsRef.current = actionAdversaryTargets;
 
-  // Flat list of all hittable targets for the damage banner: characters + adversary instances.
+  // Flat list of all hittable targets for the damage banner: characters, companions, adversary instances.
   const damageTargets = useMemo(() => {
     const targets = [];
     for (const item of consolidatedElements) {
@@ -4475,8 +4488,9 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
         });
       }
     }
+    targets.push(...collectCompanionDamageTargets(activeElements));
     return targets;
-  }, [consolidatedElements, srdData]);
+  }, [consolidatedElements, activeElements, srdData]);
 
   // Returns names of adversaries within Very Close of the Water Druid attacker that will mark Stress.
   const getV2DamageBannerAckNotices = useCallback(
@@ -4485,7 +4499,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     [activeElements],
   );
 
-  // Character attacks with weapon range: filter to adversaries within range. Adversary attacks with range: filter to characters in range.
+  // Character attacks with weapon range: filter to adversaries within range. Adversary attacks with range: filter to characters and companions in range.
   const getTargetsForRoll = useCallback((roll) => {
     if (roll._attackerInstanceId && roll._weaponRangeFt != null) {
       const inRange = getAdversariesWithinRangeFt(activeElements, roll._attackerInstanceId, roll._weaponRangeFt);
@@ -4494,10 +4508,9 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     }
     if (roll._attackerType === 'adversary' && roll._attackRangeFt != null && (roll._attackerInstanceId || (roll._attackerInstanceIds && roll._attackerInstanceIds.length > 0))) {
       const inRange = roll._attackerInstanceIds?.length > 0
-        ? getCharactersWithinRangeOfAny(activeElements, roll._attackerInstanceIds, roll._attackRangeFt)
-        : getCharactersWithinRangeFt(activeElements, roll._attackerInstanceId, roll._attackRangeFt);
-      const ids = new Set(inRange.map(c => c.instanceId));
-      return damageTargets.filter(t => t.type === 'character' && ids.has(t.instanceId));
+        ? getAdversaryAttackTargetsWithinRangeOfAny(activeElements, roll._attackerInstanceIds, roll._attackRangeFt)
+        : getAdversaryAttackTargetsWithinRangeFt(activeElements, roll._attackerInstanceId, roll._attackRangeFt);
+      return filterPartyDamageTargetsByIds(damageTargets, inRange);
     }
     return damageTargets;
   }, [activeElements, damageTargets]);
@@ -4955,6 +4968,52 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     editState,
     openTableCharacterEditor,
   ]);
+
+  function renderAdversaryEncounterCard(adversaryEl) {
+    const group = consolidatedByCardKey.get(adversaryEl.id);
+    const displayEl = adversaryEl._scaledFromTier != null && !(scaledToggleState[adversaryEl.id] ?? true)
+      ? getUnscaledAdversary(adversaryEl)
+      : adversaryEl;
+    const groupCount = group?.instances?.length ?? 1;
+    const instanceNum = groupCount > 1
+      ? (group.instances.findIndex((i) => i.instanceId === adversaryEl.instanceId) + 1)
+      : null;
+    const { allowPlayMechanics } = characterSheetTableInteractionFlags(sessionPlayAllowed, isPlayer, true);
+    return (
+      <div data-testid="adversary-token-pin-card" className="space-y-2 min-w-0">
+        <EncounterAdversaryDifficultyRow displayEl={displayEl} className="flex items-center gap-1.5 flex-wrap" />
+        <div className="px-0">
+          <EncounterAdversaryInstanceCard
+            displayEl={displayEl}
+            inst={adversaryEl}
+            showInstanceNum={instanceNum != null}
+            instanceNum={instanceNum}
+            canEditTracks={gmResourceTrackCheckboxEditsAllowed(isPlayer)}
+            updateFn={updateActiveElement}
+            onSetHpFilled={(dmg) => void applyAdversaryManualTrackDirect(adversaryEl.instanceId, { currentHp: (displayEl.hp_max || 0) - dmg })}
+            onSetStressFilled={(s) => void applyAdversaryManualTrackDirect(adversaryEl.instanceId, { currentStress: s })}
+            conditionsHistory={conditionsHistory}
+            extraConditionSuggestions={extraConditionSuggestions}
+            onAddConditionsHistoryEntry={onAddConditionsHistoryEntry}
+            onRemoveConditionsHistoryEntry={!isPlayer ? onRemoveConditionsHistoryEntry : undefined}
+          />
+        </div>
+        <div className="border-t border-dh-border/80 pt-2">
+          <AdversaryCardAttackAndFeatures
+            element={displayEl}
+            cardKey={adversaryEl.id}
+            hoveredFeature={null}
+            onRollAttack={
+              allowPlayMechanics
+                ? (data, e) => handleCardRoll(data, displayEl.name, [adversaryEl], e)
+                : undefined
+            }
+            damageBoost={tableDamageBoost || adversaryEl._damageBoost || null}
+          />
+        </div>
+      </div>
+    );
+  }
 
   function renderAdversaryTargetAid(adversaryEl) {
     if (tableCharacters.length === 0) return null;
@@ -6952,6 +7011,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
             onRemoveConditionsHistoryEntry={!isPlayer ? onRemoveConditionsHistoryEntry : undefined}
             className="flex-1 min-h-0"
             renderPinnedCharacterPanel={renderPinnedCharacterPanel}
+            renderAdversaryEncounterCard={!isPlayer ? renderAdversaryEncounterCard : undefined}
             renderAdversaryTargetAid={renderAdversaryTargetAid}
           />
         </div>
@@ -7369,162 +7429,32 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                     >{count === 1 ? <Trash2 size={9} /> : <span className="text-[10px] font-bold">−</span>}</button>
                   </div>
                 </div>
-                {/* Difficulty + Damage Thresholds */}
-                {(displayEl.difficulty != null || (displayEl.hp_thresholds && (displayEl.hp_thresholds.major != null || displayEl.hp_thresholds.severe != null))) && (
-                  <div className="flex items-center gap-1.5 flex-wrap px-2.5 pt-1.5">
-                    {displayEl.difficulty != null && (
-                      <span className="text-[10px] font-bold text-cyan-400/70 bg-cyan-900/50 border border-cyan-800/50 rounded px-1">
-                        Diff {displayEl.difficulty}
-                      </span>
-                    )}
-                    {displayEl.hp_thresholds && (displayEl.hp_thresholds.major != null || displayEl.hp_thresholds.severe != null) && (
-                      <span className="text-[10px] text-dh-muted">
-                        Thresholds <span className="font-bold text-dh">{displayEl.hp_thresholds.major}</span>
-                        <span className="text-dh-muted"> / </span>
-                        <span className="font-bold text-red-300">{displayEl.hp_thresholds.severe}</span>
-                      </span>
-                    )}
-                  </div>
-                )}
+                <EncounterAdversaryDifficultyRow displayEl={displayEl} />
                 <div className="p-2 space-y-2">
-                  {instances.map((inst, idx) => {
-                    const hpDamage = (displayEl.hp_max || 0) - (inst.currentHp ?? displayEl.hp_max ?? 0);
-                    return (
-                      <div
-                        key={inst.instanceId}
-                        className="space-y-1 rounded group/inst"
-                      >
-                        {(count > 1 || budgetCardOpen) && (
-                          <div className="flex items-center gap-1.5 text-[10px] text-dh-muted">
-                            {count > 1 && <span className="text-dh-muted font-medium">#{idx + 1}</span>}
-                            {budgetCardOpen && (
-                              <>
-                                {count > 1 && <span className="text-dh-muted">·</span>}
-                                <span className="capitalize">{displayEl.role || 'Standard'}</span>
-                                <span className="text-dh-muted">·</span>
-                                {displayEl.role === 'minion'
-                                  ? <span>1/group BP</span>
-                                  : <span className="text-dh-muted tabular-nums">{ROLE_BP_COST[displayEl.role || 'standard'] ?? ROLE_BP_COST.standard} BP</span>
-                                }
-                              </>
-                            )}
-                            {count > 1 && (
-                              <button
-                                onClick={(e) => { e.stopPropagation(); removeActiveElement(inst.instanceId); }}
-                                className="ml-auto hidden group-hover/inst:flex w-4 h-4 rounded bg-dh-raised hover:bg-red-900 text-dh-muted hover:text-red-300 items-center justify-center transition-colors leading-none shrink-0"
-                                title={`Remove #${idx + 1}`}
-                              ><Trash2 size={9} /></button>
-                            )}
-                          </div>
-                        )}
-                        {inst.vulnerable && (
-                          <div className="flex items-center gap-1">
-                            <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-orange-950/50 border border-orange-700/60 text-orange-200">Vulnerable</span>
-                            <button
-                              onClick={() => updateActiveElement(inst.instanceId, { vulnerable: false })}
-                              className="p-0.5 rounded text-dh-muted hover:text-dh hover:bg-dh-hover transition-colors"
-                              title="Clear Vulnerable"
-                            >
-                              <X size={10} />
-                            </button>
-                          </div>
-                        )}
-                        {inst.focusedBy && (
-                          <div className="flex items-center gap-1">
-                            <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-emerald-900/50 border border-emerald-600/60 text-emerald-200">Focused by {inst.focusedBy}</span>
-                            <button
-                              onClick={() => updateActiveElement(inst.instanceId, { focusedBy: null })}
-                              className="p-0.5 rounded text-dh-muted hover:text-dh hover:bg-dh-hover transition-colors"
-                              title="Clear Focus"
-                            >
-                              <X size={10} />
-                            </button>
-                          </div>
-                        )}
-                        {inst.difficultyMod != null && inst.difficultyMod !== 0 && (
-                          <div className="flex items-center gap-1">
-                            <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-red-900/60 border border-red-600/70 text-red-200" title="Difficulty modifier">
-                              {inst.difficultyMod > 0 ? '+' : ''}{inst.difficultyMod} Difficulty
-                            </span>
-                            <button
-                              onClick={() => updateActiveElement(inst.instanceId, { difficultyMod: 0 })}
-                              className="p-0.5 rounded text-dh-muted hover:text-dh hover:bg-dh-hover transition-colors"
-                              title="Clear difficulty modifier"
-                            >
-                              <X size={10} />
-                            </button>
-                          </div>
-                        )}
-                        {isAdversaryDefeated({ hp_max: displayEl.hp_max, currentHp: inst.currentHp }) && (
-                          <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-dh-hover/80 border border-dh-strong text-dh">Defeated</span>
-                        )}
-                        {(displayEl.hp_max || 0) > 0 && (
-                          <div className="flex items-center gap-1">
-                            <CheckboxTrack
-                              total={displayEl.hp_max || 0}
-                              filled={hpDamage}
-                              onSetFilled={gmResourceTrackCheckboxEditsAllowed(isPlayer)
-                                ? (dmg) => void applyAdversaryManualTrackDirect(inst.instanceId, { currentHp: (displayEl.hp_max || 0) - dmg })
-                                : undefined}
-                              trackKind="hp"
-                              label="HP"
-                              verbs={['Mark', 'Clear']}
-                            />
-                            {(displayEl.stress_max || 0) === 0 && normalizeConditionsToList(inst.conditions).length === 0 && !openConditions.has(inst.instanceId) && (
-                              <button
-                                onClick={() => setOpenConditions(prev => new Set([...prev, inst.instanceId]))}
-                                className="ml-1 text-dh-muted hover:text-dh transition-colors shrink-0"
-                                title="Add conditions"
-                              ><Tag size={10} /></button>
-                            )}
-                          </div>
-                        )}
-                        {(displayEl.stress_max || 0) > 0 && (
-                          <div className="flex items-center gap-1">
-                            <CheckboxTrack
-                              total={displayEl.stress_max || 0}
-                              filled={inst.currentStress || 0}
-                              onSetFilled={gmResourceTrackCheckboxEditsAllowed(isPlayer)
-                                ? (s) => void applyAdversaryManualTrackDirect(inst.instanceId, { currentStress: s })
-                                : undefined}
-                              trackKind="stress"
-                              label="Stress"
-                              verbs={['Mark', 'Clear']}
-                            />
-                            {normalizeConditionsToList(inst.conditions).length === 0 && !openConditions.has(inst.instanceId) && (
-                              <button
-                                onClick={() => setOpenConditions(prev => new Set([...prev, inst.instanceId]))}
-                                className="ml-1 text-dh-muted hover:text-dh transition-colors shrink-0"
-                                title="Add conditions"
-                              ><Tag size={10} /></button>
-                            )}
-                          </div>
-                        )}
-                        {(normalizeConditionsToList(inst.conditions).length > 0 || openConditions.has(inst.instanceId)) && (
-                          <ConditionsEditor
-                            instanceId={inst.instanceId}
-                            placeholder="Add condition…"
-                            autoFocus={openConditions.has(inst.instanceId) && normalizeConditionsToList(inst.conditions).length === 0}
-                            value={inst.conditions || ''}
-                            onCommit={(v) => updateActiveElement(inst.instanceId, { conditions: v })}
-                            suggestions={conditionsHistory}
-                            extraSuggestions={extraConditionSuggestions}
-                            onAddSuggestion={onAddConditionsHistoryEntry}
-                            onRemoveSuggestion={!isPlayer ? onRemoveConditionsHistoryEntry : undefined}
-                            onBlur={() => {
-                              if (normalizeConditionsToList(inst.conditions).length === 0) {
-                                setOpenConditions(prev => { const s = new Set(prev); s.delete(inst.instanceId); return s; });
-                              }
-                            }}
-                            className="w-full flex flex-wrap items-center gap-1 bg-dh-raised/50 border border-dh-strong rounded px-1.5 py-0.5 text-xs text-dh focus-within:border-blue-500"
-                          />
-                        )}
-                        {idx < instances.length - 1 && (
-                          <div className="border-t border-dh-border mt-1" />
-                        )}
-                      </div>
-                    );
-                  })}
+                  {instances.map((inst, idx) => (
+                    <div key={inst.instanceId}>
+                      <EncounterAdversaryInstanceCard
+                        displayEl={displayEl}
+                        inst={inst}
+                        showInstanceNum={count > 1}
+                        instanceNum={idx + 1}
+                        showBp={budgetCardOpen}
+                        showInstanceRemove={count > 1}
+                        onRemoveInstance={removeActiveElement}
+                        canEditTracks={gmResourceTrackCheckboxEditsAllowed(isPlayer)}
+                        updateFn={updateActiveElement}
+                        onSetHpFilled={(dmg) => void applyAdversaryManualTrackDirect(inst.instanceId, { currentHp: (displayEl.hp_max || 0) - dmg })}
+                        onSetStressFilled={(s) => void applyAdversaryManualTrackDirect(inst.instanceId, { currentStress: s })}
+                        conditionsHistory={conditionsHistory}
+                        extraConditionSuggestions={extraConditionSuggestions}
+                        onAddConditionsHistoryEntry={onAddConditionsHistoryEntry}
+                        onRemoveConditionsHistoryEntry={!isPlayer ? onRemoveConditionsHistoryEntry : undefined}
+                      />
+                      {idx < instances.length - 1 && (
+                        <div className="border-t border-dh-border mt-1" />
+                      )}
+                    </div>
+                  ))}
                 </div>
               </div>
             );
@@ -8339,7 +8269,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
           </div>
           <div className="space-y-1">
             {adversaryTargetMenu.validTargets.length === 0 ? (
-              <p className="text-[11px] text-dh-muted italic px-1 py-1">No characters are in range of this attack.</p>
+              <p className="text-[11px] text-dh-muted italic px-1 py-1">No targets are in range of this attack.</p>
             ) : adversaryTargetMenu.validTargets.map((t) => {
               const disadvantageForTarget = t.type === 'character' ? getDisadvantageForTarget(adversaryTargetMenu.rollText, t.instanceId) : [];
               return (

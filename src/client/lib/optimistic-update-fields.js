@@ -5,7 +5,7 @@
  *
  * The server snapshot confirms or corrects each value via `reconcileElementsById` on the next tick.
  * The set is intentionally broad enough to cover both character and adversary element update sites
- * in `GMTableView` — all of these fields are plain scalars or arrays that survive a shallow merge.
+ * in `GMTableView` — these fields survive a shallow merge (`companion` is replaced as a whole object).
  */
 export const OPTIMISTIC_ELEMENT_UPDATE_FIELDS = new Set([
   // Token positions
@@ -19,6 +19,8 @@ export const OPTIMISTIC_ELEMENT_UPDATE_FIELDS = new Set([
   'currentStress',
   'hope',
   'currentArmor',
+  // Beastbound companion bag (stress / conditions live on the parent character)
+  'companion',
 ]);
 
 /**

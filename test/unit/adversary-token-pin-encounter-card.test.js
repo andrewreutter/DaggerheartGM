@@ -1,0 +1,39 @@
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { describe, expect, it } from 'vitest';
+
+const dir = dirname(fileURLToPath(import.meta.url));
+
+describe('GM adversary token pin uses Encounter card + attack/feature actions', () => {
+  it('BattleMap wires renderAdversaryEncounterCard into TokenDetailPanel for adversaries', () => {
+    const src = readFileSync(join(dir, '../../src/client/components/BattleMap.jsx'), 'utf8');
+    expect(src).toContain('renderAdversaryEncounterCard');
+    expect(src).toContain('adversaryEncounterCard');
+    expect(src).toContain('gmEncounterAdvPin');
+    expect(src).toMatch(/gmEncounterAdvPin \? \([\s\S]*adversaryEncounterCard/);
+  });
+
+  it('player pin still uses EncounterAdversaryMarkedSummary when the GM card is not passed', () => {
+    const src = readFileSync(join(dir, '../../src/client/components/BattleMap.jsx'), 'utf8');
+    expect(src).toContain('playerEncounterAdvPin');
+    expect(src).toContain('EncounterAdversaryMarkedSummary');
+    expect(src).toMatch(/playerEncounterAdvPin \? \([\s\S]*EncounterAdversaryMarkedSummary/);
+  });
+
+  it('GMTableView pin body is the Encounter instance card plus AdversaryCardAttackAndFeatures', () => {
+    const src = readFileSync(join(dir, '../../src/client/components/GMTableView.jsx'), 'utf8');
+    expect(src).toContain('function renderAdversaryEncounterCard');
+    expect(src).toContain('data-testid="adversary-token-pin-card"');
+    expect(src).toContain('EncounterAdversaryInstanceCard');
+    expect(src).toContain('AdversaryCardAttackAndFeatures');
+    expect(src).toContain('renderAdversaryEncounterCard={!isPlayer ? renderAdversaryEncounterCard : undefined}');
+    const pinFn = src.slice(src.indexOf('function renderAdversaryEncounterCard'));
+    const pinBody = pinFn.slice(0, pinFn.indexOf('function renderAdversaryTargetAid'));
+    expect(pinBody).toContain('EncounterAdversaryDifficultyRow');
+    expect(pinBody).toContain('EncounterAdversaryInstanceCard');
+    expect(pinBody).toContain('AdversaryCardAttackAndFeatures');
+    expect(pinBody).toContain('handleCardRoll');
+    expect(pinBody).not.toContain('EncounterAdversaryMarkedSummary');
+  });
+});

@@ -1467,6 +1467,8 @@ function TokenDetailPanel({
   /** Adversary pin: Encounter-panel-style marked stats + party target aid (replaces HP/Stress checkbox tracks). */
   adversaryTargetAid = null,
   adversaryPinInstanceNum = null,
+  /** GM adversary pin: Encounter sidebar card + attack/feature actions. */
+  adversaryEncounterCard = null,
   /** For boardToken companion panels: the parent character element (carries companion data and traits). */
   parentCharacterEl,
   /** Called with (rollText, displayName, rollMeta, opts) when the attack button is clicked. */
@@ -1723,13 +1725,19 @@ function TokenDetailPanel({
 
   const hpMax = element.hp_max;
   const stressMax = element.stress_max;
-  const encounterStyleAdvPin = isAdv && adversaryTargetAid != null;
+  const gmEncounterAdvPin = isAdv && adversaryEncounterCard != null;
+  const playerEncounterAdvPin = isAdv && !gmEncounterAdvPin && adversaryTargetAid != null;
+  const encounterStyleAdvPin = gmEncounterAdvPin || playerEncounterAdvPin;
 
   return (
     <AnchoredFloatingPanel anchorX={anchorX} anchorY={anchorY} onEscape={onClose}>
     <div
       className={`bg-dh-raised border border-dh-strong rounded-lg shadow-2xl p-3 min-w-[180px] ${
-        encounterStyleAdvPin ? 'max-w-[min(22rem,94vw)] max-h-[min(72vh,560px)] overflow-y-auto overflow-x-hidden' : 'max-w-[240px]'
+        gmEncounterAdvPin
+          ? 'max-w-[min(24rem,94vw)] max-h-[min(80vh,640px)] overflow-y-auto overflow-x-hidden'
+          : encounterStyleAdvPin
+            ? 'max-w-[min(22rem,94vw)] max-h-[min(72vh,560px)] overflow-y-auto overflow-x-hidden'
+            : 'max-w-[240px]'
       }`}
       onPointerDown={e => e.stopPropagation()}
     >
@@ -1775,7 +1783,12 @@ function TokenDetailPanel({
         </div>
       </div>
 
-      {encounterStyleAdvPin ? (
+      {gmEncounterAdvPin ? (
+        <>
+          {adversaryEncounterCard}
+          {adversaryTargetAid}
+        </>
+      ) : playerEncounterAdvPin ? (
         <>
           {(!isPlayer || playerEncounterInstanceRowVisible(element, element)) && (
             <div className="mb-2 space-y-1.5">
@@ -2522,6 +2535,8 @@ export function BattleMap({
    * Uses `GameTableCharacterListCard` (same as the Characters sidebar); sheet open is wired via `sheetTriggerProps` on that card.
    */
   renderPinnedCharacterPanel,
+  /** GM adversary pin — Encounter sidebar card + attack/feature actions (built in GMTableView). */
+  renderAdversaryEncounterCard,
   /** Adversary pin — party target aid + offense (built in GMTableView). */
   renderAdversaryTargetAid,
   /** GM-only. Called with `instanceId` when the GM deletes an adversary from the table via the map token panel. */
@@ -7034,6 +7049,11 @@ export function BattleMap({
             onOpenImageLightbox={onOpenImageLightbox}
             onRoll={onRoll}
             parentCharacterEl={el.elementType === 'boardToken' ? parentByInstanceId.get(el.parentInstanceId) : undefined}
+            adversaryEncounterCard={
+              el.elementType === 'adversary' && typeof renderAdversaryEncounterCard === 'function'
+                ? renderAdversaryEncounterCard(el)
+                : null
+            }
             adversaryTargetAid={
               el.elementType === 'adversary' && typeof renderAdversaryTargetAid === 'function'
                 ? renderAdversaryTargetAid(el)

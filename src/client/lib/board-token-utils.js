@@ -9,12 +9,16 @@ export function characterWantsCompanionBoardToken(el) {
   );
 }
 
+export function isCompanionBoardToken(el) {
+  return (
+    el?.elementType === 'boardToken' &&
+    (el.virtualTokenId === BEASTBOUND_COMPANION_VIRTUAL_TOKEN_ID || el.tokenKind === 'companion')
+  );
+}
+
 export function hasCompanionBoardToken(activeElements, parentInstanceId) {
   return (activeElements || []).some(
-    (e) =>
-      e.elementType === 'boardToken' &&
-      e.parentInstanceId === parentInstanceId &&
-      (e.virtualTokenId === BEASTBOUND_COMPANION_VIRTUAL_TOKEN_ID || e.tokenKind === 'companion'),
+    (e) => isCompanionBoardToken(e) && e.parentInstanceId === parentInstanceId,
   );
 }
 
