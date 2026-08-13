@@ -141,11 +141,15 @@ const DRAG_THRESHOLD_PX = 8;
 /** Approx. time for fireworks-js rocket to reach target (no API hook); tuned for default trace speed. */
 const MAP_PING_FIREWORK_LAND_MS = 800;
 const MAP_PING_LABEL_FADE_MS = 5000;
-/** Range-band bullseye ring overlays render at z-index 25 (hover) / 26 (drag-follow). The token
+/** Placed tokens (characters, companions, adversaries) stack starting at this z-index — above the
+ * persisted mapImage/drawShape objects (z=22) and the interactive draw/scribble canvases (z<=21),
+ * so drawings on the map never render over tokens. */
+const TOKEN_BASE_Z_INDEX = 30;
+/** Range-band bullseye ring overlays render at z-index 55 (hover) / 56 (drag-follow). The token
  * currently snapped to the bullseye (bullseyeFt.excludeInstanceId) is elevated above both so it
  * isn't visually obscured by the rings drawn over it — matching how non-snapped tokens whose
- * normal stacking z-index happens to exceed 25/26 already render on top. */
-const SNAPPED_TOKEN_Z_INDEX = 27;
+ * normal stacking z-index happens to exceed 55/56 already render on top. */
+const SNAPPED_TOKEN_Z_INDEX = 57;
 
 /** Clears placement AND altitude so a re-placed token doesn't keep a stale height. */
 const TRAY_UNPLACE_UPDATES = { tokenX: null, tokenY: null, mapId: null, altitude: 0 };
@@ -1445,7 +1449,7 @@ function TokenAltitudeControl({
             height: stemAbsPx,
             marginLeft: -1,
             boxShadow: '0 0 0 1px rgb(0 0 0 / 0.45)',
-            zIndex,
+            zIndex: Math.max(1, zIndex - 1),
           }}
         />
       )}
@@ -6911,12 +6915,12 @@ export function BattleMap({
                 aria-hidden
               />
 
-              {/* Range band bullseye overlay (above draw canvas z-20) */}
+              {/* Range band bullseye overlay (above tokens z-30+ so range rings are legible over them) */}
               {/* Visibility gated by primaryBullseyeVisible (same gate as token range highlights). */}
               {primaryBullseyeVisible && (
                 <svg
                   className="absolute inset-0 pointer-events-none"
-                  style={{ width: renderedWidthPx, height: renderedHeightPx, zIndex: 25 }}
+                  style={{ width: renderedWidthPx, height: renderedHeightPx, zIndex: 55 }}
                   overflow="visible"
                 >
                   {/* Draw largest ring first so inner bands paint on top */}
@@ -6973,7 +6977,7 @@ export function BattleMap({
               {followBullseyeFt && (
                 <svg
                   className="absolute inset-0 pointer-events-none"
-                  style={{ width: renderedWidthPx, height: renderedHeightPx, zIndex: 26 }}
+                  style={{ width: renderedWidthPx, height: renderedHeightPx, zIndex: 56 }}
                   overflow="visible"
                 >
                   {[...RANGE_BANDS].reverse().map((band) => {
@@ -7024,7 +7028,7 @@ export function BattleMap({
                 </svg>
               )}
 
-              {/* Placed mapImage + drawShape objects — between draw layer (z=4) and tokens (z=10+) */}
+              {/* Placed mapImage + drawShape objects — above the draw/scribble canvases (z<=21), below tokens (z=30+) */}
               {mapImages.map((el) => (
                 <MapImageObject
                   key={el.instanceId}
@@ -7065,7 +7069,7 @@ export function BattleMap({
                 const bandIdx = bandInfo?.bandIdx;
                 const rangeBand = (bandIdx != null && bandIdx >= 0) ? RANGE_BANDS[bandIdx] : null;
                 const renderPx = computeTokenRenderPx(tokenSizePx, element);
-                const zIndex = element.instanceId === bullseyeFt?.excludeInstanceId ? SNAPPED_TOKEN_Z_INDEX : 10 + stackIdx;
+                const zIndex = element.instanceId === bullseyeFt?.excludeInstanceId ? SNAPPED_TOKEN_Z_INDEX : TOKEN_BASE_Z_INDEX + stackIdx;
                 return (
                   <Fragment key={element.instanceId}>
                     <PlacedToken
@@ -7098,7 +7102,7 @@ export function BattleMap({
                 const bandIdx = bandInfo?.bandIdx;
                 const rangeBand = bandIdx != null && bandIdx >= 0 ? RANGE_BANDS[bandIdx] : null;
                 const renderPx = computeTokenRenderPx(tokenSizePx, resolveTokenSizeSource(element, parentByInstanceId));
-                const zIndex = element.instanceId === bullseyeFt?.excludeInstanceId ? SNAPPED_TOKEN_Z_INDEX : 10 + charMapTokens.length + stackIdx;
+                const zIndex = element.instanceId === bullseyeFt?.excludeInstanceId ? SNAPPED_TOKEN_Z_INDEX : TOKEN_BASE_Z_INDEX + charMapTokens.length + stackIdx;
                 return (
                   <Fragment key={element.instanceId}>
                     <PlacedToken
@@ -7131,7 +7135,7 @@ export function BattleMap({
                 const bandIdx = bandInfo?.bandIdx;
                 const rangeBand = (bandIdx != null && bandIdx >= 0) ? RANGE_BANDS[bandIdx] : null;
                 const renderPx = computeTokenRenderPx(tokenSizePx, element);
-                const zIndex = element.instanceId === bullseyeFt?.excludeInstanceId ? SNAPPED_TOKEN_Z_INDEX : 10 + charMapTokens.length + boardMapTokens.length + advIdx;
+                const zIndex = element.instanceId === bullseyeFt?.excludeInstanceId ? SNAPPED_TOKEN_Z_INDEX : TOKEN_BASE_Z_INDEX + charMapTokens.length + boardMapTokens.length + advIdx;
                 return (
                   <Fragment key={element.instanceId}>
                     <PlacedToken
