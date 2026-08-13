@@ -1153,6 +1153,7 @@ const CHARACTER_RUNTIME_KEYS_DB = new Set([
   'instanceId', 'elementType',
   'currentHp', 'currentStress', 'hope', 'currentArmor', 'conditions',
   'tokenX', 'tokenY',
+  'altitude',
   'mapId',
   'assignedPlayerEmail', 'assignedPlayerUid', 'playerName',
   'reinforcedActive', 'selectedExperienceIndex',

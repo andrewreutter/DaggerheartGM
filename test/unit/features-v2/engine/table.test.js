@@ -1327,6 +1327,55 @@ describe('table.me.lastPosition', () => {
     // Previous position (80, 0) to target (0, 0) = 80 ft → 'far'
     expect(table.me?.lastPosition?.rangeFromTarget).toBe('far');
   });
+});
+
+describe('table.me.rangeFrom altitude', () => {
+  it('exposes altitude on the actor (default 0)', () => {
+    const char = mockCharacter({ instanceId: 'c1', tokenX: 0, tokenY: 0 });
+    const table = buildTableSnapshot(mockGameState({ activeElements: [char], _ownerInstanceId: 'c1' }));
+    expect(table.me.altitude).toBe(0);
+  });
+
+  it('keeps melee when two tokens share altitude at melee XY', () => {
+    const char = mockCharacter({ instanceId: 'c1', tokenX: 0, tokenY: 0, altitude: 40 });
+    const adv = mockAdversary({ instanceId: 'a1', tokenX: 4, tokenY: 0, altitude: 40 });
+    const table = buildTableSnapshot(
+      mockGameState({ activeElements: [char, adv], _ownerInstanceId: 'c1' }),
+    );
+    expect(table.me.rangeFrom(table.adversaries[0])).toBe('melee');
+  });
+
+  it('resolves a melee-XY pair at a large altitude delta to far (or farther)', () => {
+    const char = mockCharacter({ instanceId: 'c1', tokenX: 0, tokenY: 0, altitude: 0 });
+    const adv = mockAdversary({ instanceId: 'a1', tokenX: 4, tokenY: 0, altitude: 60 });
+    const table = buildTableSnapshot(
+      mockGameState({ activeElements: [char, adv], _ownerInstanceId: 'c1' }),
+    );
+    expect(table.me.rangeFrom(table.adversaries[0])).toBe('far');
+    expect(table.me.rangeFromTarget).toBeNull();
+  });
+
+  it('rangeFromTarget uses the target element altitude', () => {
+    const char = mockCharacter({ instanceId: 'c1', tokenX: 0, tokenY: 0, altitude: 0 });
+    const adv = mockAdversary({ instanceId: 'a1', tokenX: 4, tokenY: 0, altitude: 60 });
+    const table = buildTableSnapshot(
+      mockGameState({
+        activeElements: [char, adv],
+        _ownerInstanceId: 'c1',
+        action: {
+          type: 'attack',
+          actorInstanceId: 'c1',
+          targetInstanceIds: ['a1'],
+          trait: 'Agility',
+          range: 'melee',
+          effects: [],
+          appliedEffects: [],
+        },
+      }),
+    );
+    expect(table.me.rangeFromTarget).toBe('far');
+  });
+});
 
   describe('table.me.weapons / primaryWeapon / secondaryWeapon', () => {
     it('returns null for primaryWeapon when element has no weapons', () => {
@@ -1686,7 +1735,6 @@ describe('table.me.lastPosition', () => {
     // (0,8) to (0,0) = 8 ft → 'veryClose' (would be null if tokenX: 0 were misread as null)
     expect(table.me?.lastPosition?.rangeFrom(advActor)).toBe('veryClose');
   });
-});
 
 // ---------------------------------------------------------------------------
 // table.sheet.rollThenResume

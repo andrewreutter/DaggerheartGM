@@ -41,6 +41,8 @@ export const CHARACTER_RUNTIME_KEYS = [
   'instanceId', 'elementType',
   'currentHp', 'currentStress', 'hope', 'currentArmor', 'conditions',
   'tokenX', 'tokenY',
+  /** Vertical offset in feet (0 = ground). Implicit default; omitted until the user changes it. */
+  'altitude',
   /** Which parallel map this token is on when placed (`null` = tray / unassigned). */
   'mapId',
   'assignedPlayerEmail', 'assignedPlayerUid', 'playerName',
@@ -118,6 +120,7 @@ export const BOARD_TOKEN_RUNTIME_KEYS = [
   'label',
   'tokenX',
   'tokenY',
+  'altitude',
   'mapId',
 ];
 
@@ -131,6 +134,7 @@ export const RUNTIME_KEYS = [
   'classFeatures', 'subclassFeatures', 'ancestryFeatures', 'communityFeatures',
   'experiences', 'spellcastTrait', 'hopeAbility', 'hopeAbilityName', 'companion', 'tier',
   'tokenX', 'tokenY',
+  'altitude',
   'mapId',
   'classId', 'subclassId', 'ancestryIds', 'communityId',
   'armorId', 'primaryWeaponId', 'secondaryWeaponId',
@@ -156,6 +160,7 @@ export const UPDATE_BASE_DATA_RUNTIME_KEYS = [
   'instanceId', 'elementType',
   'currentHp', 'currentStress', 'conditions',
   'tokenX', 'tokenY',
+  'altitude',
   'mapId',
   'weaponMods', 'armorMods',
   'difficultyMod',
@@ -374,7 +379,7 @@ export function applyTableOp(op, state) {
           if (el.tokenX == null || el.tokenY == null) return el;
           const mid = el.mapId ?? DEFAULT_LEGACY_MAP_ID;
           if (mid !== targetMapId) return el;
-          return { ...el, tokenX: null, tokenY: null, mapId: null };
+          return { ...el, tokenX: null, tokenY: null, mapId: null, altitude: 0 };
         });
       }
       return {
@@ -760,7 +765,7 @@ export function applyTableOp(op, state) {
         if (el.tokenX == null || el.tokenY == null) return el;
         const mid = el.mapId ?? DEFAULT_LEGACY_MAP_ID;
         if (mid !== targetId) return el;
-        return { ...el, tokenX: null, tokenY: null, mapId: null };
+        return { ...el, tokenX: null, tokenY: null, mapId: null, altitude: 0 };
       });
       const nextState = { ...base, maps, mapViews, activeMapId, gmActiveViewId };
       syncGmMapViewFromActiveView(nextState);

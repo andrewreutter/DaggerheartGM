@@ -12,7 +12,7 @@
  *   mapConfig: object,
  *   activeElements: array,         // characters + adversaries on the table
  *   currentActorInstanceId: string,
- *   _previousPositions: object,    // { [instanceId]: { tokenX, tokenY } } — position before last move
+ *   _previousPositions: object,    // { [instanceId]: { tokenX, tokenY, altitude? } } — position before last move
  *   action: {
  *     type: string,                // 'action'|'trait'|'attack'|'spellcast'|'reaction'|'damage'|'free'|'shortRest'|'longRest'|'sessionStart'
  *     actorInstanceId: string,
@@ -98,12 +98,23 @@ function calcRangeBand(dist) {
  * — the single canonical distance implementation — so engine `actor.rangeFrom(other)` matches
  * BattleMap range highlights and VTT pending-move checks (e.g. Faun Kick) exactly.
  *
+ * Optional altitudes (feet, default 0) are combined as a sphere with the planar nearest-edge
+ * distance. Equal altitudes (including the implicit 0 default) match 2D range exactly.
+ *
  * @param {{halfWidth:number,halfLength:number}} [aFootprint] - defaults to standard 5×5'
  * @param {{halfWidth:number,halfLength:number}} [bFootprint] - defaults to standard 5×5'
+ * @param {number} [aAltitudeFt=0]
+ * @param {number} [bAltitudeFt=0]
  */
-function rangeBetween(x1, y1, x2, y2, aFootprint = DEFAULT_TOKEN_FOOTPRINT_FT, bFootprint = DEFAULT_TOKEN_FOOTPRINT_FT) {
+function rangeBetween(
+  x1, y1, x2, y2,
+  aFootprint = DEFAULT_TOKEN_FOOTPRINT_FT,
+  bFootprint = DEFAULT_TOKEN_FOOTPRINT_FT,
+  aAltitudeFt = 0,
+  bAltitudeFt = 0,
+) {
   if (x1 == null || y1 == null || x2 == null || y2 == null) return null;
-  const dist = tokenDistanceFt(x1, y1, x2, y2, aFootprint, bFootprint);
+  const dist = tokenDistanceFt(x1, y1, x2, y2, aFootprint, bFootprint, aAltitudeFt, bAltitudeFt);
   return calcRangeBand(dist);
 }
 
@@ -199,6 +210,7 @@ function buildBoardTokenActor(element, gameState, mutations, instanceId) {
 
     tokenX: element.tokenX ?? null,
     tokenY: element.tokenY ?? null,
+    altitude: element.altitude ?? 0,
     mapId: element.mapId ?? null,
 
     /** Footprint in feet (`{ halfWidth, halfLength }`); used by `rangeBetween` for ellipse-projected reach. */
@@ -208,6 +220,7 @@ function buildBoardTokenActor(element, gameState, mutations, instanceId) {
       return rangeBetween(
         element.tokenX, element.tokenY, otherActor?.tokenX, otherActor?.tokenY,
         footprint, otherActor?._footprint,
+        element.altitude ?? 0, otherActor?.altitude ?? 0,
       );
     },
     get rangeFromTarget() {
@@ -220,6 +233,7 @@ function buildBoardTokenActor(element, gameState, mutations, instanceId) {
       return rangeBetween(
         element.tokenX, element.tokenY, targetEl.tokenX, targetEl.tokenY,
         footprint, getTokenFootprintFt(targetEl),
+        element.altitude ?? 0, targetEl.altitude ?? 0,
       );
     },
     get lastPosition() {
@@ -236,12 +250,14 @@ function buildBoardTokenActor(element, gameState, mutations, instanceId) {
           return rangeBetween(
             prev.tokenX, prev.tokenY, targetEl.tokenX, targetEl.tokenY,
             footprint, getTokenFootprintFt(targetEl),
+            prev.altitude ?? 0, targetEl.altitude ?? 0,
           );
         },
         rangeFrom(otherActor) {
           return rangeBetween(
             prev.tokenX, prev.tokenY, otherActor?.tokenX, otherActor?.tokenY,
             footprint, otherActor?._footprint,
+            prev.altitude ?? 0, otherActor?.altitude ?? 0,
           );
         },
       };
@@ -578,6 +594,7 @@ function buildActor(element, gameState, mutations) {
     // Position (for range calculations)
     tokenX: element.tokenX ?? null,
     tokenY: element.tokenY ?? null,
+    altitude: element.altitude ?? 0,
 
     /** Footprint in feet (`{ halfWidth, halfLength }`); used by `rangeBetween` for ellipse-projected reach. */
     _footprint: footprint,
@@ -646,6 +663,7 @@ function buildActor(element, gameState, mutations) {
       return rangeBetween(
         element.tokenX, element.tokenY, targetEl.tokenX, targetEl.tokenY,
         footprint, getTokenFootprintFt(targetEl),
+        element.altitude ?? 0, targetEl.altitude ?? 0,
       );
     },
 
@@ -653,6 +671,7 @@ function buildActor(element, gameState, mutations) {
       return rangeBetween(
         element.tokenX, element.tokenY, otherActor?.tokenX, otherActor?.tokenY,
         footprint, otherActor?._footprint,
+        element.altitude ?? 0, otherActor?.altitude ?? 0,
       );
     },
 
@@ -677,12 +696,14 @@ function buildActor(element, gameState, mutations) {
           return rangeBetween(
             prev.tokenX, prev.tokenY, targetEl.tokenX, targetEl.tokenY,
             footprint, getTokenFootprintFt(targetEl),
+            prev.altitude ?? 0, targetEl.altitude ?? 0,
           );
         },
         rangeFrom(otherActor) {
           return rangeBetween(
             prev.tokenX, prev.tokenY, otherActor?.tokenX, otherActor?.tokenY,
             footprint, otherActor?._footprint,
+            prev.altitude ?? 0, otherActor?.altitude ?? 0,
           );
         },
       };

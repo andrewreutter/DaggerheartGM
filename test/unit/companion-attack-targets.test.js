@@ -104,7 +104,20 @@ describe('resolveCompanionRangeElement', () => {
 
   it('falls back to the ranger position when the companion is in the tray', () => {
     const rangeEl = resolveCompanionRangeElement(companionToken, ranger);
-    expect(rangeEl).toMatchObject({ tokenX: 0, tokenY: 0, mapId: 'map-a' });
+    expect(rangeEl).toMatchObject({ tokenX: 0, tokenY: 0, mapId: 'map-a', altitude: 0 });
+  });
+
+  it('uses the ranger altitude when the companion is unplaced', () => {
+    const flyingRanger = { ...ranger, altitude: 60 };
+    const rangeEl = resolveCompanionRangeElement(companionToken, flyingRanger);
+    expect(rangeEl.altitude).toBe(60);
+  });
+
+  it('uses the placed companion token altitude over the ranger\'s', () => {
+    const flyingRanger = { ...ranger, altitude: 60 };
+    const placed = { ...companionToken, tokenX: 40, tokenY: 10, mapId: 'map-a', altitude: 5 };
+    const rangeEl = resolveCompanionRangeElement(placed, flyingRanger);
+    expect(rangeEl).toMatchObject({ tokenX: 40, tokenY: 10, altitude: 5 });
   });
 
   it('returns null when neither companion nor ranger is on the map', () => {
@@ -117,6 +130,12 @@ describe('getCompanionsWithinRangeFt / adversary attack targets', () => {
   it('includes an unplaced companion that shares the ranger\'s space in melee of the attacker', () => {
     const inRange = getCompanionsWithinRangeFt([ranger, companionToken, adversary], 'adv-1', 5);
     expect(inRange.map((t) => t.instanceId)).toEqual(['comp-1']);
+  });
+
+  it('excludes an unplaced companion when the ranger is at a large altitude above melee XY', () => {
+    const flyingRanger = { ...ranger, altitude: 60 };
+    const inRange = getCompanionsWithinRangeFt([flyingRanger, companionToken, adversary], 'adv-1', 5);
+    expect(inRange).toEqual([]);
   });
 
   it('excludes a companion placed beyond the attack range even if the ranger is in range', () => {

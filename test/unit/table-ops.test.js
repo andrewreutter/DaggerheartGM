@@ -447,7 +447,7 @@ describe('applyTableOp', () => {
         mapViewZoomRatio: 0.5,
         mapViewPanNorm: { x: 1, y: 0 },
       },
-      activeElements: [mkElement({ tokenX: 10, tokenY: 20 })],
+      activeElements: [mkElement({ tokenX: 10, tokenY: 20, altitude: 50 })],
     };
     const result = applyTableOp(
       { op: 'set-map', mapImageUrl: 'v', resetTokenPositions: true },
@@ -457,6 +457,7 @@ describe('applyTableOp', () => {
     expect(result.mapConfig.mapViewPanNorm).toBeNull();
     expect(result.activeElements[0].tokenX).toBeNull();
     expect(result.activeElements[0].tokenY).toBeNull();
+    expect(result.activeElements[0].altitude).toBe(0);
   });
 
   it('set-map with a new mapImageUrl clears zoom/pan without resetTokenPositions', () => {
@@ -1086,6 +1087,7 @@ describe('CHARACTER_RUNTIME_KEYS', () => {
     expect(CHARACTER_RUNTIME_KEYS).toContain('conditions');
     expect(CHARACTER_RUNTIME_KEYS).toContain('tokenX');
     expect(CHARACTER_RUNTIME_KEYS).toContain('tokenY');
+    expect(CHARACTER_RUNTIME_KEYS).toContain('altitude');
     expect(CHARACTER_RUNTIME_KEYS).toContain('mapId');
     expect(CHARACTER_RUNTIME_KEYS).toContain('assignedPlayerEmail');
     expect(CHARACTER_RUNTIME_KEYS).toContain('assignedPlayerUid');

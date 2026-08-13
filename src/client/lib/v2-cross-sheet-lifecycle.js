@@ -355,7 +355,7 @@ export function runV2TokenMoveHooks(params, registry) {
     activeElements: postMoveActiveElements,
     featureState,
     _previousPositions: previousTokenFt
-      ? { [moverInstanceId]: { tokenX: previousTokenFt.tokenX, tokenY: previousTokenFt.tokenY } }
+      ? { [moverInstanceId]: { tokenX: previousTokenFt.tokenX, tokenY: previousTokenFt.tokenY, altitude: previousTokenFt.altitude ?? 0 } }
       : {},
   };
 

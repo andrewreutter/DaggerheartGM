@@ -41,7 +41,7 @@ function companionDisplayName(boardToken, companion) {
  *
  * @param {object} boardToken
  * @param {object|null|undefined} parentEl
- * @returns {{ tokenX: number, tokenY: number, mapId: * } | null}
+ * @returns {{ tokenX: number, tokenY: number, mapId: *, altitude: number } | null}
  */
 export function resolveCompanionRangeElement(boardToken, parentEl) {
   const companion = parentEl?.companion;
@@ -57,6 +57,7 @@ export function resolveCompanionRangeElement(boardToken, parentEl) {
     tokenX: placed.tokenX,
     tokenY: placed.tokenY,
     mapId: placed.mapId,
+    altitude: placed.altitude ?? 0,
     tokenSizeWidth: sizeSource?.tokenSizeWidth,
     tokenSizeLength: sizeSource?.tokenSizeLength,
   };
@@ -132,6 +133,8 @@ export function getCompanionsWithinRangeFt(activeElements, sourceInstanceId, max
       rangeEl.tokenY,
       sourceFootprint,
       getTokenFootprintFt(rangeEl),
+      source.altitude ?? 0,
+      rangeEl.altitude ?? 0,
     );
     if (dist <= maxFt) {
       out.push({ instanceId: el.instanceId, name: companionDisplayName(el, companion) });

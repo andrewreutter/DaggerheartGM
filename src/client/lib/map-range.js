@@ -102,6 +102,21 @@ export function ellipseRadiusAtAngle(halfWidth, halfLength, angleRad) {
 }
 
 /**
+ * Combine a planar (horizontal) nearest-edge distance with a vertical altitude delta via
+ * Pythagoras. Equal altitudes return `horizontalDist` unchanged (byte-identical to 2D).
+ *
+ * @param {number} horizontalDist - planar nearest-edge distance in feet (≥ 0)
+ * @param {number} [aAltitudeFt=0]
+ * @param {number} [bAltitudeFt=0]
+ * @returns {number}
+ */
+export function combinePlanarDistanceWithAltitude(horizontalDist, aAltitudeFt = 0, bAltitudeFt = 0) {
+  const dAlt = (Number(bAltitudeFt) || 0) - (Number(aAltitudeFt) || 0);
+  if (dAlt === 0) return horizontalDist;
+  return Math.sqrt(horizontalDist * horizontalDist + dAlt * dAlt);
+}
+
+/**
  * Nearest-edge distance in feet between two placed tokens, accounting for each token's own
  * (possibly non-default) footprint. Matches the distance formula used in BattleMap.jsx for
  * range band highlighting.
@@ -110,18 +125,25 @@ export function ellipseRadiusAtAngle(halfWidth, halfLength, angleRad) {
  * between the two centers; the two reaches are **averaged** (not summed) so that two
  * default-sized (2.5'/2.5') tokens reproduce the original flat `-2.5'` subtraction exactly.
  *
+ * Optional altitudes (feet, default 0) are combined with the planar result as a sphere:
+ * `sqrt(horizontal² + Δaltitude²)`. When both altitudes are 0 the result is identical to 2D.
+ *
  * @param {number} ax - Token A's tokenX (feet, top-left)
  * @param {number} ay - Token A's tokenY (feet, top-left)
  * @param {number} bx - Token B's tokenX (feet, top-left)
  * @param {number} by - Token B's tokenY (feet, top-left)
  * @param {{halfWidth:number,halfLength:number}} [aFootprint] - Token A's footprint (default: standard 5×5')
  * @param {{halfWidth:number,halfLength:number}} [bFootprint] - Token B's footprint (default: standard 5×5')
+ * @param {number} [aAltitudeFt=0] - Token A's altitude in feet
+ * @param {number} [bAltitudeFt=0] - Token B's altitude in feet
  * @returns {number} nearest-edge distance in feet (≥ 0)
  */
 export function tokenDistanceFt(
   ax, ay, bx, by,
   aFootprint = DEFAULT_TOKEN_FOOTPRINT_FT,
   bFootprint = DEFAULT_TOKEN_FOOTPRINT_FT,
+  aAltitudeFt = 0,
+  bAltitudeFt = 0,
 ) {
   const acx = ax + aFootprint.halfWidth;
   const acy = ay + aFootprint.halfLength;
@@ -130,27 +152,35 @@ export function tokenDistanceFt(
   const dx = acx - bcx;
   const dy = acy - bcy;
   const centerDist = Math.sqrt(dx * dx + dy * dy);
+  let horizontal;
   if (centerDist < 1e-9) {
     const reach = ((aFootprint.halfWidth + aFootprint.halfLength) / 2 + (bFootprint.halfWidth + bFootprint.halfLength) / 2) / 2;
-    return Math.max(0, centerDist - reach);
+    horizontal = Math.max(0, centerDist - reach);
+  } else {
+    const angle = Math.atan2(dy, dx);
+    const rA = ellipseRadiusAtAngle(aFootprint.halfWidth, aFootprint.halfLength, angle);
+    const rB = ellipseRadiusAtAngle(bFootprint.halfWidth, bFootprint.halfLength, angle);
+    const reach = (rA + rB) / 2;
+    horizontal = Math.max(0, centerDist - reach);
   }
-  const angle = Math.atan2(dy, dx);
-  const rA = ellipseRadiusAtAngle(aFootprint.halfWidth, aFootprint.halfLength, angle);
-  const rB = ellipseRadiusAtAngle(bFootprint.halfWidth, bFootprint.halfLength, angle);
-  const reach = (rA + rB) / 2;
-  return Math.max(0, centerDist - reach);
+  return combinePlanarDistanceWithAltitude(horizontal, aAltitudeFt, bAltitudeFt);
 }
 
 /**
  * Convenience wrapper: extracts position + footprint (via `getTokenFootprintFt`) from two
- * elements and computes their nearest-edge distance in feet.
+ * elements and computes their nearest-edge distance in feet, including altitude
+ * (`element.altitude ?? 0`).
  *
  * @param {object} a - element with tokenX/tokenY and optional tokenSizeWidth/tokenSizeLength
  * @param {object} b - element with tokenX/tokenY and optional tokenSizeWidth/tokenSizeLength
  * @returns {number} nearest-edge distance in feet (≥ 0)
  */
 export function tokenDistanceFtForElements(a, b) {
-  return tokenDistanceFt(a.tokenX, a.tokenY, b.tokenX, b.tokenY, getTokenFootprintFt(a), getTokenFootprintFt(b));
+  return tokenDistanceFt(
+    a.tokenX, a.tokenY, b.tokenX, b.tokenY,
+    getTokenFootprintFt(a), getTokenFootprintFt(b),
+    a.altitude ?? 0, b.altitude ?? 0,
+  );
 }
 
 /**

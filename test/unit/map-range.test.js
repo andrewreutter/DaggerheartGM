@@ -104,6 +104,37 @@ describe('tokenDistanceFtForElements', () => {
     // Center distance = 97.5; reach = (5+2.5)/2 = 3.75; distance = 93.75.
     expect(tokenDistanceFtForElements(a, b)).toBeCloseTo(93.75, 10);
   });
+
+  it('reads altitude from each element', () => {
+    const a = { tokenX: 0, tokenY: 0, altitude: 0 };
+    const b = { tokenX: 4, tokenY: 0, altitude: 60 };
+    const planar = tokenDistanceFt(0, 0, 4, 0);
+    expect(tokenDistanceFtForElements(a, b)).toBeCloseTo(Math.sqrt(planar * planar + 60 * 60), 5);
+  });
+});
+
+describe('tokenDistanceFt altitude (sphere)', () => {
+  it('is unchanged when both altitudes are equal (including the implicit 0 default)', () => {
+    const planar = tokenDistanceFt(0, 0, 100, 0);
+    expect(tokenDistanceFt(0, 0, 100, 0, undefined, undefined, 0, 0)).toBe(planar);
+    expect(tokenDistanceFt(0, 0, 100, 0, undefined, undefined, 50, 50)).toBe(planar);
+  });
+
+  it('combines a Melee-range horizontal gap with a large altitude delta into a farther band', () => {
+    // tokenX 4: centers 4' apart, nearest-edge 1.5' → Melee (≤5)
+    const planar = tokenDistanceFt(0, 0, 4, 0);
+    expect(planar).toBeLessThanOrEqual(RANGE_BANDS_FT.MELEE);
+    const withAlt = tokenDistanceFt(0, 0, 4, 0, undefined, undefined, 0, 60);
+    expect(withAlt).toBeCloseTo(Math.sqrt(planar * planar + 60 * 60), 5);
+    expect(withAlt).toBeGreaterThan(RANGE_BANDS_FT.CLOSE);
+    expect(withAlt).toBeLessThanOrEqual(RANGE_BANDS_FT.FAR);
+  });
+
+  it('treats negative altitude the same as a positive delta of the same magnitude', () => {
+    const up = tokenDistanceFt(0, 0, 4, 0, undefined, undefined, 0, 20);
+    const down = tokenDistanceFt(0, 0, 4, 0, undefined, undefined, 0, -20);
+    expect(down).toBeCloseTo(up, 10);
+  });
 });
 
 describe('positionAtDistanceFt', () => {

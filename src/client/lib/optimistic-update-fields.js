@@ -12,6 +12,7 @@ export const OPTIMISTIC_ELEMENT_UPDATE_FIELDS = new Set([
   'tokenX',
   'tokenY',
   'mapId',
+  'altitude',
   // Status text (controlled input — must not flicker)
   'conditions',
   // Character resource tracks (also used on adversaries for currentHp / currentStress)

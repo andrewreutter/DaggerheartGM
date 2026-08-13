@@ -87,6 +87,7 @@ describe('shouldOptimisticallyPatch', () => {
   it('returns true for tokenX', () => expect(shouldOptimisticallyPatch({ tokenX: 0 })).toBe(true));
   it('returns true for tokenY', () => expect(shouldOptimisticallyPatch({ tokenY: 0 })).toBe(true));
   it('returns true for mapId', () => expect(shouldOptimisticallyPatch({ mapId: 'x' })).toBe(true));
+  it('returns true for altitude', () => expect(shouldOptimisticallyPatch({ altitude: 10 })).toBe(true));
   it('returns true for conditions', () => expect(shouldOptimisticallyPatch({ conditions: '' })).toBe(true));
   it('returns true for currentHp', () => expect(shouldOptimisticallyPatch({ currentHp: 0 })).toBe(true));
   it('returns true for currentStress', () => expect(shouldOptimisticallyPatch({ currentStress: 1 })).toBe(true));
