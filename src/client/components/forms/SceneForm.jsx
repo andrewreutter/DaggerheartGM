@@ -120,56 +120,68 @@ export function SceneForm({
         </button>
       </div>
 
-      <div className={activeTab === 'details' ? 'flex-1 min-h-0 min-w-0 overflow-y-auto space-y-3' : 'hidden'}>
-        <FormRow label="Scene Name" className="mb-0">
-          <input
-            type="text"
-            value={fd.name || ''}
-            onChange={(e) => updateField('name', e.target.value)}
-            className="bg-dh-inset border border-dh-border rounded p-2 text-dh w-full"
-          />
-        </FormRow>
-        <FormRow label={<>Description<MarkdownHelpTooltip /></>} className="mb-0">
-          <textarea
-            value={fd.description || ''}
-            onChange={(e) => updateField('description', e.target.value)}
-            className="bg-dh-inset border border-dh-border rounded p-2 text-dh h-16 resize-none w-full"
-          />
-        </FormRow>
-        <FormRow label="Cover art (optional)" className="mb-0">
-          <ImageEditor
-            imageUrl={fd.imageUrl}
-            _additionalImages={fd._additionalImages}
-            onChange={({ imageUrl, _additionalImages }) => emit({ ...latestFdRef.current, imageUrl, _additionalImages })}
-            onImageSaved={onImageSaved}
-            collection="scenes"
-            formData={fd}
-            inline
-          />
-        </FormRow>
-        {!omitPublicCheckbox && (
-          <label className="flex items-center gap-2 cursor-pointer select-none text-sm text-dh-muted">
+      {/* SceneTableEditor always stays in layout (invisible, not display:none) so the
+          Details tab keeps the same dialog height as Scene and doesn't jump on switch.
+          Details overlays when active; Scene stays mounted for BattleMap pan/zoom state. */}
+      <div className="relative flex-1 min-h-0 min-w-0 flex flex-col">
+        <div
+          className={
+            activeTab === 'details'
+              ? 'absolute inset-0 z-10 overflow-y-auto space-y-3 bg-dh-surface'
+              : 'hidden'
+          }
+        >
+          <FormRow label="Scene Name" className="mb-0">
             <input
-              type="checkbox"
-              checked={!!fd.is_public}
-              onChange={(e) => updateField('is_public', e.target.checked)}
-              className="accent-blue-500"
+              type="text"
+              value={fd.name || ''}
+              onChange={(e) => updateField('name', e.target.value)}
+              className="bg-dh-inset border border-dh-border rounded p-2 text-dh w-full"
             />
-            Make Public
-          </label>
-        )}
-      </div>
+          </FormRow>
+          <FormRow label={<>Description<MarkdownHelpTooltip /></>} className="mb-0">
+            <textarea
+              value={fd.description || ''}
+              onChange={(e) => updateField('description', e.target.value)}
+              className="bg-dh-inset border border-dh-border rounded p-2 text-dh h-16 resize-none w-full"
+            />
+          </FormRow>
+          <FormRow label="Cover art (optional)" className="mb-0">
+            <ImageEditor
+              imageUrl={fd.imageUrl}
+              _additionalImages={fd._additionalImages}
+              onChange={({ imageUrl, _additionalImages }) => emit({ ...latestFdRef.current, imageUrl, _additionalImages })}
+              onImageSaved={onImageSaved}
+              collection="scenes"
+              formData={fd}
+              inline
+            />
+          </FormRow>
+          {!omitPublicCheckbox && (
+            <label className="flex items-center gap-2 cursor-pointer select-none text-sm text-dh-muted">
+              <input
+                type="checkbox"
+                checked={!!fd.is_public}
+                onChange={(e) => updateField('is_public', e.target.checked)}
+                className="accent-blue-500"
+              />
+              Make Public
+            </label>
+          )}
+        </div>
 
-      {/* Kept mounted (not unmounted) while on the Details tab so BattleMap's local
-          pan/zoom/draw-tool state survives switching tabs. */}
-      <div className={activeTab === 'scene' ? 'flex-1 min-h-0 min-w-0 flex flex-col' : 'hidden'}>
-        <SceneTableEditor
-          value={fd}
-          onChange={onTableChange}
-          partySize={partySize}
-          partyTier={partyTier}
-          characters={characters}
-        />
+        <div
+          className={`flex-1 min-h-0 min-w-0 flex flex-col${activeTab === 'scene' ? '' : ' invisible pointer-events-none'}`}
+          aria-hidden={activeTab !== 'scene'}
+        >
+          <SceneTableEditor
+            value={fd}
+            onChange={onTableChange}
+            partySize={partySize}
+            partyTier={partyTier}
+            characters={characters}
+          />
+        </div>
       </div>
 
       {!isControlled && (

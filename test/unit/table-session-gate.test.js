@@ -96,6 +96,28 @@ describe('table-session-gate', () => {
     expect(g.ok).toBe(true);
   });
 
+  it('allows add-scene-snapshot during prep (Add Scene from library)', () => {
+    const g = gateTableOpForPrepMode(prepState, {
+      op: 'add-scene-snapshot',
+      maps: [{ id: 'm1' }],
+      mapViews: [],
+      elements: [{ instanceId: 'e1', elementType: 'adversary' }],
+    });
+    expect(g.ok).toBe(true);
+  });
+
+  it('allows add-scene-snapshot during idle session pause', () => {
+    const paused = { top: { sessionStarted: true, sessionPaused: true } };
+    expect(isTablePlayAllowed(paused)).toBe(false);
+    const g = gateTableOpForPrepMode(paused, {
+      op: 'add-scene-snapshot',
+      maps: [{ id: 'm1' }],
+      mapViews: [],
+      elements: [],
+    });
+    expect(g.ok).toBe(true);
+  });
+
   it('bypassPrepGate allows a single blocked update without changing session state in the gate', () => {
     const g = gateTableOpForPrepMode(prepState, {
       op: 'update-element',
