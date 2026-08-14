@@ -323,6 +323,13 @@ export function applyTableOp(op, state) {
       if (existing.some((e) => String(e).trim().toLowerCase() === email)) return {};
       return { playerEmails: [...existing, email] };
     }
+    case 'set-player-name': {
+      const email = typeof op.email === 'string' ? op.email.trim().toLowerCase() : '';
+      const name = typeof op.name === 'string' ? op.name.trim() : '';
+      if (!email || !name || name === email) return {};
+      const playerNames = { ...(state.playerNames || {}), [email]: name };
+      return { playerNames };
+    }
     case 'remove-player-email': {
       const email = typeof op.email === 'string' ? op.email.trim().toLowerCase() : '';
       if (!email) return {};

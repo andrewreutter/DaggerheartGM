@@ -180,6 +180,7 @@ function App() {
   const [myRooms, setMyRooms] = useState([]); // [{ tableId, gmUid, gmName, tableName, playerCount, players }] — tables user is invited to
   const [myTables, setMyTables] = useState([]); // [{ id, name, playerCount, players }] — tables user owns
   const [connectedPlayers, setConnectedPlayers] = useState([]); // [{ uid, name, email, photoURL }]
+  const [playerNames, setPlayerNames] = useState({}); // { [email_lowercase]: displayName } — persisted in table_state
   // pendingBanners: authoritative list from the 'banners' subscription channel
   const [pendingBanners, setPendingBanners] = useState([]);
   /** Ephemeral map click pings (SSE `map_ping`); not persisted */
@@ -843,6 +844,7 @@ function App() {
         if (Array.isArray(state.sessionCountdowns)) setSessionCountdowns(state.sessionCountdowns);
         if (state.tableBattleMods != null) setTableBattleMods(state.tableBattleMods);
         if (Array.isArray(state.playerEmails)) setPlayerEmails(state.playerEmails);
+        if (state.playerNames != null && typeof state.playerNames === 'object') setPlayerNames(state.playerNames);
         setInviteLink(state.inviteLink ?? null);
         if (state.tableName != null) {
           setTableName(state.tableName);
@@ -953,6 +955,7 @@ function App() {
         if (Array.isArray(state.sessionCountdowns)) setSessionCountdowns(state.sessionCountdowns);
         if (state.tableBattleMods != null) setTableBattleMods(state.tableBattleMods);
         if (Array.isArray(state.playerEmails)) setPlayerEmails(state.playerEmails);
+        if (state.playerNames != null && typeof state.playerNames === 'object') setPlayerNames(state.playerNames);
         setInviteLink(state.inviteLink ?? null);
         if (state.tableName != null) setTableName(state.tableName);
         if (state.mapConfig != null && typeof state.mapConfig === 'object') {
@@ -2165,6 +2168,7 @@ function App() {
                 playerEmail={effectivePlayerEmail}
                 connectedPlayers={connectedPlayers}
                 playerEmails={playerEmails}
+                playerNames={playerNames}
                 inviteLink={inviteLink}
                 onGenerateInviteLink={effectiveIsPlayer ? undefined : sendGenerateInviteLink}
                 onRevokeInviteLink={effectiveIsPlayer ? undefined : sendRevokeInviteLink}

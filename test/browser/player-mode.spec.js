@@ -79,8 +79,8 @@ async function mockPlayerStream(page, gmUid, { elements = [] } = {}) {
 }
 
 /**
- * Mock the GM's table state to include a player email so the "Invited Players"
- * panel shows up and the GM can enter preview mode.
+ * Mock the GM's table state to include a player email so the Joined roster
+ * shows up and the GM can enter preview mode.
  * Call AFTER authenticate() so the LIFO route order makes this take precedence.
  *
  * Also mocks the GM SSE endpoint so the real server never overrides playerEmails
@@ -125,12 +125,16 @@ async function mockTableStateWithPlayer(page, playerEmail) {
 }
 
 /**
- * Navigate to a page, open the Invited Players panel, and click the Eye icon
+ * Navigate to a page and click the Eye icon on the Joined roster
  * to enter preview mode for the given email.
  */
 async function enterPreviewMode(page, email) {
-  await page.click('button[title="Manage invited players"]');
-  await expect(page.locator('text=Invited Players')).toBeVisible({ timeout: 3000 });
+  // The Players section starts collapsed when there are players; expand it first.
+  const heading = page.getByRole('button', { name: /Players/i }).first();
+  await expect(heading).toBeVisible({ timeout: 3000 });
+  const expanded = await heading.getAttribute('aria-expanded');
+  if (expanded === 'false') await heading.click();
+  await expect(page.getByText('Joined', { exact: false })).toBeVisible({ timeout: 3000 });
   await page.click(`button[title="Preview as ${email}"]`);
   await expect(page.locator('text=Previewing as')).toBeVisible({ timeout: 3000 });
 }
@@ -230,15 +234,21 @@ test('player Add Character submits and the new character appears (regression)', 
 // Real player mode: blocked from GM-only controls
 // ---------------------------------------------------------------------------
 
-test('player mode: Manage Invited Players button is hidden', async ({ page }) => {
+test('player mode: Invite Link controls are hidden', async ({ page }) => {
   await authenticate(page);
   await mockPlayerStream(page, OTHER_GM_UID);
   await page.goto(`/table/${OTHER_GM_UID}`);
 
   await expect(page.locator('button', { hasText: 'Add Character' })).toBeVisible({ timeout: 10000 });
+  // Players section header is visible (players can see the Joined list).
+  // The toggle button contains the text "Players" as its heading.
+  const playersToggle = page.getByRole('button', { name: /Players/i }).first();
+  await expect(playersToggle).toBeVisible();
 
-  // This button is GM-only; players must not see it
-  await expect(page.locator('[title="Manage invited players"]')).not.toBeVisible();
+  // Invite Link generate/copy/revoke and kick/preview are GM-only — they must never appear.
+  await expect(page.getByRole('button', { name: 'Generate Invite Link' })).not.toBeVisible();
+  await expect(page.getByTitle('Remove player')).not.toBeVisible();
+  await expect(page.getByTitle(/Preview as/)).not.toBeVisible();
 });
 
 test('player mode: GM Encounter panel Add button is hidden', async ({ page }) => {

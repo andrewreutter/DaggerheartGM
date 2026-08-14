@@ -32,6 +32,7 @@ import { withActionBannerSuppression } from '../lib/action-notification-banner.j
 import { isReactionRoll } from '../lib/reaction-roll-display.js';
 import { buildTraitRollText, buildPreRollPanelTitle } from '../lib/trait-roll-text.js';
 import { buildReactionCallRoster, canViewerProceedReaction } from '../lib/reaction-call-roster.js';
+import { buildJoinedPlayerRoster, mergePresenceNamesIntoCache } from '../lib/joined-player-roster.js';
 import { requiresGmFinalizedDifficulty, resolveFinalizedIntentDifficulty } from '../lib/action-roll-difficulty.js';
 import {
   postRoll as postRollToServer,
@@ -483,7 +484,7 @@ function buildGameTableNewEnvironmentStub(tier = 1, type = 'exploration') {
   };
 }
 
-export function GMTableView({ tableId, activeElements, updateActiveElement: pushTableElementUpdate, removeActiveElement, updateActiveElementsBaseData, data, saveItem, saveImage, addToTable, sendDoAddToTable, onMergeAdversary, user, route, navigate, featureCountdowns = {}, sessionCountdowns = [], updateCountdown, partySize = 1, partyTier = 1, characters = [], tableBattleMods, setTableBattleMods, fearCount = 0, setFearCount, conditionsHistory = [], onAddConditionsHistoryEntry, onRemoveConditionsHistoryEntry, tableName = '', gmDisplayName = '', tableStateReady = false, onTableNameChange, onDeleteTable, ensureAdventuresLoaded, ensureCharactersLoaded, clearTable, isPlayer = false, playerEmail, connectedPlayers = [], playerEmails = [], inviteLink = null, onGenerateInviteLink, onRevokeInviteLink, onRemovePlayerEmail, onLeaveTable, gmUid, onPlayerAddCharacter, pendingBanners = [], pendingPlayerIntent = null, intentDifficultyUpdate = null, onFeatureRequestSuccess, onFeatureRequestCancel, rangerFocusRequestedBannerIds, onRangerFocusRerollRequestSuccess, onRangerFocusRerollRequestCancel, previewAsPlayerEmail = null, onPreviewAsPlayer, onExitPreview, actionLog = [], setActionLog, mapConfig, maps = [], activeMapId = null, gmMapView = null, onSetActiveMap, onAddMap, onAddMapWithImage, onRemoveMap, onRenameMap, onMapConfigChange, onMapViewSync, lifeSupportSelections = {}, onLifeSupportSelect, onLifeSupportClear, restMovesSelections = {}, onRestMoveSelect, onRestMoveClear, tableFeatureState = {}, sessionPlayAllowed = true, sessionStarted = true, sessionPaused = false, mapPings = [], onDismissMapPing = () => {}, appendMapPing = () => {},
+export function GMTableView({ tableId, activeElements, updateActiveElement: pushTableElementUpdate, removeActiveElement, updateActiveElementsBaseData, data, saveItem, saveImage, addToTable, sendDoAddToTable, onMergeAdversary, user, route, navigate, featureCountdowns = {}, sessionCountdowns = [], updateCountdown, partySize = 1, partyTier = 1, characters = [], tableBattleMods, setTableBattleMods, fearCount = 0, setFearCount, conditionsHistory = [], onAddConditionsHistoryEntry, onRemoveConditionsHistoryEntry, tableName = '', gmDisplayName = '', tableStateReady = false, onTableNameChange, onDeleteTable, ensureAdventuresLoaded, ensureCharactersLoaded, clearTable, isPlayer = false, playerEmail, connectedPlayers = [], playerEmails = [], playerNames = {}, inviteLink = null, onGenerateInviteLink, onRevokeInviteLink, onRemovePlayerEmail, onLeaveTable, gmUid, onPlayerAddCharacter, pendingBanners = [], pendingPlayerIntent = null, intentDifficultyUpdate = null, onFeatureRequestSuccess, onFeatureRequestCancel, rangerFocusRequestedBannerIds, onRangerFocusRerollRequestSuccess, onRangerFocusRerollRequestCancel, previewAsPlayerEmail = null, onPreviewAsPlayer, onExitPreview, actionLog = [], setActionLog, mapConfig, maps = [], activeMapId = null, gmMapView = null, onSetActiveMap, onAddMap, onAddMapWithImage, onRemoveMap, onRenameMap, onMapConfigChange, onMapViewSync, lifeSupportSelections = {}, onLifeSupportSelect, onLifeSupportClear, restMovesSelections = {}, onRestMoveSelect, onRestMoveClear, tableFeatureState = {}, sessionPlayAllowed = true, sessionStarted = true, sessionPaused = false, mapPings = [], onDismissMapPing = () => {}, appendMapPing = () => {},
   mapScribbles = [],
   mapViews = [], gmActiveViewId = null, onSetActiveView, onAddMapViewOp, onRemoveMapView, onRenameMapView, onSetViewBroadcast, onSetViewLocked, onSetMapShare,
   onSetMapOverlay,
@@ -773,9 +774,28 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
   // Action banners with adversary target: { [rollDbId]: selectedAdversaryInstanceId } — pre-populated from player's in-place pick, cleared on ack
   const [actionAdversarySelections, setActionAdversarySelections] = useState({});
   // Character dialog removed — characters are now managed through the Library picker
-  const [showPlayerEmailPanel, setShowPlayerEmailPanel] = useState(false);
-  const [showOnlinePlayersPanel, setShowOnlinePlayersPanel] = useState(false);
   const [inviteLinkCopied, setInviteLinkCopied] = useState(false);
+  // Collapsed by default once table state arrives, unless there are no players yet and no invite link.
+  // We can't use a lazy initializer because playerEmails / inviteLink arrive via SSE after mount.
+  const [playersOpen, setPlayersOpen] = useState(true);
+  const playersOpenDefaultAppliedRef = useRef(false);
+  useEffect(() => {
+    if (tableStateReady && !playersOpenDefaultAppliedRef.current) {
+      playersOpenDefaultAppliedRef.current = true;
+      if (playerEmails.length > 0 || inviteLink) setPlayersOpen(false);
+    }
+  }, [tableStateReady, playerEmails, inviteLink]);
+  // Accumulate player display names seen via presence so they survive disconnect within a session.
+  const playerNameCacheRef = useRef({});
+  useEffect(() => {
+    mergePresenceNamesIntoCache(playerNameCacheRef.current, connectedPlayers);
+  }, [connectedPlayers]);
+  const joinedPlayers = useMemo(
+    // Merge DB-persisted names (playerNames) with in-session cache; live presence overrides both.
+    () => buildJoinedPlayerRoster(playerEmails, connectedPlayers, { ...playerNames, ...playerNameCacheRef.current }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [playerEmails, connectedPlayers, playerNames],
+  );
   // dialogSyncing / dialogSyncError removed — character dialog replaced by Library picker
   const overlayScrollRef = useRef(null);
   const gmFeatureOverlayRef = useRef(null); // outer ref for touch outside-tap dismiss
@@ -5918,123 +5938,123 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
         );
       })()}
       <div className="flex min-h-0 flex-1 overflow-hidden">
-      {/* Characters Panel */}
+      {/* Players + Characters Panel */}
       <div className="w-56 bg-dh-canvas border-r border-dh-border flex flex-col overflow-y-auto shrink-0">
-        <div className="p-3 bg-dh-canvas border-b border-dh-border sticky top-0 z-10">
-          <div className="flex items-center justify-between">
+        {/* Players — invite link (GM) + joined roster */}
+        <div className="bg-dh-canvas border-b border-dh-border shrink-0">
+          <button
+            type="button"
+            onClick={() => setPlayersOpen(o => !o)}
+            className="w-full flex items-center justify-between gap-2 px-3 py-2.5 text-left hover:bg-dh-raised/40 transition-colors"
+            aria-expanded={playersOpen}
+          >
             <h2 className="font-bold text-dh uppercase tracking-wider flex items-center gap-2 text-sm">
-              <Users size={15} className="text-sky-400" /> Characters
+              <Users size={15} className="text-sky-400" /> Players
             </h2>
-            {!isPlayer && (
-              <button
-                onClick={() => setShowPlayerEmailPanel(p => !p)}
-                className="text-dh-muted hover:text-sky-400 transition-colors"
-                title="Manage invited players"
-              ><Users size={13} /></button>
-            )}
-            {isPlayer && connectedPlayers.length > 0 && (
-              <button
-                onClick={() => setShowOnlinePlayersPanel(p => !p)}
-                className="text-dh-muted hover:text-sky-400 transition-colors"
-                title={showOnlinePlayersPanel ? 'Hide online players' : 'Show online players'}
-              ><Users size={13} /></button>
-            )}
-          </div>
-          {/* Invite link + roster (GM only) */}
-          {!isPlayer && showPlayerEmailPanel && (
-            <div className="mt-2 space-y-2">
-              <p className="text-[10px] text-dh-muted uppercase tracking-wider font-semibold">Invite Link</p>
-              {!inviteLink ? (
-                <button
-                  type="button"
-                  onClick={onGenerateInviteLink}
-                  className="w-full rounded-lg border border-dashed border-dh-strong bg-dh-raised/60 hover:border-sky-500/50 hover:bg-dh-hover px-2.5 py-1.5 flex items-center justify-center gap-1.5 transition-colors"
-                >
-                  <Plus size={12} className="text-sky-500" />
-                  <span className="text-xs font-semibold text-dh">Generate Invite Link</span>
-                </button>
-              ) : (
-                <div className="space-y-1">
-                  <div className="flex gap-1">
-                    <input
-                      readOnly
-                      value={`${typeof window !== 'undefined' ? window.location.origin : ''}/join/${inviteLink.token}`}
-                      className="flex-1 bg-dh-surface border border-dh-strong rounded px-2 py-1 text-xs text-dh outline-none min-w-0"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const url = `${window.location.origin}/join/${inviteLink.token}`;
-                        navigator.clipboard.writeText(url).then(() => {
-                          setInviteLinkCopied(true);
-                          setTimeout(() => setInviteLinkCopied(false), 1500);
-                        }).catch(() => {});
-                      }}
-                      className="px-2 py-1 bg-sky-700 hover:bg-sky-600 text-white text-xs rounded transition-colors shrink-0"
-                    >{inviteLinkCopied ? 'Copied' : 'Copy'}</button>
-                    <button
-                      type="button"
-                      onClick={onRevokeInviteLink}
-                      className="px-2 py-1 text-xs rounded border border-dh-strong text-dh-muted hover:text-red-400 hover:border-red-700/50 transition-colors shrink-0"
-                    >Revoke</button>
-                  </div>
-                  <p className="text-[10px] text-dh-muted">Anyone with this link can sign in and join this table.</p>
-                </div>
+            <div className="flex items-center gap-2 shrink-0">
+              {!playersOpen && joinedPlayers.length > 0 && (
+                <span className="text-[10px] text-dh-muted">
+                  {`${joinedPlayers.filter(p => p.online).length} / ${joinedPlayers.length} online`}
+                </span>
               )}
-              <p className="text-[10px] text-dh-muted uppercase tracking-wider font-semibold">Invited Players</p>
-              {playerEmails.map(email => {
-                const connected = connectedPlayers.find(p => p.email === email);
-                const isPreviewing = previewAsPlayerEmail === email;
-                return (
-                  <div key={email} className="flex items-center gap-1.5">
-                    {connected && (
-                      <Circle size={6} className="text-green-400 fill-green-400 shrink-0" />
-                    )}
-                    <span className="flex-1 text-xs text-dh truncate">{email}</span>
+              <ChevronDown
+                size={13}
+                className={`text-dh-muted transition-transform duration-150 ${playersOpen ? 'rotate-180' : ''}`}
+              />
+            </div>
+          </button>
+          {playersOpen && (
+            <div className="px-3 pb-3 space-y-2">
+              {!isPlayer && (
+                <>
+                  <p className="text-[10px] text-dh-muted uppercase tracking-wider font-semibold">Invite Link</p>
+                  {!inviteLink ? (
                     <button
-                      onClick={() => onPreviewAsPlayer?.(isPreviewing ? null : email)}
-                      title={isPreviewing ? 'Exit preview' : `Preview as ${connected?.name || email}`}
-                      className={`shrink-0 transition-colors ${isPreviewing ? 'text-sky-400 hover:text-sky-300' : 'text-dh-muted hover:text-sky-400'}`}
+                      type="button"
+                      onClick={onGenerateInviteLink}
+                      className="w-full rounded-lg border border-dashed border-dh-strong bg-dh-raised/60 hover:border-sky-500/50 hover:bg-dh-hover px-2.5 py-1.5 flex items-center justify-center gap-1.5 transition-colors"
                     >
-                      {isPreviewing ? <EyeOff size={11} /> : <Eye size={11} />}
+                      <Plus size={12} className="text-sky-500" />
+                      <span className="text-xs font-semibold text-dh">Generate Invite Link</span>
                     </button>
-                    <button
-                      type="button"
-                      title="Remove player"
-                      onClick={() => {
-                        if (!window.confirm(`Remove ${email} from this table? They will need a new invite link to rejoin.`)) return;
-                        onRemovePlayerEmail?.(email);
-                      }}
-                      className="text-dh-muted hover:text-red-400 transition-colors shrink-0"
-                    ><Trash2 size={11} /></button>
-                  </div>
-                );
-              })}
-              {connectedPlayers.length > 0 && (
-                <div className="pt-1 border-t border-dh-border">
-                  <p className="text-[10px] text-dh-muted mb-1">Online ({connectedPlayers.length})</p>
-                  {connectedPlayers.map(p => (
-                    <div key={p.uid} className="flex items-center gap-1.5 text-[10px] text-dh">
-                      <Circle size={6} className="text-green-400 fill-green-400 shrink-0" />
-                      <span className="truncate">{p.name || p.email}</span>
+                  ) : (
+                    <div className="space-y-1">
+                      <div className="flex gap-1">
+                        <input
+                          readOnly
+                          value={`${typeof window !== 'undefined' ? window.location.origin : ''}/join/${inviteLink.token}`}
+                          className="flex-1 bg-dh-surface border border-dh-strong rounded px-2 py-1 text-xs text-dh outline-none min-w-0"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const url = `${window.location.origin}/join/${inviteLink.token}`;
+                            navigator.clipboard.writeText(url).then(() => {
+                              setInviteLinkCopied(true);
+                              setTimeout(() => setInviteLinkCopied(false), 1500);
+                            }).catch(() => {});
+                          }}
+                          className="px-2 py-1 bg-sky-700 hover:bg-sky-600 text-white text-xs rounded transition-colors shrink-0"
+                        >{inviteLinkCopied ? 'Copied' : 'Copy'}</button>
+                        <button
+                          type="button"
+                          onClick={onRevokeInviteLink}
+                          className="px-2 py-1 text-xs rounded border border-dh-strong text-dh-muted hover:text-red-400 hover:border-red-700/50 transition-colors shrink-0"
+                        >Revoke</button>
+                      </div>
+                      <p className="text-[10px] text-dh-muted">Anyone with this link can sign in and join this table.</p>
                     </div>
-                  ))}
-                </div>
+                  )}
+                </>
+              )}
+              <p className="text-[10px] text-dh-muted uppercase tracking-wider font-semibold">
+                Joined ({joinedPlayers.filter(p => p.online).length} / {joinedPlayers.length} online)
+              </p>
+              {joinedPlayers.length === 0 ? (
+                <p className="text-[10px] text-dh-muted">No players yet.</p>
+              ) : (
+                joinedPlayers.map((player) => {
+                  const isPreviewing = previewAsPlayerEmail === player.email;
+                  return (
+                    <div key={player.email} className="flex items-center gap-1.5">
+                      {player.online && (
+                        <Circle size={6} className="text-green-400 fill-green-400 shrink-0" />
+                      )}
+                      {!player.online && <span className="w-1.5 shrink-0" aria-hidden />}
+                      <span className="flex-1 text-xs text-dh truncate">{player.name}</span>
+                      {!isPlayer && (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => onPreviewAsPlayer?.(isPreviewing ? null : player.email)}
+                            title={isPreviewing ? 'Exit preview' : `Preview as ${player.name}`}
+                            className={`shrink-0 transition-colors ${isPreviewing ? 'text-sky-400 hover:text-sky-300' : 'text-dh-muted hover:text-sky-400'}`}
+                          >
+                            {isPreviewing ? <EyeOff size={11} /> : <Eye size={11} />}
+                          </button>
+                          <button
+                            type="button"
+                            title="Remove player"
+                            onClick={() => {
+                              if (!window.confirm(`Remove ${player.email} from this table? They will need a new invite link to rejoin.`)) return;
+                              onRemovePlayerEmail?.(player.email);
+                            }}
+                            className="text-dh-muted hover:text-red-400 transition-colors shrink-0"
+                          ><Trash2 size={11} /></button>
+                        </>
+                      )}
+                    </div>
+                  );
+                })
               )}
             </div>
           )}
-          {/* Player view: show who's online */}
-          {isPlayer && showOnlinePlayersPanel && connectedPlayers.length > 0 && (
-            <div className="mt-2 space-y-0.5">
-              <p className="text-[10px] text-dh-muted uppercase tracking-wider">Online ({connectedPlayers.length})</p>
-              {connectedPlayers.map(p => (
-                <div key={p.uid} className="flex items-center gap-1.5 text-[10px] text-dh">
-                  <Circle size={6} className="text-green-400 fill-green-400 shrink-0" />
-                  <span className="truncate">{p.name || p.email}</span>
-                </div>
-              ))}
-            </div>
-          )}
+        </div>
+
+        <div className="p-3 bg-dh-canvas border-b border-dh-border sticky top-0 z-10">
+          <h2 className="font-bold text-dh uppercase tracking-wider flex items-center gap-2 text-sm">
+            <Users size={15} className="text-sky-400" /> Characters
+          </h2>
         </div>
 
         <div className="p-2 space-y-3">

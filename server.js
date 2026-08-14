@@ -3201,6 +3201,11 @@ app.get('/api/room/:tableId/stream', async (req, res) => {
     const room = getOrCreateRoom(tableId);
     room.players.set(user.uid, { res, name: user.name, email: user.email, photoURL: user.picture });
 
+    // Persist the player's display name so it survives page reloads and other clients.
+    if (user.name && user.email && user.name.trim().toLowerCase() !== user.email.trim().toLowerCase()) {
+      applyOpToTableState(tableId, { op: 'set-player-name', email: user.email, name: user.name }).catch(() => {});
+    }
+
     const presence = [...room.players.entries()].map(([uid, p]) => ({ uid, name: p.name, email: p.email, photoURL: p.photoURL }));
     res.write(`event: presence\ndata: ${JSON.stringify({ players: presence })}\n\n`);
 

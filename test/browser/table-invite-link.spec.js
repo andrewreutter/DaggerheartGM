@@ -1,9 +1,9 @@
 /**
  * Table invite link + leave — multi-actor UI coverage.
  *
- * GM generates a reusable /join/:token link; Player A redeems it in the
- * browser; GM kicks them (clears roster + character assignment); Player B
- * joins the same link and leaves via the Characters-panel button.
+ * GM generates a reusable /join/:token link from the Players panel; Player A
+ * redeems it in the browser; GM kicks them from Joined (clears roster +
+ * character assignment); Player B joins the same link and leaves via Leave table.
  */
 import { test, expect } from '@playwright/test';
 import {
@@ -50,9 +50,10 @@ test.describe('table invite link and leave', () => {
       await authenticateActor(playerBPage, ACTOR_PLAYER_B);
 
       await gmPage.goto(`/table/${tableId}`);
-      await expect(gmPage.getByRole('heading', { name: 'Characters' })).toBeVisible({ timeout: 15000 });
+      // New table has no players/link → Players section opens by default.
+      await expect(gmPage.getByRole('button', { name: /Players/i }).first()).toBeVisible({ timeout: 15000 });
+      await expect(gmPage.getByRole('heading', { name: 'Characters' })).toBeVisible();
 
-      await gmPage.getByTitle('Manage invited players').click();
       await gmPage.getByRole('button', { name: 'Generate Invite Link' }).click();
       const inviteInput = gmPage.locator('input[readonly]');
       await expect(inviteInput).toHaveValue(new RegExp(`/join/`), { timeout: 10000 });

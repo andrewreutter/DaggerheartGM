@@ -302,6 +302,31 @@ describe('applyTableOp', () => {
     expect(result.activeElements[2].assignedPlayerEmail).toBe('alice@example.com');
   });
 
+  it('set-player-name persists a display name keyed by lowercase email', () => {
+    const result = applyTableOp(
+      { op: 'set-player-name', email: 'Alice@Example.com', name: 'Alice Ranger' },
+      {},
+    );
+    expect(result.playerNames).toEqual({ 'alice@example.com': 'Alice Ranger' });
+  });
+
+  it('set-player-name merges with existing playerNames', () => {
+    const state = { playerNames: { 'bob@example.com': 'Bob the GM' } };
+    const result = applyTableOp(
+      { op: 'set-player-name', email: 'alice@example.com', name: 'Alice' },
+      state,
+    );
+    expect(result.playerNames).toEqual({ 'bob@example.com': 'Bob the GM', 'alice@example.com': 'Alice' });
+  });
+
+  it('set-player-name is a no-op when the name equals the email', () => {
+    const result = applyTableOp(
+      { op: 'set-player-name', email: 'player@example.com', name: 'player@example.com' },
+      {},
+    );
+    expect(result.playerNames).toBeUndefined();
+  });
+
   it('life-support-select sets selection for roll', () => {
     const result = applyTableOp(
       { op: 'life-support-select', _rollDbId: 42, selectedLifeSupportTargetInstanceId: 'char-1' },
