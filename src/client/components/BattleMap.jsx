@@ -79,6 +79,10 @@ import { MapAiImageDialog } from './MapAiImageDialog.jsx';
 import Fireworks from 'fireworks-js';
 import { effectiveTokenMapId, DEFAULT_LEGACY_MAP_ID, mapConfigHasImage } from '../lib/map-table-state.js';
 import { buildCharacterTrayTokenEntries, buildBoardTrayTokenEntries } from '../lib/character-tray-tokens.js';
+import {
+  trayProxyShouldSnapBullseye,
+  bullseyeFtForPlacedTokenHover,
+} from '../lib/tray-proxy-hover.js';
 import { getMapDimensionsFt as getMapDimensions, MAP_SIZE_FT_MIN, MAP_SIZE_FT_MAX } from '../lib/map-dimensions-ft.js';
 import { getGmTotMEmptyMapHint, getPlayerTotMEmptyMapHint } from '../lib/battle-map-totm-hint.js';
 import { isAdversaryDefeated } from '../lib/helpers.js';
@@ -1572,7 +1576,9 @@ const trayTokenPropsAreEqual = (prev, next) => {
     prev.allyColorClasses !== next.allyColorClasses ||
     prev.onPointerDown !== next.onPointerDown ||
     prev.onPointerMove !== next.onPointerMove ||
-    prev.onPointerUp !== next.onPointerUp
+    prev.onPointerUp !== next.onPointerUp ||
+    prev.onProxyHoverEnter !== next.onProxyHoverEnter ||
+    prev.onProxyHoverLeave !== next.onProxyHoverLeave
   ) {
     return false;
   }
@@ -1593,13 +1599,18 @@ const TrayToken = memo(function TrayTokenRaw({
   onPointerDown,
   onPointerMove,
   onPointerUp,
+  onProxyHoverEnter,
+  onProxyHoverLeave,
 }) {
+  const snapBullseyeOnHover = trayProxyShouldSnapBullseye({ isProxy, isOtherMapShelf });
   return (
     <div
       style={{ touchAction: 'none' }}
       onPointerDown={(e) => onPointerDown(e, element, true)}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
+      onPointerEnter={snapBullseyeOnHover && onProxyHoverEnter ? () => onProxyHoverEnter(element) : undefined}
+      onPointerLeave={snapBullseyeOnHover && onProxyHoverLeave ? () => onProxyHoverLeave(element) : undefined}
     >
       <TokenCircle
         element={element}
@@ -2085,7 +2096,21 @@ function TokenDetailPanel({
 
 // ─── TrayColumn ──────────────────────────────────────────────────────────────
 
-function TrayColumn({ tokens, side, isHighlighted, trayRef, tokenSizePx, dragRef, onPointerDown, onPointerMove, onPointerUp, pinnedInstanceId, allyColorsByInstanceId = null }) {
+function TrayColumn({
+  tokens,
+  side,
+  isHighlighted,
+  trayRef,
+  tokenSizePx,
+  dragRef,
+  onPointerDown,
+  onPointerMove,
+  onPointerUp,
+  onProxyHoverEnter,
+  onProxyHoverLeave,
+  pinnedInstanceId,
+  allyColorsByInstanceId = null,
+}) {
   if (tokens.length === 0) return null;
 
   const borderClass = side === 'left' ? 'border-r border-dh-border' : 'border-l border-dh-border';
@@ -2113,6 +2138,8 @@ function TrayColumn({ tokens, side, isHighlighted, trayRef, tokenSizePx, dragRef
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
+          onProxyHoverEnter={onProxyHoverEnter}
+          onProxyHoverLeave={onProxyHoverLeave}
         />
       ))}
     </div>
@@ -2877,7 +2904,13 @@ export function BattleMap({
    * handlers' own dependency churn (e.g. `instanceNumbers` recomputing on any `activeElements` change)
    * would break token memoization on every SSE update.
    */
-  const handlersRef = useRef({ handlePointerDown: null, handlePointerMove: null, handlePointerUp: null });
+  const handlersRef = useRef({
+    handlePointerDown: null,
+    handlePointerMove: null,
+    handlePointerUp: null,
+    handleTrayProxyHoverEnter: null,
+    handleTrayProxyHoverLeave: null,
+  });
   const stableOnPointerDown = useCallback((e, element, fromTray) => {
     handlersRef.current.handlePointerDown?.(e, element, fromTray);
   }, []);
@@ -2886,6 +2919,12 @@ export function BattleMap({
   }, []);
   const stableOnPointerUp = useCallback((e) => {
     handlersRef.current.handlePointerUp?.(e);
+  }, []);
+  const stableOnProxyHoverEnter = useCallback((element) => {
+    handlersRef.current.handleTrayProxyHoverEnter?.(element);
+  }, []);
+  const stableOnProxyHoverLeave = useCallback((element) => {
+    handlersRef.current.handleTrayProxyHoverLeave?.(element);
   }, []);
   /** After shelf click switches map, center the viewport on that character once `activeMapIdResolved` matches. */
   const pendingShelfNavigateCenterInstanceIdRef = useRef(null);
@@ -5524,6 +5563,28 @@ export function BattleMap({
     setBullseyeIdleVisible(false);
   }, [scheduleBullseyeFt, clearBullseyeIdleTimer]);
 
+  /** Active-map tray proxies: snap bullseye / range highlights as if hovering the placed token. */
+  const handleTrayProxyHoverEnter = useCallback((element) => {
+    if (frozenBullseyeRef.current) return;
+    const snap = bullseyeFtForPlacedTokenHover(
+      element,
+      getTokenFootprintFt(resolveTokenSizeSource(element, parentByInstanceId)),
+    );
+    if (!snap) return;
+    clearBullseyeIdleTimer();
+    lastHoveredTokenIdRef.current = element.instanceId;
+    scheduleBullseyeFt(snap);
+  }, [parentByInstanceId, clearBullseyeIdleTimer, scheduleBullseyeFt]);
+
+  const handleTrayProxyHoverLeave = useCallback((element) => {
+    if (frozenBullseyeRef.current) return;
+    if (lastHoveredTokenIdRef.current !== element?.instanceId) return;
+    lastHoveredTokenIdRef.current = null;
+    scheduleBullseyeFt(null);
+    clearBullseyeIdleTimer();
+    setBullseyeIdleVisible(false);
+  }, [scheduleBullseyeFt, clearBullseyeIdleTimer]);
+
   const handleMapPingPointerDown = useCallback((e) => {
     if (e.button !== 0) return;
     if (drawEyedropperActive) {
@@ -5874,7 +5935,13 @@ export function BattleMap({
   }, [isPlayer, pxPerFt, mapWidthFt, mapHeightFt, updateActiveElement, pinnedToken, activeElements, onTokenDragEnd, canControlMapView, centerMapOnPlacedActor, activeMapIdResolved, navigateShelfToCharacterMap, parentByInstanceId]);
 
   /** Keep the stable proxy callbacks (declared earlier) pointed at the latest handler closures. */
-  handlersRef.current = { handlePointerDown, handlePointerMove, handlePointerUp };
+  handlersRef.current = {
+    handlePointerDown,
+    handlePointerMove,
+    handlePointerUp,
+    handleTrayProxyHoverEnter,
+    handleTrayProxyHoverLeave,
+  };
 
   const renderTokenAltitudeHud = (element, tokenSizeWpx, tokenSizeHpx, zIndex, { isMyCharacter = false, allyColorClasses = null } = {}) => {
     const bandInfo = tokenRangeBands[element.instanceId];
@@ -6515,6 +6582,8 @@ export function BattleMap({
                 onPointerDown={stableOnPointerDown}
                 onPointerMove={stableOnPointerMove}
                 onPointerUp={stableOnPointerUp}
+                onProxyHoverEnter={stableOnProxyHoverEnter}
+                onProxyHoverLeave={stableOnProxyHoverLeave}
                 pinnedInstanceId={pinnedToken?.element.instanceId}
                 allyColorsByInstanceId={allyColorsByInstanceId}
               />
@@ -7338,6 +7407,8 @@ export function BattleMap({
                 onPointerDown={stableOnPointerDown}
                 onPointerMove={stableOnPointerMove}
                 onPointerUp={stableOnPointerUp}
+                onProxyHoverEnter={stableOnProxyHoverEnter}
+                onProxyHoverLeave={stableOnProxyHoverLeave}
                 pinnedInstanceId={pinnedToken?.element.instanceId}
               />
             </div>

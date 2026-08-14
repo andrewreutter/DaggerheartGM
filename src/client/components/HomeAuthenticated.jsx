@@ -82,7 +82,7 @@ export function HomeAuthenticated({
   onRequireAuth,
 }) {
   return (
-    <div className="flex-1 overflow-y-auto p-6 md:p-8 space-y-8">
+    <div className="flex-1 overflow-y-auto bg-dh-canvas p-6 md:p-8 space-y-8">
       <section>
         <h2 className="text-lg font-semibold text-dh mb-4">My Tables</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -153,7 +153,7 @@ export function HomeAuthenticated({
 
       <section>
         <h2 className="text-lg font-semibold text-dh mb-4">My Library</h2>
-        <div className="h-[70vh] overflow-hidden flex flex-col rounded-xl border border-dh-border bg-dh-canvas">
+        <div className="h-[70vh] overflow-hidden flex flex-col">
           <LibraryView
             key={libraryKey}
             embedded={true}
