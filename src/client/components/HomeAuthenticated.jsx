@@ -76,7 +76,6 @@ export function HomeAuthenticated({
   userUid,
   onItemsChange,
   onMergeAdversary,
-  ensureScenesLoaded,
   ensureAdventuresLoaded,
   ensureCharactersLoaded,
   libraryKey,
@@ -175,7 +174,6 @@ export function HomeAuthenticated({
             partySize={partySize}
             partyTier={partyTier}
             characters={characters}
-            ensureScenesLoaded={ensureScenesLoaded}
             ensureAdventuresLoaded={ensureAdventuresLoaded}
             ensureCharactersLoaded={ensureCharactersLoaded}
             myTables={myTables}

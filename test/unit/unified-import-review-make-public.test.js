@@ -15,7 +15,6 @@ describe('UnifiedImportReviewPane make public', () => {
     const src = readFileSync(path, 'utf8');
     expect(src).toMatch(/<AdversaryForm[\s\S]*?omitPublicCheckbox/);
     expect(src).toMatch(/<EnvironmentForm[\s\S]*?omitPublicCheckbox/);
-    expect(src).toMatch(/<SceneForm[\s\S]*?omitPublicCheckbox/);
     expect(src).toMatch(/<AdventureForm[\s\S]*?omitPublicCheckbox/);
   });
 

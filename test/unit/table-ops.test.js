@@ -171,6 +171,83 @@ describe('applyTableOp', () => {
     expect(result.tableBattleMods).toEqual(mods);
   });
 
+  it('add-scene-snapshot appends maps, views, and elements onto empty state', () => {
+    const result = applyTableOp({
+      op: 'add-scene-snapshot',
+      maps: [{ id: 'm1', name: 'Forest' }],
+      mapViews: [{ id: 'v1', mapId: 'm1' }],
+      elements: [mkElement({ instanceId: 'inst-s1', name: 'Goblin' })],
+      sessionCountdowns: [{ id: 'cd1', label: 'Collapse', current: 3 }],
+    }, {});
+    expect(result.maps).toEqual([{ id: 'm1', name: 'Forest' }]);
+    expect(result.mapViews).toEqual([{ id: 'v1', mapId: 'm1' }]);
+    expect(result.activeElements).toHaveLength(1);
+    expect(result.activeElements[0].name).toBe('Goblin');
+    expect(result.sessionCountdowns).toEqual([{ id: 'cd1', label: 'Collapse', current: 3 }]);
+    expect(result).not.toHaveProperty('tableBattleMods');
+  });
+
+  it('add-scene-snapshot appends after existing rows without replacing them', () => {
+    const state = {
+      maps: [{ id: 'm-existing', name: 'Keep' }],
+      mapViews: [{ id: 'v-existing', mapId: 'm-existing' }],
+      activeElements: [mkElement()],
+      sessionCountdowns: [{ id: 'cd-existing', label: 'Old' }],
+      tableBattleMods: { lessDifficult: true },
+    };
+    const result = applyTableOp({
+      op: 'add-scene-snapshot',
+      maps: [{ id: 'm-new', name: 'New' }],
+      mapViews: [{ id: 'v-new', mapId: 'm-new' }],
+      elements: [mkElement({ instanceId: 'inst-new', name: 'Orc' })],
+      sessionCountdowns: [{ id: 'cd-new', label: 'New' }],
+    }, state);
+    expect(result.maps.map((m) => m.id)).toEqual(['m-existing', 'm-new']);
+    expect(result.mapViews.map((v) => v.id)).toEqual(['v-existing', 'v-new']);
+    expect(result.activeElements.map((e) => e.instanceId)).toEqual(['inst-1', 'inst-new']);
+    expect(result.sessionCountdowns.map((c) => c.id)).toEqual(['cd-existing', 'cd-new']);
+    expect(result).not.toHaveProperty('tableBattleMods');
+  });
+
+  it('add-scene-snapshot omits sessionCountdowns and tableBattleMods when those fields are omitted', () => {
+    const state = {
+      maps: [],
+      mapViews: [],
+      activeElements: [mkElement()],
+      sessionCountdowns: [{ id: 'keep', label: 'Keep' }],
+      tableBattleMods: { moreDangerous: true },
+    };
+    const result = applyTableOp({
+      op: 'add-scene-snapshot',
+      maps: [{ id: 'm1' }],
+      mapViews: [],
+      elements: [],
+    }, state);
+    expect(result.maps).toEqual([{ id: 'm1' }]);
+    expect(result).not.toHaveProperty('sessionCountdowns');
+    expect(result).not.toHaveProperty('tableBattleMods');
+  });
+
+  it('add-scene-snapshot replaces tableBattleMods only when present', () => {
+    const state = { tableBattleMods: { lessDifficult: true } };
+    const applied = applyTableOp({
+      op: 'add-scene-snapshot',
+      maps: [],
+      mapViews: [],
+      elements: [],
+      tableBattleMods: { moreDangerous: true },
+    }, state);
+    expect(applied.tableBattleMods).toEqual({ moreDangerous: true });
+
+    const kept = applyTableOp({
+      op: 'add-scene-snapshot',
+      maps: [],
+      mapViews: [],
+      elements: [],
+    }, state);
+    expect(kept).not.toHaveProperty('tableBattleMods');
+  });
+
   it('set-player-emails sets playerEmails', () => {
     const result = applyTableOp({ op: 'set-player-emails', playerEmails: ['a@b.com'] }, {});
     expect(result.playerEmails).toEqual(['a@b.com']);

@@ -4,7 +4,6 @@ import { MarkdownHelpTooltip } from '../MarkdownHelpTooltip.jsx';
 import { MarkdownText } from '../../lib/markdown.js';
 import { AdversaryForm } from '../forms/AdversaryForm.jsx';
 import { EnvironmentForm } from '../forms/EnvironmentForm.jsx';
-import { SceneForm } from '../forms/SceneForm.jsx';
 import { AdventureForm } from '../forms/AdventureForm.jsx';
 import { CharacterForm } from '../forms/CharacterForm.jsx';
 import { GenericSrdLibraryForm } from '../forms/GenericSrdLibraryForm.jsx';
@@ -158,21 +157,6 @@ export function UnifiedImportReviewPane({
   if (col === 'environments') {
     return formWrap(
       <EnvironmentForm value={draft} onChange={(next) => replace(next)} featureLibraryPortal={null} omitPublicCheckbox />,
-    );
-  }
-
-  if (col === 'scenes') {
-    return formWrap(
-      <SceneForm
-        value={draft}
-        onChange={(next) => replace(next)}
-        data={sharedBrowse}
-        partySize={partySize}
-        partyTier={partyTier}
-        characters={[]}
-        onMergeAdversary={undefined}
-        omitPublicCheckbox
-      />,
     );
   }
 

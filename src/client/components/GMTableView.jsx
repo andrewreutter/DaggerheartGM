@@ -2,7 +2,7 @@ import { useMemo, useState, useEffect, useLayoutEffect, useRef, useCallback } fr
 import { createPortal } from 'react-dom';
 import { useTouchDevice } from '../lib/useTouchDevice.js';
 import { useHoverOverlay } from '../lib/useHoverOverlay.js';
-import { Zap, Trash2, Dices, ChevronDown, ChevronRight, X, Plus, Camera, Swords, AlertTriangle, Flame, Edit, Users, RefreshCw, ExternalLink, Eye, EyeOff, Circle, Square, CheckSquare, StickyNote, Heart } from 'lucide-react';
+import { Zap, Trash2, Dices, ChevronDown, ChevronRight, X, Plus, Swords, AlertTriangle, Flame, Edit, Users, RefreshCw, ExternalLink, Eye, EyeOff, Circle, Square, CheckSquare, StickyNote, Heart } from 'lucide-react';
 import { BattleMap, CHARACTER_TRAY_WIDTH_PX, TokenTrayActionButton } from './BattleMap.jsx';
 import { EncounterAdversaryInstancePlayerSummary } from './EncounterAdversaryMarkedSummary.jsx';
 import { playerEncounterInstanceRowVisible } from '../lib/encounter-adversary-player-summary.js';
@@ -22,6 +22,7 @@ import { ItemDetailModal } from './modals/ItemDetailModal.jsx';
 import { ItemPickerModal } from './modals/ItemPickerModal.jsx';
 import { EncounterNoteEditorModal } from './modals/EncounterNoteEditorModal.jsx';
 import { ReactionCallModal } from './modals/ReactionCallModal.jsx';
+import { CreateSceneModal } from './modals/CreateSceneModal.jsx';
 import { TRAIT_FULL } from './CharacterDisplay.jsx';
 import { MarkdownText } from '../lib/markdown.js';
 import { handleAiConceptTextareaKeyDown } from '../lib/ai-concept-textarea.js';
@@ -328,75 +329,6 @@ function buildAttackRollText(name, modifier, range, damage, trait, sourceName) {
   return `${sourceName} ${name} [d20${modStr}] damage [${damage}] ${(trait || 'phy').toLowerCase()} ${range}`;
 }
 
-function CaptureTableModal({ activeElements, saveItem, onClose, navigate }) {
-  const [name, setName] = useState('');
-  const [saving, setSaving] = useState(false);
-
-  const handleSave = async () => {
-    if (!name.trim()) return;
-    setSaving(true);
-
-    const adversaries = activeElements.filter(el => el.elementType === 'adversary');
-    const environments = activeElements.filter(el => el.elementType === 'environment');
-
-    // Collapse duplicate adversaries into { adversaryId, count }.
-    const advMap = new Map();
-    adversaries.forEach(el => {
-      if (advMap.has(el.id)) {
-        advMap.get(el.id).count += 1;
-      } else {
-        advMap.set(el.id, { adversaryId: el.id, count: 1 });
-      }
-    });
-    const adversaryRefs = [...advMap.values()];
-    const environmentRefs = environments.map(el => el.id);
-
-    const item = { id: generateId(), name: name.trim(), adversaries: adversaryRefs, environments: environmentRefs, scenes: [] };
-    await saveItem('scenes', item);
-
-    setSaving(false);
-    onClose();
-    navigate(`/library/scenes/${item.id}`);
-  };
-
-  return (
-    <div className="fixed inset-0 z-[53] flex items-center justify-center bg-black/70" onClick={onClose}>
-      <div className="bg-dh-surface border border-dh-strong rounded-xl shadow-2xl w-full max-w-md mx-4 p-6" onClick={e => e.stopPropagation()}>
-        <div className="flex items-center justify-between mb-5">
-          <h2 className="text-lg font-bold text-dh flex items-center gap-2"><Camera size={18} /> Capture Table as Scene</h2>
-          <button type="button" tabIndex={0} onClick={onClose} className="text-dh-muted hover:text-dh"><X size={18} /></button>
-        </div>
-
-        <p className="text-sm text-dh-muted mb-5">Save the current table contents as a reusable Scene, including all adversaries and environments.</p>
-
-        <label className="block text-sm font-medium text-dh mb-1">Scene Name</label>
-        <input
-          type="text"
-          value={name}
-          onChange={e => setName(e.target.value)}
-          onKeyDown={e => { if (e.key === 'Enter') handleSave(); if (e.key === 'Escape') onClose(); }}
-          placeholder="e.g. Bandit Ambush"
-          autoFocus
-          className="w-full bg-dh-raised border border-dh-strong rounded-lg px-3 py-2 text-sm text-dh placeholder-dh-muted outline-none focus:border-red-500 mb-5"
-        />
-
-        <div className="flex justify-end gap-2">
-          <button type="button" tabIndex={0} onClick={onClose} className="px-4 py-2 rounded-lg text-sm text-dh-muted hover:text-dh bg-dh-raised border border-dh-strong hover:border-dh-strong transition-colors">Cancel</button>
-          <button
-            type="button"
-            tabIndex={0}
-            onClick={handleSave}
-            disabled={!name.trim() || saving}
-            className="px-4 py-2 rounded-lg text-sm font-medium bg-red-700 hover:bg-red-600 text-white disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-          >
-            {saving ? 'Saving…' : 'Save as Scene'}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 // Strip runtime tracking fields to get the base item data for form editing.
 function getItemData(element) {
   const { instanceId, elementType, currentHp, currentStress, conditions, ...rest } = element;
@@ -553,7 +485,7 @@ function buildGameTableNewEnvironmentStub(tier = 1, type = 'exploration') {
   };
 }
 
-export function GMTableView({ tableId, activeElements, updateActiveElement: pushTableElementUpdate, removeActiveElement, updateActiveElementsBaseData, data, saveItem, saveImage, addToTable, sendDoAddToTable, onMergeAdversary, user, route, navigate, featureCountdowns = {}, sessionCountdowns = [], updateCountdown, partySize = 1, partyTier = 1, characters = [], tableBattleMods, setTableBattleMods, fearCount = 0, setFearCount, conditionsHistory = [], onAddConditionsHistoryEntry, onRemoveConditionsHistoryEntry, tableName = '', gmDisplayName = '', tableStateReady = false, onTableNameChange, onDeleteTable, ensureScenesLoaded, ensureAdventuresLoaded, ensureCharactersLoaded, clearTable, isPlayer = false, playerEmail, connectedPlayers = [], playerEmails = [], setPlayerEmails, gmUid, onPlayerAddCharacter, pendingBanners = [], pendingPlayerIntent = null, intentDifficultyUpdate = null, onFeatureRequestSuccess, onFeatureRequestCancel, rangerFocusRequestedBannerIds, onRangerFocusRerollRequestSuccess, onRangerFocusRerollRequestCancel, previewAsPlayerEmail = null, onPreviewAsPlayer, onExitPreview, actionLog = [], setActionLog, mapConfig, maps = [], activeMapId = null, gmMapView = null, onSetActiveMap, onAddMap, onAddMapWithImage, onRemoveMap, onRenameMap, onMapConfigChange, onMapViewSync, lifeSupportSelections = {}, onLifeSupportSelect, onLifeSupportClear, restMovesSelections = {}, onRestMoveSelect, onRestMoveClear, tableFeatureState = {}, sessionPlayAllowed = true, sessionStarted = true, sessionPaused = false, mapPings = [], onDismissMapPing = () => {}, appendMapPing = () => {},
+export function GMTableView({ tableId, activeElements, updateActiveElement: pushTableElementUpdate, removeActiveElement, updateActiveElementsBaseData, data, saveItem, saveImage, addToTable, sendDoAddToTable, onMergeAdversary, user, route, navigate, featureCountdowns = {}, sessionCountdowns = [], updateCountdown, partySize = 1, partyTier = 1, characters = [], tableBattleMods, setTableBattleMods, fearCount = 0, setFearCount, conditionsHistory = [], onAddConditionsHistoryEntry, onRemoveConditionsHistoryEntry, tableName = '', gmDisplayName = '', tableStateReady = false, onTableNameChange, onDeleteTable, ensureAdventuresLoaded, ensureCharactersLoaded, clearTable, isPlayer = false, playerEmail, connectedPlayers = [], playerEmails = [], setPlayerEmails, gmUid, onPlayerAddCharacter, pendingBanners = [], pendingPlayerIntent = null, intentDifficultyUpdate = null, onFeatureRequestSuccess, onFeatureRequestCancel, rangerFocusRequestedBannerIds, onRangerFocusRerollRequestSuccess, onRangerFocusRerollRequestCancel, previewAsPlayerEmail = null, onPreviewAsPlayer, onExitPreview, actionLog = [], setActionLog, mapConfig, maps = [], activeMapId = null, gmMapView = null, onSetActiveMap, onAddMap, onAddMapWithImage, onRemoveMap, onRenameMap, onMapConfigChange, onMapViewSync, lifeSupportSelections = {}, onLifeSupportSelect, onLifeSupportClear, restMovesSelections = {}, onRestMoveSelect, onRestMoveClear, tableFeatureState = {}, sessionPlayAllowed = true, sessionStarted = true, sessionPaused = false, mapPings = [], onDismissMapPing = () => {}, appendMapPing = () => {},
   mapScribbles = [],
   mapViews = [], gmActiveViewId = null, onSetActiveView, onAddMapViewOp, onRemoveMapView, onRenameMapView, onSetViewBroadcast, onSetViewLocked, onSetMapShare,
   onSetMapOverlay,
@@ -802,17 +734,11 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
 
   // Dice roller ref — banners are added/removed purely by the pendingBanners subscription effect.
 
-  // Load scenes/adventures when picker opens so it can display the list.
+  // Load adventures when picker opens so it can display the list (scenes are paginated
+  // by ItemPickerModal itself via useCollectionSearch — no bulk preload needed).
   const [pickerLoading, setPickerLoading] = useState(false);
   useEffect(() => {
-    if (modalOpen === 'scenes' && ensureScenesLoaded) {
-      if ((data.scenes || []).length > 0) {
-        setPickerLoading(false);
-        return;
-      }
-      setPickerLoading(true);
-      ensureScenesLoaded().finally(() => setPickerLoading(false));
-    } else if (modalOpen === 'adventures' && ensureAdventuresLoaded) {
+    if (modalOpen === 'adventures' && ensureAdventuresLoaded) {
       if ((data.adventures || []).length > 0) {
         setPickerLoading(false);
         return;
@@ -822,7 +748,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     } else {
       setPickerLoading(false);
     }
-  }, [modalOpen, ensureScenesLoaded, ensureAdventuresLoaded, data.scenes?.length, data.adventures?.length]);
+  }, [modalOpen, ensureAdventuresLoaded, data.adventures?.length]);
 
   useEffect(() => {
     if (!lightboxUrl) return;
@@ -842,7 +768,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
   }, [adversaryTargetMenu]);
-  const [captureOpen, setCaptureOpen] = useState(false);
+  const [createSceneOpen, setCreateSceneOpen] = useState(false);
   const [budgetCardOpen, setBudgetCardOpen] = useState(false);
   const [diceCanvasHidden, setDiceCanvasHidden] = useState(false);
 
@@ -7085,6 +7011,8 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
             renderPinnedCharacterPanel={renderPinnedCharacterPanel}
             renderAdversaryEncounterCard={!isPlayer ? renderAdversaryEncounterCard : undefined}
             renderAdversaryTargetAid={renderAdversaryTargetAid}
+            onOpenCreateScene={!isPlayer ? () => setCreateSceneOpen(true) : undefined}
+            onOpenAddScene={!isPlayer ? () => setModalOpen('scenes') : undefined}
           />
         </div>
         </div>
@@ -7103,12 +7031,6 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
               <Swords size={15} className="text-red-400" /> Encounter
             </h2>
             <div className="flex items-center gap-0.5">
-              <button
-                onClick={() => setCaptureOpen(true)}
-                disabled={activeElements.length === 0}
-                title="Save current table as a Scene"
-                className="p-1 rounded text-dh-muted hover:text-dh disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-              ><Camera size={13} /></button>
               <button
                 onClick={() => {
                   if (!window.confirm('Clear all adversaries, environments, and notes from the table? This cannot be undone.')) return;
@@ -7815,19 +7737,23 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
           setModalOpen(null);
           void openNewEnvironmentEditor({ pendingAiConcept: concept, tier, type });
         } : undefined}
-        isLoading={['scenes', 'adventures', 'characters'].includes(modalOpen) ? pickerLoading : undefined}
+        isLoading={modalOpen === 'adventures' ? pickerLoading : undefined}
         excludeIds={modalOpen === 'characters' ? activeElements.filter(el => el.elementType === 'character').map(el => el.id) : undefined}
       />
     )}
 
-    {captureOpen && (
-      <CaptureTableModal
-        activeElements={activeElements}
-        saveItem={saveItem}
-        navigate={navigate}
-        onClose={() => setCaptureOpen(false)}
-      />
-    )}
+    <CreateSceneModal
+      open={createSceneOpen}
+      onClose={() => setCreateSceneOpen(false)}
+      activeElements={activeElements}
+      maps={maps}
+      mapViews={mapViews}
+      sessionCountdowns={sessionCountdowns}
+      tableBattleMods={tableBattleMods}
+      saveItem={saveItem}
+      navigate={navigate}
+      partySize={partySize}
+    />
 
     {/* Character sheet overlay — right of Characters panel; sheet + editor share one rounded card (editor slides from behind). Mounts before ItemDetailModal so the editor portal target exists. */}
     {characterOverlay.isOpen && (() => {

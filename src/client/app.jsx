@@ -9,6 +9,7 @@ import { dataUrlToFile, loadImageNaturalSizeFromUrl } from './lib/map-image-data
 import { AiUiPreferenceProvider, useAiUiPreference } from './lib/ai-ui-preference-context.jsx';
 import { shouldShowConceptAiUi } from './lib/ai-ui-visibility.js';
 import { generateId } from './lib/helpers.js';
+import { regenerateSceneIdsForTablePlacement } from './lib/scene-id-remap.js';
 import { computeSessionCountdownUpdatesFromRoll } from './lib/session-countdowns.js';
 import { resetOnboardingState } from './lib/onboarding-storage.js';
 import { isOwnItem, DEFAULT_CHARACTER_STARTING_HOPE } from './lib/constants.js';
@@ -159,13 +160,10 @@ function App() {
   // tableStateReady: true after we've applied table state for the current table (avoids opening name editor before load)
   const [tableStateReady, setTableStateReady] = useState(false);
   const tableStateReadyRef = useRef(false);
-  const scenesLoadedRef = useRef(false);
   const adventuresLoadedRef = useRef(false);
   const charactersLoadedRef = useRef(false);
-  const scenesLoadPromiseRef = useRef(null);
   const adventuresLoadPromiseRef = useRef(null);
   const charactersLoadPromiseRef = useRef(null);
-  const scenesCacheRef = useRef([]);
   const adventuresCacheRef = useRef([]);
   const charactersCacheRef = useRef([]);
   const charLoadResolversRef = useRef([]);
@@ -246,9 +244,7 @@ function App() {
     setPendingBanners([]);
     setMapPings([]);
     tableStateReadyRef.current = false;
-    scenesLoadedRef.current = false;
     adventuresLoadedRef.current = false;
-    scenesCacheRef.current = [];
     adventuresCacheRef.current = [];
   setActiveElements([]);
   try {
@@ -274,9 +270,7 @@ function App() {
       }
     }
     setData({ adversaries: [], environments: [], scenes: [], adventures: [] });
-    scenesLoadedRef.current = false;
     adventuresLoadedRef.current = false;
-    scenesCacheRef.current = [];
     adventuresCacheRef.current = [];
     setActiveElements([]);
     tableStateReadyRef.current = false;
@@ -343,59 +337,6 @@ function App() {
   const routeRef = useRef(null);
   const lastLibraryPathRef = useRef(`/library/${DEFAULT_LIBRARY_TAB}`);
 
-  // Load scenes on demand; resolve adversary/env IDs for scene chips.
-  // Returns the scenes array (from cache if already loaded, or freshly loaded).
-  const ensureScenesLoaded = useCallback(async () => {
-    if (scenesLoadedRef.current) return scenesCacheRef.current;
-    if (scenesLoadPromiseRef.current) return scenesLoadPromiseRef.current;
-    const promise = (async () => {
-      try {
-        const result = await loadCollection('scenes', { limit: 1000 });
-        const scenes = result.items || [];
-        if (!userRef.current) return [];
-        // Show scenes immediately so the UI feels instant; resolve refs in background for chip names.
-        setData(prev => {
-          if ((prev.scenes || []).length > 0) return prev;
-          return { ...prev, scenes };
-        });
-        scenesLoadedRef.current = true;
-        scenesCacheRef.current = scenes;
-
-        const advIds = new Set();
-        const envIds = new Set();
-        for (const scene of scenes) {
-          for (const envEntry of (scene.environments || [])) {
-            if (typeof envEntry === 'string') envIds.add(envEntry);
-          }
-          for (const ref of (scene.adversaries || [])) {
-            if (ref != null && !ref.data && ref.adversaryId) advIds.add(ref.adversaryId);
-          }
-        }
-        if (advIds.size || envIds.size) {
-          resolveItems({
-            ...(advIds.size ? { adversaries: [...advIds] } : {}),
-            ...(envIds.size ? { environments: [...envIds] } : {}),
-          }).then(resolved => {
-            if (!userRef.current) return;
-            const resolvedAdvs = resolved.adversaries || [];
-            const resolvedEnvs = resolved.environments || [];
-            const resolvedAdvIds = new Set(resolvedAdvs.map(a => a.id));
-            const resolvedEnvIds = new Set(resolvedEnvs.map(e => e.id));
-            setData(prev => ({
-              ...prev,
-              adversaries: [...resolvedAdvs, ...(prev.adversaries || []).filter(a => !resolvedAdvIds.has(a.id))],
-              environments: [...resolvedEnvs, ...(prev.environments || []).filter(e => !resolvedEnvIds.has(e.id))],
-            }));
-          }).catch(() => {});
-        }
-        return scenes;
-      } finally {
-        scenesLoadPromiseRef.current = null;
-      }
-    })();
-    scenesLoadPromiseRef.current = promise;
-    return promise;
-  }, []);
 
   // Load adventures on demand. Returns the adventures array.
   const ensureAdventuresLoaded = useCallback(async () => {
@@ -1117,9 +1058,9 @@ function App() {
     }
   }, [route.view, route.tab]);
 
-  /** Called by LibraryView whenever its hook fetches a new page of adversaries/environments.
-   *  Merges with previously resolved items (from fetchAllCollections) so scene
-   *  reference resolution in ItemCard and ItemDetailView keeps working. */
+  /** Called by LibraryView whenever its hook fetches a new page of a paginated collection
+   *  (adversaries/environments/scenes). Merges with previously resolved items (from
+   *  fetchAllCollections) so ItemCard and picker lookups elsewhere keep working. */
   const syncDataToApp = (collection, items) => {
     setData(prev => {
       const newIds = new Set(items.map(i => i.id));
@@ -1232,72 +1173,7 @@ function App() {
     }));
   };
 
-  // Collect all DB-referenced IDs from a scene (and nested scenes) for batch resolution.
-  // visited prevents infinite recursion from circular scene references.
-  function collectSceneIds(scene, scenesById, visited = new Set()) {
-    if (visited.has(scene.id)) return { adversaryIds: [], environmentIds: [] };
-    visited.add(scene.id);
-
-    const adversaryIds = new Set();
-    const environmentIds = new Set();
-
-    (scene.environments || []).forEach(e => { if (typeof e === 'string') environmentIds.add(e); });
-    (scene.adversaries || []).forEach(ref => { if (ref != null && !ref.data && ref.adversaryId) adversaryIds.add(ref.adversaryId); });
-
-    (scene.scenes || []).forEach(nestedId => {
-      const nested = scenesById[nestedId];
-      if (!nested) return;
-      const { adversaryIds: a, environmentIds: e } = collectSceneIds(nested, scenesById, visited);
-      a.forEach(id => adversaryIds.add(id));
-      e.forEach(id => environmentIds.add(id));
-    });
-
-    return { adversaryIds: [...adversaryIds], environmentIds: [...environmentIds] };
-  }
-
-  // Expand a scene into table elements using pre-resolved data maps.
-  // visited prevents infinite recursion from circular scene references.
-  // rootDamageBoost is inherited from the root scene's battleMods (only top-level scene sets it).
-  function expandSceneWithResolved(scene, scenesById, adversariesById, environmentsById, visited = new Set(), depth = 0, rootDamageBoost = null) {
-    if (visited.has(scene.id) || depth > 10) return [];
-    visited.add(scene.id);
-
-    // Only the root scene (depth 0) sets the damage boost; nested scenes inherit it.
-    const damageBoost = depth === 0
-      ? (scene.battleMods?.damageBoostD4 ? 'd4' : scene.battleMods?.damageBoostStatic ? 'static' : scene.battleMods?.damageBoostPlusOne ? 'plusOne' : null)
-      : rootDamageBoost;
-
-    const elements = [];
-
-    (scene.environments || []).forEach(envEntry => {
-      if (envEntry == null) return;
-      if (typeof envEntry === 'object' && envEntry.data) {
-        elements.push({ id: envEntry.data.id || generateId(), ...envEntry.data, instanceId: generateId(), elementType: 'environment' });
-      } else {
-        const env = environmentsById[envEntry];
-        if (env) elements.push({ ...env, instanceId: generateId(), elementType: 'environment' });
-      }
-    });
-
-    (scene.adversaries || []).forEach(advRef => {
-      if (advRef == null) return;
-      const adv = advRef.data ? { id: advRef.data.id || generateId(), ...advRef.data } : adversariesById[advRef.adversaryId];
-      if (adv) {
-        for (let i = 0; i < (advRef.count || 1); i++) {
-          elements.push({ ...adv, instanceId: generateId(), elementType: 'adversary', currentHp: adv.hp_max || 0, currentStress: 0, conditions: '', ...(damageBoost ? { _damageBoost: damageBoost } : {}) });
-        }
-      }
-    });
-
-    (scene.scenes || []).forEach(nestedId => {
-      const nested = scenesById[nestedId];
-      if (nested) elements.push(...expandSceneWithResolved(nested, scenesById, adversariesById, environmentsById, visited, depth + 1, damageBoost));
-    });
-
-    return elements;
-  }
-
-  const doAddToTable = async (item, collectionName, explicitTargetTableId) => {
+  const doAddToTable = async (item, collectionName, explicitTargetTableId, opts = {}) => {
     const newElements = [];
 
     if (collectionName === 'adversaries' || collectionName === 'environments') {
@@ -1331,15 +1207,32 @@ function App() {
         newElements.push({ ...tableItem, instanceId: generateId(), elementType: 'environment' });
       }
     } else if (collectionName === 'scenes') {
-      const scenes = await ensureScenesLoaded();
-      const scenesById = Object.fromEntries(scenes.map(s => [s.id, s]));
-      const { adversaryIds, environmentIds } = collectSceneIds(item, scenesById);
-      const resolved = (adversaryIds.length || environmentIds.length)
-        ? await resolveItems({ adversaries: adversaryIds, environments: environmentIds }, { adopt: true })
-        : { adversaries: [], environments: [] };
-      const adversariesById = Object.fromEntries(resolved.adversaries.map(a => [a.id, a]));
-      const environmentsById = Object.fromEntries(resolved.environments.map(e => [e.id, e]));
-      newElements.push(...expandSceneWithResolved(item, scenesById, adversariesById, environmentsById));
+      let tableItem = item;
+      if (isOwnItem(item)) {
+        recordPlay('scenes', item.id).catch(err => console.warn('recordPlay failed:', err));
+      } else {
+        try {
+          tableItem = await cloneItemToLibrary('scenes', item, { play: true });
+        } catch (err) {
+          console.warn('Auto-clone failed, using original:', err);
+          tableItem = item;
+        }
+      }
+      const remapped = regenerateSceneIdsForTablePlacement(tableItem);
+      const target = resolveTargetTableId(explicitTargetTableId);
+      const snapshotOp = {
+        op: 'add-scene-snapshot',
+        maps: remapped.maps,
+        mapViews: remapped.mapViews,
+        elements: remapped.elements,
+        sessionCountdowns: remapped.sessionCountdowns,
+      };
+      if (opts.applySceneBattleMods) {
+        const mods = tableItem.tableBattleMods || tableItem.battleMods;
+        if (mods) snapshotOp.tableBattleMods = { ...mods };
+      }
+      postTableOp(snapshotOp, target);
+      return [];
     } else if (collectionName === 'notes') {
       const id = item.id || generateId();
       newElements.push({
@@ -1357,28 +1250,40 @@ function App() {
         charData.hope != null ? charData.hope : Math.min(DEFAULT_CHARACTER_STARTING_HOPE, maxH);
       newElements.push({ ...charData, hope: hopeVal, instanceId: generateId(), elementType: 'character' });
     } else if (collectionName === 'adventures') {
-      const scenes = await ensureScenesLoaded();
-      await ensureAdventuresLoaded();
-      const scenesById = Object.fromEntries(scenes.map(s => [s.id, s]));
-      const allAdvIds = new Set();
-      const allEnvIds = new Set();
-      (item.scenes || []).forEach(sceneId => {
-        const scene = scenesById[sceneId];
-        if (scene) {
-          const { adversaryIds, environmentIds } = collectSceneIds(scene, scenesById);
-          adversaryIds.forEach(id => allAdvIds.add(id));
-          environmentIds.forEach(id => allEnvIds.add(id));
-        }
-      });
-      const resolved = (allAdvIds.size || allEnvIds.size)
-        ? await resolveItems({ adversaries: [...allAdvIds], environments: [...allEnvIds] }, { adopt: true })
+      const envIds = (item.environments || [])
+        .map((e) => (typeof e === 'string' ? e : e?.id))
+        .filter(Boolean);
+      const advRefs = (item.adversaries || []).map((ref) => {
+        if (ref == null) return null;
+        if (typeof ref === 'string') return { id: ref, count: 1 };
+        const id = ref.id || ref.adversaryId;
+        if (!id) return null;
+        return { id, count: ref.count || 1 };
+      }).filter(Boolean);
+      const advIds = advRefs.map((r) => r.id);
+      const resolved = (advIds.length || envIds.length)
+        ? await resolveItems({ adversaries: advIds, environments: envIds }, { adopt: true })
         : { adversaries: [], environments: [] };
-      const adversariesById = Object.fromEntries(resolved.adversaries.map(a => [a.id, a]));
-      const environmentsById = Object.fromEntries(resolved.environments.map(e => [e.id, e]));
-      (item.scenes || []).forEach(sceneId => {
-        const scene = scenesById[sceneId];
-        if (scene) newElements.push(...expandSceneWithResolved(scene, scenesById, adversariesById, environmentsById));
-      });
+      const adversariesById = Object.fromEntries((resolved.adversaries || []).map((a) => [a.id, a]));
+      const environmentsById = Object.fromEntries((resolved.environments || []).map((e) => [e.id, e]));
+      for (const envId of envIds) {
+        const tableItem = environmentsById[envId];
+        if (tableItem) newElements.push({ ...tableItem, instanceId: generateId(), elementType: 'environment' });
+      }
+      for (const { id, count } of advRefs) {
+        const tableItem = adversariesById[id];
+        if (!tableItem) continue;
+        for (let i = 0; i < count; i++) {
+          newElements.push({
+            ...tableItem,
+            instanceId: generateId(),
+            elementType: 'adversary',
+            currentHp: tableItem.hp_max || 0,
+            currentStress: 0,
+            conditions: '',
+          });
+        }
+      }
     }
 
     const target = resolveTargetTableId(explicitTargetTableId);
@@ -1484,16 +1389,16 @@ function App() {
     postTableOp({ op: 'clear-table' }, tableId);
   };
 
-  const sendDoAddToTable = async (item, collectionName, targetTableId) => {
+  const sendDoAddToTable = async (item, collectionName, targetTableId, opts) => {
     const target = resolveTargetTableId(targetTableId);
-    const newElements = await doAddToTable(item, collectionName, targetTableId);
+    const newElements = await doAddToTable(item, collectionName, targetTableId, opts);
     if (newElements?.length) postTableOp({ op: 'add-elements', elements: newElements }, target);
     return newElements;
   };
 
   const sendAddToTable = (item, collectionName, targetTableId) => {
     if (collectionName === 'scenes') {
-      const mods = item?.battleMods;
+      const mods = item?.tableBattleMods || item?.battleMods;
       const hasActiveMods = mods && (mods.lessDifficult || mods.slightlyMoreDangerous || mods.damageBoostPlusOne || mods.damageBoostD4 || mods.damageBoostStatic || mods.moreDangerous);
       if (hasActiveMods) {
         setPendingSceneAdd({ scene: item, targetTableId: resolveTargetTableId(targetTableId) });
@@ -2065,7 +1970,6 @@ function App() {
             userUid={user?.uid}
             onItemsChange={syncDataToApp}
             onMergeAdversary={mergeAdversaryIntoData}
-            ensureScenesLoaded={ensureScenesLoaded}
             ensureAdventuresLoaded={ensureAdventuresLoaded}
             ensureCharactersLoaded={ensureCharactersLoaded}
             libraryKey={libraryKey}
@@ -2137,7 +2041,6 @@ function App() {
                 partySize={partySize}
                 partyTier={partyTier}
                 characters={characters}
-                ensureScenesLoaded={ensureScenesLoaded}
                 ensureAdventuresLoaded={ensureAdventuresLoaded}
                 ensureCharactersLoaded={ensureCharactersLoaded}
                 myTables={myTables}
@@ -2175,7 +2078,6 @@ function App() {
                 sendDoAddToTable={effectiveIsPlayer ? undefined : sendDoAddToTable}
                 onMergeAdversary={mergeAdversaryIntoData}
                 user={user}
-                ensureScenesLoaded={ensureScenesLoaded}
                 ensureAdventuresLoaded={ensureAdventuresLoaded}
                 ensureCharactersLoaded={ensureCharactersLoaded}
                 route={route}
@@ -2320,13 +2222,11 @@ function App() {
       )}
       {pendingSceneAdd && (
         <SceneAdoptDialog
-          scene={pendingSceneAdd.scene}
+          scene={{ ...pendingSceneAdd.scene, battleMods: pendingSceneAdd.scene.tableBattleMods || pendingSceneAdd.scene.battleMods }}
           tableHref={pendingSceneAdd.targetTableId ? `/table/${encodeURIComponent(pendingSceneAdd.targetTableId)}` : undefined}
           currentTableMods={tableBattleMods}
           onApply={() => {
-            const tid = pendingSceneAdd.targetTableId;
-            postTableOp({ op: 'set-battle-mods', tableBattleMods: { ...pendingSceneAdd.scene.battleMods } }, tid);
-            sendDoAddToTable(pendingSceneAdd.scene, 'scenes', tid);
+            sendDoAddToTable(pendingSceneAdd.scene, 'scenes', pendingSceneAdd.targetTableId, { applySceneBattleMods: true });
             setPendingSceneAdd(null);
           }}
           onKeep={() => {

@@ -3,6 +3,8 @@
  *
  * These are pure-logic tests that run in Node via Vitest.
  * No browser, no DOM, no Firebase needed.
+ *
+ * Scene adversaries are full inline `activeElements` rows (`elementType: 'adversary'`).
  */
 import { describe, it, expect } from 'vitest';
 import {
@@ -12,8 +14,24 @@ import {
   computeTotalBudgetMod,
   applyDamageBoost,
   collectSceneAdversaries,
+  computeSceneTier,
   computeSceneBudget,
 } from '../../src/client/lib/battle-points.js';
+
+function adv(overrides = {}) {
+  return {
+    instanceId: overrides.instanceId || 'i-1',
+    elementType: 'adversary',
+    role: 'standard',
+    tier: 1,
+    name: 'Goblin',
+    ...overrides,
+  };
+}
+
+function sceneWithAdversaries(adversaries, extra = {}) {
+  return { id: 's1', activeElements: adversaries, ...extra };
+}
 
 // ---------------------------------------------------------------------------
 // computeBudget
@@ -114,6 +132,15 @@ describe('computeTotalBudgetMod', () => {
     const userMods = { lessDifficult: false, damageBoostD4: false, damageBoostStatic: false, moreDangerous: false };
     expect(computeTotalBudgetMod(autoMods, userMods)).toBe(0);
   });
+
+  it('applies damageBoostPlusOne (−1) and slightlyMoreDangerous (+1)', () => {
+    const autoMods = {
+      twoOrMoreSolos: { active: false, value: -2 },
+      lowerTierAdversary: { active: false, value: 1 },
+      noHeavyRoles: { active: false, value: 1 },
+    };
+    expect(computeTotalBudgetMod(autoMods, { damageBoostPlusOne: true, slightlyMoreDangerous: true })).toBe(0);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -136,43 +163,96 @@ describe('applyDamageBoost', () => {
 });
 
 // ---------------------------------------------------------------------------
-// collectSceneAdversaries
+// collectSceneAdversaries / computeSceneTier (flat activeElements)
 // ---------------------------------------------------------------------------
 describe('collectSceneAdversaries', () => {
   it('returns empty array for a scene with no adversaries', () => {
-    const scene = { id: 's1', adversaries: [] };
-    expect(collectSceneAdversaries(scene, {})).toEqual([]);
+    const scene = { id: 's1', activeElements: [] };
+    expect(collectSceneAdversaries(scene)).toEqual([]);
   });
 
-  it('collects adversaries referenced by ID', () => {
-    const scene = {
-      id: 's1',
-      adversaries: [{ adversaryId: 'a1', count: 2 }],
-    };
-    const data = {
-      adversaries: [{ id: 'a1', name: 'Goblin', role: 'minion', tier: 1 }],
-      scenes: [],
-    };
-    const result = collectSceneAdversaries(scene, data);
-    expect(result).toHaveLength(1);
-    expect(result[0]).toMatchObject({ role: 'minion', tier: 1, count: 2, name: 'Goblin' });
+  it('ignores non-adversary elements', () => {
+    const scene = sceneWithAdversaries([
+      { instanceId: 'n1', elementType: 'note', name: 'A note' },
+      { instanceId: 'e1', elementType: 'environment', name: 'Grove' },
+      { instanceId: 'm1', elementType: 'mapImage', imageUrl: 'https://example.com/x.png' },
+    ]);
+    expect(collectSceneAdversaries(scene)).toEqual([]);
   });
 
-  it('collects inline (owned-copy) adversaries', () => {
-    const scene = {
-      id: 's1',
-      adversaries: [{ data: { name: 'Orc', role: 'bruiser', tier: 2 }, count: 1 }],
-    };
-    const result = collectSceneAdversaries(scene, {});
+  it('collects each adversary element as count 1', () => {
+    const scene = sceneWithAdversaries([
+      adv({ instanceId: 'a1', name: 'Goblin', role: 'minion', tier: 1 }),
+      adv({ instanceId: 'a2', name: 'Goblin', role: 'minion', tier: 1 }),
+    ]);
+    const result = collectSceneAdversaries(scene);
+    expect(result).toHaveLength(2);
+    expect(result[0]).toMatchObject({ role: 'minion', tier: 1, count: 1, name: 'Goblin' });
+    expect(result[1]).toMatchObject({ role: 'minion', tier: 1, count: 1, name: 'Goblin' });
+  });
+
+  it('reads role/tier/name from the inline element (no library data)', () => {
+    const scene = sceneWithAdversaries([
+      adv({ instanceId: 'a1', name: 'Orc', role: 'bruiser', tier: 2 }),
+    ]);
+    const result = collectSceneAdversaries(scene);
     expect(result[0]).toMatchObject({ role: 'bruiser', tier: 2, count: 1, name: 'Orc' });
   });
+});
 
-  it('prevents infinite loops from circular scene references', () => {
-    // scene A references scene B which references scene A
-    const sceneA = { id: 'A', adversaries: [], scenes: ['B'] };
-    const sceneB = { id: 'B', adversaries: [], scenes: ['A'] };
-    const data = { adversaries: [], scenes: [sceneA, sceneB] };
-    // Should not throw or hang
-    expect(() => collectSceneAdversaries(sceneA, data)).not.toThrow();
+describe('computeSceneTier', () => {
+  it('returns null when there are no adversaries', () => {
+    expect(computeSceneTier(sceneWithAdversaries([]))).toBeNull();
+  });
+
+  it('returns the max adversary tier', () => {
+    const scene = sceneWithAdversaries([
+      adv({ instanceId: 'a1', tier: 1, role: 'standard' }),
+      adv({ instanceId: 'a2', tier: 3, role: 'solo' }),
+      adv({ instanceId: 'a3', tier: 2, role: 'bruiser' }),
+    ]);
+    expect(computeSceneTier(scene)).toBe(3);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// computeSceneBudget (no library `data` argument)
+// ---------------------------------------------------------------------------
+describe('computeSceneBudget', () => {
+  it('computes bp/tier from activeElements and reads tableBattleMods', () => {
+    const scene = sceneWithAdversaries(
+      [
+        adv({ instanceId: 'a1', role: 'bruiser', tier: 2, name: 'Ogre' }),
+        adv({ instanceId: 'a2', role: 'standard', tier: 1, name: 'Goblin' }),
+        adv({ instanceId: 'a3', role: 'standard', tier: 1, name: 'Goblin' }),
+      ],
+      { tableBattleMods: { moreDangerous: true } },
+    );
+    const result = computeSceneBudget(scene, 4, 1);
+    expect(result.tier).toBe(2);
+    // bruiser 4 + standard 2 + standard 2 = 8
+    expect(result.bp).toBe(8);
+    expect(result.budget).toBe(14);
+    expect(result.userMods.moreDangerous).toBe(true);
+    expect(result.totalMod).toBe(2); // moreDangerous only (has heavy roles, not 2 solos)
+    expect(result.adjustedBudget).toBe(16);
+  });
+
+  it('counts minion BP from one-element-per-instance rows', () => {
+    const scene = sceneWithAdversaries([
+      adv({ instanceId: 'm1', role: 'minion', name: 'Rat' }),
+      adv({ instanceId: 'm2', role: 'minion', name: 'Rat' }),
+      adv({ instanceId: 'm3', role: 'minion', name: 'Rat' }),
+      adv({ instanceId: 'm4', role: 'minion', name: 'Rat' }),
+      adv({ instanceId: 'm5', role: 'minion', name: 'Rat' }),
+    ]);
+    // 5 minions / party of 4 = ceil(5/4) = 2 BP
+    expect(computeSceneBudget(scene, 4).bp).toBe(2);
+  });
+
+  it('returns 0 bp and null tier for an empty scene', () => {
+    const result = computeSceneBudget({ activeElements: [] }, 4);
+    expect(result.bp).toBe(0);
+    expect(result.tier).toBeNull();
   });
 });

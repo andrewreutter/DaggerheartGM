@@ -12,7 +12,7 @@ import { EnvironmentForm } from '../forms/EnvironmentForm.jsx';
  *
  * Props:
  *   item             - the item object (must have .id and .name)
- *   collection       - 'adversaries' | 'environments' | 'scenes'
+ *   collection       - 'adversaries' | 'environments'
  *   existingItems    - items already in the library, used for name-based duplicate detection
  *   selected         - whether this item is checked for import
  *   onToggleSelect   - called when the checkbox changes
@@ -40,7 +40,6 @@ export function ImportPreviewCard({
     e => e.name.trim().toLowerCase() === item.name.trim().toLowerCase()
   );
 
-  const focusClass = colorScheme === 'green' ? 'focus:border-green-600' : 'focus:border-red-500';
   const accentColor = colorScheme === 'green' ? '#22c55e' : '#ef4444';
 
   const handleControlledChange = (formData) => {
@@ -74,9 +73,6 @@ export function ImportPreviewCard({
           {item.features?.length > 0 && <span>{item.features.length} feature(s)</span>}
           {item.description && <span className="italic opacity-75 line-clamp-1">{item.description}</span>}
         </div>
-      )}
-      {collection === 'scenes' && (
-        <span className="italic opacity-75">{item.description || 'Auto-generated'}</span>
       )}
     </>
   );
@@ -199,44 +195,6 @@ export function ImportPreviewCard({
               value={item}
               onChange={handleControlledChange}
             />
-          )}
-          {collection === 'scenes' && (
-            <div className="space-y-3">
-              <div className="flex flex-col gap-1">
-                <label className="text-xs font-medium text-dh-muted uppercase tracking-wider">
-                  Name
-                </label>
-                <input
-                  type="text"
-                  value={item.name}
-                  onChange={e => onUpdate({ ...item, name: e.target.value })}
-                  className={`bg-dh-surface border border-dh-border rounded px-3 py-2 text-dh text-sm outline-none ${focusClass}`}
-                />
-              </div>
-              {'description' in item && (
-                <div className="flex flex-col gap-1">
-                  <label className="text-xs font-medium text-dh-muted uppercase tracking-wider">
-                    Description
-                  </label>
-                  <textarea
-                    value={item.description || ''}
-                    onChange={e => onUpdate({ ...item, description: e.target.value })}
-                    rows={3}
-                    className={`bg-dh-surface border border-dh-border rounded px-3 py-2 text-dh text-sm outline-none resize-none ${focusClass}`}
-                  />
-                </div>
-              )}
-              <div className="flex justify-end">
-                <button
-                  type="button"
-                  tabIndex={0}
-                  onClick={() => setExpanded(false)}
-                  className="px-3 py-1.5 text-xs text-dh-muted hover:text-white"
-                >
-                  Collapse
-                </button>
-              </div>
-            </div>
           )}
         </div>
       )}

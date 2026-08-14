@@ -4,7 +4,6 @@ import { CollectionRefPicker } from './CollectionRefPicker.jsx';
 import { ImageEditor } from './ImageEditor.jsx';
 
 const ADVENTURE_COLLECTIONS = [
-  { key: 'scenes', label: 'Scene' },
   { key: 'environments', label: 'Environment' },
   { key: 'adversaries', label: 'Adversary' },
 ];
@@ -19,7 +18,6 @@ export function AdventureForm({ initial, value, onChange, data, onSave, onCancel
 
   const [localData, setLocalData] = useState({
     name: initial?.name || '', imageUrl: initial?.imageUrl || '', _additionalImages: initial?._additionalImages || [],
-    scenes: initial?.scenes || [],
     environments: initial?.environments || [], adversaries: initial?.adversaries || [],
     is_public: initial?.is_public || false,
   });

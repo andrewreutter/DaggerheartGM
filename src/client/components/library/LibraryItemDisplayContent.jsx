@@ -1,12 +1,10 @@
 import { useCallback, useLayoutEffect, useRef, useState, useMemo } from 'react';
-import { Swords } from 'lucide-react';
+import { Map, StickyNote, Swords, Trees } from 'lucide-react';
 import { AdversaryCardContent, EnvironmentCardContent } from '../DetailCardContent.jsx';
 import { CharacterDetailPane, TRAIT_LABELS } from '../CharacterDisplay.jsx';
-import { ExpandedTablePreview } from '../ItemDetailView.jsx';
 import { LibraryItemImageThumb } from './LibraryItemImageThumb.jsx';
 import { getLibraryItemImageUrls } from '../../lib/library-item-image-urls.js';
 import { MarkdownText } from '../../lib/markdown.js';
-import { computeSceneBudget } from '../../lib/battle-points.js';
 import { LIBRARY_GENERIC_DETAIL_COLLECTIONS } from '../../lib/library-filter-config.js';
 import { GuideFeatureCard } from '../features/GuideFeatureCard.jsx';
 import { coerceLibraryAttack } from '../../lib/library-attack-display.js';
@@ -589,102 +587,64 @@ function GenericLibraryRecordBody({ item, collection, srdData }) {
   );
 }
 
+function countSceneElementsByType(item, elementType) {
+  const elements = Array.isArray(item?.activeElements) ? item.activeElements : [];
+  return elements.filter(el => el?.elementType === elementType).length;
+}
+
 /**
- * Compact battle budget summary bar for scene detail view.
- * Shows tier, BP cost, adjusted budget with modifiers.
+ * Lightweight scene summary: first-map thumbnail, denormalized tier/BP, and element counts.
  */
-function SceneBudgetBar({ item, data, partySize = 1, partyTier = 1, characters = [] }) {
-  const { tier, bp, budget, autoMods, userMods, totalMod, adjustedBudget } = computeSceneBudget(item, data, partySize, partyTier);
+function SceneLibraryCard({ item, compact = false }) {
+  const mapImageUrl = item?.maps?.[0]?.mapImageUrl;
+  const mapCount = Array.isArray(item?.maps) ? item.maps.length : 0;
+  const envCount = countSceneElementsByType(item, 'environment');
+  const advCount = countSceneElementsByType(item, 'adversary');
+  const noteCount = countSceneElementsByType(item, 'note');
+  const showTier = item?.tier != null && item.tier !== '';
+  const showBp = item?.bp != null && item.bp !== '';
 
-  const hasAdversaries = bp > 0 || tier != null;
-  if (!hasAdversaries) return null;
-
-  const diff = bp - adjustedBudget;
-  const diffColor = diff > 0 ? 'text-red-400' : diff < 0 ? 'text-emerald-400' : 'text-dh-muted';
-
-  const { lowerTierAdversary } = autoMods;
-  const topTierChars = lowerTierAdversary.active
-    ? characters.filter(c => (c.tier ?? 1) >= (lowerTierAdversary.partyTier ?? 1))
-    : [];
-  const lowerTierAdvNames = lowerTierAdversary.active
-    ? [...new Map((lowerTierAdversary.lowerTierItems || []).map(a => [a.name || a.role, a])).values()]
-    : [];
-  const lowerTierTooltip = lowerTierAdversary.active
-    ? [
-        `Party T${lowerTierAdversary.partyTier ?? 1}${topTierChars.length > 0 ? `: ${topTierChars.map(c => c.name).join(', ')}` : ''}`,
-        lowerTierAdvNames.length > 0 ? `Lower: ${lowerTierAdvNames.map(a => `${a.name || a.role} T${a.tier ?? 1}`).join(', ')}` : '',
-      ].filter(Boolean).join(' · ')
-    : '';
-
-  const activeMods = [
-    autoMods.twoOrMoreSolos.active && { label: '2+ Solos', value: -2, auto: true },
-    lowerTierAdversary.active && { label: 'Lower-tier adversary', value: +1, auto: true, tooltip: lowerTierTooltip },
-    autoMods.noHeavyRoles.active && { label: 'No heavy roles', value: +1, auto: true },
-    userMods.lessDifficult && { label: 'Less difficult', value: -1, auto: false },
-    userMods.damageBoostPlusOne && { label: '+1 damage', value: -1, auto: false },
-    userMods.damageBoostD4 && { label: '+1d4 damage', value: -2, auto: false },
-    userMods.damageBoostStatic && { label: '+2 damage', value: -2, auto: false },
-    userMods.slightlyMoreDangerous && { label: 'Slightly more dangerous', value: +1, auto: false },
-    userMods.moreDangerous && { label: 'More dangerous', value: +2, auto: false },
-  ].filter(Boolean);
+  const counts = [
+    { Icon: Map, label: 'Maps', count: mapCount },
+    { Icon: Trees, label: 'Environments', count: envCount },
+    { Icon: Swords, label: 'Adversaries', count: advCount },
+    { Icon: StickyNote, label: 'Notes', count: noteCount },
+  ];
 
   return (
-    <div className="mb-3 p-2.5 bg-dh-inset border border-dh-border rounded-lg">
-      <div className="flex items-center gap-3 flex-wrap">
-        {tier != null && (
-          <span className="shrink-0" title={`Tier ${tier}`}>
-            <TierShieldBadge tier={tier} size="md" />
+    <div className="mb-3 p-2.5 bg-dh-inset border border-dh-border rounded-lg space-y-2.5">
+      {mapImageUrl ? (
+        <div className={`overflow-hidden rounded border border-dh-border/80 ${compact ? 'h-20' : 'h-36'}`}>
+          <img
+            src={mapImageUrl}
+            alt=""
+            className="h-full w-full object-cover"
+          />
+        </div>
+      ) : null}
+      {(showTier || showBp) && (
+        <div className="flex items-center gap-2 flex-wrap">
+          {showTier ? (
+            <span className="shrink-0" title={`Tier ${item.tier}`}>
+              <TierShieldBadge tier={item.tier} size={compact ? 'sm' : 'md'} />
+            </span>
+          ) : null}
+          {showBp ? (
+            <span className="text-xs font-semibold tabular-nums text-blue-200 border border-blue-700/50 bg-blue-900/30 rounded px-1.5 py-0.5">
+              {item.bp} BP
+            </span>
+          ) : null}
+        </div>
+      )}
+      <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-dh-muted">
+        {counts.map(({ Icon, label, count }) => (
+          <span key={label} className="inline-flex items-center gap-1" title={label}>
+            <Icon size={12} className="shrink-0" aria-hidden />
+            <span className="tabular-nums font-medium text-dh">{count}</span>
+            <span>{label}</span>
           </span>
-        )}
-        <span className="text-sm text-dh">
-          <span className="font-bold text-dh">{bp}</span>
-          <span className="text-dh-muted"> BP</span>
-        </span>
-        <span className="text-dh-muted">·</span>
-        <span className="text-sm text-dh">
-          Budget <span className="font-bold text-dh">{adjustedBudget}</span>
-          {totalMod !== 0 && (
-            <span className={`ml-1 text-xs ${totalMod > 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-              ({totalMod > 0 ? '+' : ''}{totalMod})
-            </span>
-          )}
-        </span>
-        <span className={`text-xs font-semibold ${diffColor}`}>
-          {diff === 0 ? 'On budget' : diff > 0 ? `+${diff} over budget` : `${Math.abs(diff)} under budget`}
-        </span>
-        <div className="ml-auto flex items-center gap-1.5 shrink-0">
-          <span className="text-xs text-dh-muted">{partySize} PC{partySize !== 1 ? 's' : ''}</span>
-        </div>
+        ))}
       </div>
-      {activeMods.length > 0 && (
-        <div className="flex flex-wrap gap-1 mt-1.5">
-          {activeMods.map((m, i) => (
-            <span
-              key={i}
-              title={m.tooltip || undefined}
-              className={`text-xs px-1.5 py-0.5 rounded-full border ${
-                m.value > 0
-                  ? 'bg-emerald-900/40 border-emerald-700/50 text-emerald-300'
-                  : 'bg-red-900/40 border-red-700/50 text-red-300'
-              } ${m.auto ? '' : 'border-dashed'} ${m.tooltip ? 'cursor-help' : ''}`}
-            >
-              {m.label} {m.value > 0 ? '+' : ''}{m.value}
-            </span>
-          ))}
-        </div>
-      )}
-      {lowerTierAdversary.active && (
-        <div className="mt-1.5 space-y-0.5">
-          <p className="text-xs text-sky-400/80 leading-snug">
-            Party T{lowerTierAdversary.partyTier ?? 1}{topTierChars.length > 0 ? `: ${topTierChars.map(c => c.name).join(', ')}` : ''}
-          </p>
-          {lowerTierAdvNames.length > 0 && (
-            <p className="text-xs text-emerald-400/70 leading-snug">
-              Lower: {lowerTierAdvNames.map(a => `${a.name || a.role} T${a.tier ?? 1}`).join(', ')}
-            </p>
-          )}
-        </div>
-      )}
     </div>
   );
 }
@@ -757,25 +717,12 @@ export function LibraryItemDisplayContent({
       {collection === 'environments' && (
         <EnvironmentCardContent element={item} hoveredFeature={null} cardKey={cardKey} suppressTierBadge />
       )}
-      {collection === 'scenes' && data && (
+      {collection === 'scenes' && (
         <>
           {item.description && (
             <MarkdownText text={item.description} className="text-sm italic text-dh mb-3" />
           )}
-          <SceneBudgetBar item={item} data={data} partySize={partySize} partyTier={partyTier} characters={characters} />
-          <ExpandedTablePreview
-            item={item}
-            tab={collection}
-            data={data}
-            onSaveElement={onSaveElement}
-            isOwn={isOwn}
-            damageBoost={
-              item.battleMods?.damageBoostD4 ? 'd4'
-              : item.battleMods?.damageBoostStatic ? 'static'
-              : item.battleMods?.damageBoostPlusOne ? 'plusOne'
-              : null
-            }
-          />
+          <SceneLibraryCard item={item} compact={libraryCard} />
         </>
       )}
       {collection === 'adventures' && item.description && (

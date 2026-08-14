@@ -74,8 +74,8 @@ const COLLECTION_LABELS = {
  *
  * Props:
  *   item          – item to view/edit (pass `{}` for new)
-   *   collection    – 'adversaries' | 'environments' | 'scenes' | 'adventures'
-   *   data          – app-level data for ref resolution (scene preview)
+ *   collection    – 'adversaries' | 'environments' | 'scenes' | 'adventures'
+  *   data          – app-level data for ref resolution (adventure sub-item preview)
  *   editable      – boolean; false for SRD/public catalog items
  *   onSave        – async (formData) => void; called by auto-save with full item data
    *   onSaveElement – optional; for scene inline element edits
@@ -561,6 +561,14 @@ export const ItemDetailModal = forwardRef(function ItemDetailModal({
       </>
     );
 
+    if (collection === 'scenes') {
+      return (
+        <div className="flex flex-col flex-1 min-w-0 min-h-0 overflow-hidden p-3">
+          {genericForm}
+        </div>
+      );
+    }
+
     if (collection === 'characters') {
       const charCheck = isCharacterComplete(
         formData,
@@ -618,6 +626,7 @@ export const ItemDetailModal = forwardRef(function ItemDetailModal({
   };
 
   const maxWidth =
+    collection === 'scenes' && editable ? 'max-w-[110rem]' :
     showFeatureLibrary ? 'max-w-[110rem]' :
     editable ? 'max-w-[88rem]' :
     collection === 'characters' ? 'max-w-[88rem]' :
@@ -903,6 +912,10 @@ export const ItemDetailModal = forwardRef(function ItemDetailModal({
           <div className="flex-1 overflow-hidden flex min-h-0">
             {editable ? (
               isRightDrawer ? (
+                <div className="flex-1 min-w-0 overflow-hidden flex flex-col">
+                  {renderFormContent()}
+                </div>
+              ) : collection === 'scenes' ? (
                 <div className="flex-1 min-w-0 overflow-hidden flex flex-col">
                   {renderFormContent()}
                 </div>

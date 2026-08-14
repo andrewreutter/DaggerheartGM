@@ -9,6 +9,7 @@ export const LIBRARY_ALL_TIER_RANKED_COLLECTIONS = new Set([
   'weapons',
   'armor',
   'beastforms',
+  'scenes',
 ]);
 
 /**

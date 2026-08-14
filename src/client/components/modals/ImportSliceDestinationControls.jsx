@@ -4,7 +4,6 @@ import { resolveAttachPrimary } from '../../lib/unified-import-resolve.js';
 
 const LIBRARY_PICK_COLLECTIONS = [
   ...SRD_UNIFIED_COLLECTIONS.filter((c) => c !== 'features'),
-  'scenes',
   'adventures',
   'characters',
   'notes',
@@ -26,7 +25,6 @@ export const DESTINATION_OPTION_LABEL = {
   items: 'Item',
   subclasses: 'Subclass',
   weapons: 'Weapon',
-  scenes: 'Scene',
   adventures: 'Adventure',
   characters: 'Character',
   notes: 'Note',

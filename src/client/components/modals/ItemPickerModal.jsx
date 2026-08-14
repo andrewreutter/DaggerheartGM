@@ -32,8 +32,8 @@ const ENV_TYPE_LABEL = {
 /**
  * A searchable, filterable item picker modal.
  *
- * For adversaries/environments: uses useCollectionSearch with full filters + infinite scroll.
- * For scenes/adventures: uses a simple client-side name search over `data[collection]`.
+ * For adversaries/environments/scenes: uses useCollectionSearch with full filters + infinite scroll.
+ * For adventures/characters: uses a simple client-side name search over `data[collection]`.
  *
  * Props:
  *   collection    — which collection to browse ('adversaries' | 'environments' | 'scenes' | 'adventures')
@@ -65,7 +65,7 @@ export function ItemPickerModal({
 }) {
   const { hideAiUi } = useAiUiPreference();
   const showConceptAiUi = shouldShowConceptAiUi(conceptAiEnabled, hideAiUi);
-  const isPaginated = collection === 'adversaries' || collection === 'environments';
+  const isPaginated = collection === 'adversaries' || collection === 'environments' || collection === 'scenes';
   const showNonPaginatedLoading = !isPaginated && isLoading;
   const singular = ITEM_PICKER_SINGULAR[collection] || collection;
   const actionLabel = title || `Add ${singular}`;
@@ -445,7 +445,7 @@ export function ItemPickerModal({
           </div>
         )}
 
-        {/* Filters — only for paginated collections (adversaries / environments) */}
+        {/* Filters — only for paginated collections (adversaries / environments / scenes) */}
         {isPaginated && showBrowse && (
           <div className="px-5 py-4 border-b border-dh-border shrink-0">
             <CollectionFilters
@@ -458,7 +458,7 @@ export function ItemPickerModal({
           </div>
         )}
 
-        {/* Simple search for non-paginated (scenes / adventures / characters) */}
+        {/* Simple search for non-paginated (adventures / characters) */}
         {!isPaginated && showBrowse && (
           <div className="px-5 py-3 border-b border-dh-border shrink-0">
             <div className="flex items-center gap-2 bg-dh-raised border border-dh-border rounded-lg px-3 py-2 focus-within:border-blue-500 transition-colors">

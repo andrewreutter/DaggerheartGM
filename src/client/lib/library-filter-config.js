@@ -161,6 +161,8 @@ export const LIBRARY_FILTER_CONFIG = {
     rankMode: 'tier',
     defaultSort: 'name',
   },
+  /** User + public scenes (no SRD); denormalized `tier` on the row. */
+  scenes: { typeLabel: '', typeOptions: null, rankMode: 'tier', defaultSort: 'popularity' },
 };
 
 export function getLibraryFilterConfig(collection) {

@@ -97,18 +97,17 @@ describe('item-image-storage', () => {
       expect(supabase._uploadMock).toHaveBeenCalledTimes(1);
     });
 
-    it('sanitizes nested scene shape: adversaries[].data.imageUrl', async () => {
+    it('sanitizes nested imageUrl on activeElements (scene blob)', async () => {
       const supabase = makeMockSupabase();
       const item = {
         name: 'Forest Ambush',
-        adversaries: [
-          { adversaryId: 'srd-1', count: 2 },
-          { data: { name: 'Wolf', imageUrl: DATA_URL }, count: 1 },
+        activeElements: [
+          { elementType: 'adversary', name: 'Wolf', imageUrl: DATA_URL },
         ],
       };
       const result = await sanitizeItemImageDataUrlsDeep(supabase, 'uid1', item);
-      expect(result.adversaries[1].data.imageUrl).toBe(HOSTED_URL);
-      expect(result.adversaries[0].adversaryId).toBe('srd-1');
+      expect(result.activeElements[0].imageUrl).toBe(HOSTED_URL);
+      expect(result.activeElements[0].elementType).toBe('adversary');
     });
 
     it('fast-paths when value is a plain string without data: prefix', async () => {

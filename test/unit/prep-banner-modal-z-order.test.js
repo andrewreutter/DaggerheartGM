@@ -28,7 +28,7 @@ describe('prep banner vs modal z-order', () => {
       'src/client/components/modals/EditChoiceDialog.jsx',
       'src/client/components/modals/ImportModalShell.jsx',
       'src/client/components/LibraryView.jsx',
-      'src/client/components/GMTableView.jsx',
+      'src/client/components/modals/CreateSceneModal.jsx',
     ]) {
       const src = readFileSync(join(root, rel), 'utf8');
       expect(src, rel).toMatch(/z-\[53\]/);

@@ -131,7 +131,7 @@ const TABS = [
   { id: 'adventures', label: 'Adventures', Icon: BookOpen },
 ];
 
-const LIBRARY_NAV_HIDDEN_IDS = new Set(['characters', 'scenes', 'adventures']);
+const LIBRARY_NAV_HIDDEN_IDS = new Set(['characters', 'adventures']);
 const LIBRARY_NAV_TABS = TABS.filter(t => !LIBRARY_NAV_HIDDEN_IDS.has(t.id));
 const LIBRARY_NAV_SIDEBAR = [
   { id: 'assistant', label: 'Assistant', Icon: Bot },
@@ -146,8 +146,8 @@ const TAB_LABEL_BY_ID = Object.fromEntries(TABS.map(t => [t.id, t.label]));
 /** Portaled “New” type menu — must be excluded from outside-dismiss (menu is not under `newItemMenuWrapRef`). */
 const NEW_ITEM_MENU_SELECTOR = '[data-library-new-item-menu]';
 
-/** Unified paginated API (Mine + SRD + …) */
-const SRD_FILTER_TABS = new Set(SRD_UNIFIED_COLLECTIONS);
+/** Paginated library tabs: SRD unified collections plus user-content scenes (no SRD source). */
+const PAGINATED_LIBRARY_TABS = new Set([...SRD_UNIFIED_COLLECTIONS, 'scenes']);
 
 /** Game Table can only add these library types */
 const TABLE_ADDABLE_COLLECTIONS = new Set(['adversaries', 'environments', 'scenes', 'adventures', 'characters']);
@@ -176,7 +176,6 @@ export function LibraryView({
   partySize = 1,
   partyTier = 1,
   characters = [],
-  ensureScenesLoaded,
   ensureAdventuresLoaded,
   ensureCharactersLoaded,
   userUid,
@@ -223,12 +222,12 @@ export function LibraryView({
 
   const lastPaginatedTabRef = useRef('abilities');
   useEffect(() => {
-    if (activeTab !== 'all' && SRD_FILTER_TABS.has(activeTab)) {
+    if (activeTab !== 'all' && PAGINATED_LIBRARY_TABS.has(activeTab)) {
       lastPaginatedTabRef.current = activeTab;
     }
   }, [activeTab]);
 
-  const isPaginatedTab = !isAssistantTab && (SRD_FILTER_TABS.has(activeTab) || activeTab === 'all');
+  const isPaginatedTab = !isAssistantTab && (PAGINATED_LIBRARY_TABS.has(activeTab) || activeTab === 'all');
   const collectionSearchCollection = activeTab === 'all' ? lastPaginatedTabRef.current : activeTab;
 
   // Restore card dimensions for this signed-in user and library collection (tab) before paint.
@@ -246,16 +245,9 @@ export function LibraryView({
     return { sort: c.defaultSort || 'popularity' };
   }, [activeTab]);
 
-  // Load scenes/adventures on demand when user navigates to those tabs.
+  // Load adventures/characters on demand when user navigates to those tabs.
   useEffect(() => {
-    if (activeTab === 'scenes' && ensureScenesLoaded) {
-      if ((data.scenes || []).length > 0) {
-        setNonPaginatedLoading(false);
-        return;
-      }
-      setNonPaginatedLoading(true);
-      ensureScenesLoaded().finally(() => setNonPaginatedLoading(false));
-    } else if (activeTab === 'adventures' && ensureAdventuresLoaded) {
+    if (activeTab === 'adventures' && ensureAdventuresLoaded) {
       if ((data.adventures || []).length > 0) {
         setNonPaginatedLoading(false);
         return;
@@ -272,7 +264,7 @@ export function LibraryView({
     } else {
       setNonPaginatedLoading(false);
     }
-  }, [activeTab, ensureScenesLoaded, ensureAdventuresLoaded, ensureCharactersLoaded, data.scenes?.length, data.adventures?.length, data.characters?.length]);
+  }, [activeTab, ensureAdventuresLoaded, ensureCharactersLoaded, data.adventures?.length, data.characters?.length]);
 
   useEffect(() => {
     try {
@@ -1214,7 +1206,7 @@ export function LibraryView({
           )}
         </div>
 
-        {/* Scrollable content: virtualized grid for SRD unified tabs; flex-wrap for scenes/adventures */}
+        {/* Scrollable content: virtualized grid for paginated tabs (SRD + scenes); flex-wrap for adventures/characters */}
         <div className="flex-1 min-h-0 overflow-hidden px-6 py-4 flex flex-col">
           {isAssistantTab ? (
             <LibraryAssistantPanel

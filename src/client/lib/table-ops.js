@@ -297,6 +297,23 @@ export function applyTableOp(op, state) {
     }
     case 'set-battle-mods':
       return { tableBattleMods: op.tableBattleMods };
+    // Used by "Add Scene to Table": append remapped maps/views/elements/countdowns
+    // from a library scene snapshot. `tableBattleMods` replaces the table's factors
+    // only when present (GM chose "Apply Scene Factors"); omit to keep current factors.
+    case 'add-scene-snapshot': {
+      const out = {
+        maps: [...(state.maps || []), ...(op.maps || [])],
+        mapViews: [...(state.mapViews || []), ...(op.mapViews || [])],
+        activeElements: [...activeElements, ...(op.elements || [])],
+      };
+      if (Array.isArray(op.sessionCountdowns)) {
+        out.sessionCountdowns = [...sessionCountdowns, ...op.sessionCountdowns];
+      }
+      if ('tableBattleMods' in op) {
+        out.tableBattleMods = op.tableBattleMods;
+      }
+      return out;
+    }
     case 'set-player-emails':
       return { playerEmails: op.playerEmails };
     case 'update-base-data': {

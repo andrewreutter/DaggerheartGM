@@ -948,6 +948,51 @@ async function fetchFeaturesLibraryAllBranch(opts, countOnly) {
   return { collection: 'features', items, totalCount };
 }
 
+/**
+ * Own + public `scenes` rows for Library "All" (no SRD/HoD cache — scenes are DB-only).
+ * @param {boolean} countOnly - pass through to getUnifiedItems (no row fetch when true)
+ */
+async function fetchScenesLibraryAllBranch(appId, userId, opts, countOnly) {
+  const {
+    includeMine = true,
+    includePublic = false,
+    search = '',
+    tiers = [],
+    levels = [],
+    includeScaledUp = false,
+  } = opts;
+
+  const tierNums = Array.isArray(tiers)
+    ? tiers.map(t => Number(t)).filter(n => !isNaN(n) && n >= 1 && n <= 12)
+    : [];
+  const levelNums = Array.isArray(levels)
+    ? levels.map(t => Number(t)).filter(n => !isNaN(n) && n >= 1 && n <= 12)
+    : [];
+
+  const cfg = unifiedListConfig('scenes');
+  const { tiersParam, tierMax, tierMaxExclusive } = resolveLibraryAllBranchTiers('scenes', {
+    tierNums,
+    levelNums,
+    includeScaledUp,
+  });
+
+  const result = await getUnifiedItems(appId, userId, 'scenes', {
+    includeMine,
+    includePublic,
+    search,
+    tierMax,
+    tierMaxExclusive,
+    tiers: tiersParam,
+    tierExprSql: cfg.tierExprSql,
+    sort: 'popularity',
+    offset: 0,
+    limit: countOnly ? 0 : LIBRARY_ALL_FETCH_LIMIT,
+    countOnly,
+  });
+
+  return { collection: 'scenes', items: result.items, totalCount: result.totalCount };
+}
+
 async function runLibraryAllBranches(appId, userId, opts, countOnly) {
   const {
     includeMine = true,
@@ -1017,7 +1062,10 @@ async function runLibraryAllBranches(appId, userId, opts, countOnly) {
       countOnly
     )
     : { collection: 'features', items: [], totalCount: 0 };
-  return [...srdBranches, featBranch];
+  const scenesBranch = shouldIncludeLibraryAllBranch('scenes', opts)
+    ? await fetchScenesLibraryAllBranch(appId, userId, opts, countOnly)
+    : { collection: 'scenes', items: [], totalCount: 0 };
+  return [...srdBranches, featBranch, scenesBranch];
 }
 
 /**

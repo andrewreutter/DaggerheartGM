@@ -60,6 +60,7 @@ import {
   Maximize2,
   Lock,
   LockOpen,
+  FolderOpen,
   Hand,
   ArrowUpDown,
   Tag,
@@ -2855,6 +2856,10 @@ export function BattleMap({
   extraConditionSuggestions,
   onAddConditionsHistoryEntry,
   onRemoveConditionsHistoryEntry,
+  /** GM: open Create Scene (capture current table into a library scene). */
+  onOpenCreateScene,
+  /** GM: open Add Scene picker. */
+  onOpenAddScene,
 }) {
   const { hideAiUi } = useAiUiPreference();
   const showImageGenAiUi = shouldShowImageGenAiUi(imageGenEnabled, hideAiUi);
@@ -6369,6 +6374,42 @@ export function BattleMap({
                 hasPlacedByKind={hasPlacedByKind}
                 extraDisabled={mapAiPreviewActive}
               />
+              {!isPlayer && onOpenCreateScene ? (
+                <Tooltip
+                  label="Create Scene from this table"
+                  placement="left"
+                  className="relative block min-w-0"
+                >
+                  <button
+                    type="button"
+                    onClick={onOpenCreateScene}
+                    aria-label="Create Scene"
+                    className="w-full max-w-full min-w-0 flex flex-col items-center justify-center gap-0.5 rounded px-1 py-1 text-[10px] leading-tight text-center box-border border text-dh-muted border-dh-strong/50 bg-dh-raised/40 hover:bg-dh-raised/70 hover:text-dh"
+                    style={{ width: CHARACTER_TRAY_WIDTH_PX, maxWidth: CHARACTER_TRAY_WIDTH_PX }}
+                  >
+                    <Camera size={Math.max(12, trayTokenSizePx - 8)} strokeWidth={1.25} aria-hidden />
+                    <span className="px-0.5 font-medium">Create<br />Scene</span>
+                  </button>
+                </Tooltip>
+              ) : null}
+              {!isPlayer && onOpenAddScene ? (
+                <Tooltip
+                  label="Add a Scene from the library"
+                  placement="left"
+                  className="relative block min-w-0"
+                >
+                  <button
+                    type="button"
+                    onClick={onOpenAddScene}
+                    aria-label="Add Scene"
+                    className="w-full max-w-full min-w-0 flex flex-col items-center justify-center gap-0.5 rounded px-1 py-1 text-[10px] leading-tight text-center box-border border text-dh-muted border-dh-strong/50 bg-dh-raised/40 hover:bg-dh-raised/70 hover:text-dh"
+                    style={{ width: CHARACTER_TRAY_WIDTH_PX, maxWidth: CHARACTER_TRAY_WIDTH_PX }}
+                  >
+                    <FolderOpen size={Math.max(12, trayTokenSizePx - 8)} strokeWidth={1.25} aria-hidden />
+                    <span className="px-0.5 font-medium">Add<br />Scene</span>
+                  </button>
+                </Tooltip>
+              ) : null}
             </div>
           ) : null}
         </div>

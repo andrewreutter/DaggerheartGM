@@ -339,9 +339,10 @@ export const loadTableState = async (tableId = null) => {
 };
 
 /**
- * Resolve items by IDs across collections (for scene/group expansion).
+ * Resolve items by IDs across collections.
  * Pass adopt: true to auto-clone any non-own adversaries/environments into the user's library
- * and increment popularity counts on their sources.
+ * and increment popularity counts on their sources. Scene ids resolve to self-contained
+ * scene rows (no nested adversary/environment id expansion).
  * @param {{ adversaries?, environments?, scenes? }} idMap
  * @param {{ adopt?: boolean }} opts
  * @returns {{ adversaries, environments, scenes }}

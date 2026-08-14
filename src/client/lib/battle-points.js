@@ -1,6 +1,11 @@
 /**
  * Battle Points (BP) calculation utilities for Scene combat budgeting.
  *
+ * The Scene library row is a flat, self-contained snapshot of table_state:
+ * adversaries live as full inline copies on `scene.activeElements` (elementType
+ * `'adversary'`). There is no nested-scene graph and no external library `data`
+ * lookup — BP/tier are derived directly from those elements.
+ *
  * Rules source: Daggerheart GM guide for building combat encounters.
  *
  * Base budget = (3 × number of PCs) + 2
@@ -18,56 +23,43 @@
  *   +1  if any adversary is from a lower tier than the party's highest character tier
  *   +1  if no Bruisers, Hordes, Leaders, or Solos are present
  *
- * Budget modifiers (user-controlled via battleMods on the scene):
+ * Budget modifiers (user-controlled via `tableBattleMods` on the scene):
  *   -1  lessDifficult          — fight should be less difficult or shorter
  *   -1  damageBoostPlusOne     — all adversaries deal +1 extra damage
  *   -2  damageBoostD4          — all adversaries deal +1d4 extra damage
  *   -2  damageBoostStatic      — all adversaries deal +2 extra damage
  *   +1  slightlyMoreDangerous  — fight should be slightly more dangerous or slightly longer
  *   +2  moreDangerous          — fight should be more dangerous or last longer
+ *
+ * Denormalized `scene.tier` / `scene.bp` are stamped by the Scene editor on
+ * every change so Library cards can read them without recomputing.
  */
 
 import { ROLE_BP_COST } from './constants.js';
 
 // ---------------------------------------------------------------------------
-// Adversary collection (walks nested scenes recursively)
+// Adversary collection (flat activeElements — no nesting, no library lookup)
 // ---------------------------------------------------------------------------
 
 /**
- * Returns a flat array of { role, tier, count, name } for every adversary in the
- * scene, including those from nested scenes. Uses cycle detection.
+ * Returns a flat array of { role, tier, count, name } for every adversary
+ * element on the scene. Each `elementType === 'adversary'` row is one instance
+ * (`count: 1`).
  *
- * @param {object} scene  - scene item data
- * @param {object} data   - { adversaries: [], scenes: [] } resolved library data
- * @param {Set}    visited - IDs already visited (cycle prevention)
+ * @param {object} scene  - scene item data (`activeElements` array)
  * @returns {{ role: string, tier: number, count: number, name: string }[]}
  */
-export function collectSceneAdversaries(scene, data, visited = new Set()) {
-  if (!scene || visited.has(scene.id)) return [];
-  visited.add(scene.id);
-
+export function collectSceneAdversaries(scene) {
   const result = [];
-
-  (scene.adversaries || []).forEach(advRef => {
-    if (advRef == null) return;
-    let adv = null;
-    if (advRef.data) {
-      adv = advRef.data;
-    } else if (advRef.adversaryId) {
-      adv = (data?.adversaries || []).find(a => a.id === advRef.adversaryId);
-    }
-    if (adv) {
-      result.push({ role: adv.role || 'standard', tier: adv.tier ?? 1, count: advRef.count || 1, name: adv.name || '' });
-    }
-  });
-
-  (scene.scenes || []).forEach(nestedId => {
-    const nested = (data?.scenes || []).find(s => s.id === nestedId);
-    if (nested) {
-      result.push(...collectSceneAdversaries(nested, data, visited));
-    }
-  });
-
+  for (const el of scene?.activeElements || []) {
+    if (!el || el.elementType !== 'adversary') continue;
+    result.push({
+      role: el.role || 'standard',
+      tier: el.tier ?? 1,
+      count: 1,
+      name: el.name || '',
+    });
+  }
   return result;
 }
 
@@ -76,15 +68,14 @@ export function collectSceneAdversaries(scene, data, visited = new Set()) {
 // ---------------------------------------------------------------------------
 
 /**
- * Returns the highest adversary tier in the scene (direct + nested).
+ * Returns the highest adversary tier among `scene.activeElements`.
  * Returns null when no adversaries are present.
  *
  * @param {object} scene
- * @param {object} data
  * @returns {number|null}
  */
-export function computeSceneTier(scene, data) {
-  const adversaries = collectSceneAdversaries(scene, data);
+export function computeSceneTier(scene) {
+  const adversaries = collectSceneAdversaries(scene);
   if (adversaries.length === 0) return null;
   return Math.max(...adversaries.map(a => a.tier ?? 1));
 }
@@ -225,11 +216,14 @@ export function applyDamageBoost(damageStr, boostType) {
 // Convenience: all scene BP stats in one call
 // ---------------------------------------------------------------------------
 
+function sceneUserMods(scene) {
+  return scene?.tableBattleMods || scene?.battleMods || {};
+}
+
 /**
  * Compute the full battle budget summary for a scene.
  *
- * @param {object} scene      - scene item data (with adversaries, scenes, battleMods)
- * @param {object} data       - library data: { adversaries, scenes }
+ * @param {object} scene      - scene item data (flat `activeElements` + `tableBattleMods`)
  * @param {number} partySize
  * @param {number|null} partyTier - highest tier among player characters; used for the
  *   "lower-tier adversary" auto-modifier. Defaults to null (modifier inactive).
@@ -239,17 +233,18 @@ export function applyDamageBoost(damageStr, boostType) {
  *   bp: number,
  *   budget: number,
  *   autoMods: object,
+ *   userMods: object,
  *   totalMod: number,
  *   adjustedBudget: number,
  * }}
  */
-export function computeSceneBudget(scene, data, partySize = 4, partyTier = null) {
-  const adversaries = collectSceneAdversaries(scene, data);
-  const tier = computeSceneTier(scene, data);
+export function computeSceneBudget(scene, partySize = 4, partyTier = null) {
+  const adversaries = collectSceneAdversaries(scene);
+  const tier = computeSceneTier(scene);
   const bp = computeBattlePoints(adversaries, partySize);
   const budget = computeBudget(partySize);
   const autoMods = computeAutoModifiers(adversaries, partyTier);
-  const userMods = scene?.battleMods || {};
+  const userMods = sceneUserMods(scene);
   const totalMod = computeTotalBudgetMod(autoMods, userMods);
   const adjustedBudget = budget + totalMod;
 
