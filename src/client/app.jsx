@@ -27,7 +27,7 @@ import {
 } from './lib/conditions-history.js';
 const NON_PAGINATED_COLLECTIONS = ['scenes', 'adventures', 'characters'];
 
-import { useRouter, legacyGmTableToCanonical, DEFAULT_LIBRARY_TAB } from './lib/router.js';
+import { useRouter, legacyGmTableToCanonical, DEFAULT_LIBRARY_TAB, shouldHandleSpaNavClick } from './lib/router.js';
 import { NavBtn } from './components/NavBtn.jsx';
 import { LibraryView } from './components/LibraryView.jsx';
 import { LibraryAssistantModal } from './components/LibraryAssistantPanel.jsx';
@@ -1833,16 +1833,16 @@ function App() {
       )}
       <nav className="bg-dh-canvas border-b border-dh-border p-4 flex items-center justify-between shadow-md z-[70]">
           <div className="flex items-center gap-6">
-            <button
-              type="button"
-              onClick={() => navigate('/')}
-              className="text-xl font-bold text-red-500 tracking-wider flex items-center gap-2"
+            <a
+              href="/"
+              onClick={(e) => { if (shouldHandleSpaNavClick(e)) { e.preventDefault(); navigate('/'); } }}
+              className="text-xl font-bold text-red-500 tracking-wider flex items-center gap-2 no-underline"
             >
               <img src="/assets/daggertop-logo.png" alt="Daggertop" className="w-8 h-8 object-contain" /> DAGGERTOP
-            </button>
+            </a>
             <div className="flex items-center gap-2">
               <NavImportBtn />
-              <NavBtn icon={<BookOpen />} label="Library" active={route.view === 'library'} onClick={() => navigate(lastLibraryPathRef.current)} />
+              <NavBtn icon={<BookOpen />} label="Library" active={route.view === 'library'} href={lastLibraryPathRef.current} onClick={() => navigate(lastLibraryPathRef.current)} />
               <NavAssistantBtn active={libraryAssistantOpen} onClick={() => setLibraryAssistantOpen(true)} />
               {user && (<>
               {myTables.map((t) => (
@@ -1851,6 +1851,7 @@ function App() {
                   icon={<LayoutDashboard />}
                   label={(t.name && t.name.trim() && t.name !== 'New Table' ? t.name : 'Game Table')}
                   active={route.view === 'table' && route.tableId === t.id}
+                  href={`/table/${t.id}`}
                   onClick={() => navigate(`/table/${t.id}`)}
                 />
               ))}
@@ -1862,6 +1863,7 @@ function App() {
                     icon={<LayoutDashboard />}
                     label={label}
                     active={route.view === 'table' && route.tableId === room.tableId}
+                    href={`/table/${room.tableId}`}
                     onClick={() => navigate(`/table/${room.tableId}`)}
                   />
                 );

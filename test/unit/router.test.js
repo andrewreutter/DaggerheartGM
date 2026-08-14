@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseRoute, legacyGmTableToCanonical, DEFAULT_LIBRARY_TAB } from '../../src/client/lib/router.js';
+import { parseRoute, legacyGmTableToCanonical, DEFAULT_LIBRARY_TAB, shouldHandleSpaNavClick } from '../../src/client/lib/router.js';
 
 describe('parseRoute /library', () => {
   it('defaults tab to All when path is /library or tab segment is invalid', () => {
@@ -188,5 +188,37 @@ describe('legacyGmTableToCanonical', () => {
   it('returns null for non-legacy paths', () => {
     expect(legacyGmTableToCanonical('/table/x', uid)).toBe(null);
     expect(legacyGmTableToCanonical('/library/adversaries', uid)).toBe(null);
+  });
+});
+
+describe('shouldHandleSpaNavClick', () => {
+  const ev = (overrides = {}) => ({ metaKey: false, ctrlKey: false, shiftKey: false, altKey: false, button: 0, ...overrides });
+
+  it('returns true for a plain primary left-click', () => {
+    expect(shouldHandleSpaNavClick(ev())).toBe(true);
+  });
+
+  it('returns false for Cmd-click (metaKey)', () => {
+    expect(shouldHandleSpaNavClick(ev({ metaKey: true }))).toBe(false);
+  });
+
+  it('returns false for Ctrl-click (ctrlKey)', () => {
+    expect(shouldHandleSpaNavClick(ev({ ctrlKey: true }))).toBe(false);
+  });
+
+  it('returns false for Shift-click', () => {
+    expect(shouldHandleSpaNavClick(ev({ shiftKey: true }))).toBe(false);
+  });
+
+  it('returns false for Alt-click', () => {
+    expect(shouldHandleSpaNavClick(ev({ altKey: true }))).toBe(false);
+  });
+
+  it('returns false for middle-click (button 1)', () => {
+    expect(shouldHandleSpaNavClick(ev({ button: 1 }))).toBe(false);
+  });
+
+  it('returns false for right-click (button 2)', () => {
+    expect(shouldHandleSpaNavClick(ev({ button: 2 }))).toBe(false);
   });
 });

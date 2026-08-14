@@ -3080,15 +3080,14 @@ export function BattleMap({
     const el = scrollWrapperRef.current;
     if (!el) return;
     const apply = () => {
+      // Prefer clientWidth/Height (same as persist encode) — contentRect can disagree and
+      // caused hydrate→persist visibleNorm drift on reload.
       setContainerWidth(el.clientWidth);
       setContainerHeight(el.clientHeight);
     };
     apply();
-    const ro = new ResizeObserver(entries => {
-      const cr = entries[0]?.contentRect;
-      if (!cr) return;
-      if (cr.width > 0) setContainerWidth(cr.width);
-      if (cr.height > 0) setContainerHeight(cr.height);
+    const ro = new ResizeObserver(() => {
+      apply();
     });
     ro.observe(el);
     return () => ro.disconnect();
@@ -3409,6 +3408,8 @@ export function BattleMap({
   }, [visibleMapPings, pxPerFt, renderedWidthPx, renderedHeightPx, fireworksViewport]);
 
   const gmViewHydratedRef = useRef(false);
+  /** Viewport size used for the last successful GM hydrate — persist skips while layout still disagrees. */
+  const lastHydratedViewportRef = useRef(null);
   const mapViewPersistTimerRef = useRef(null);
   /** Latest `onMapViewSync` — debounced persist must not call a stale closure (wrong camera `viewId`). */
   const onMapViewSyncRef = useRef(onMapViewSync);
@@ -3564,6 +3565,14 @@ export function BattleMap({
           const vw = wrap?.clientWidth ?? 0;
           const vh = wrap?.clientHeight ?? 0;
           if (vw <= 0 || vh <= 0) return;
+          const hyd = lastHydratedViewportRef.current;
+          // Skip persist while hydrate viewport disagrees with live client size (layout still settling).
+          if (
+            hyd &&
+            (Math.abs((hyd.viewportW ?? 0) - vw) > 1 || Math.abs((hyd.viewportH ?? 0) - vh) > 1)
+          ) {
+            return;
+          }
           const encoded = encodeMapViewState({
             mapZoom: mapZoomRef.current,
             scrollLeft: mapPanLeftRef.current,
@@ -3629,6 +3638,13 @@ export function BattleMap({
     gmViewHydratedRef.current = false;
   }, [mapConfig?.mapImageUrl, gmUid, activeMapIdResolved, gmActiveViewId]);
 
+  // Viewport size changes after first paint (toolbars/banners) must re-hydrate from portable
+  // mapViewVisibleNorm before any persist — otherwise encode uses a smaller vw/vh than decode
+  // and each reload zooms in (and drifts up).
+  useLayoutEffect(() => {
+    gmViewHydratedRef.current = false;
+  }, [containerWidth, containerHeight]);
+
   const handleSplitCamera = useCallback(async () => {
     const wrap = scrollWrapperRef.current;
     const vw = wrap?.clientWidth ?? 0;
@@ -3678,7 +3694,10 @@ export function BattleMap({
   useLayoutEffect(() => {
     if (!onMapViewSync) return;
     if (!tableStateReady) return;
-    if (containerWidth <= 0 || containerHeight <= 0) return;
+    const wrap = scrollWrapperRef.current;
+    const viewportW = wrap?.clientWidth > 0 ? wrap.clientWidth : containerWidth;
+    const viewportH = wrap?.clientHeight > 0 ? wrap.clientHeight : containerHeight;
+    if (viewportW <= 0 || viewportH <= 0) return;
     if (gmViewHydratedRef.current) return;
     if (
       mapConfig?.mapViewZoomRatio == null &&
@@ -3694,8 +3713,8 @@ export function BattleMap({
       maxZoom,
       renderedWidthPx,
       renderedHeightPx,
-      viewportW: containerWidth,
-      viewportH: containerHeight,
+      viewportW,
+      viewportH,
     });
     if (!d) {
       gmViewHydratedRef.current = true;
@@ -3703,6 +3722,7 @@ export function BattleMap({
       return;
     }
     gmViewHydratedRef.current = true;
+    lastHydratedViewportRef.current = { viewportW, viewportH };
     mapZoomRef.current = d.mapZoom;
     setMapZoom(d.mapZoom);
     mapPanLeftRef.current = d.scrollLeft;

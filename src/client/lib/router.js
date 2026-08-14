@@ -225,3 +225,12 @@ export function useRouter() {
 
   return { route: parseRoute(path), navigate };
 }
+
+/**
+ * Returns true when a click event should be handled as an in-app SPA navigation
+ * (plain left-click, no modifier keys). Returns false for Cmd/Ctrl/Shift/Alt-click,
+ * middle-click, and right-click so the browser can open the link in a new tab/window.
+ */
+export function shouldHandleSpaNavClick(e) {
+  return !(e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0);
+}
