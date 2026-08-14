@@ -5,10 +5,37 @@
  * Legacy keys `dh_libraryCardWidth` / `dh_libraryCardHeight` are read when scoped values are absent.
  */
 
+/**
+ * Per-tab card size defaults (used before the user has saved their own prefs for that tab).
+ * Unknown tabs fall back to {@link DEFAULT_LIBRARY_CARD_WIDTH} / {@link DEFAULT_LIBRARY_CARD_HEIGHT}.
+ */
+export const DEFAULT_LIBRARY_CARD_DIMENSIONS = Object.freeze({
+  all: Object.freeze({ width: 392, height: 359 }),
+  abilities: Object.freeze({ width: 392, height: 150 }),
+  adversaries: Object.freeze({ width: 392, height: 334 }),
+  ancestries: Object.freeze({ width: 526, height: 239 }),
+  armor: Object.freeze({ width: 392, height: 226 }),
+  beastforms: Object.freeze({ width: 312, height: 251 }),
+  campaign_frames: Object.freeze({ width: 526, height: 486 }),
+  classes: Object.freeze({ width: 526, height: 324 }),
+  communities: Object.freeze({ width: 526, height: 252 }),
+  consumables: Object.freeze({ width: 221, height: 100 }),
+  domains: Object.freeze({ width: 526, height: 279 }),
+  environments: Object.freeze({ width: 259, height: 270 }),
+  features: Object.freeze({ width: 221, height: 137 }),
+  items: Object.freeze({ width: 221, height: 120 }),
+  rules: Object.freeze({ width: 526, height: 161 }),
+  scenes: Object.freeze({ width: 221, height: 315 }),
+  subclasses: Object.freeze({ width: 392, height: 179 }),
+  weapons: Object.freeze({ width: 392, height: 226 }),
+});
+
+/** Fallback when a tab has no entry in {@link DEFAULT_LIBRARY_CARD_DIMENSIONS}. */
 export const DEFAULT_LIBRARY_CARD_WIDTH = 360;
 export const MIN_LIBRARY_CARD_WIDTH = 220;
 /** Stored widths are clamped on load to current viewport; no fixed upper bound. */
 export const STORED_LIBRARY_CARD_WIDTH_CAP = 10000;
+/** Fallback when a tab has no entry in {@link DEFAULT_LIBRARY_CARD_DIMENSIONS}. */
 export const DEFAULT_LIBRARY_CARD_HEIGHT = 176;
 /**
  * Shortest library card: compact title row + padding (preview hidden at or below this; see ItemCard).
@@ -21,6 +48,15 @@ export const STORED_LIBRARY_CARD_HEIGHT_CAP = 10000;
 
 /** Fixed CSS `zoom` on embedded `LibraryItemDisplayContent` in grid cards (modal-sized layout shrunk to fit). */
 export const LIBRARY_CARD_DETAIL_ZOOM = 0.38;
+
+/** Default width/height for a library tab (per-type map, else global fallbacks). */
+export function defaultLibraryCardDimensionsForTab(tab) {
+  const d = tab && typeof tab === 'string' ? DEFAULT_LIBRARY_CARD_DIMENSIONS[tab] : null;
+  if (d && typeof d.width === 'number' && typeof d.height === 'number') {
+    return { width: d.width, height: d.height };
+  }
+  return { width: DEFAULT_LIBRARY_CARD_WIDTH, height: DEFAULT_LIBRARY_CARD_HEIGHT };
+}
 
 const LEGACY_LIBRARY_CARD_WIDTH_KEY = 'dh_libraryCardWidth';
 const LEGACY_LIBRARY_CARD_HEIGHT_KEY = 'dh_libraryCardHeight';
@@ -44,7 +80,7 @@ export function clampStoredLibraryCardHeight(v) {
 
 /**
  * Normalize a preferences `libraryCardDimensions` map to `{ [tab]: { width, height } }`.
- * Invalid tabs/values are dropped; partial rows fill missing axis with defaults.
+ * Invalid tabs/values are dropped; partial rows fill missing axis with per-tab defaults.
  */
 export function normalizeLibraryCardDimensions(raw) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
@@ -54,9 +90,10 @@ export function normalizeLibraryCardDimensions(raw) {
     const width = clampStoredLibraryCardWidth(dims.width);
     const height = clampStoredLibraryCardHeight(dims.height);
     if (width == null && height == null) continue;
+    const defaults = defaultLibraryCardDimensionsForTab(tab);
     out[tab] = {
-      width: width ?? DEFAULT_LIBRARY_CARD_WIDTH,
-      height: height ?? DEFAULT_LIBRARY_CARD_HEIGHT,
+      width: width ?? defaults.width,
+      height: height ?? defaults.height,
     };
   }
   return out;
@@ -86,9 +123,10 @@ export function mergeLibraryCardDimensions(base, patch) {
     if (!tab || typeof tab !== 'string') continue;
     const partial = normalizePartialTabDimensions(dims);
     if (!partial) continue;
+    const defaults = defaultLibraryCardDimensionsForTab(tab);
     out[tab] = {
-      width: DEFAULT_LIBRARY_CARD_WIDTH,
-      height: DEFAULT_LIBRARY_CARD_HEIGHT,
+      width: defaults.width,
+      height: defaults.height,
       ...(out[tab] || {}),
       ...partial,
     };
@@ -101,9 +139,10 @@ export function isLibraryCardDimensionsEmpty(map) {
 }
 
 /**
- * Resolve width/height for a tab: prefer DB map, else localStorage (scoped then legacy).
+ * Resolve width/height for a tab: prefer DB map, else localStorage (scoped then legacy), else per-tab defaults.
  */
 export function getDimensionsForTab(map, tab, userUid) {
+  const defaults = defaultLibraryCardDimensionsForTab(tab);
   const fromMap = map && typeof map === 'object' ? map[tab] : null;
   if (
     fromMap &&
@@ -111,8 +150,8 @@ export function getDimensionsForTab(map, tab, userUid) {
     typeof fromMap.width === 'number' &&
     typeof fromMap.height === 'number'
   ) {
-    const width = clampStoredLibraryCardWidth(fromMap.width) ?? DEFAULT_LIBRARY_CARD_WIDTH;
-    const height = clampStoredLibraryCardHeight(fromMap.height) ?? DEFAULT_LIBRARY_CARD_HEIGHT;
+    const width = clampStoredLibraryCardWidth(fromMap.width) ?? defaults.width;
+    const height = clampStoredLibraryCardHeight(fromMap.height) ?? defaults.height;
     return { width, height };
   }
   return {
@@ -176,7 +215,7 @@ export function readStoredLibraryCardWidth(userUid, collection) {
       if (v != null) return v;
     }
   } catch { /* ignore */ }
-  return DEFAULT_LIBRARY_CARD_WIDTH;
+  return defaultLibraryCardDimensionsForTab(collection).width;
 }
 
 export function readStoredLibraryCardHeight(userUid, collection) {
@@ -192,5 +231,5 @@ export function readStoredLibraryCardHeight(userUid, collection) {
       if (c != null) return c;
     }
   } catch { /* ignore */ }
-  return DEFAULT_LIBRARY_CARD_HEIGHT;
+  return defaultLibraryCardDimensionsForTab(collection).height;
 }
