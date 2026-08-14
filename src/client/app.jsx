@@ -22,6 +22,7 @@ import { resetOnboardingState } from './lib/onboarding-storage.js';
 import { isOwnItem, DEFAULT_CHARACTER_STARTING_HOPE } from './lib/constants.js';
 import { UPDATE_BASE_DATA_RUNTIME_KEYS, applyTableOp } from './lib/table-ops.js';
 import { isTablePlayAllowed, isPrepModeElementUpdateBlocked } from './lib/table-session-gate.js';
+import { billingNavIndicatorCopy } from './lib/billing-status-copy.js';
 import { shouldPersistMapViewToTable } from './lib/map-view-sync.js';
 import { DEFAULT_LEGACY_MAP_ID, deriveMapConfigForViewId, deriveMapConfigForMapId } from './lib/map-table-state.js';
 import { playerCanAccessMapViewSelection } from './lib/map-view-player-sync.js';
@@ -1966,7 +1967,13 @@ function App() {
                       return <span className={`text-[9px] font-mono ${urgent ? 'text-amber-400 opacity-80' : 'opacity-50 text-dh-muted'}`}>Trial: {days === 0 ? 'ends today' : `${days}d left`}</span>;
                     }
                     if (!bs.isLive) {
-                      return <span className="text-[9px] font-mono text-red-400 opacity-80">Trial ended</span>;
+                      const label = billingNavIndicatorCopy(bs.reason);
+                      const muted = bs.reason === 'never_started';
+                      return (
+                        <span className={`text-[9px] font-mono ${muted ? 'opacity-40 text-dh-muted' : 'text-red-400 opacity-80'}`}>
+                          {label}
+                        </span>
+                      );
                     }
                     return <span className="text-[9px] opacity-40 font-mono">Free plan</span>;
                   })()}

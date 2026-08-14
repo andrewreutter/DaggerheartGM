@@ -71,6 +71,10 @@ import {
   fetchTableBillingStatus,
 } from '../lib/api.js';
 import { SupportTableModal } from './SupportTableModal.jsx';
+import {
+  billingDowngradeBannerCopy,
+  billingSessionBlockedCopy,
+} from '../lib/billing-status-copy.js';
 import { BugReportButton } from './BugReportButton.jsx';
 import { generateAndApplyBattleMapQuietly } from '../lib/quiet-battle-map-generate.js';
 import { useAiUiPreference } from '../lib/ai-ui-preference-context.jsx';
@@ -6103,11 +6107,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
             >
               <p className="text-[11px] font-semibold text-amber-300">Session cannot start</p>
               <p className="text-[11px] text-amber-200/80 leading-snug">
-                {tableNotLiveError.reason === 'trial_expired'
-                  ? 'Your free trial has ended.'
-                  : tableNotLiveError.reason === 'pass_expired'
-                    ? 'Your Campaign Pass has expired.'
-                    : 'This table needs a Campaign Pass to start new sessions.'}
+                {billingSessionBlockedCopy(tableNotLiveError.reason)}
               </p>
               <button
                 type="button"
@@ -6339,7 +6339,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
 
       {/* Center Column */}
       <div className="flex-1 flex flex-col overflow-hidden min-h-0 bg-dh-canvas relative">
-        {/* T14: Read-only / downgrade banner — shown when trial/pass has lapsed */}
+        {/* T14: billing status banner — visible whenever the table is not live */}
         {tableBillingStatus && !tableBillingStatus.isLive && (
           <div
             className="shrink-0 flex items-center justify-between gap-3 px-4 py-2 bg-amber-950/50 border-b border-amber-800/60 text-amber-200 text-[11px]"
@@ -6347,9 +6347,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
           >
             <span>
               <AlertTriangle size={12} className="inline -mt-0.5 mr-1 text-amber-400" aria-hidden />
-              {tableBillingStatus.reason === 'trial_expired'
-                ? 'Free trial has ended — this table is read-only. New sessions cannot be started.'
-                : 'Campaign Pass has expired — this table is read-only. New sessions cannot be started.'}
+              {billingDowngradeBannerCopy(tableBillingStatus.reason)}
             </span>
             <button
               type="button"

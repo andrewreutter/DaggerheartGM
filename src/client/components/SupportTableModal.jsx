@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useId } from 'react';
 import { Heart, CheckCircle, Clock, AlertCircle, ShieldCheck } from 'lucide-react';
 import { FullPageOverlay, FullPageOverlayHeader } from './FullPageOverlay.jsx';
 import { fetchTableBillingStatus, postCampaignPassCheckout } from '../lib/api.js';
+import { billingSupportPillCopy } from '../lib/billing-status-copy.js';
 
 /** Prices in cents, keyed by months. */
 const PASS_PRICES = { 3: 20, 6: 35, 12: 60 };
@@ -71,12 +72,19 @@ function BillingStatusPill({ billing, loading }) {
   }
 
   if (!billing.isLive) {
+    const { text, tone } = billingSupportPillCopy(billing.reason);
+    if (tone === 'muted') {
+      return (
+        <div className="flex items-center gap-1.5 text-[11px] text-dh-muted">
+          <Clock size={12} aria-hidden />
+          <span>{text}</span>
+        </div>
+      );
+    }
     return (
       <div className="flex items-center gap-1.5 text-[11px] text-red-400">
         <AlertCircle size={12} aria-hidden />
-        <span>
-          {billing.reason === 'trial_expired' ? 'Free trial has ended' : 'Pass expired — sessions are paused'}
-        </span>
+        <span>{text}</span>
       </div>
     );
   }

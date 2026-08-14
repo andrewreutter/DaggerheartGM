@@ -150,6 +150,32 @@ test('T14: expired billing shows read-only banner in the center column', async (
 
   // The downgrade banner should appear in the center column.
   await expect(page.locator('text=read-only').first()).toBeVisible({ timeout: 10000 });
+  await expect(page.locator('text=Free trial has ended')).toBeVisible();
+});
+
+test('T14/T15: never_started is not shown as expired', async ({ page }) => {
+  await authenticate(page);
+  await mockMyTables(page);
+  await mockBillingStatus(page, {
+    isLive: false,
+    reason: 'never_started',
+    trialEndsAt: null,
+    paidThroughAt: null,
+  });
+  await mockGmStream(page);
+  await page.goto('/table/test-user-uid');
+
+  await expect(page.locator('button', { hasText: 'Support this table' })).toBeVisible({ timeout: 10000 });
+
+  // Banner is visible for non-live tables, but must not use expired/lapse copy.
+  await expect(page.locator('text=Trial not yet started')).toBeVisible({ timeout: 10000 });
+  await expect(page.locator('text=Campaign Pass has expired')).toHaveCount(0);
+  await expect(page.locator('text=Free trial has ended')).toHaveCount(0);
+  await expect(page.locator('text=Trial ended')).toHaveCount(0);
+  await expect(page.locator('text=read-only')).toHaveCount(0);
+
+  // T15 ambient nav indicator: Free plan (not Trial ended).
+  await expect(page.locator('text=Free plan')).toBeVisible();
 });
 
 test('T11: session-start returns tableNotLive → error banner shown, no crash', async ({ page }) => {
@@ -509,5 +535,5 @@ test('T15: ambient billing indicator shows in user menu trigger', async ({ page 
   // The ambient indicator is part of the nav user-menu trigger button.
   // It should show "Trial: 14d left" (or similar countdown).
   // The user menu button contains the billing status line.
-  await expect(page.locator('text=/Trial:|Covered through|Trial ended/i')).toBeVisible({ timeout: 10000 });
+  await expect(page.locator('text=/Trial:|Covered through|Trial ended|Free plan|Pass expired|Trial used/i')).toBeVisible({ timeout: 10000 });
 });
