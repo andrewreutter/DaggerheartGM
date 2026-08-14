@@ -4,10 +4,17 @@ import { createPortal } from 'react-dom';
 import { signOut, onAuthStateChanged } from 'firebase/auth';
 import { BookOpen, LayoutDashboard, ChevronDown, LogOut, Upload, Download, Trash2, Circle, Plus, ScrollText, Sparkles, Bot, ShieldOff, Bug } from 'lucide-react';
 
-import { auth, getAuthToken, CLIENT_ID, loadCollection, loadTableState, resolveItems, saveItem as apiSaveItem, saveImage as apiSaveImage, deleteItem as apiDeleteItem, cloneItemToLibrary, recordPlay, fetchMe, fetchMyRooms, fetchMyTables, createTable, postCharacterUpdate, postAddCharacter, postTableOp, postLifeSupportSelect, postRestMoveSelect, normalizeRoll, conceptAiEnabled, imageGenEnabled, fetchTableBillingStatus, postMapImageFile, postMapImageFileForTable, postMapImageObject, postGenerateInviteLink, postRevokeInviteLink, postJoinInviteToken, postLeaveTable } from './lib/api.js';
+import { auth, getAuthToken, CLIENT_ID, loadCollection, loadTableState, resolveItems, saveItem as apiSaveItem, saveImage as apiSaveImage, deleteItem as apiDeleteItem, cloneItemToLibrary, recordPlay, fetchMe, fetchMyRooms, fetchMyTables, createTable, postCharacterUpdate, postAddCharacter, postTableOp, postLifeSupportSelect, postRestMoveSelect, normalizeRoll, conceptAiEnabled, imageGenEnabled, fetchTableBillingStatus, postMapImageFile, postMapImageFileForTable, postMapImageObject, postGenerateInviteLink, postRevokeInviteLink, postJoinInviteToken, postLeaveTable, putUserPreferences } from './lib/api.js';
 import { dataUrlToFile, loadImageNaturalSizeFromUrl } from './lib/map-image-data-url.js';
 import { AiUiPreferenceProvider, useAiUiPreference } from './lib/ai-ui-preference-context.jsx';
 import { shouldShowConceptAiUi } from './lib/ai-ui-visibility.js';
+import {
+  isLibraryCardDimensionsEmpty,
+  mergeLibraryCardDimensions,
+  normalizeLibraryCardDimensions,
+  readAllStoredLibraryCardDimensions,
+  writeStoredLibraryCardDimensions,
+} from './lib/library-card-dimensions.js';
 import { generateId } from './lib/helpers.js';
 import { regenerateSceneIdsForTablePlacement } from './lib/scene-id-remap.js';
 import { computeSessionCountdownUpdatesFromRoll } from './lib/session-countdowns.js';
@@ -177,6 +184,13 @@ function App() {
   const [adminPrivilegesKnown, setAdminPrivilegesKnown] = useState(false);
   /** When true, hide concept-AI and image-gen AI entry points (persisted via `PUT /api/me/preferences`). */
   const [hideAiUi, setHideAiUi] = useState(false);
+  /** Per-tab Library card width/height from `user_preferences` (signed-in). */
+  const [libraryCardDimensions, setLibraryCardDimensions] = useState({});
+  const [libraryCardDimensionsLoaded, setLibraryCardDimensionsLoaded] = useState(false);
+  const libraryCardDimensionsRef = useRef(libraryCardDimensions);
+  libraryCardDimensionsRef.current = libraryCardDimensions;
+  const libraryCardDimensionsSaveTimerRef = useRef(null);
+  const libraryCardDimensionsMigratedRef = useRef(false);
   const [myRooms, setMyRooms] = useState([]); // [{ tableId, gmUid, gmName, tableName, playerCount, players }] — tables user is invited to
   const [myTables, setMyTables] = useState([]); // [{ id, name, playerCount, players }] — tables user owns
   const [connectedPlayers, setConnectedPlayers] = useState([]); // [{ uid, name, email, photoURL }]
@@ -412,6 +426,9 @@ function App() {
           .then(({ isAdmin: admin, preferences }) => {
             setIsAdmin(admin);
             setHideAiUi(!!preferences?.hideAiUi);
+            setLibraryCardDimensions(normalizeLibraryCardDimensions(preferences?.libraryCardDimensions));
+            setLibraryCardDimensionsLoaded(true);
+            libraryCardDimensionsMigratedRef.current = false;
           })
           .catch(() => {})
           .finally(() => setAdminPrivilegesKnown(true));
@@ -429,12 +446,56 @@ function App() {
       } else {
         myTablesFetchedRef.current = false;
         setHideAiUi(false);
+        setLibraryCardDimensions({});
+        setLibraryCardDimensionsLoaded(false);
+        libraryCardDimensionsMigratedRef.current = false;
+        if (libraryCardDimensionsSaveTimerRef.current) {
+          clearTimeout(libraryCardDimensionsSaveTimerRef.current);
+          libraryCardDimensionsSaveTimerRef.current = null;
+        }
         setIsAdmin(false);
         setAdminPrivilegesKnown(false);
       }
     });
     return () => unsubscribe();
   }, [navigate]);
+
+  // One-shot: if DB has no card sizes yet, upload scoped localStorage values for this user.
+  useEffect(() => {
+    if (!user?.uid || !libraryCardDimensionsLoaded || libraryCardDimensionsMigratedRef.current) return;
+    if (!isLibraryCardDimensionsEmpty(libraryCardDimensions)) {
+      libraryCardDimensionsMigratedRef.current = true;
+      return;
+    }
+    const fromLs = readAllStoredLibraryCardDimensions(user.uid);
+    libraryCardDimensionsMigratedRef.current = true;
+    if (isLibraryCardDimensionsEmpty(fromLs)) return;
+    setLibraryCardDimensions(fromLs);
+    libraryCardDimensionsRef.current = fromLs;
+    putUserPreferences({ libraryCardDimensions: fromLs }).catch(() => {});
+  }, [user?.uid, libraryCardDimensionsLoaded, libraryCardDimensions]);
+
+  const scheduleLibraryCardDimensionsSave = useCallback(() => {
+    if (libraryCardDimensionsSaveTimerRef.current) {
+      clearTimeout(libraryCardDimensionsSaveTimerRef.current);
+    }
+    libraryCardDimensionsSaveTimerRef.current = setTimeout(() => {
+      libraryCardDimensionsSaveTimerRef.current = null;
+      const map = libraryCardDimensionsRef.current;
+      putUserPreferences({ libraryCardDimensions: map }).catch(() => {});
+    }, 500);
+  }, []);
+
+  const handleLibraryCardDimensionsChange = useCallback((tab, dims) => {
+    if (!user?.uid || !tab || !dims) return;
+    writeStoredLibraryCardDimensions(user.uid, tab, dims);
+    setLibraryCardDimensions((prev) => {
+      const next = mergeLibraryCardDimensions(prev, { [tab]: dims });
+      libraryCardDimensionsRef.current = next;
+      return next;
+    });
+    scheduleLibraryCardDimensionsSave();
+  }, [user?.uid, scheduleLibraryCardDimensionsSave]);
 
   // Keep routeRef current
   useEffect(() => { routeRef.current = route; }, [route]);
@@ -2034,6 +2095,8 @@ function App() {
             ensureCharactersLoaded={ensureCharactersLoaded}
             libraryKey={libraryKey}
             onRequireAuth={() => requireAuthRedirect('signin')}
+            libraryCardDimensions={libraryCardDimensions}
+            onLibraryCardDimensionsChange={handleLibraryCardDimensionsChange}
           />
         ) : (
           <div className="flex-1 flex flex-col items-center justify-center p-8 bg-gradient-to-b from-dh-surface to-dh-canvas">
@@ -2104,6 +2167,8 @@ function App() {
                 ensureAdventuresLoaded={ensureAdventuresLoaded}
                 ensureCharactersLoaded={ensureCharactersLoaded}
                 myTables={myTables}
+                libraryCardDimensions={user ? libraryCardDimensions : null}
+                onLibraryCardDimensionsChange={user ? handleLibraryCardDimensionsChange : undefined}
               />
             </div>
             {user && (

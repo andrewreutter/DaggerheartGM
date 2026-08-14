@@ -9,7 +9,7 @@ import { showLibraryTierShield, showLibraryLevelBadge } from '../lib/library-tie
 import { ItemActionButtons } from './ItemActionButtons.jsx';
 import { TierShieldBadge } from './TierShieldBadge.jsx';
 import { LevelBadge } from './LevelBadge.jsx';
-import { LibraryItemDisplayContent } from './library/LibraryItemDisplayContent.jsx';
+import { LibraryItemDisplayContent, SceneLibraryCard } from './library/LibraryItemDisplayContent.jsx';
 import { LibraryItemImageThumb } from './library/LibraryItemImageThumb.jsx';
 import { getLibraryItemImageUrls } from '../lib/library-item-image-urls.js';
 import {
@@ -57,6 +57,9 @@ export function ItemCard({
   const levelByName = showLibraryLevelBadge(tab, item);
   const showPreview = cardHeight >= LIBRARY_CARD_PREVIEW_VISIBLE_MIN_HEIGHT;
   const showCompactTitleThumb = !showPreview && getLibraryItemImageUrls(item).length > 0;
+  /** Scene cards with a map: fill the preview without CSS zoom so the map can use card height. */
+  const sceneMapFillPreview =
+    showPreview && tab === 'scenes' && Boolean(item?.maps?.[0]?.mapImageUrl);
   const v2LibrarySourcePath = useMemo(() => {
     if (tab === 'features' && item?._resolveV2) {
       return resolveV2FeatureSourcePath({ ...item._resolveV2, name: item.name });
@@ -377,8 +380,19 @@ export function ItemCard({
         {/*
           Use CSS zoom (not transform:scale) so layout + clipping work inside flex/virtualized rows.
           Transform scaling kept the modal-sized layout box huge and often produced an empty clip region.
+          Scene cards with a map skip zoom and fill the preview so the map grows with the card.
         */}
         {showPreview ? (
+        sceneMapFillPreview ? (
+        <div
+          ref={previewClipRef}
+          className="relative flex-1 min-h-0 overflow-hidden rounded border border-dh-border/80 bg-dh-canvas/50 pointer-events-none"
+        >
+          <div ref={previewContentRef} className="h-full min-h-0 min-w-0 p-0.5">
+            <SceneLibraryCard item={item} compact fill />
+          </div>
+        </div>
+        ) : (
         <div className="relative flex-1 min-h-0 overflow-hidden rounded border border-dh-border/80 bg-dh-canvas/50 pointer-events-none">
           <div
             ref={previewClipRef}
@@ -426,6 +440,7 @@ export function ItemCard({
             </>
           ) : null}
         </div>
+        )
         ) : null}
       </div>
       {libraryResize ? (

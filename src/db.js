@@ -10,6 +10,7 @@ import { countFeatureCatalog, filterFeatureCatalog } from './v2-feature-catalog.
 import { FCG_PUBLIC_USER_ID } from './game-constants.js';
 import { normalizePersistedCharacterElement } from './client/lib/normalize-persisted-character-element.js';
 import { attachDerivedMapConfig } from './client/lib/map-table-state.js';
+import { mergeUserPreferencesData, normalizeUserPreferences } from './user-preferences.js';
 import { readdir, readFile } from 'fs/promises';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
@@ -1499,33 +1500,38 @@ export async function updateDiceRollData(appId, gmUid, id, dataPatch) {
   return true;
 }
 
-/** Per-user JSON preferences (e.g. hide AI UI). */
+/** Per-user JSON preferences (e.g. hide AI UI, library card sizes). */
 export async function getUserPreferences(appId, userId) {
   if (!process.env.DATABASE_URL) {
-    return { hideAiUi: false };
+    return normalizeUserPreferences({});
   }
   const db = getPool();
   const { rows } = await db.query(
     'SELECT data FROM user_preferences WHERE app_id = $1 AND user_id = $2',
     [appId, userId]
   );
-  if (!rows.length) return { hideAiUi: false };
-  const d = rows[0].data || {};
-  return { hideAiUi: !!d.hideAiUi };
+  if (!rows.length) return normalizeUserPreferences({});
+  return normalizeUserPreferences(rows[0].data || {});
 }
 
-/** Merge `patch` into stored JSON (`data = data || patch`). */
+/**
+ * Merge `patch` into stored preferences (deep-merges `libraryCardDimensions` per tab).
+ * Writes the full normalized document so nested maps are not wiped by shallow JSONB `||`.
+ */
 export async function upsertUserPreferences(appId, userId, patch) {
-  if (!process.env.DATABASE_URL) return;
+  if (!process.env.DATABASE_URL) return normalizeUserPreferences({});
+  const current = await getUserPreferences(appId, userId);
+  const merged = mergeUserPreferencesData(current, patch);
   const db = getPool();
   await db.query(
     `INSERT INTO user_preferences (app_id, user_id, data, updated_at)
      VALUES ($1, $2, $3::jsonb, now())
      ON CONFLICT (app_id, user_id) DO UPDATE SET
-       data = user_preferences.data || EXCLUDED.data,
+       data = EXCLUDED.data,
        updated_at = now()`,
-    [appId, userId, JSON.stringify(patch)]
+    [appId, userId, JSON.stringify(merged)]
   );
+  return merged;
 }
 
 /** @param {{ appId: string, userId?: string|null, builder: string, provider: 'openai'|'xai', model?: string|null, promptTokens?: number|null, completionTokens?: number|null, cachedPromptTokens?: number|null, totalTokens?: number|null, latencyMs?: number|null, ok: boolean, errorCode?: string|null, requestId?: string|null }} row */

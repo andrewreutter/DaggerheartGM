@@ -594,8 +594,10 @@ function countSceneElementsByType(item, elementType) {
 
 /**
  * Lightweight scene summary: first-map thumbnail, denormalized tier/BP, and element counts.
+ * @param {{ item: object, compact?: boolean, fill?: boolean }} props
+ *   `fill` — library grid card: map grows into available height and keeps aspect via object-contain.
  */
-function SceneLibraryCard({ item, compact = false }) {
+export function SceneLibraryCard({ item, compact = false, fill = false }) {
   const mapImageUrl = item?.maps?.[0]?.mapImageUrl;
   const mapCount = Array.isArray(item?.maps) ? item.maps.length : 0;
   const envCount = countSceneElementsByType(item, 'environment');
@@ -611,22 +613,36 @@ function SceneLibraryCard({ item, compact = false }) {
     { Icon: StickyNote, label: 'Notes', count: noteCount },
   ];
 
+  const mapBoxClass = fill
+    ? 'flex-1 min-h-0 flex items-center justify-center overflow-hidden rounded border border-dh-border/80 bg-dh-canvas/40'
+    : `overflow-hidden rounded border border-dh-border/80 ${compact ? 'h-20' : 'h-36'}`;
+
   return (
-    <div className="mb-3 p-2.5 bg-dh-inset border border-dh-border rounded-lg space-y-2.5">
+    <div
+      className={
+        fill
+          ? 'h-full min-h-0 flex flex-col gap-1.5 p-1.5 bg-dh-inset border border-dh-border rounded-lg'
+          : 'mb-3 p-2.5 bg-dh-inset border border-dh-border rounded-lg space-y-2.5'
+      }
+    >
       {mapImageUrl ? (
-        <div className={`overflow-hidden rounded border border-dh-border/80 ${compact ? 'h-20' : 'h-36'}`}>
+        <div className={mapBoxClass}>
           <img
             src={mapImageUrl}
             alt=""
-            className="h-full w-full object-cover"
+            className={
+              fill
+                ? 'max-h-full max-w-full w-auto h-auto object-contain'
+                : 'h-full w-full object-contain'
+            }
           />
         </div>
       ) : null}
       {(showTier || showBp) && (
-        <div className="flex items-center gap-2 flex-wrap">
+        <div className={`flex items-center gap-2 flex-wrap ${fill ? 'shrink-0' : ''}`}>
           {showTier ? (
             <span className="shrink-0" title={`Tier ${item.tier}`}>
-              <TierShieldBadge tier={item.tier} size={compact ? 'sm' : 'md'} />
+              <TierShieldBadge tier={item.tier} size={compact || fill ? 'sm' : 'md'} />
             </span>
           ) : null}
           {showBp ? (
@@ -636,7 +652,7 @@ function SceneLibraryCard({ item, compact = false }) {
           ) : null}
         </div>
       )}
-      <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-dh-muted">
+      <div className={`flex flex-wrap gap-x-3 gap-y-1 text-xs text-dh-muted ${fill ? 'shrink-0' : ''}`}>
         {counts.map(({ Icon, label, count }) => (
           <span key={label} className="inline-flex items-center gap-1" title={label}>
             <Icon size={12} className="shrink-0" aria-hidden />

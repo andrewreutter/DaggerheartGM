@@ -74,9 +74,8 @@ import {
   DEFAULT_LIBRARY_CARD_HEIGHT as DEFAULT_CARD_HEIGHT,
   MIN_LIBRARY_CARD_WIDTH as MIN_CARD_WIDTH,
   MIN_LIBRARY_CARD_HEIGHT as MIN_CARD_HEIGHT,
-  readStoredLibraryCardWidth,
-  readStoredLibraryCardHeight,
-  libraryCardDimensionStorageKey,
+  getDimensionsForTab,
+  writeStoredLibraryCardDimensions,
 } from '../lib/library-card-dimensions.js';
 
 /** Fallback max card height (px) until the library scroll viewport is measured. */
@@ -187,6 +186,10 @@ export function LibraryView({
   onRequireAuth = noopRequireAuth,
   /** Home-page embed: All tab only, no sidebar, Mine-only ephemeral search. */
   embedded = false,
+  /** DB-backed map of tab → { width, height } (signed-in). Null/omit → localStorage only. */
+  libraryCardDimensions = null,
+  /** Called when the user changes card size for a tab (not on restore). */
+  onLibraryCardDimensionsChange,
 }) {
   const { srdData: libraryCharacterSrdData } = useCharacterSrdData();
   const { hideAiUi } = useAiUiPreference();
@@ -211,8 +214,14 @@ export function LibraryView({
     if (userUid) return [{ id: userUid, name: 'Game Table' }];
     return [];
   }, [myTables, userUid]);
-  const [libraryCardWidth, setLibraryCardWidth] = useState(() => readStoredLibraryCardWidth(userUid, activeTab));
-  const [libraryCardHeight, setLibraryCardHeight] = useState(() => readStoredLibraryCardHeight(userUid, activeTab));
+  const [libraryCardWidth, setLibraryCardWidth] = useState(() =>
+    getDimensionsForTab(libraryCardDimensions, activeTab, userUid).width
+  );
+  const [libraryCardHeight, setLibraryCardHeight] = useState(() =>
+    getDimensionsForTab(libraryCardDimensions, activeTab, userUid).height
+  );
+  /** Skip notifying parent after programmatic restore from map/localStorage. */
+  const skipCardDimPersistRef = useRef(true);
   /** Viewport width of the library card area; slider max = one full-width card per row. */
   const [libraryGridInnerWidth, setLibraryGridInnerWidth] = useState(null);
   const { openImport, enabled: unifiedImportEnabled } = useUnifiedImport();
@@ -230,11 +239,13 @@ export function LibraryView({
   const isPaginatedTab = !isAssistantTab && (PAGINATED_LIBRARY_TABS.has(activeTab) || activeTab === 'all');
   const collectionSearchCollection = activeTab === 'all' ? lastPaginatedTabRef.current : activeTab;
 
-  // Restore card dimensions for this signed-in user and library collection (tab) before paint.
+  // Restore card dimensions for this user + library collection (tab) before paint.
   useLayoutEffect(() => {
-    setLibraryCardWidth(readStoredLibraryCardWidth(userUid, activeTab));
-    setLibraryCardHeight(readStoredLibraryCardHeight(userUid, activeTab));
-  }, [userUid, activeTab]);
+    const { width, height } = getDimensionsForTab(libraryCardDimensions, activeTab, userUid);
+    skipCardDimPersistRef.current = true;
+    setLibraryCardWidth(width);
+    setLibraryCardHeight(height);
+  }, [userUid, activeTab, libraryCardDimensions]);
 
   const showLibraryNewControls = activeTab === 'all' || LIBRARY_USER_EDITABLE_COLLECTIONS.has(activeTab);
   const [newItemMenuOpen, setNewItemMenuOpen] = useState(false);
@@ -267,16 +278,26 @@ export function LibraryView({
   }, [activeTab, ensureAdventuresLoaded, ensureCharactersLoaded, data.adventures?.length, data.characters?.length]);
 
   useEffect(() => {
-    try {
-      localStorage.setItem(libraryCardDimensionStorageKey(userUid, activeTab, 'Width'), String(libraryCardWidth));
-    } catch { /* ignore */ }
-  }, [libraryCardWidth, userUid, activeTab]);
+    writeStoredLibraryCardDimensions(userUid, activeTab, {
+      width: libraryCardWidth,
+      height: libraryCardHeight,
+    });
+    if (skipCardDimPersistRef.current) {
+      skipCardDimPersistRef.current = false;
+      return;
+    }
+    onLibraryCardDimensionsChange?.(activeTab, {
+      width: libraryCardWidth,
+      height: libraryCardHeight,
+    });
+  }, [libraryCardWidth, libraryCardHeight, userUid, activeTab, onLibraryCardDimensionsChange]);
 
+  // If React bails out of setState after a restore (same values), the persist effect may not run —
+  // still clear the skip flag so the next user edit is saved. Must run *after* the persist effect.
   useEffect(() => {
-    try {
-      localStorage.setItem(libraryCardDimensionStorageKey(userUid, activeTab, 'Height'), String(libraryCardHeight));
-    } catch { /* ignore */ }
-  }, [libraryCardHeight, userUid, activeTab]);
+    if (!skipCardDimPersistRef.current) return;
+    skipCardDimPersistRef.current = false;
+  }, [userUid, activeTab, libraryCardDimensions]);
 
   const collectionSearch = useCollectionSearch(collectionSearchCollection, {
     limit: PAGE_SIZE,

@@ -80,6 +80,8 @@ export function HomeAuthenticated({
   ensureCharactersLoaded,
   libraryKey,
   onRequireAuth,
+  libraryCardDimensions = null,
+  onLibraryCardDimensionsChange,
 }) {
   return (
     <div className="flex-1 overflow-y-auto bg-dh-canvas p-6 md:p-8 space-y-8">
@@ -177,6 +179,8 @@ export function HomeAuthenticated({
             ensureAdventuresLoaded={ensureAdventuresLoaded}
             ensureCharactersLoaded={ensureCharactersLoaded}
             myTables={myTables}
+            libraryCardDimensions={libraryCardDimensions}
+            onLibraryCardDimensionsChange={onLibraryCardDimensionsChange}
           />
         </div>
       </section>

@@ -622,7 +622,7 @@ export const postRollSilent = async (rollText, displayName = '', tableId = null)
   return { ...rollData, value };
 };
 
-/** Returns `{ isAdmin, isQa, preferences?: { hideAiUi } }` for the currently signed-in user. */
+/** Returns `{ isAdmin, isQa, preferences?: { hideAiUi, libraryCardDimensions } }` for the currently signed-in user. */
 export const fetchMe = async () => {
   const token = await getAuthToken();
   if (!token) throw new Error('Not signed in');
@@ -701,7 +701,7 @@ export const postAdminBugReportNotes = async (id, notes) => {
   return body;
 };
 
-/** Persist user preferences (server JSON merge). */
+/** Persist user preferences (server JSON merge). Body may include `hideAiUi` and/or `libraryCardDimensions`. */
 export const putUserPreferences = async (body) => {
   const token = await getAuthToken();
   if (!token) throw new Error('Not signed in');

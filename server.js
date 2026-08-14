@@ -250,7 +250,7 @@ app.get('/api/config', (req, res) => {
 // --- Current user info ---
 app.get('/api/me', requireAuth, async (req, res) => {
   const em = req.email?.toLowerCase();
-  let preferences = { hideAiUi: false };
+  let preferences = { hideAiUi: false, libraryCardDimensions: {} };
   try {
     if (process.env.DATABASE_URL) {
       preferences = await getUserPreferences(APP_ID, req.uid);
@@ -266,16 +266,33 @@ app.get('/api/me', requireAuth, async (req, res) => {
 });
 
 app.put('/api/me/preferences', requireAuth, async (req, res) => {
-  const { hideAiUi } = req.body || {};
-  if (typeof hideAiUi !== 'boolean') {
+  const body = req.body || {};
+  const hasHideAiUi = Object.prototype.hasOwnProperty.call(body, 'hideAiUi');
+  const hasLibraryCardDimensions = Object.prototype.hasOwnProperty.call(body, 'libraryCardDimensions');
+  if (!hasHideAiUi && !hasLibraryCardDimensions) {
+    return res.status(400).json({ error: 'Provide hideAiUi and/or libraryCardDimensions' });
+  }
+  if (hasHideAiUi && typeof body.hideAiUi !== 'boolean') {
     return res.status(400).json({ error: 'hideAiUi must be a boolean' });
+  }
+  if (hasLibraryCardDimensions) {
+    if (
+      body.libraryCardDimensions == null ||
+      typeof body.libraryCardDimensions !== 'object' ||
+      Array.isArray(body.libraryCardDimensions)
+    ) {
+      return res.status(400).json({ error: 'libraryCardDimensions must be an object' });
+    }
   }
   if (!process.env.DATABASE_URL) {
     return res.status(503).json({ error: 'Preferences require database' });
   }
   try {
-    await upsertUserPreferences(APP_ID, req.uid, { hideAiUi });
-    res.json({ preferences: { hideAiUi } });
+    const patch = {};
+    if (hasHideAiUi) patch.hideAiUi = body.hideAiUi;
+    if (hasLibraryCardDimensions) patch.libraryCardDimensions = body.libraryCardDimensions;
+    const preferences = await upsertUserPreferences(APP_ID, req.uid, patch);
+    res.json({ preferences });
   } catch (err) {
     console.error('PUT /api/me/preferences:', err);
     res.status(500).json({ error: 'Failed to save preferences' });

@@ -3,10 +3,20 @@ import {
   libraryCardDimensionStorageKey,
   readStoredLibraryCardWidth,
   readStoredLibraryCardHeight,
+  readAllStoredLibraryCardDimensions,
+  normalizeLibraryCardDimensions,
+  mergeLibraryCardDimensions,
+  getDimensionsForTab,
+  isLibraryCardDimensionsEmpty,
   DEFAULT_LIBRARY_CARD_WIDTH,
   DEFAULT_LIBRARY_CARD_HEIGHT,
   MIN_LIBRARY_CARD_HEIGHT,
+  MIN_LIBRARY_CARD_WIDTH,
 } from '../../src/client/lib/library-card-dimensions.js';
+import {
+  mergeUserPreferencesData,
+  normalizeUserPreferences,
+} from '../../src/user-preferences.js';
 
 describe('library-card-dimensions', () => {
   const store = new Map();
@@ -23,6 +33,10 @@ describe('library-card-dimensions', () => {
       },
       clear: () => {
         store.clear();
+      },
+      key: (i) => [...store.keys()][i] ?? null,
+      get length() {
+        return store.size;
       },
     };
   });
@@ -70,5 +84,92 @@ describe('library-card-dimensions', () => {
     const compactThumbPx = 32;
     const itemCardBodyVerticalPaddingPx = 10; // pt-1.5 + pb-1
     expect(compactThumbPx + itemCardBodyVerticalPaddingPx).toBeLessThanOrEqual(MIN_LIBRARY_CARD_HEIGHT);
+  });
+
+  it('normalizes and merges libraryCardDimensions maps', () => {
+    expect(normalizeLibraryCardDimensions(null)).toEqual({});
+    expect(normalizeLibraryCardDimensions({
+      weapons: { width: 400, height: 20 },
+      bad: null,
+    })).toEqual({
+      weapons: { width: 400, height: MIN_LIBRARY_CARD_HEIGHT },
+    });
+    expect(mergeLibraryCardDimensions(
+      { weapons: { width: 400, height: 200 } },
+      { weapons: { width: 300 }, armor: { width: 250, height: 100 } },
+    )).toEqual({
+      weapons: { width: 300, height: 200 },
+      armor: { width: 250, height: 100 },
+    });
+  });
+
+  it('getDimensionsForTab prefers map over localStorage', () => {
+    localStorage.setItem(libraryCardDimensionStorageKey('u1', 'weapons', 'Width'), '400');
+    localStorage.setItem(libraryCardDimensionStorageKey('u1', 'weapons', 'Height'), '200');
+    expect(getDimensionsForTab(
+      { weapons: { width: 320, height: 120 } },
+      'weapons',
+      'u1',
+    )).toEqual({ width: 320, height: 120 });
+    expect(getDimensionsForTab({}, 'weapons', 'u1')).toEqual({ width: 400, height: 200 });
+  });
+
+  it('readAllStoredLibraryCardDimensions scans scoped keys for a uid', () => {
+    localStorage.setItem(libraryCardDimensionStorageKey('u1', 'weapons', 'Width'), '400');
+    localStorage.setItem(libraryCardDimensionStorageKey('u1', 'weapons', 'Height'), '200');
+    localStorage.setItem(libraryCardDimensionStorageKey('u1', 'armor', 'Width'), '300');
+    localStorage.setItem(libraryCardDimensionStorageKey('u2', 'weapons', 'Width'), '500');
+    expect(readAllStoredLibraryCardDimensions('u1')).toEqual({
+      weapons: { width: 400, height: 200 },
+      armor: { width: 300, height: DEFAULT_LIBRARY_CARD_HEIGHT },
+    });
+    expect(isLibraryCardDimensionsEmpty({})).toBe(true);
+    expect(isLibraryCardDimensionsEmpty(readAllStoredLibraryCardDimensions('u1'))).toBe(false);
+  });
+
+  it('clamps width below minimum', () => {
+    expect(normalizeLibraryCardDimensions({
+      x: { width: 10, height: 100 },
+    }).x.width).toBe(MIN_LIBRARY_CARD_WIDTH);
+  });
+});
+
+describe('user-preferences merge', () => {
+  it('normalizes defaults', () => {
+    expect(normalizeUserPreferences(null)).toEqual({
+      hideAiUi: false,
+      libraryCardDimensions: {},
+    });
+  });
+
+  it('deep-merges libraryCardDimensions without dropping other tabs', () => {
+    const merged = mergeUserPreferencesData(
+      {
+        hideAiUi: true,
+        libraryCardDimensions: { weapons: { width: 400, height: 176 } },
+      },
+      { libraryCardDimensions: { armor: { width: 300, height: 120 } } },
+    );
+    expect(merged).toEqual({
+      hideAiUi: true,
+      libraryCardDimensions: {
+        weapons: { width: 400, height: 176 },
+        armor: { width: 300, height: 120 },
+      },
+    });
+  });
+
+  it('updates hideAiUi without clearing dimensions', () => {
+    const merged = mergeUserPreferencesData(
+      {
+        hideAiUi: false,
+        libraryCardDimensions: { weapons: { width: 400, height: 176 } },
+      },
+      { hideAiUi: true },
+    );
+    expect(merged.hideAiUi).toBe(true);
+    expect(merged.libraryCardDimensions).toEqual({
+      weapons: { width: 400, height: 176 },
+    });
   });
 });
