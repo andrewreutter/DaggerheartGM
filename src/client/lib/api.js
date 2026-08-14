@@ -1,6 +1,6 @@
 import { buildLibraryAllSearchParams } from './library-all-api-params.js';
 import { initializeApp } from 'firebase/app';
-import { getAuth, GoogleAuthProvider, signInWithPopup, linkWithPopup, reauthenticateWithPopup } from 'firebase/auth';
+import { getAuth } from 'firebase/auth';
 
 /** Headers to add when running behind ngrok (bypasses browser warning interstitial). */
 function apiHeaders(extra = {}) {
@@ -926,6 +926,68 @@ export const createTable = async (name = 'New Table') => {
   return res.json();
 };
 
+/** GM: generate (or rotate) a reusable table invite token. Returns `{ token, createdAt }`. */
+export const postGenerateInviteLink = async (tableId) => {
+  const token = await getAuthToken();
+  if (!token) throw new Error('Not signed in');
+  const res = await fetch('/api/room/my/invite-link', {
+    method: 'POST',
+    headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
+    body: JSON.stringify({ tableId }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || `HTTP ${res.status}`);
+  }
+  return res.json();
+};
+
+/** GM: revoke the active invite token. Returns `{ ok: true }`. */
+export const postRevokeInviteLink = async (tableId) => {
+  const token = await getAuthToken();
+  if (!token) throw new Error('Not signed in');
+  const qs = tableId != null ? `?tableId=${encodeURIComponent(tableId)}` : '';
+  const res = await fetch(`/api/room/my/invite-link${qs}`, {
+    method: 'DELETE',
+    headers: apiHeaders({ Authorization: `Bearer ${token}` }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || `HTTP ${res.status}`);
+  }
+  return res.json();
+};
+
+/** Authenticated user: redeem a join token. Returns `{ tableId }`. */
+export const postJoinInviteToken = async (inviteToken) => {
+  const token = await getAuthToken();
+  if (!token) throw new Error('Not signed in');
+  const res = await fetch(`/api/join/${encodeURIComponent(inviteToken)}`, {
+    method: 'POST',
+    headers: apiHeaders({ Authorization: `Bearer ${token}` }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || `HTTP ${res.status}`);
+  }
+  return res.json();
+};
+
+/** Invited player: leave a table. Returns `{ ok: true }`. */
+export const postLeaveTable = async (tableId) => {
+  const token = await getAuthToken();
+  if (!token) throw new Error('Not signed in');
+  const res = await fetch(`/api/room/${tableId}/leave`, {
+    method: 'POST',
+    headers: apiHeaders({ Authorization: `Bearer ${token}` }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || `HTTP ${res.status}`);
+  }
+  return res.json();
+};
+
 /** Player: send a runtime update for an assigned character. tableId identifies the table. */
 export const postCharacterUpdate = async (tableId, instanceId, updates) => {
   const token = await getAuthToken();
@@ -1639,73 +1701,6 @@ export const postDiceAck = async (ackData) => {
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
-};
-
-/**
- * Request the Google contacts.readonly scope via a popup.
- * Should only be called in response to a user gesture (click).
- * Returns the OAuth access token string, or null if the user cancelled.
- */
-export const requestGoogleContactsAccess = async () => {
-  try {
-    const provider = new GoogleAuthProvider();
-    provider.addScope('https://www.googleapis.com/auth/contacts.readonly');
-    const currentUser = auth?.currentUser;
-    if (currentUser?.email) {
-      provider.setCustomParameters({ login_hint: currentUser.email });
-    }
-    const hasGoogle = currentUser?.providerData?.some((p) => p.providerId === 'google.com');
-    let result;
-    if (currentUser && !hasGoogle) {
-      result = await linkWithPopup(currentUser, provider);
-    } else if (currentUser && hasGoogle) {
-      result = await reauthenticateWithPopup(currentUser, provider);
-    } else {
-      result = await signInWithPopup(auth, provider);
-    }
-    const credential = GoogleAuthProvider.credentialFromResult(result);
-    return credential?.accessToken ?? null;
-  } catch (err) {
-    if (err.code === 'auth/popup-closed-by-user' || err.code === 'auth/cancelled-popup-request') {
-      return null;
-    }
-    console.error('requestGoogleContactsAccess failed:', err);
-    return null;
-  }
-};
-
-/**
- * Search the authenticated user's Google contacts using the People API.
- * Returns [{ name, email }] — up to 8 results. Returns [] on any error.
- * accessToken — obtained from requestGoogleContactsAccess()
- */
-export const searchGoogleContacts = async (query, accessToken) => {
-  if (!query?.trim() || !accessToken) return [];
-  try {
-    const params = new URLSearchParams({
-      query: query.trim(),
-      readMask: 'names,emailAddresses',
-      pageSize: '8',
-    });
-    const res = await fetch(
-      `https://people.googleapis.com/v1/people:searchContacts?${params}`,
-      { headers: { Authorization: `Bearer ${accessToken}` } }
-    );
-    if (!res.ok) return [];
-    const json = await res.json();
-    const results = [];
-    for (const { person } of (json.results || [])) {
-      const emails = person.emailAddresses || [];
-      if (!emails.length) continue;
-      const name = person.names?.[0]?.displayName || '';
-      for (const { value } of emails) {
-        if (value) results.push({ name, email: value });
-      }
-    }
-    return results;
-  } catch {
-    return [];
-  }
 };
 
 /**

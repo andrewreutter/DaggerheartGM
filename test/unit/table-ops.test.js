@@ -253,6 +253,55 @@ describe('applyTableOp', () => {
     expect(result.playerEmails).toEqual(['a@b.com']);
   });
 
+  it('add-player-email appends a normalized email', () => {
+    const result = applyTableOp(
+      { op: 'add-player-email', email: '  Alice@Example.com  ' },
+      { playerEmails: ['bob@example.com'] },
+    );
+    expect(result.playerEmails).toEqual(['bob@example.com', 'alice@example.com']);
+  });
+
+  it('add-player-email is a no-op when the email is already present in a different case', () => {
+    const state = { playerEmails: ['Player@Example.com'] };
+    const result = applyTableOp({ op: 'add-player-email', email: 'player@example.com' }, state);
+    expect(result.playerEmails).toBeUndefined();
+  });
+
+  it('remove-player-email drops the email and clears matching character assignments', () => {
+    const state = {
+      playerEmails: ['Alice@Example.com', 'bob@example.com'],
+      activeElements: [
+        {
+          instanceId: 'c1',
+          elementType: 'character',
+          assignedPlayerEmail: 'alice@example.com',
+          assignedPlayerUid: 'uid-1',
+          name: 'Alice',
+        },
+        {
+          instanceId: 'c2',
+          elementType: 'character',
+          assignedPlayerEmail: 'bob@example.com',
+          assignedPlayerUid: 'uid-2',
+          name: 'Bob',
+        },
+        {
+          instanceId: 'a1',
+          elementType: 'adversary',
+          assignedPlayerEmail: 'alice@example.com',
+        },
+      ],
+    };
+    const result = applyTableOp({ op: 'remove-player-email', email: 'ALICE@example.com' }, state);
+    expect(result.playerEmails).toEqual(['bob@example.com']);
+    expect(result.activeElements[0].assignedPlayerEmail).toBeUndefined();
+    expect(result.activeElements[0].assignedPlayerUid).toBeUndefined();
+    expect(result.activeElements[0].name).toBe('Alice');
+    expect(result.activeElements[1].assignedPlayerEmail).toBe('bob@example.com');
+    expect(result.activeElements[1].assignedPlayerUid).toBe('uid-2');
+    expect(result.activeElements[2].assignedPlayerEmail).toBe('alice@example.com');
+  });
+
   it('life-support-select sets selection for roll', () => {
     const result = applyTableOp(
       { op: 'life-support-select', _rollDbId: 42, selectedLifeSupportTargetInstanceId: 'char-1' },

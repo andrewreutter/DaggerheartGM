@@ -132,6 +132,12 @@ describe('parseRoute /admin', () => {
   });
 });
 
+describe('parseRoute /join', () => {
+  it('parses /join/:token', () => {
+    expect(parseRoute('/join/abc123')).toEqual({ view: 'join', token: 'abc123' });
+  });
+});
+
 describe('parseRoute /table', () => {
   const gmUid = '9s3M6tgScJgXhKgYOHZVYAStNQi2';
   const secondaryTableId = 'd6f893df-6a9a-44da-b722-7d4de2c35e97';

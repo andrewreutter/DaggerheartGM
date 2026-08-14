@@ -9,7 +9,7 @@ import { readFile } from 'fs/promises';
 import { initializeApp, getApps } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import cron from 'node-cron';
-import { runMigrations, getPool, getItems, getPublicItems, upsertItem, deleteItem, countItems, getItemsPaginated, countCommunityItems, getCommunityItemsPaginated, getItemsByIds, getItem, recordClone, recordPlay, upsertMirror, findAutoClone, getUnifiedItems, getUnifiedLibraryAll, getUnifiedLibraryAllBranchCounts, getExternalCacheByIds, getTableStatesByPlayerEmail, getTableStateById, listTableStates, summarizeTablePlayerRoster, appendDiceRoll, ackDiceRoll, getRecentDiceRolls, setBannerStatus, getPendingBanners, getDiceRollById, updateDiceRollData, resolveCharacterElements as resolveCharacterElementsDb, stripCharacterElementsForDb, getResolvedTableState, setTableStateNotifyHook, getUserPreferences, upsertUserPreferences, queryAiUsageAggregates, stampFreeTrialStart, checkTableIsLive, extendTableCampaignPass, recordCampaignPassPurchase, markStripeEventProcessed, recordCharacterTablePlacement, removeCharacterTablePlacementsForTable, countUserAiCallsThisMonth, getBugReportsPaginated, countBugReports, setBugReportStatus, updateBugReportNotes, BUG_REPORT_STATUSES, getCharacterById, upsertCharacterForTable, deleteCharacterForTable, stampCharacterTableId } from './src/db.js';
+import { runMigrations, getPool, getItems, getPublicItems, upsertItem, deleteItem, countItems, getItemsPaginated, countCommunityItems, getCommunityItemsPaginated, getItemsByIds, getItem, recordClone, recordPlay, upsertMirror, findAutoClone, getUnifiedItems, getUnifiedLibraryAll, getUnifiedLibraryAllBranchCounts, getExternalCacheByIds, getTableStatesByPlayerEmail, getTableStateById, listTableStates, summarizeTablePlayerRoster, appendDiceRoll, ackDiceRoll, getRecentDiceRolls, setBannerStatus, getPendingBanners, getDiceRollById, updateDiceRollData, resolveCharacterElements as resolveCharacterElementsDb, stripCharacterElementsForDb, getResolvedTableState, setTableStateNotifyHook, getUserPreferences, upsertUserPreferences, queryAiUsageAggregates, stampFreeTrialStart, checkTableIsLive, extendTableCampaignPass, recordCampaignPassPurchase, markStripeEventProcessed, recordCharacterTablePlacement, removeCharacterTablePlacementsForTable, createTableInviteLink, revokeTableInviteLink, getActiveTableInviteLink, redeemTableInviteLink, deleteTableInviteLinksForTable, countUserAiCallsThisMonth, getBugReportsPaginated, countBugReports, setBugReportStatus, updateBugReportNotes, BUG_REPORT_STATUSES, getCharacterById, upsertCharacterForTable, deleteCharacterForTable, stampCharacterTableId } from './src/db.js';
 import { isStripeConfigured, getStripe, constructWebhookEvent, CAMPAIGN_PASS_PRICE_CENTS, getCampaignPassPriceId } from './src/stripe.js';
 import { srdRouter, warmCache, getItem as getSrdItem } from './src/srd/index.js';
 import { fetchHoDFoundryDetail } from './src/hod-search.js';
@@ -2718,10 +2718,106 @@ app.delete('/api/my-tables/:id', requireAuth, async (req, res) => {
       console.error('[billing] removeCharacterTablePlacementsForTable failed:', err.message);
     }
 
+    try {
+      await deleteTableInviteLinksForTable(APP_ID, tableId);
+    } catch (err) {
+      console.error('[invite] deleteTableInviteLinksForTable failed:', err.message);
+    }
+
     res.json({ ok: true });
   } catch (err) {
     console.error('DELETE /api/my-tables/:id error:', err);
     res.status(500).json({ error: 'Failed to delete table' });
+  }
+});
+
+// POST /api/room/my/invite-link — GM generates (or rotates) a reusable join token.
+app.post('/api/room/my/invite-link', requireAuth, async (req, res) => {
+  if (!process.env.DATABASE_URL) {
+    return res.status(503).json({ error: 'Database required' });
+  }
+  const tableId = req.body?.tableId || req.uid;
+  try {
+    const row = await getTableStateById(APP_ID, tableId);
+    if (!row) return res.status(404).json({ error: 'Table not found' });
+    if (row.userId !== req.uid) return res.status(403).json({ error: 'Not your table' });
+    const result = await createTableInviteLink(APP_ID, tableId, req.uid);
+    subscriptionManager.notifyChange('table_state', tableId);
+    res.json(result);
+  } catch (err) {
+    console.error('POST /api/room/my/invite-link error:', err);
+    res.status(500).json({ error: 'Failed to create invite link' });
+  }
+});
+
+// DELETE /api/room/my/invite-link — GM revokes the active join token.
+app.delete('/api/room/my/invite-link', requireAuth, async (req, res) => {
+  if (!process.env.DATABASE_URL) {
+    return res.status(503).json({ error: 'Database required' });
+  }
+  const tableId = req.query.tableId || req.uid;
+  try {
+    const row = await getTableStateById(APP_ID, tableId);
+    if (!row) return res.status(404).json({ error: 'Table not found' });
+    if (row.userId !== req.uid) return res.status(403).json({ error: 'Not your table' });
+    await revokeTableInviteLink(APP_ID, tableId);
+    subscriptionManager.notifyChange('table_state', tableId);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('DELETE /api/room/my/invite-link error:', err);
+    res.status(500).json({ error: 'Failed to revoke invite link' });
+  }
+});
+
+// POST /api/join/:token — authenticated user redeems an invite link (appends their email).
+app.post('/api/join/:token', requireAuth, async (req, res) => {
+  if (!process.env.DATABASE_URL) {
+    return res.status(503).json({ error: 'Database required' });
+  }
+  try {
+    const redeemed = await redeemTableInviteLink(APP_ID, req.params.token);
+    if (!redeemed) return res.status(404).json({ error: 'Invalid or revoked invite link' });
+    const { tableId } = redeemed;
+    const row = await getTableStateById(APP_ID, tableId);
+    if (!row) return res.status(404).json({ error: 'Table not found' });
+    if (row.userId === req.uid) {
+      return res.json({ tableId });
+    }
+    await applyOpToTableState(tableId, { op: 'add-player-email', email: req.email });
+    subscriptionManager.notifyChange('table_state', tableId);
+    res.json({ tableId });
+  } catch (err) {
+    if (err?.statusCode === 400) {
+      return res.status(400).json({
+        error: err.message || 'Bad request',
+        ...(err.playBlocked ? { playBlocked: err.playBlocked } : {}),
+      });
+    }
+    console.error('POST /api/join/:token error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// POST /api/room/:tableId/leave — invited player leaves; owner cannot leave.
+app.post('/api/room/:tableId/leave', requireAuth, async (req, res) => {
+  const ctx = await resolveTableAccess(APP_ID, req.params.tableId, req);
+  if (ctx.error) return res.status(ctx.error).json({ error: ctx.message });
+  if (req.uid === ctx.gmUid) {
+    return res.status(400).json({ error: 'Table owner cannot leave their own table' });
+  }
+  try {
+    await applyOpToTableState(ctx.tableId, { op: 'remove-player-email', email: req.email });
+    subscriptionManager.notifyChange('table_state', ctx.tableId);
+    res.json({ ok: true });
+  } catch (err) {
+    if (err?.statusCode === 400) {
+      return res.status(400).json({
+        error: err.message || 'Bad request',
+        ...(err.playBlocked ? { playBlocked: err.playBlocked } : {}),
+      });
+    }
+    console.error('POST /api/room/:tableId/leave error:', err);
+    res.status(500).json({ error: 'Server error' });
   }
 });
 

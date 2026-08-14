@@ -4,7 +4,7 @@ import { createPortal } from 'react-dom';
 import { signOut, onAuthStateChanged } from 'firebase/auth';
 import { BookOpen, LayoutDashboard, ChevronDown, LogOut, Upload, Download, Trash2, Circle, Plus, ScrollText, Sparkles, Bot, ShieldOff, Bug } from 'lucide-react';
 
-import { auth, getAuthToken, CLIENT_ID, loadCollection, loadTableState, resolveItems, saveItem as apiSaveItem, saveImage as apiSaveImage, deleteItem as apiDeleteItem, cloneItemToLibrary, recordPlay, fetchMe, fetchMyRooms, fetchMyTables, createTable, postCharacterUpdate, postAddCharacter, postTableOp, postLifeSupportSelect, postRestMoveSelect, normalizeRoll, conceptAiEnabled, imageGenEnabled, fetchTableBillingStatus, postMapImageFile, postMapImageFileForTable, postMapImageObject } from './lib/api.js';
+import { auth, getAuthToken, CLIENT_ID, loadCollection, loadTableState, resolveItems, saveItem as apiSaveItem, saveImage as apiSaveImage, deleteItem as apiDeleteItem, cloneItemToLibrary, recordPlay, fetchMe, fetchMyRooms, fetchMyTables, createTable, postCharacterUpdate, postAddCharacter, postTableOp, postLifeSupportSelect, postRestMoveSelect, normalizeRoll, conceptAiEnabled, imageGenEnabled, fetchTableBillingStatus, postMapImageFile, postMapImageFileForTable, postMapImageObject, postGenerateInviteLink, postRevokeInviteLink, postJoinInviteToken, postLeaveTable } from './lib/api.js';
 import { dataUrlToFile, loadImageNaturalSizeFromUrl } from './lib/map-image-data-url.js';
 import { AiUiPreferenceProvider, useAiUiPreference } from './lib/ai-ui-preference-context.jsx';
 import { shouldShowConceptAiUi } from './lib/ai-ui-visibility.js';
@@ -103,6 +103,7 @@ function App() {
 
   const [activeElements, setActiveElements] = useState([]);
   const [playerEmails, setPlayerEmails] = useState([]); // GM's invited player emails
+  const [inviteLink, setInviteLink] = useState(null);
   const [featureCountdowns, setFeatureCountdowns] = useState({});
   const [sessionCountdowns, setSessionCountdowns] = useState([]);
 
@@ -215,6 +216,9 @@ function App() {
   const [tableOwnerUid, setTableOwnerUid] = useState(undefined);
   /** Set to 'not-found' when the table doesn't exist or the user isn't invited (403/404 from loadTableState). */
   const [tableAccessError, setTableAccessError] = useState(null);
+  /** Set when `/join/:token` redemption fails (invalid or revoked). */
+  const [joinLinkError, setJoinLinkError] = useState(null);
+  const joinRedeemedTokenRef = useRef(null);
 
   useEffect(() => {
     const handleClickOutside = (e) => {
@@ -485,7 +489,7 @@ function App() {
 
   useEffect(() => {
     if (loading || user) return;
-    if (route.view === 'table' || route.view === 'adminAiUsage' || route.view === 'adminBugReports') {
+    if (route.view === 'table' || route.view === 'adminAiUsage' || route.view === 'adminBugReports' || route.view === 'join') {
       requireAuthRedirect('signin');
     }
   }, [loading, user, route.view, requireAuthRedirect]);
@@ -503,6 +507,23 @@ function App() {
       navigate(`/library/${DEFAULT_LIBRARY_TAB}`, { replace: true });
     }
   }, [user, route.view, isAdmin, adminPrivilegesKnown, navigate]);
+
+  useEffect(() => {
+    if (route.view !== 'join' || !user || !route.token) return;
+    if (joinRedeemedTokenRef.current === route.token) return;
+    joinRedeemedTokenRef.current = route.token;
+    setJoinLinkError(null);
+    (async () => {
+      try {
+        const result = await postJoinInviteToken(route.token);
+        fetchMyRooms().then(rooms => setMyRooms(rooms)).catch(() => {});
+        navigate(`/table/${result.tableId}`, { replace: true });
+      } catch (err) {
+        console.error('Failed to join table:', err);
+        setJoinLinkError('This invite link is invalid or has been revoked.');
+      }
+    })();
+  }, [route.view, route.token, user, navigate]);
 
   // GM can preview the table as a specific player (non-persisted; cleared on reload)
   const isPreviewMode = !isPlayer && !!previewAsPlayerEmail && route.view === 'table';
@@ -680,6 +701,7 @@ function App() {
       setSessionCountdowns([]);
       setTableBattleMods({});
       setPlayerEmails([]);
+      setInviteLink(null);
       setTableName('');
       setMapConfig(DEFAULT_MAP_CONFIG);
       setMaps([]);
@@ -717,6 +739,7 @@ function App() {
         setFearCount(0);
         setConditionsHistory([]);
         setPlayerEmails([]);
+        setInviteLink(null);
         setTableName('');
         setMapConfig(DEFAULT_MAP_CONFIG);
         setMaps([]);
@@ -742,6 +765,7 @@ function App() {
       if (tableState.fearCount != null) setFearCount(tableState.fearCount);
       setConditionsHistory(Array.isArray(tableState.conditionsHistory) ? tableState.conditionsHistory : []);
       if (Array.isArray(tableState.playerEmails)) setPlayerEmails(tableState.playerEmails);
+      setInviteLink(tableState.inviteLink ?? null);
       if (tableState.tableName != null) setTableName(tableState.tableName);
       if (tableState.gmDisplayName != null) setTableGmDisplayName(tableState.gmDisplayName);
       if (tableState.mapConfig && typeof tableState.mapConfig === 'object') {
@@ -819,6 +843,7 @@ function App() {
         if (Array.isArray(state.sessionCountdowns)) setSessionCountdowns(state.sessionCountdowns);
         if (state.tableBattleMods != null) setTableBattleMods(state.tableBattleMods);
         if (Array.isArray(state.playerEmails)) setPlayerEmails(state.playerEmails);
+        setInviteLink(state.inviteLink ?? null);
         if (state.tableName != null) {
           setTableName(state.tableName);
           setMyTables(prev => prev.map(t => t.id === tableId ? { ...t, name: state.tableName } : t));
@@ -928,6 +953,7 @@ function App() {
         if (Array.isArray(state.sessionCountdowns)) setSessionCountdowns(state.sessionCountdowns);
         if (state.tableBattleMods != null) setTableBattleMods(state.tableBattleMods);
         if (Array.isArray(state.playerEmails)) setPlayerEmails(state.playerEmails);
+        setInviteLink(state.inviteLink ?? null);
         if (state.tableName != null) setTableName(state.tableName);
         if (state.mapConfig != null && typeof state.mapConfig === 'object') {
           const merged = { ...DEFAULT_MAP_CONFIG, ...state.mapConfig };
@@ -1375,9 +1401,38 @@ function App() {
     postTableOp({ op: 'set-battle-mods', tableBattleMods: resolved }, tableId);
   };
 
-  const sendSetPlayerEmails = (valueOrFn) => {
-    const resolved = typeof valueOrFn === 'function' ? valueOrFn(playerEmails) : valueOrFn;
-    postTableOp({ op: 'set-player-emails', playerEmails: resolved }, tableId);
+  const sendGenerateInviteLink = async () => {
+    try {
+      const result = await postGenerateInviteLink(tableId);
+      setInviteLink(result);
+    } catch (err) {
+      console.error('Failed to generate invite link:', err);
+    }
+  };
+
+  const sendRevokeInviteLink = async () => {
+    try {
+      await postRevokeInviteLink(tableId);
+      setInviteLink(null);
+    } catch (err) {
+      console.error('Failed to revoke invite link:', err);
+    }
+  };
+
+  const sendRemovePlayerEmail = (email) => {
+    postTableOp({ op: 'remove-player-email', email }, tableId);
+    setPlayerEmails(prev => prev.filter(e => e.toLowerCase() !== email.toLowerCase()));
+  };
+
+  const sendLeaveTable = async () => {
+    try {
+      await postLeaveTable(tableId);
+      setMyRooms(prev => prev.filter(r => r.tableId !== tableId));
+      navigate('/');
+    } catch (err) {
+      console.error('Failed to leave table:', err);
+      alert('Failed to leave the table. Please try again.');
+    }
   };
 
   const sendUpdateCountdown = (cardKey, featureKey, cdIdx, value) => {
@@ -2047,6 +2102,7 @@ function App() {
               />
             </div>
             {user && (
+            <>
             <div
               className="flex-1 overflow-hidden flex flex-col"
               style={{ display: route.view === 'table' ? 'flex' : 'none' }}
@@ -2109,7 +2165,11 @@ function App() {
                 playerEmail={effectivePlayerEmail}
                 connectedPlayers={connectedPlayers}
                 playerEmails={playerEmails}
-                setPlayerEmails={effectiveIsPlayer ? () => {} : sendSetPlayerEmails}
+                inviteLink={inviteLink}
+                onGenerateInviteLink={effectiveIsPlayer ? undefined : sendGenerateInviteLink}
+                onRevokeInviteLink={effectiveIsPlayer ? undefined : sendRevokeInviteLink}
+                onRemovePlayerEmail={effectiveIsPlayer ? undefined : sendRemovePlayerEmail}
+                onLeaveTable={isPlayer ? sendLeaveTable : undefined}
                 gmUid={tableOwnerUid ?? user?.uid}
                 onPlayerAddCharacter={isPlayer ? handlePlayerAddCharacter : (isPreviewMode ? handleGmImpersonateAddCharacter : undefined)}
                 pendingBanners={pendingBanners}
@@ -2198,6 +2258,20 @@ function App() {
                 isAdmin={isAdmin}
               />}
             </div>
+            {route.view === 'join' && (
+              <div className="flex-1 flex flex-col items-center justify-center gap-3 text-dh-muted">
+                {joinLinkError ? (
+                  <>
+                    <span className="text-5xl">🔗</span>
+                    <p className="text-lg font-semibold text-dh">Invite link invalid</p>
+                    <p className="text-sm">{joinLinkError}</p>
+                  </>
+                ) : (
+                  <p className="text-dh">Joining table...</p>
+                )}
+              </div>
+            )}
+            </>
             )}
           </>
         )}

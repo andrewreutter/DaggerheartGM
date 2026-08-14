@@ -96,6 +96,15 @@ describe('table-session-gate', () => {
     expect(g.ok).toBe(true);
   });
 
+  it('allows add-player-email and remove-player-email during prep', () => {
+    const add = gateTableOpForPrepMode(prepState, { op: 'add-player-email', email: 'a@b.com' });
+    expect(add.ok).toBe(true);
+    expect(add.op.op).toBe('add-player-email');
+    const remove = gateTableOpForPrepMode(prepState, { op: 'remove-player-email', email: 'a@b.com' });
+    expect(remove.ok).toBe(true);
+    expect(remove.op.op).toBe('remove-player-email');
+  });
+
   it('allows add-scene-snapshot during prep (Add Scene from library)', () => {
     const g = gateTableOpForPrepMode(prepState, {
       op: 'add-scene-snapshot',

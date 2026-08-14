@@ -103,10 +103,24 @@ export function redactEncounterNotesForAudience(state, audience) {
   return { ...state, elements: filtered };
 }
 
-/** Apply all GM-only redactions for player SSE / GET table_state (countdowns + notes). */
+/**
+ * GM-only reusable join token. Players already on the table must not see it.
+ * @param {object} state table_state-like
+ * @param {'gm' | 'player'} audience
+ */
+export function redactInviteLinkForAudience(state, audience) {
+  if (!state || typeof state !== 'object') return state;
+  if (audience !== 'player') return state;
+  if (!('inviteLink' in state)) return state;
+  const { inviteLink: _inviteLink, ...rest } = state;
+  return rest;
+}
+
+/** Apply all GM-only redactions for player SSE / GET table_state (countdowns + notes + invite link). */
 export function redactTableStateForPlayerAudience(state) {
   let s = redactSessionCountdownsForAudience(state, 'player');
   s = redactEncounterNotesForAudience(s, 'player');
+  s = redactInviteLinkForAudience(s, 'player');
   return s;
 }
 

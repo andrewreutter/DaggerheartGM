@@ -88,6 +88,7 @@ export function pathnameOnly(fullPath) {
  *   /admin/bug-reports             -> { view: 'adminBugReports' } (admin-only UI)
  *   /table/:tableId                -> { view: 'table', tableId }
  *   /table/:tableId/:collection/:id -> table + modal deep-link
+ *   /join/:token                   -> { view: 'join', token }
  *   /gm-table/...                  -> legacy (prefer legacyGmTableToCanonical + redirect)
  *
  * Note: /library/:tab/:id/edit is no longer a route — item editing is now
@@ -119,6 +120,10 @@ export function parseRoute(pathWithOptionalQuery) {
 
   if (parts[0] === 'admin' && parts[1] === 'bug-reports') {
     return { view: 'adminBugReports', tab: null, itemId: null, librarySemantic: null, librarySearchQuery: null };
+  }
+
+  if (parts[0] === 'join' && parts[1]) {
+    return { view: 'join', token: parts[1] };
   }
 
   if (parts[0] === 'table') {

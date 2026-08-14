@@ -316,6 +316,29 @@ export function applyTableOp(op, state) {
     }
     case 'set-player-emails':
       return { playerEmails: op.playerEmails };
+    case 'add-player-email': {
+      const email = typeof op.email === 'string' ? op.email.trim().toLowerCase() : '';
+      if (!email) return {};
+      const existing = Array.isArray(state.playerEmails) ? state.playerEmails : [];
+      if (existing.some((e) => String(e).trim().toLowerCase() === email)) return {};
+      return { playerEmails: [...existing, email] };
+    }
+    case 'remove-player-email': {
+      const email = typeof op.email === 'string' ? op.email.trim().toLowerCase() : '';
+      if (!email) return {};
+      const existing = Array.isArray(state.playerEmails) ? state.playerEmails : [];
+      const playerEmails = existing.filter((e) => String(e).trim().toLowerCase() !== email);
+      const nextEls = activeElements.map((el) => {
+        if (el.elementType !== 'character') return el;
+        const assigned = el.assignedPlayerEmail;
+        if (typeof assigned !== 'string' || assigned.trim().toLowerCase() !== email) return el;
+        const next = { ...el };
+        delete next.assignedPlayerEmail;
+        delete next.assignedPlayerUid;
+        return next;
+      });
+      return { playerEmails, activeElements: nextEls };
+    }
     case 'update-base-data': {
       return {
         activeElements: activeElements.map(el => {

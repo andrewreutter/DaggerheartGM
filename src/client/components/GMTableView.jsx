@@ -2,7 +2,7 @@ import { useMemo, useState, useEffect, useLayoutEffect, useRef, useCallback } fr
 import { createPortal } from 'react-dom';
 import { useTouchDevice } from '../lib/useTouchDevice.js';
 import { useHoverOverlay } from '../lib/useHoverOverlay.js';
-import { Zap, Trash2, Dices, ChevronDown, ChevronRight, X, Plus, Swords, AlertTriangle, Flame, Edit, Users, RefreshCw, ExternalLink, Eye, EyeOff, Circle, Square, CheckSquare, StickyNote, Heart } from 'lucide-react';
+import { Zap, Trash2, Dices, ChevronDown, ChevronRight, X, Plus, Swords, AlertTriangle, Flame, Edit, Users, RefreshCw, ExternalLink, Eye, EyeOff, Circle, Square, CheckSquare, StickyNote, Heart, LogOut } from 'lucide-react';
 import { BattleMap, CHARACTER_TRAY_WIDTH_PX, TokenTrayActionButton } from './BattleMap.jsx';
 import { EncounterAdversaryInstancePlayerSummary } from './EncounterAdversaryMarkedSummary.jsx';
 import { playerEncounterInstanceRowVisible } from '../lib/encounter-adversary-player-summary.js';
@@ -62,8 +62,6 @@ import {
   postFinalizeIntentDifficulty,
   syncDaggerstackCharacter,
   resolveItems,
-  requestGoogleContactsAccess,
-  searchGoogleContacts,
   conceptAiEnabled,
   imageGenEnabled,
   postEncounterAiBuild,
@@ -485,7 +483,7 @@ function buildGameTableNewEnvironmentStub(tier = 1, type = 'exploration') {
   };
 }
 
-export function GMTableView({ tableId, activeElements, updateActiveElement: pushTableElementUpdate, removeActiveElement, updateActiveElementsBaseData, data, saveItem, saveImage, addToTable, sendDoAddToTable, onMergeAdversary, user, route, navigate, featureCountdowns = {}, sessionCountdowns = [], updateCountdown, partySize = 1, partyTier = 1, characters = [], tableBattleMods, setTableBattleMods, fearCount = 0, setFearCount, conditionsHistory = [], onAddConditionsHistoryEntry, onRemoveConditionsHistoryEntry, tableName = '', gmDisplayName = '', tableStateReady = false, onTableNameChange, onDeleteTable, ensureAdventuresLoaded, ensureCharactersLoaded, clearTable, isPlayer = false, playerEmail, connectedPlayers = [], playerEmails = [], setPlayerEmails, gmUid, onPlayerAddCharacter, pendingBanners = [], pendingPlayerIntent = null, intentDifficultyUpdate = null, onFeatureRequestSuccess, onFeatureRequestCancel, rangerFocusRequestedBannerIds, onRangerFocusRerollRequestSuccess, onRangerFocusRerollRequestCancel, previewAsPlayerEmail = null, onPreviewAsPlayer, onExitPreview, actionLog = [], setActionLog, mapConfig, maps = [], activeMapId = null, gmMapView = null, onSetActiveMap, onAddMap, onAddMapWithImage, onRemoveMap, onRenameMap, onMapConfigChange, onMapViewSync, lifeSupportSelections = {}, onLifeSupportSelect, onLifeSupportClear, restMovesSelections = {}, onRestMoveSelect, onRestMoveClear, tableFeatureState = {}, sessionPlayAllowed = true, sessionStarted = true, sessionPaused = false, mapPings = [], onDismissMapPing = () => {}, appendMapPing = () => {},
+export function GMTableView({ tableId, activeElements, updateActiveElement: pushTableElementUpdate, removeActiveElement, updateActiveElementsBaseData, data, saveItem, saveImage, addToTable, sendDoAddToTable, onMergeAdversary, user, route, navigate, featureCountdowns = {}, sessionCountdowns = [], updateCountdown, partySize = 1, partyTier = 1, characters = [], tableBattleMods, setTableBattleMods, fearCount = 0, setFearCount, conditionsHistory = [], onAddConditionsHistoryEntry, onRemoveConditionsHistoryEntry, tableName = '', gmDisplayName = '', tableStateReady = false, onTableNameChange, onDeleteTable, ensureAdventuresLoaded, ensureCharactersLoaded, clearTable, isPlayer = false, playerEmail, connectedPlayers = [], playerEmails = [], inviteLink = null, onGenerateInviteLink, onRevokeInviteLink, onRemovePlayerEmail, onLeaveTable, gmUid, onPlayerAddCharacter, pendingBanners = [], pendingPlayerIntent = null, intentDifficultyUpdate = null, onFeatureRequestSuccess, onFeatureRequestCancel, rangerFocusRequestedBannerIds, onRangerFocusRerollRequestSuccess, onRangerFocusRerollRequestCancel, previewAsPlayerEmail = null, onPreviewAsPlayer, onExitPreview, actionLog = [], setActionLog, mapConfig, maps = [], activeMapId = null, gmMapView = null, onSetActiveMap, onAddMap, onAddMapWithImage, onRemoveMap, onRenameMap, onMapConfigChange, onMapViewSync, lifeSupportSelections = {}, onLifeSupportSelect, onLifeSupportClear, restMovesSelections = {}, onRestMoveSelect, onRestMoveClear, tableFeatureState = {}, sessionPlayAllowed = true, sessionStarted = true, sessionPaused = false, mapPings = [], onDismissMapPing = () => {}, appendMapPing = () => {},
   mapScribbles = [],
   mapViews = [], gmActiveViewId = null, onSetActiveView, onAddMapViewOp, onRemoveMapView, onRenameMapView, onSetViewBroadcast, onSetViewLocked, onSetMapShare,
   onSetMapOverlay,
@@ -775,13 +773,9 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
   // Action banners with adversary target: { [rollDbId]: selectedAdversaryInstanceId } — pre-populated from player's in-place pick, cleared on ack
   const [actionAdversarySelections, setActionAdversarySelections] = useState({});
   // Character dialog removed — characters are now managed through the Library picker
-  const [playerEmailInput, setPlayerEmailInput] = useState('');
   const [showPlayerEmailPanel, setShowPlayerEmailPanel] = useState(false);
   const [showOnlinePlayersPanel, setShowOnlinePlayersPanel] = useState(false);
-  const [contactsToken, setContactsToken] = useState(null);
-  const [contactSuggestions, setContactSuggestions] = useState([]);
-  const [contactsLoading, setContactsLoading] = useState(false);
-  const contactsDebounceRef = useRef(null);
+  const [inviteLinkCopied, setInviteLinkCopied] = useState(false);
   // dialogSyncing / dialogSyncError removed — character dialog replaced by Library picker
   const overlayScrollRef = useRef(null);
   const gmFeatureOverlayRef = useRef(null); // outer ref for touch outside-tap dismiss
@@ -5946,9 +5940,47 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
               ><Users size={13} /></button>
             )}
           </div>
-          {/* Player email management (GM only) */}
+          {/* Invite link + roster (GM only) */}
           {!isPlayer && showPlayerEmailPanel && (
             <div className="mt-2 space-y-2">
+              <p className="text-[10px] text-dh-muted uppercase tracking-wider font-semibold">Invite Link</p>
+              {!inviteLink ? (
+                <button
+                  type="button"
+                  onClick={onGenerateInviteLink}
+                  className="w-full rounded-lg border border-dashed border-dh-strong bg-dh-raised/60 hover:border-sky-500/50 hover:bg-dh-hover px-2.5 py-1.5 flex items-center justify-center gap-1.5 transition-colors"
+                >
+                  <Plus size={12} className="text-sky-500" />
+                  <span className="text-xs font-semibold text-dh">Generate Invite Link</span>
+                </button>
+              ) : (
+                <div className="space-y-1">
+                  <div className="flex gap-1">
+                    <input
+                      readOnly
+                      value={`${typeof window !== 'undefined' ? window.location.origin : ''}/join/${inviteLink.token}`}
+                      className="flex-1 bg-dh-surface border border-dh-strong rounded px-2 py-1 text-xs text-dh outline-none min-w-0"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const url = `${window.location.origin}/join/${inviteLink.token}`;
+                        navigator.clipboard.writeText(url).then(() => {
+                          setInviteLinkCopied(true);
+                          setTimeout(() => setInviteLinkCopied(false), 1500);
+                        }).catch(() => {});
+                      }}
+                      className="px-2 py-1 bg-sky-700 hover:bg-sky-600 text-white text-xs rounded transition-colors shrink-0"
+                    >{inviteLinkCopied ? 'Copied' : 'Copy'}</button>
+                    <button
+                      type="button"
+                      onClick={onRevokeInviteLink}
+                      className="px-2 py-1 text-xs rounded border border-dh-strong text-dh-muted hover:text-red-400 hover:border-red-700/50 transition-colors shrink-0"
+                    >Revoke</button>
+                  </div>
+                  <p className="text-[10px] text-dh-muted">Anyone with this link can sign in and join this table.</p>
+                </div>
+              )}
               <p className="text-[10px] text-dh-muted uppercase tracking-wider font-semibold">Invited Players</p>
               {playerEmails.map(email => {
                 const connected = connectedPlayers.find(p => p.email === email);
@@ -5967,93 +5999,17 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                       {isPreviewing ? <EyeOff size={11} /> : <Eye size={11} />}
                     </button>
                     <button
-                      onClick={() => setPlayerEmails?.(prev => prev.filter(e => e !== email))}
+                      type="button"
+                      title="Remove player"
+                      onClick={() => {
+                        if (!window.confirm(`Remove ${email} from this table? They will need a new invite link to rejoin.`)) return;
+                        onRemovePlayerEmail?.(email);
+                      }}
                       className="text-dh-muted hover:text-red-400 transition-colors shrink-0"
                     ><Trash2 size={11} /></button>
                   </div>
                 );
               })}
-              {/* Email input with contacts autocomplete */}
-              <div className="relative">
-                <div className="flex gap-1">
-                  <input
-                    type="email"
-                    placeholder="player@email.com"
-                    value={playerEmailInput}
-                    onChange={e => {
-                      const val = e.target.value;
-                      setPlayerEmailInput(val);
-                      if (contactsDebounceRef.current) clearTimeout(contactsDebounceRef.current);
-                      if (!val.trim() || !contactsToken) { setContactSuggestions([]); return; }
-                      contactsDebounceRef.current = setTimeout(async () => {
-                        setContactsLoading(true);
-                        const results = await searchGoogleContacts(val, contactsToken);
-                        setContactsLoading(false);
-                        if (results === null) {
-                          // token expired
-                          setContactsToken(null);
-                          setContactSuggestions([]);
-                        } else {
-                          setContactSuggestions(results.filter(r => !playerEmails.includes(r.email)));
-                        }
-                      }, 300);
-                    }}
-                    onKeyDown={e => {
-                      if (e.key === 'Escape') { setContactSuggestions([]); return; }
-                      if (e.key === 'Enter' && playerEmailInput.trim()) {
-                        setPlayerEmails?.(prev => prev.includes(playerEmailInput.trim()) ? prev : [...prev, playerEmailInput.trim()]);
-                        setPlayerEmailInput('');
-                        setContactSuggestions([]);
-                      }
-                    }}
-                    onBlur={() => setTimeout(() => setContactSuggestions([]), 150)}
-                    className="flex-1 bg-dh-surface border border-dh-strong rounded px-2 py-1 text-xs text-dh outline-none focus:border-sky-500 min-w-0"
-                  />
-                  <button
-                    onClick={() => {
-                      if (playerEmailInput.trim()) {
-                        setPlayerEmails?.(prev => prev.includes(playerEmailInput.trim()) ? prev : [...prev, playerEmailInput.trim()]);
-                        setPlayerEmailInput('');
-                        setContactSuggestions([]);
-                      }
-                    }}
-                    className="px-2 py-1 bg-sky-700 hover:bg-sky-600 text-white text-xs rounded transition-colors shrink-0"
-                  ><Plus size={11} /></button>
-                </div>
-                {/* Autocomplete dropdown */}
-                {contactSuggestions.length > 0 && (
-                  <div className="absolute left-0 right-0 top-full mt-0.5 bg-dh-raised border border-dh-strong rounded shadow-lg z-30 overflow-hidden">
-                    {contactSuggestions.map(({ name, email }) => (
-                      <button
-                        key={email}
-                        onMouseDown={e => e.preventDefault()}
-                        onClick={() => {
-                          setPlayerEmails?.(prev => prev.includes(email) ? prev : [...prev, email]);
-                          setPlayerEmailInput('');
-                          setContactSuggestions([]);
-                        }}
-                        className="w-full text-left px-2 py-1.5 hover:bg-dh-hover cursor-pointer"
-                      >
-                        {name && <span className="block text-xs text-dh truncate">{name}</span>}
-                        <span className="block text-[10px] text-dh-muted truncate">{email}</span>
-                      </button>
-                    ))}
-                  </div>
-                )}
-                {/* Connect Google Contacts prompt */}
-                {!contactsToken && (
-                  <button
-                    onClick={async () => {
-                      const token = await requestGoogleContactsAccess();
-                      if (token) setContactsToken(token);
-                    }}
-                    className="mt-1 text-[10px] text-sky-500 hover:text-sky-400 transition-colors"
-                  >
-                    {contactsLoading ? 'Searching…' : '+ Connect Google Contacts'}
-                  </button>
-                )}
-              </div>
-              {/* Connected players */}
               {connectedPlayers.length > 0 && (
                 <div className="pt-1 border-t border-dh-border">
                   <p className="text-[10px] text-dh-muted mb-1">Online ({connectedPlayers.length})</p>
@@ -6102,6 +6058,19 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
             <Heart size={11} className="text-sky-500/70" />
             <span className="text-[11px] font-medium text-dh-muted">Support this table</span>
           </button>
+
+          {isPlayer && onLeaveTable && (
+            <button
+              type="button"
+              onClick={() => {
+                if (window.confirm('Leave this table? You will need a new invite link to rejoin.')) onLeaveTable();
+              }}
+              className="w-full rounded-lg border border-dh-border bg-dh-surface/40 hover:border-red-700/40 hover:bg-dh-raised/60 px-2.5 py-1.5 flex items-center justify-center gap-1.5 transition-colors"
+            >
+              <LogOut size={11} className="text-dh-muted" />
+              <span className="text-[11px] font-medium text-dh-muted">Leave table</span>
+            </button>
+          )}
 
           {/* Bug report — visible to GM and all players, never interrupts play */}
           <BugReportButton tableId={tableId} actionLog={actionLog} activeElements={activeElements} isPlayer={isPlayer} />

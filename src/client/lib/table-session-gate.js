@@ -134,6 +134,8 @@ export function gateTableOpForPrepMode(state, op) {
     case 'set-map-view-fog':
     case 'clear-table':
     case 'set-player-emails':
+    case 'add-player-email':
+    case 'remove-player-email':
     case 'set-gm-display-name':
     case 'set-table-name':
     case 'set-battle-mods':

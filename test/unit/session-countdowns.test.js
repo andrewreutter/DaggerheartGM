@@ -79,6 +79,16 @@ describe('redactTableStateForPlayerAudience', () => {
     expect(out.elements).toHaveLength(1);
     expect(out.elements[0].elementType).toBe('adversary');
   });
+
+  it('strips inviteLink for the player audience', () => {
+    const state = {
+      inviteLink: { token: 'secret', createdAt: '2026-01-01' },
+      elements: [{ instanceId: 'a1', elementType: 'adversary' }],
+    };
+    const out = redactTableStateForPlayerAudience(state);
+    expect(out.inviteLink).toBeUndefined();
+    expect(out.elements).toHaveLength(1);
+  });
 });
 
 describe('findSessionCountdownBySource', () => {

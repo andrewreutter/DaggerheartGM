@@ -13,6 +13,7 @@ import { attachDerivedMapConfig } from './client/lib/map-table-state.js';
 import { readdir, readFile } from 'fs/promises';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import { randomBytes } from 'node:crypto';
 
 const { Pool } = pg;
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -1419,7 +1420,8 @@ export async function getResolvedTableState(appId, tableId) {
 
   const elements = stateData.elements || [];
   const resolved = await resolveCharacterElements(appId, elements);
-  return attachDerivedMapConfig({ ...stateData, elements: resolved });
+  const inviteLink = await getActiveTableInviteLink(appId, tableId);
+  return attachDerivedMapConfig({ ...stateData, elements: resolved, inviteLink });
 }
 
 export async function appendDiceRoll(appId, gmUid, rollData, opts = {}) {
@@ -1827,6 +1829,104 @@ export async function removeCharacterTablePlacementsForTable(appId, tableId) {
   const db = getPool();
   await db.query(
     'DELETE FROM character_table_placements WHERE app_id = $1 AND table_id = $2',
+    [appId, tableId],
+  );
+}
+
+// ── Table invite links ─────────────────────────────────────────────────────────
+
+/** 20 random bytes as base64url (~27 chars). Exported for unit tests. */
+export function generateTableInviteToken() {
+  return randomBytes(20).toString('base64url');
+}
+
+/**
+ * Revoke any active invite link for the table, then insert a new one.
+ * @param {string} appId
+ * @param {string} tableId
+ * @param {string} createdByUid
+ * @returns {Promise<{ token: string, createdAt: Date }>}
+ */
+export async function createTableInviteLink(appId, tableId, createdByUid) {
+  const token = generateTableInviteToken();
+  const db = getPool();
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query(
+      `UPDATE table_invite_links SET revoked_at = now()
+        WHERE app_id = $1 AND table_id = $2 AND revoked_at IS NULL`,
+      [appId, tableId],
+    );
+    const { rows } = await client.query(
+      `INSERT INTO table_invite_links (app_id, token, table_id, created_by_uid)
+       VALUES ($1, $2, $3, $4)
+       RETURNING token, created_at`,
+      [appId, token, tableId, createdByUid],
+    );
+    await client.query('COMMIT');
+    const r = rows[0];
+    return { token: r.token, createdAt: r.created_at };
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * Revoke the active invite link for a table (no-op if none).
+ * @returns {Promise<boolean>} true if a row was updated
+ */
+export async function revokeTableInviteLink(appId, tableId) {
+  const db = getPool();
+  const result = await db.query(
+    `UPDATE table_invite_links SET revoked_at = now()
+      WHERE app_id = $1 AND table_id = $2 AND revoked_at IS NULL`,
+    [appId, tableId],
+  );
+  return (result.rowCount ?? 0) > 0;
+}
+
+/**
+ * @returns {Promise<{ token: string, createdAt: Date } | null>}
+ */
+export async function getActiveTableInviteLink(appId, tableId) {
+  const db = getPool();
+  const { rows } = await db.query(
+    `SELECT token, created_at FROM table_invite_links
+      WHERE app_id = $1 AND table_id = $2 AND revoked_at IS NULL`,
+    [appId, tableId],
+  );
+  const r = rows[0];
+  if (!r) return null;
+  return { token: r.token, createdAt: r.created_at };
+}
+
+/**
+ * Validate an invite token. Does not mutate playerEmails.
+ * @returns {Promise<{ tableId: string } | null>}
+ */
+export async function redeemTableInviteLink(appId, token) {
+  const db = getPool();
+  const { rows } = await db.query(
+    `SELECT table_id FROM table_invite_links
+      WHERE app_id = $1 AND token = $2 AND revoked_at IS NULL`,
+    [appId, token],
+  );
+  const r = rows[0];
+  if (!r) return null;
+  return { tableId: r.table_id };
+}
+
+/**
+ * Best-effort cleanup when a table is deleted (mirrors removeCharacterTablePlacementsForTable).
+ */
+export async function deleteTableInviteLinksForTable(appId, tableId) {
+  const db = getPool();
+  await db.query(
+    'DELETE FROM table_invite_links WHERE app_id = $1 AND table_id = $2',
     [appId, tableId],
   );
 }

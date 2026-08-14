@@ -2189,7 +2189,7 @@ const ZOOM_FIT_CONTROL_ITEMS = [
     kind: 'actors',
     ariaLabel: 'Zoom to Actors',
     tooltip: 'Fit everyone on the map at the closest zoom',
-    labeledText: <>Zoom to<br />Actors</>,
+    labeledText: 'Actors',
     Icon: Focus,
     labeledClassName: 'text-violet-200/95 border-violet-500/35 bg-violet-950/25 hover:bg-violet-900/35',
     iconClassName: 'text-dh-muted hover:text-dh',
@@ -2198,7 +2198,7 @@ const ZOOM_FIT_CONTROL_ITEMS = [
     kind: 'party',
     ariaLabel: 'Zoom to Party',
     tooltip: 'Fit the party on the map at the closest zoom',
-    labeledText: <>Zoom to<br />Party</>,
+    labeledText: 'Party',
     Icon: Users,
     labeledClassName: 'text-sky-200/95 border-sky-500/35 bg-sky-950/25 hover:bg-sky-900/35',
     iconClassName: 'text-sky-400 hover:text-sky-300',
@@ -2207,16 +2207,79 @@ const ZOOM_FIT_CONTROL_ITEMS = [
     kind: 'adversaries',
     ariaLabel: 'Zoom to Adversaries',
     tooltip: 'Fit adversaries on the map at the closest zoom',
-    labeledText: <>Zoom to<br />adver-<br />saries</>,
+    labeledText: 'Adversaries',
     Icon: Swords,
     labeledClassName: 'text-amber-200/95 border-amber-500/35 bg-amber-950/25 hover:bg-amber-900/35',
     iconClassName: 'text-amber-400 hover:text-amber-300',
   },
 ];
 
+/** Width for the ZOOM TO column (icon + label in a row). */
+const MAP_STRIP_ZOOM_COL_WIDTH_PX = 112;
+
+/** Underlined group label spanning the button column beneath (ZOOM TO / CAMERAS / SCENE). */
+function MapStripGroupLabel({ children }) {
+  return (
+    <div className="mb-0.5 w-full border-b border-dh-muted/55 pb-0.5 text-center text-[9px] font-semibold uppercase tracking-wide text-dh-muted leading-none">
+      {children}
+    </div>
+  );
+}
+
 /**
- * Zoom-to-fit trio (Actors / Party / Adversaries). Labeled variant sits in a row;
- * each button uses the same `CHARACTER_TRAY_WIDTH_PX` footprint as Zoom to Actors.
+ * Compact map-strip button: icon left, label right.
+ * `grow` — fill leftover height in a stretched pair column.
+ * `width` — fixed px, or `'fit'` for content-sized (SCENE).
+ */
+function MapStripActionButton({
+  onClick,
+  disabled = false,
+  ariaLabel,
+  ariaPressed,
+  className,
+  iconSize,
+  Icon,
+  label,
+  tooltip,
+  tooltipPlacement = 'bottom',
+  grow = false,
+  width = MAP_STRIP_ZOOM_COL_WIDTH_PX,
+}) {
+  const fit = width === 'fit';
+  return (
+    <Tooltip
+      label={tooltip}
+      placement={tooltipPlacement}
+      className={
+        grow
+          ? 'relative flex min-h-0 min-w-0 flex-1 flex-col'
+          : 'relative block w-full min-w-0'
+      }
+    >
+      <button
+        type="button"
+        onClick={onClick}
+        disabled={disabled}
+        aria-label={ariaLabel}
+        aria-pressed={ariaPressed}
+        className={`w-full min-w-0 flex flex-row items-center gap-1.5 rounded px-1.5 py-0.5 text-[10px] leading-tight border disabled:opacity-40 disabled:pointer-events-none box-border ${
+          grow ? 'flex-1' : ''
+        } ${className}`}
+        style={fit ? undefined : { width, maxWidth: width }}
+      >
+        <Icon size={iconSize} strokeWidth={1.25} className="shrink-0" aria-hidden />
+        <span className={`min-w-0 text-left font-medium ${fit ? 'whitespace-nowrap' : 'flex-1 truncate'}`}>
+          {label}
+        </span>
+      </button>
+    </Tooltip>
+  );
+}
+
+/**
+ * Zoom-to-fit trio (Actors / Party / Adversaries).
+ * Labeled variant: vertical stack with icon-left / text-right under an optional group label.
+ * Icon variant: compact horizontal icon-only row (floating map overlay).
  */
 function ZoomToFitControls({
   variant = 'labeled',
@@ -2225,18 +2288,13 @@ function ZoomToFitControls({
   hasPlacedByKind,
   extraDisabled = false,
   tooltipPlacement = 'left',
+  groupLabel = null,
 }) {
-  return (
-    <div
-      className={
-        variant === 'labeled'
-          ? 'flex shrink-0 flex-row items-stretch gap-1 min-w-0 self-stretch'
-          : 'flex flex-row items-stretch gap-1'
-      }
-    >
-      {ZOOM_FIT_CONTROL_ITEMS.map((item) => {
-        const disabled = extraDisabled || !hasPlacedByKind[item.kind];
-        if (variant === 'icon') {
+  if (variant === 'icon') {
+    return (
+      <div className="flex flex-row items-stretch gap-1">
+        {ZOOM_FIT_CONTROL_ITEMS.map((item) => {
+          const disabled = extraDisabled || !hasPlacedByKind[item.kind];
           return (
             <Tooltip key={item.kind} label={item.tooltip}>
               <button
@@ -2250,30 +2308,43 @@ function ZoomToFitControls({
               </button>
             </Tooltip>
           );
-        }
-        return (
-          <Tooltip
-            key={item.kind}
-            label={item.tooltip}
-            placement={tooltipPlacement}
-            className="relative block min-w-0 h-full"
-          >
-            <button
-              type="button"
-              onClick={() => onZoomToFit(item.kind)}
-              disabled={disabled}
-              aria-label={item.ariaLabel}
-              className={`w-full h-full max-w-full min-w-0 flex flex-col items-center justify-center gap-0.5 rounded px-1 py-1 text-[10px] leading-tight text-center border disabled:opacity-40 disabled:pointer-events-none box-border ${item.labeledClassName}`}
-              style={{ width: CHARACTER_TRAY_WIDTH_PX, maxWidth: CHARACTER_TRAY_WIDTH_PX }}
-            >
-              <item.Icon size={iconSize} strokeWidth={1.25} aria-hidden />
-              <span className="px-0.5 font-medium">{item.labeledText}</span>
-            </button>
-          </Tooltip>
-        );
-      })}
+        })}
+      </div>
+    );
+  }
+
+  const buttons = (
+    <div className="flex h-full min-h-0 flex-col items-stretch gap-0.5">
+      {ZOOM_FIT_CONTROL_ITEMS.map((item) => (
+        <MapStripActionButton
+          key={item.kind}
+          onClick={() => onZoomToFit(item.kind)}
+          disabled={extraDisabled || !hasPlacedByKind[item.kind]}
+          ariaLabel={item.ariaLabel}
+          className={item.labeledClassName}
+          iconSize={iconSize}
+          Icon={item.Icon}
+          label={item.labeledText}
+          tooltip={item.tooltip}
+          tooltipPlacement={tooltipPlacement}
+          width={MAP_STRIP_ZOOM_COL_WIDTH_PX}
+        />
+      ))}
     </div>
   );
+
+  if (groupLabel) {
+    return (
+      <div
+        className="flex h-full min-h-0 flex-col items-stretch self-stretch"
+        style={{ width: MAP_STRIP_ZOOM_COL_WIDTH_PX }}
+      >
+        <MapStripGroupLabel>{groupLabel}</MapStripGroupLabel>
+        {buttons}
+      </div>
+    );
+  }
+  return buttons;
 }
 
 // ─── Shared map-object primitives (MapImageObject + DrawShapeObject) ────────
@@ -3000,6 +3071,9 @@ export function BattleMap({
   const mapAiGenPreviewUrlRef = useRef(null);
   mapAiGenPreviewUrlRef.current = mapAiGenPreviewUrl;
   const gmCameraLockedRef = useRef(false);
+  /** ZOOM TO + CAMERAS column pair — Scene column mirrors this height. */
+  const mapStripZoomCamerasRef = useRef(null);
+  const mapStripSceneRef = useRef(null);
 
   // Track scroll area size for pxPerFt and display zoom bounds
   useLayoutEffect(() => {
@@ -3433,6 +3507,35 @@ export function BattleMap({
   const activeGmMapView = !isPlayer ? mapViews.find(v => v.id === gmActiveViewId) ?? null : null;
   const gmCameraLocked = !!activeGmMapView?.locked;
   gmCameraLockedRef.current = gmCameraLocked;
+
+  // Keep SCENE column the same height as ZOOM TO + CAMERAS (not the taller map-tile strip).
+  useLayoutEffect(() => {
+    const src = mapStripZoomCamerasRef.current;
+    const dst = mapStripSceneRef.current;
+    if (!src || !dst) {
+      if (dst) dst.style.height = '';
+      return undefined;
+    }
+    const sync = () => {
+      dst.style.height = `${src.offsetHeight}px`;
+    };
+    sync();
+    const ro = new ResizeObserver(sync);
+    ro.observe(src);
+    return () => {
+      ro.disconnect();
+      if (mapStripSceneRef.current) mapStripSceneRef.current.style.height = '';
+    };
+  }, [
+    isPlayer,
+    maps.length,
+    canControlMapView,
+    onOpenCreateScene,
+    onOpenAddScene,
+    onAddMap,
+    gmCanCreateCameraView,
+    trayTokenSizePx,
+  ]);
 
   const mapViewSig = useMemo(
     () =>
@@ -6133,70 +6236,85 @@ export function BattleMap({
         />
       )}
       {!isPlayer && maps.length > 0 && onSetActiveView && onMapFreeExplore && (
-        <div className="flex items-start gap-2 px-3 py-1.5 bg-dh-surface border-b border-dh-border text-xs shrink-0 flex-wrap">
+        <div className="flex items-start gap-2 px-3 py-1.5 bg-dh-surface border-b border-dh-border text-xs shrink-0 min-w-0">
+          <div ref={mapStripZoomCamerasRef} className="flex shrink-0 items-stretch gap-2 self-start">
+          {canControlMapView ? (
+            <ZoomToFitControls
+              groupLabel="Zoom to"
+              iconSize={Math.max(12, trayTokenSizePx - 8)}
+              onZoomToFit={applyZoomToFit}
+              hasPlacedByKind={hasPlacedByKind}
+              extraDisabled={mapAiPreviewActive}
+              tooltipPlacement="bottom"
+            />
+          ) : null}
           <div
-            className="flex shrink-0 flex-col gap-1 items-stretch pt-0.5 box-border overflow-hidden"
+            className="flex shrink-0 flex-col items-stretch min-w-0 self-stretch box-border"
             style={{ width: CHARACTER_TRAY_WIDTH_PX, maxWidth: CHARACTER_TRAY_WIDTH_PX }}
           >
-            {onAddMap ? (
-              <Tooltip label="Add map" placement="right" className="relative block w-full min-w-0">
-                <button
-                  type="button"
-                  onClick={onAddMap}
-                  className="w-full max-w-full min-w-0 flex justify-center items-center rounded px-0.5 py-0.5 text-violet-300/90 border border-violet-500/35 bg-violet-950/25 hover:bg-violet-900/35 hover:underline box-border"
-                  aria-label="Add map"
-                >
-                  <span className="relative inline-flex shrink-0">
-                    <MapIcon size={trayTokenSizePx - 6} strokeWidth={1.25} aria-hidden />
-                    <Plus
-                      className="absolute -bottom-0.5 -right-0.5 text-violet-100"
-                      size={16}
-                      strokeWidth={3.5}
-                      aria-hidden
-                    />
+            <MapStripGroupLabel>Cameras</MapStripGroupLabel>
+            <div className="flex min-h-0 flex-1 flex-col items-stretch gap-0.5">
+              <Tooltip
+                label={
+                  gmCanCreateCameraView
+                    ? 'Add camera at the current zoom and pan'
+                    : 'Cameras'
+                }
+                placement="right"
+                className="relative flex min-h-0 min-w-0 flex-1 flex-col"
+              >
+                {gmCanCreateCameraView ? (
+                  <button
+                    type="button"
+                    onClick={() => void handleSplitCamera()}
+                    className="flex min-h-0 w-full flex-1 items-center justify-center rounded px-0.5 py-0.5 text-violet-300/90 border border-violet-500/35 bg-violet-950/25 hover:bg-violet-900/35 hover:underline box-border"
+                    aria-label="Add camera at the current zoom and pan"
+                  >
+                    <span className="relative inline-flex shrink-0">
+                      <Camera size={trayTokenSizePx - 6} strokeWidth={1.25} aria-hidden />
+                      <Plus
+                        className="absolute -bottom-0.5 -right-0.5 text-violet-100"
+                        size={16}
+                        strokeWidth={3.5}
+                        aria-hidden
+                      />
+                    </span>
+                  </button>
+                ) : (
+                  <span
+                    className="flex min-h-0 w-full flex-1 flex-col items-center justify-center text-dh-muted"
+                    role="img"
+                    aria-label="Camera views"
+                  >
+                    <Camera size={trayTokenSizePx} strokeWidth={1.25} aria-hidden />
                   </span>
-                </button>
+                )}
               </Tooltip>
-            ) : null}
-            <Tooltip
-              label={
-                gmCanCreateCameraView
-                  ? 'Add camera at the current zoom and pan'
-                  : 'Cameras'
-              }
-              placement="right"
-              className="relative block w-full min-w-0"
-            >
-              {gmCanCreateCameraView ? (
-                <button
-                  type="button"
-                  onClick={() => void handleSplitCamera()}
-                  className="w-full max-w-full min-w-0 flex justify-center items-center rounded px-0.5 py-0.5 text-violet-300/90 border border-violet-500/35 bg-violet-950/25 hover:bg-violet-900/35 hover:underline box-border"
-                  aria-label="Add camera at the current zoom and pan"
-                >
-                  <span className="relative inline-flex shrink-0">
-                    <Camera size={trayTokenSizePx - 6} strokeWidth={1.25} aria-hidden />
-                    <Plus
-                      className="absolute -bottom-0.5 -right-0.5 text-violet-100"
-                      size={16}
-                      strokeWidth={3.5}
-                      aria-hidden
-                    />
-                  </span>
-                </button>
-              ) : (
-                <span
-                  className="shrink-0 flex flex-col items-center justify-center text-dh-muted w-full"
-                  role="img"
-                  aria-label="Camera views"
-                >
-                  <Camera size={trayTokenSizePx} strokeWidth={1.25} aria-hidden />
-                </span>
-              )}
-            </Tooltip>
+              {onAddMap ? (
+                <Tooltip label="Add map" placement="right" className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+                  <button
+                    type="button"
+                    onClick={onAddMap}
+                    className="flex min-h-0 w-full flex-1 items-center justify-center rounded px-0.5 py-0.5 text-violet-300/90 border border-violet-500/35 bg-violet-950/25 hover:bg-violet-900/35 hover:underline box-border"
+                    aria-label="Add map"
+                  >
+                    <span className="relative inline-flex shrink-0">
+                      <MapIcon size={trayTokenSizePx - 6} strokeWidth={1.25} aria-hidden />
+                      <Plus
+                        className="absolute -bottom-0.5 -right-0.5 text-violet-100"
+                        size={16}
+                        strokeWidth={3.5}
+                        aria-hidden
+                      />
+                    </span>
+                  </button>
+                </Tooltip>
+              ) : null}
+            </div>
+          </div>
           </div>
           <div
-            className="flex flex-1 min-w-0 items-stretch gap-2 overflow-x-auto pb-0.5 -mb-0.5"
+            className="flex flex-1 min-w-0 items-stretch gap-2 overflow-x-auto pb-0.5 -mb-0.5 self-start"
             role="tablist"
             aria-label="Map views"
           >
@@ -6405,78 +6523,42 @@ export function BattleMap({
               </Fragment>
             ))}
           </div>
-          {canControlMapView ? (
-            <div className="flex shrink-0 flex-row items-stretch gap-1 pt-0.5 box-border overflow-hidden self-start">
-              {onSetViewLocked && activeGmMapView ? (
-                <Tooltip
-                  label={gmCameraLocked ? 'Camera locked — click to unlock pan/zoom' : 'Lock this camera to prevent accidental pan/zoom'}
-                  placement="left"
-                  className="relative block min-w-0"
-                >
-                  <button
-                    type="button"
-                    onClick={() => onSetViewLocked(activeGmMapView.id, !gmCameraLocked)}
-                    aria-pressed={gmCameraLocked}
-                    aria-label={gmCameraLocked ? 'Unlock camera' : 'Lock camera'}
-                    className={`w-full max-w-full min-w-0 flex flex-col items-center justify-center gap-0.5 rounded px-1 py-1 text-[10px] leading-tight text-center box-border border ${
-                      gmCameraLocked
-                        ? 'text-amber-200 border-amber-500/60 bg-amber-900/40 hover:bg-amber-800/50'
-                        : 'text-dh-muted border-dh-strong/50 bg-dh-raised/40 hover:bg-dh-raised/70 hover:text-dh'
-                    }`}
-                    style={{ width: CHARACTER_TRAY_WIDTH_PX, maxWidth: CHARACTER_TRAY_WIDTH_PX }}
-                  >
-                    {gmCameraLocked
-                      ? <Lock size={Math.max(12, trayTokenSizePx - 8)} strokeWidth={1.25} aria-hidden />
-                      : <LockOpen size={Math.max(12, trayTokenSizePx - 8)} strokeWidth={1.25} aria-hidden />
-                    }
-                    <span className="px-0.5 font-medium">
-                      {gmCameraLocked ? <>Unlock<br />Pan /<br />Zoom</> : <>Lock<br />Pan /<br />Zoom</>}
-                    </span>
-                  </button>
-                </Tooltip>
-              ) : null}
-              <ZoomToFitControls
-                iconSize={Math.max(12, trayTokenSizePx - 8)}
-                onZoomToFit={applyZoomToFit}
-                hasPlacedByKind={hasPlacedByKind}
-                extraDisabled={mapAiPreviewActive}
-              />
-              {!isPlayer && onOpenCreateScene ? (
-                <Tooltip
-                  label="Create Scene from this table"
-                  placement="left"
-                  className="relative block min-w-0"
-                >
-                  <button
-                    type="button"
+          {!isPlayer && (onOpenCreateScene || onOpenAddScene) ? (
+            <div
+              ref={mapStripSceneRef}
+              className="ml-auto flex shrink-0 flex-col items-stretch min-w-0 self-start w-max"
+            >
+              <MapStripGroupLabel>Scene</MapStripGroupLabel>
+              <div className="flex min-h-0 flex-1 flex-col items-stretch gap-0.5">
+                {onOpenCreateScene ? (
+                  <MapStripActionButton
                     onClick={onOpenCreateScene}
-                    aria-label="Create Scene"
-                    className="w-full max-w-full min-w-0 flex flex-col items-center justify-center gap-0.5 rounded px-1 py-1 text-[10px] leading-tight text-center box-border border text-dh-muted border-dh-strong/50 bg-dh-raised/40 hover:bg-dh-raised/70 hover:text-dh"
-                    style={{ width: CHARACTER_TRAY_WIDTH_PX, maxWidth: CHARACTER_TRAY_WIDTH_PX }}
-                  >
-                    <Camera size={Math.max(12, trayTokenSizePx - 8)} strokeWidth={1.25} aria-hidden />
-                    <span className="px-0.5 font-medium">Create<br />Scene</span>
-                  </button>
-                </Tooltip>
-              ) : null}
-              {!isPlayer && onOpenAddScene ? (
-                <Tooltip
-                  label="Add a Scene from the library"
-                  placement="left"
-                  className="relative block min-w-0"
-                >
-                  <button
-                    type="button"
+                    ariaLabel="Create Scene"
+                    className="text-dh-muted border-dh-strong/50 bg-dh-raised/40 hover:bg-dh-raised/70 hover:text-dh"
+                    iconSize={Math.max(12, trayTokenSizePx - 8)}
+                    Icon={Camera}
+                    label="Create"
+                    tooltip="Create Scene from this table"
+                    tooltipPlacement="left"
+                    grow
+                    width="fit"
+                  />
+                ) : null}
+                {onOpenAddScene ? (
+                  <MapStripActionButton
                     onClick={onOpenAddScene}
-                    aria-label="Add Scene"
-                    className="w-full max-w-full min-w-0 flex flex-col items-center justify-center gap-0.5 rounded px-1 py-1 text-[10px] leading-tight text-center box-border border text-dh-muted border-dh-strong/50 bg-dh-raised/40 hover:bg-dh-raised/70 hover:text-dh"
-                    style={{ width: CHARACTER_TRAY_WIDTH_PX, maxWidth: CHARACTER_TRAY_WIDTH_PX }}
-                  >
-                    <FolderOpen size={Math.max(12, trayTokenSizePx - 8)} strokeWidth={1.25} aria-hidden />
-                    <span className="px-0.5 font-medium">Add<br />Scene</span>
-                  </button>
-                </Tooltip>
-              ) : null}
+                    ariaLabel="Add Scene"
+                    className="text-dh-muted border-dh-strong/50 bg-dh-raised/40 hover:bg-dh-raised/70 hover:text-dh"
+                    iconSize={Math.max(12, trayTokenSizePx - 8)}
+                    Icon={FolderOpen}
+                    label="Add"
+                    tooltip="Add a Scene from the library"
+                    tooltipPlacement="left"
+                    grow
+                    width="fit"
+                  />
+                ) : null}
+              </div>
             </div>
           ) : null}
         </div>
@@ -6545,6 +6627,7 @@ export function BattleMap({
             </div>
             {canControlMapView ? (
               <ZoomToFitControls
+                groupLabel="Zoom to"
                 iconSize={Math.max(12, trayTokenSizePx - 8)}
                 onZoomToFit={applyZoomToFit}
                 hasPlacedByKind={hasPlacedByKind}
@@ -6839,6 +6922,33 @@ export function BattleMap({
                   </label>
                 </div>
                 <div className="ml-auto flex shrink-0 items-center gap-2">
+                  {!isPlayer && onSetViewLocked && activeGmMapView ? (
+                    <Tooltip
+                      label={
+                        gmCameraLocked
+                          ? 'Camera locked — click to unlock pan/zoom'
+                          : 'Lock this camera to prevent accidental pan/zoom'
+                      }
+                    >
+                      <button
+                        type="button"
+                        onClick={() => onSetViewLocked(activeGmMapView.id, !gmCameraLocked)}
+                        aria-pressed={gmCameraLocked}
+                        aria-label={gmCameraLocked ? 'Unlock camera' : 'Lock camera'}
+                        className={`inline-flex items-center justify-center rounded border p-1.5 ${
+                          gmCameraLocked
+                            ? 'border-amber-500/60 bg-amber-900/40 text-amber-200 hover:bg-amber-800/50'
+                            : 'border-dh-strong bg-dh-raised/70 text-dh-muted hover:text-dh'
+                        }`}
+                      >
+                        {gmCameraLocked ? (
+                          <Lock size={15} aria-hidden />
+                        ) : (
+                          <LockOpen size={15} aria-hidden />
+                        )}
+                      </button>
+                    </Tooltip>
+                  ) : null}
                   {!isPlayer ? (
                     <Tooltip label="Clear this layer only">
                       <button
