@@ -493,6 +493,9 @@ export async function getCharacterById(appId, id) {
  * This prevents the "shadow row" bug where player saves create a second row under their own uid.
  */
 export async function upsertCharacterForTable(appId, { requesterUid, tableId, id, data, isPublic = false }) {
+  // #region agent log
+  try { (await import('node:fs')).appendFileSync('/Users/andrewreutter/Repos/DaggerheartGM/.cursor/debug-167b91.log', JSON.stringify({sessionId:'167b91',runId:'post-fix',hypothesisId:'C',location:'src/db.js:495',message:'upsertCharacterForTable (server library write)',data:{id,tableId,name:data?.name??null},timestamp:Date.now()})+'\n'); } catch {}
+  // #endregion
   const db = getPool();
   const existing = await getCharacterById(appId, id);
   if (existing) {

@@ -88,6 +88,7 @@ const COLLECTION_LABELS = {
  *   presentation  – 'center' (default) full-screen modal; 'rightDrawer' slides the editor in from the right (form only, no preview — Game Table character edit).
  *   rightDrawerPortalTo — optional; with `rightDrawer`, mount the editor into this element (unified sheet card on the Game Table). Omit for fixed-viewport fallback; `null` means waiting for the portal node.
  *   onCharacterDrawerChromeSync — optional; when the Game Table portals the character editor, called with form + save UI state for the shared title bar (header is omitted in the modal).
+ *   isNew         – optional override for autosave gating. Defaults to `!item?.id`. Game Table "Create new character" stubs already have an id (table row + deep-link) but must still skip library save until named — pass `true` when `editState.mode === 'new'`.
  */
 export const ItemDetailModal = forwardRef(function ItemDetailModal({
   item,
@@ -121,8 +122,10 @@ export const ItemDetailModal = forwardRef(function ItemDetailModal({
   /** Game Table: level history preview slider (1…saved level) */
   characterLevelPreview,
   onCharacterLevelPreviewChange,
+  isNew: isNewProp,
 }, ref) {
-  const isNew = !item?.id;
+  // Prefer explicit override: Game Table new-character stubs carry an id before the first library save.
+  const isNew = typeof isNewProp === 'boolean' ? isNewProp : !item?.id;
   const isRightDrawer = presentation === 'rightDrawer';
   const showFeatureLibrary = editable && (collection === 'adversaries' || collection === 'environments') && !isRightDrawer;
 

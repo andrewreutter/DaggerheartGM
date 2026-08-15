@@ -129,14 +129,20 @@ async function mockTableStateWithPlayer(page, playerEmail) {
  * to enter preview mode for the given email.
  */
 async function enterPreviewMode(page, email) {
-  // The Players section starts collapsed when there are players; expand it first.
   const heading = page.getByRole('button', { name: /Players/i }).first();
-  await expect(heading).toBeVisible({ timeout: 3000 });
-  const expanded = await heading.getAttribute('aria-expanded');
-  if (expanded === 'false') await heading.click();
-  await expect(page.getByText('Joined', { exact: false })).toBeVisible({ timeout: 3000 });
-  await page.click(`button[title="Preview as ${email}"]`);
-  await expect(page.locator('text=Previewing as')).toBeVisible({ timeout: 3000 });
+  await expect(heading).toBeVisible({ timeout: 10000 });
+  const previewBtn = page.locator(`button[title="Preview as ${email}"]`);
+  // playerEmails can arrive after mount and auto-collapse Players — keep expanding until Preview is visible.
+  await expect(async () => {
+    if (!(await previewBtn.isVisible())) {
+      if ((await heading.getAttribute('aria-expanded')) === 'false') {
+        await heading.click();
+      }
+    }
+    await expect(previewBtn).toBeVisible();
+  }).toPass({ timeout: 15000 });
+  await previewBtn.click();
+  await expect(page.locator('text=Previewing as')).toBeVisible({ timeout: 5000 });
 }
 
 // ---------------------------------------------------------------------------
@@ -151,23 +157,47 @@ test('player sees the Add Character button on a GM table', async ({ page }) => {
   await expect(page.locator('button', { hasText: 'Add Character' })).toBeVisible({ timeout: 10000 });
 });
 
-test('player clicking Add Character opens the character dialog', async ({ page }) => {
+test('player clicking Add Character opens the new character editor (skips picker)', async ({ page }) => {
   await authenticate(page);
   await mockPlayerStream(page, OTHER_GM_UID);
+
+  await page.route(`/api/room/${OTHER_GM_UID}/add-character`, (route) => {
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        character: {
+          instanceId: 'char-player-new',
+          elementType: 'character',
+          id: 'stub-char-id',
+          name: '',
+          tier: 1,
+          hope: 6, maxHope: 6, maxHp: 6, maxStress: 6,
+          currentHp: 6, currentStress: 0, conditions: '',
+          assignedPlayerUid: TEST_USER.uid,
+          assignedPlayerEmail: TEST_USER.email,
+        },
+      }),
+    });
+  });
+
   await page.goto(`/table/${OTHER_GM_UID}`);
 
   const addBtn = page.locator('button', { hasText: 'Add Character' });
   await expect(addBtn).toBeVisible({ timeout: 10000 });
+  const addCharRequest = page.waitForRequest(req =>
+    req.url().includes('/add-character') && req.method() === 'POST');
   await addBtn.click();
-  // The character picker modal opens with a search input.
-  await expect(page.locator('input[placeholder="Search by name..."]')).toBeVisible({ timeout: 5000 });
+  await addCharRequest;
+  // Skips ItemPickerModal; opens Create new character editor directly.
+  await expect(page.locator('input[placeholder="Search by name..."]')).not.toBeVisible();
+  await expect(page.locator('input[placeholder="Character name"]')).toBeVisible({ timeout: 10000 });
 });
 
-test('player Add Character submits and the new character appears (regression)', async ({ page }) => {
+test('player Add Character creates a stub via add-character (regression)', async ({ page }) => {
   await authenticate(page);
   await mockPlayerStream(page, OTHER_GM_UID);
 
-  // Mock the server-side add-character endpoint
+  // Mock the server-side add-character endpoint (openNewCharacterEditor posts a stub)
   await page.route(`/api/room/${OTHER_GM_UID}/add-character`, (route) => {
     route.fulfill({
       contentType: 'application/json',
@@ -175,29 +205,14 @@ test('player Add Character submits and the new character appears (regression)', 
         character: {
           instanceId: 'char-player-1',
           elementType: 'character',
-          name: 'Aria the Brave',
+          id: 'stub-char-1',
+          name: '',
           tier: 1,
           hope: 6, maxHope: 6, maxHp: 6, maxStress: 6,
           currentHp: 6, currentStress: 0, conditions: '',
           assignedPlayerUid: TEST_USER.uid,
+          assignedPlayerEmail: TEST_USER.email,
         },
-      }),
-    });
-  });
-
-  // Mock the characters collection so the picker shows "Aria the Brave"
-  await page.route('/api/data/characters*', (route) => {
-    route.fulfill({
-      contentType: 'application/json',
-      body: JSON.stringify({
-        items: [{
-          id: 'test-char-1',
-          name: 'Aria the Brave',
-          tier: 1, level: 1,
-          hope: 6, maxHope: 6, maxHp: 6, maxStress: 6,
-          _source: 'own',
-        }],
-        totalCount: 1,
       }),
     });
   });
@@ -205,29 +220,13 @@ test('player Add Character submits and the new character appears (regression)', 
   await page.goto(`/table/${OTHER_GM_UID}`);
   const addBtn = page.locator('button', { hasText: 'Add Character' });
   await expect(addBtn).toBeVisible({ timeout: 10000 });
-  await addBtn.click();
 
-  // The picker opens. Select "Aria the Brave" from the list.
-  // The picker calls onPlayerAddCharacter → postAddCharacter → our mock.
-  // GMTableView then calls characterOverlay.show with the returned character,
-  // making "Aria the Brave" visible in the hover card overlay.
-  await expect(page.locator('input[placeholder="Search by name..."]')).toBeVisible({ timeout: 5000 });
-
-  // The character list uses plain <button> elements — no data-testid on the container.
-  // Wait for "Aria the Brave" to appear in the picker (characters load asynchronously).
-  const charBtn = page.locator('button', { hasText: 'Aria the Brave' });
-  await expect(charBtn).toBeVisible({ timeout: 5000 });
-
-  // Set up request interceptor before clicking to verify the server call is made.
-  // (Player mode: state updates arrive via SSE, not immediate local mutation.)
   const addCharRequest = page.waitForRequest(req =>
     req.url().includes('/add-character') && req.method() === 'POST');
-  await charBtn.click();
+  await addBtn.click();
 
-  // Picker closes after selection.
-  await expect(page.locator('input[placeholder="Search by name..."]')).not.toBeVisible({ timeout: 5000 });
-  // Server endpoint was called.
   await addCharRequest;
+  await expect(page.locator('input[placeholder="Character name"]')).toBeVisible({ timeout: 10000 });
 });
 
 // ---------------------------------------------------------------------------
@@ -267,10 +266,16 @@ test('player mode: GM Encounter panel Add button is hidden', async ({ page }) =>
 // GM preview (impersonation) mode: Add Character — this was the reported bug
 // ---------------------------------------------------------------------------
 
-test('GM preview mode: Add Character dialog opens (regression bug fix)', async ({ page }) => {
+test('GM preview mode: Add Character opens new character editor (regression bug fix)', async ({ page }) => {
   const PLAYER_EMAIL = 'player@example.com';
   await authenticate(page);
   await mockTableStateWithPlayer(page, PLAYER_EMAIL);
+
+  // Mock table op so addToTable (stub character) succeeds in preview mode.
+  await page.route('/api/room/my/op', (route) => {
+    route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ok: true }) });
+  });
+
   await page.goto('/table/test-user-uid');
 
   await expect(page.locator('button', { hasText: 'Add Character' })).toBeVisible({ timeout: 10000 });
@@ -280,31 +285,15 @@ test('GM preview mode: Add Character dialog opens (regression bug fix)', async (
   const addBtn = page.locator('button', { hasText: 'Add Character' });
   await expect(addBtn).toBeVisible({ timeout: 5000 });
   await addBtn.click();
-  // The character picker modal opens with a search input.
-  await expect(page.locator('input[placeholder="Search by name..."]')).toBeVisible({ timeout: 5000 });
+  // Skips picker; opens Create new character editor (same as onCreateNew).
+  await expect(page.locator('input[placeholder="Search by name..."]')).not.toBeVisible();
+  await expect(page.locator('input[placeholder="Character name"]')).toBeVisible({ timeout: 10000 });
 });
 
-test('GM preview mode: Add Character submits and character appears on the table', async ({ page }) => {
+test('GM preview mode: Add Character adds a stub character to the table', async ({ page }) => {
   const PLAYER_EMAIL = 'player@example.com';
   await authenticate(page);
   await mockTableStateWithPlayer(page, PLAYER_EMAIL);
-
-  // Mock the characters collection so the picker shows "Brynn Ashwood"
-  await page.route('/api/data/characters*', (route) => {
-    route.fulfill({
-      contentType: 'application/json',
-      body: JSON.stringify({
-        items: [{
-          id: 'test-char-2',
-          name: 'Brynn Ashwood',
-          tier: 1, level: 1,
-          hope: 6, maxHope: 6, maxHp: 6, maxStress: 6,
-          _source: 'own',
-        }],
-        totalCount: 1,
-      }),
-    });
-  });
 
   // Mock table op endpoint so postTableOp doesn't try to hit a real DB table
   await page.route('/api/room/my/op', (route) => {
@@ -319,18 +308,8 @@ test('GM preview mode: Add Character submits and character appears on the table'
   await expect(addBtn).toBeVisible({ timeout: 5000 });
   await addBtn.click();
 
-  // The character picker opens. Select "Brynn Ashwood".
-  // In GM preview mode (isPlayer=false), GMTableView uses handleGmImpersonateAddCharacter
-  // which calls sendAddToTable → doAddToTable → setActiveElements (immediate local update).
-  await expect(page.locator('input[placeholder="Search by name..."]')).toBeVisible({ timeout: 5000 });
-
-  // The character list uses plain <button> elements — no data-testid on the container.
-  const charBtn = page.locator('button', { hasText: 'Brynn Ashwood' });
-  await expect(charBtn).toBeVisible({ timeout: 5000 });
-  await charBtn.click();
-
-  // After selection, the picker closes and the character appears in the Characters panel
-  // (doAddToTable calls setActiveElements immediately — no SSE needed).
-  // Use .first() because the name may appear in both the character card and hover card.
-  await expect(page.locator('text=Brynn Ashwood').first()).toBeVisible({ timeout: 5000 });
+  // openNewCharacterEditor → addToTable(stub) → setActiveElements (immediate local update).
+  // Editor opens with an empty name field; Done is available on the title bar.
+  await expect(page.locator('input[placeholder="Character name"]')).toBeVisible({ timeout: 10000 });
+  await expect(page.getByRole('button', { name: 'Done' })).toBeVisible({ timeout: 5000 });
 });

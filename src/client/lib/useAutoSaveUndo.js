@@ -58,6 +58,9 @@ export function useAutoSaveUndo({ initial, onSave, debounceMs = 800, isNew = fal
   const pendingSaveDataRef = useRef(null);
 
   const executeSave = useCallback(async (data) => {
+    // #region agent log
+    fetch('/api/debug-log',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({_debugUrl:'http://127.0.0.1:7803/ingest/b8b9e013-5af1-438e-8ea4-5198e805186a',_debugSessionId:'167b91',sessionId:'167b91',runId:'post-fix',hypothesisId:'B',location:'useAutoSaveUndo.js:61',message:'executeSave reached (name-gate check)',data:{isNew,name:data?.name??null,id:data?.id??null,willSkip:!!(isNew&&!data?.name?.trim())},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
     if (isNew && !data.name?.trim()) return;
     if (saveInProgressRef.current) {
       pendingSaveDataRef.current = data;

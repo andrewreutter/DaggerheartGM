@@ -35,4 +35,16 @@ describe('prep banner vs modal z-order', () => {
       expect(src, rel).toMatch(/z-\[53\]/);
     }
   });
+
+  it('PrepSetupChecklist unmounts when leaving the table view (body portal)', () => {
+    // Game Table stays mounted with display:none; the checklist portals to document.body,
+    // so it must be gated on route.view === 'table' or cards linger over Library/Home.
+    const gmTable = readFileSync(join(root, 'src/client/components/GMTableView.jsx'), 'utf8');
+    expect(gmTable).toMatch(
+      /!isPlayer && route\?\.view === ['"]table['"] && \(\s*<PrepSetupChecklist/,
+    );
+    const checklist = readFileSync(join(root, 'src/client/components/PrepSetupChecklist.jsx'), 'utf8');
+    expect(checklist).toMatch(/createPortal\(/);
+    expect(checklist).toMatch(/document\.body/);
+  });
 });

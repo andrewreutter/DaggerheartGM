@@ -1,5 +1,5 @@
 import { useMemo, useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
-import { createPortal } from 'react-dom';
+import { createPortal, flushSync } from 'react-dom';
 import { useTouchDevice } from '../lib/useTouchDevice.js';
 import { useHoverOverlay } from '../lib/useHoverOverlay.js';
 import { Zap, Trash2, Dices, ChevronDown, ChevronRight, X, Plus, Swords, AlertTriangle, Flame, Edit, Users, RefreshCw, ExternalLink, Eye, EyeOff, Circle, Square, CheckSquare, StickyNote, Heart, LogOut, Camera, FolderOpen } from 'lucide-react';
@@ -3166,39 +3166,43 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
         ],
       };
       const rect = getAddCharacterAnchorRect();
+      const openEditorForElement = (newEl) => {
+        // Commit editState + sheet pin + URL navigation in ONE flushSync. Navigating
+        // *after* the flushSync (previous code) left modalItemId null for one commit,
+        // so the "close modal when URL has no item" effect nulled editState; that
+        // transient null then satisfied the incomplete-character auto-open effect's
+        // guard (editState no longer matched this instance), which reopened the
+        // editor with hardcoded mode 'original' and auto-saved an unnamed row.
+        flushSync(() => {
+          setEditState({
+            step: 'form',
+            item: stub,
+            collection: 'characters',
+            mode: 'new',
+            baseElement: newEl,
+            instances: [newEl],
+            presentation: 'rightDrawer',
+            ...(pendingAiConcept?.trim() ? { pendingCharacterAiConcept: pendingAiConcept.trim() } : {}),
+          });
+          characterOverlay.show({ element: newEl, top: rect.top, bottom: rect.bottom });
+          navigate(`${gameTableBasePath}/characters/${stub.id}`, { replace: true });
+        });
+        // #region agent log
+        fetch('/api/debug-log',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({_debugUrl:'http://127.0.0.1:7803/ingest/b8b9e013-5af1-438e-8ea4-5198e805186a',_debugSessionId:'167b91',sessionId:'167b91',runId:'run3',hypothesisId:'F',location:'GMTableView.jsx:3186',message:'openNewCharacterEditor: editState+navigate flushed together, mode=new',data:{stubId:stub.id,newElInstanceId:newEl?.instanceId,newElId:newEl?.id,isPlayer:!!isPlayer},timestamp:Date.now()})}).catch(()=>{});
+        // #endregion
+      };
       if (isPlayer && onPlayerAddCharacter) {
         const res = await onPlayerAddCharacter({ ...stub, elementType: 'character' });
         const newEl = res?.character;
         if (!newEl?.instanceId) return;
-        navigate(`${gameTableBasePath}/characters/${stub.id}`, { replace: true });
-        setEditState({
-          step: 'form',
-          item: stub,
-          collection: 'characters',
-          mode: 'new',
-          baseElement: newEl,
-          instances: [newEl],
-          presentation: 'rightDrawer',
-          ...(pendingAiConcept?.trim() ? { pendingCharacterAiConcept: pendingAiConcept.trim() } : {}),
-        });
-        characterOverlay.show({ element: newEl, top: rect.top, bottom: rect.bottom });
+        // Keep library id aligned with the stub we navigate to (server may echo a different id).
+        openEditorForElement({ ...newEl, id: stub.id });
         return;
       }
       const newEls = await addToTable(stub, 'characters');
       const newEl = newEls?.[0];
       if (!newEl) return;
-      navigate(`${gameTableBasePath}/characters/${stub.id}`, { replace: true });
-      setEditState({
-        step: 'form',
-        item: stub,
-        collection: 'characters',
-        mode: 'new',
-        baseElement: newEl,
-        instances: [newEl],
-        presentation: 'rightDrawer',
-        ...(pendingAiConcept?.trim() ? { pendingCharacterAiConcept: pendingAiConcept.trim() } : {}),
-      });
-      characterOverlay.show({ element: newEl, top: rect.top, bottom: rect.bottom });
+      openEditorForElement({ ...newEl, id: stub.id });
     },
     [
       addToTable,
@@ -3277,8 +3281,11 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
       });
       return;
     }
-    // Don't overwrite if user already opened via handleEditClick (choice or form)
-    if (editState?.collection === modalCollection && editState?.baseElement?.id === modalItemId) {
+    // Don't overwrite if user already opened via handleEditClick / openNewCharacterEditor
+    if (
+      editState?.collection === modalCollection &&
+      (editState?.baseElement?.id === modalItemId || editState?.item?.id === modalItemId)
+    ) {
       return;
     }
     const elType = COLLECTION_TO_ELEMENT_TYPE[modalCollection];
@@ -3286,6 +3293,15 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     const instances = activeElements.filter(e => e.elementType === elType && e.id === modalItemId);
     const baseElement = instances[0];
     if (!baseElement) {
+      // Player create / SSE lag: openNewCharacterEditor may have already opened a form for
+      // this id while the element is not yet in activeElements. Keep the URL.
+      if (
+        editState?.step === 'form' &&
+        editState?.collection === modalCollection &&
+        (editState?.baseElement?.id === modalItemId || editState?.item?.id === modalItemId)
+      ) {
+        return;
+      }
       navigate(gameTableBasePath, { replace: true });
       return;
     }
@@ -3304,6 +3320,9 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
         ? (data[modalCollection]?.find(i => i.id === baseElement.id) || getItemData(baseElement))
         : getItemData(baseElement);
     }
+    // #region agent log
+    fetch('/api/debug-log',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({_debugUrl:'http://127.0.0.1:7803/ingest/b8b9e013-5af1-438e-8ea4-5198e805186a',_debugSessionId:'167b91',sessionId:'167b91',runId:'run2',hypothesisId:'H',location:'GMTableView.jsx:3323-deep-link-open',message:'deep-link OPEN modal effect is setting editState from URL',data:{modalCollection,modalItemId,mode,baseElementId:baseElement?.id,baseElementInstanceId:baseElement?.instanceId},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
     setEditState({
       step: 'form',
       item,
@@ -3322,6 +3341,9 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
   // Close modal when URL no longer has item (e.g. user pressed back).
   useEffect(() => {
     if (!modalCollection && !modalItemId && editState) {
+      // #region agent log
+      fetch('/api/debug-log',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({_debugUrl:'http://127.0.0.1:7803/ingest/b8b9e013-5af1-438e-8ea4-5198e805186a',_debugSessionId:'167b91',sessionId:'167b91',runId:'run2',hypothesisId:'F',location:'GMTableView.jsx:3341-close-if-no-item',message:'CLOSE-if-no-item effect is nulling editState',data:{modalCollection,modalItemId,editStateModeBeforeNull:editState.mode,editStateBaseInstanceId:editState.baseElement?.instanceId},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
       setEditState(null);
     }
   }, [modalCollection, modalItemId, editState]);
@@ -3380,14 +3402,23 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
   const openTableCharacterEditor = useCallback((liveEl) => {
     if (!liveEl) return;
     if (liveEl.id) {
-      // Characters are now resolved server-side into a single canonical row;
-      // liveEl already contains the full merged library data — no data.characters lookup needed.
+      // Characters are resolved server-side into a single canonical row when a library
+      // row exists, but a stub created via openNewCharacterEditor and abandoned (Escape)
+      // before naming has an `id` with NO library row yet. Hardcoding mode 'original' here
+      // treated that stub as an existing saved character, which cleared the new-item
+      // name-gate on reopen and let an unnamed row get auto-saved. Mirror the deep-link
+      // effect above and resolve mode from whether the id actually exists in data.characters.
+      const canEditOriginal = isOwnItem(liveEl);
+      const mode = resolveGameTableCharacterEditMode(liveEl, data?.characters, canEditOriginal);
+      // #region agent log
+      fetch('/api/debug-log',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({_debugUrl:'http://127.0.0.1:7803/ingest/b8b9e013-5af1-438e-8ea4-5198e805186a',_debugSessionId:'167b91',sessionId:'167b91',runId:'run4',hypothesisId:'I',location:'GMTableView.jsx:openTableCharacterEditor',message:'openTableCharacterEditor (has id): resolved mode',data:{liveId:liveEl.id,liveInstanceId:liveEl.instanceId,mode,libraryCharactersLoaded:Array.isArray(data?.characters),libraryCount:data?.characters?.length??null,foundInLibrary:!!data?.characters?.some(c=>c.id===liveEl.id)},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
       navigate(`${gameTableBasePath}/characters/${liveEl.id}`);
       setEditState({
         step: 'form',
         item: liveEl,
         collection: 'characters',
-        mode: 'original',
+        mode,
         instances: [liveEl],
         baseElement: liveEl,
         presentation: 'rightDrawer',
@@ -3404,7 +3435,13 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
         presentation: 'rightDrawer',
       });
     }
-  }, [gameTableBasePath, navigate]);
+  }, [gameTableBasePath, navigate, data?.characters]);
+
+  // #region agent log
+  useEffect(() => {
+    fetch('/api/debug-log',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({_debugUrl:'http://127.0.0.1:7803/ingest/b8b9e013-5af1-438e-8ea4-5198e805186a',_debugSessionId:'167b91',sessionId:'167b91',runId:'run2',hypothesisId:'F,H',location:'GMTableView.jsx:editState-watch',message:editState ? 'editState changed' : 'editState became NULL',data:editState ? {step:editState.step,collection:editState.collection,mode:editState.mode,itemId:editState.item?.id,itemName:editState.item?.name,baseInstanceId:editState.baseElement?.instanceId,presentation:editState.presentation} : {isNull:true},timestamp:Date.now()})}).catch(()=>{});
+  }, [editState]);
+  // #endregion
 
   const handleAddPotentialAdversary = async (adversaryId) => {
     try {
@@ -4925,6 +4962,9 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     ) {
       return;
     }
+    // #region agent log
+    fetch('/api/debug-log',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({_debugUrl:'http://127.0.0.1:7803/ingest/b8b9e013-5af1-438e-8ea4-5198e805186a',_debugSessionId:'167b91',sessionId:'167b91',runId:'post-fix',hypothesisId:'E',location:'GMTableView.jsx:4938',message:'auto-open incomplete editor -> openTableCharacterEditor',data:{liveInstanceId:live.instanceId,liveId:live.id,prevMode:editState?.mode??null,prevBaseInstanceId:editState?.baseElement?.instanceId??null},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
     openTableCharacterEditor(live);
   }, [
     characterOverlay.isOpen,
@@ -5921,7 +5961,9 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
-      {!isPlayer && (
+      {/* Portaled to document.body — must unmount when table view is hidden (display:none),
+          or Build/Invite/Play cards linger over Library / Home. */}
+      {!isPlayer && route?.view === 'table' && (
         <PrepSetupChecklist
           tableStateReady={tableStateReady}
           maps={maps}
@@ -5956,6 +5998,18 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
       <div className="flex min-h-0 flex-1 overflow-hidden">
       {/* Players + Characters Panel */}
       <div className="w-56 bg-dh-canvas border-r border-dh-border flex flex-col overflow-y-auto shrink-0">
+        {/* Support this table — top of column, above Players; visible to GM and all players */}
+        <div className="px-2 py-1.5 bg-dh-canvas border-b border-dh-border shrink-0">
+          <button
+            type="button"
+            onClick={() => setSupportModalOpen(true)}
+            className="w-full rounded-lg border border-amber-600/60 bg-amber-900/40 hover:bg-amber-800/50 px-2.5 py-1.5 flex items-center justify-center gap-1.5 transition-colors"
+          >
+            <Heart size={11} className="text-amber-400" aria-hidden />
+            <span className="text-[11px] font-medium text-amber-300">Support this table</span>
+          </button>
+        </div>
+
         {/* Players — invite link (GM) + joined roster */}
         <div className="bg-dh-canvas border-b border-dh-border shrink-0">
           <button
@@ -6087,26 +6141,18 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
         </div>
 
         <div className="p-2 space-y-3">
-          {/* + Add Character button — opens the character picker */}
+          {/* + Add Character — skips picker; same as Create new character */}
           <button
             type="button"
             ref={addCharacterAnchorRef}
-            onClick={() => setModalOpen('characters')}
+            onClick={() => {
+              void openNewCharacterEditor();
+            }}
             data-prep-target="invite"
             className="w-full rounded-lg border border-dashed border-yellow-400/30 bg-yellow-400/[0.06] hover:border-yellow-300/45 hover:bg-yellow-400/10 px-2.5 py-1.5 flex items-center justify-center gap-1.5 transition-colors"
           >
             <Plus size={12} className="text-yellow-300/80" />
             <span className="text-xs font-semibold text-yellow-100/80">Add Character</span>
-          </button>
-
-          {/* Support this table — visible to GM and all players */}
-          <button
-            type="button"
-            onClick={() => setSupportModalOpen(true)}
-            className="w-full rounded-lg border border-dh-border bg-dh-surface/40 hover:border-sky-600/40 hover:bg-dh-raised/60 px-2.5 py-1.5 flex items-center justify-center gap-1.5 transition-colors"
-          >
-            <Heart size={11} className="text-sky-500/70" />
-            <span className="text-[11px] font-medium text-dh-muted">Support this table</span>
           </button>
 
           {isPlayer && onLeaveTable && (
@@ -8005,6 +8051,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
         collection={editState.collection}
         data={data}
         editable={true}
+        isNew={editState.mode === 'new'}
         presentation={editState.presentation ?? 'center'}
         onCharacterDrawerChromeSync={setCharacterDrawerChromeSync}
         characterLevelPreview={editState.collection === 'characters' ? characterEditorLevelPreview : undefined}
