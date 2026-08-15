@@ -1821,7 +1821,8 @@ function App() {
   // Token positions, conditions, and resource tracks are applied optimistically like the GM path.
   const handlePlayerCharacterUpdate = useCallback(async (instanceId, updates) => {
     if (!route.tableId) return;
-    if (!sessionPlayAllowed && isPrepModeElementUpdateBlocked(updates)) {
+    const el = activeElements.find((e) => e.instanceId === instanceId);
+    if (!sessionPlayAllowed && isPrepModeElementUpdateBlocked(updates, el?.elementType)) {
       return;
     }
     if (shouldOptimisticallyPatch(updates)) {
@@ -1833,7 +1834,7 @@ function App() {
       if (err?.playBlocked === 'paused' || err?.playBlocked === 'prep') return;
       console.error('postCharacterUpdate failed:', err);
     }
-  }, [route.tableId, sessionPlayAllowed]);
+  }, [route.tableId, sessionPlayAllowed, activeElements]);
 
   const handlePlayerAddCharacter = useCallback(async (charData) => {
     if (!route.tableId) return undefined;

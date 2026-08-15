@@ -66,14 +66,64 @@ describe('table-session-gate', () => {
     expect(g.ok).toBe(false);
   });
 
-  it('allows conditions-only updates during prep', () => {
-    expect(isPrepModeElementUpdateBlocked({ conditions: 'foo' })).toBe(false);
+  it('blocks conditions updates during prep (conditions are play-state, not setup)', () => {
+    expect(isPrepModeElementUpdateBlocked({ conditions: 'foo' })).toBe(true);
     const g = gateTableOpForPrepMode(prepState, {
       op: 'update-element',
       instanceId: 'a',
       updates: { conditions: 'note' },
     });
+    expect(g.ok).toBe(false);
+  });
+
+  it('allows minPartySize updates during prep (encounter-design scale tag)', () => {
+    expect(isPrepModeElementUpdateBlocked({ minPartySize: 4 })).toBe(false);
+    const g = gateTableOpForPrepMode(prepState, {
+      op: 'update-element',
+      instanceId: 'a',
+      updates: { minPartySize: 4 },
+    });
     expect(g.ok).toBe(true);
+  });
+
+  it('allows assignedPlayerEmail updates during prep (roster bookkeeping)', () => {
+    expect(isPrepModeElementUpdateBlocked({ assignedPlayerEmail: 'player@example.com' })).toBe(false);
+    const g = gateTableOpForPrepMode(prepState, {
+      op: 'update-element',
+      instanceId: 'a',
+      updates: { assignedPlayerEmail: 'player@example.com' },
+    });
+    expect(g.ok).toBe(true);
+  });
+
+  it('allows note name/body/visibility updates during prep (note type is exempt)', () => {
+    expect(isPrepModeElementUpdateBlocked({ name: 'My Note', body: 'text', visibility: 'gm' }, 'note')).toBe(false);
+    const stateWithNote = {
+      ...prepState,
+      elements: [{ instanceId: 'n1', elementType: 'note', name: 'Old', body: '' }],
+    };
+    const g = gateTableOpForPrepMode(stateWithNote, {
+      op: 'update-element',
+      instanceId: 'n1',
+      updates: { name: 'New Title', body: 'Updated body' },
+    });
+    expect(g.ok).toBe(true);
+  });
+
+  it('still blocks conditions on a character/adversary even when note elements are present', () => {
+    const state = {
+      ...prepState,
+      elements: [
+        { instanceId: 'n1', elementType: 'note' },
+        { instanceId: 'c1', elementType: 'character' },
+      ],
+    };
+    const g = gateTableOpForPrepMode(state, {
+      op: 'update-element',
+      instanceId: 'c1',
+      updates: { conditions: 'Frightened' },
+    });
+    expect(g.ok).toBe(false);
   });
 
   it('allows update-base-data during prep (library save → table element sync)', () => {

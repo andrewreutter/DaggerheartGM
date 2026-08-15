@@ -603,7 +603,8 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
   );
 
   const updateActiveElement = useCallback((instanceId, updates) => {
-    if (!sessionPlayAllowed && isPrepModeElementUpdateBlocked(updates)) {
+    const el = activeElements.find((e) => e.instanceId === instanceId);
+    if (!sessionPlayAllowed && isPrepModeElementUpdateBlocked(updates, el?.elementType)) {
       if (!isPlayer) {
         if (playBlockedAllowAllEdits) {
           return pushTableElementUpdate(instanceId, updates, { bypassPrepGate: true });
@@ -613,7 +614,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
       return;
     }
     return pushTableElementUpdate(instanceId, updates);
-  }, [sessionPlayAllowed, pushTableElementUpdate, isPlayer, playBlockedAllowAllEdits]);
+  }, [activeElements, sessionPlayAllowed, pushTableElementUpdate, isPlayer, playBlockedAllowAllEdits]);
 
   const handleRollTransportError = useCallback((err, logLabel) => {
     if (err?.playBlocked === 'paused' || err?.playBlocked === 'prep') return;
@@ -3545,6 +3546,9 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
 
   const handleRoll = (feature, event) => {
     if (!feature._rollData && !feature._diceRoll) return;
+    // Attacks (feature._rollData) require an active session — block in prep/pause.
+    // Other feature dice (feature._diceRoll only) still go through postRoll and the existing GM dialog.
+    if (feature._rollData && !sessionPlayAllowed) return;
     dismissAllHoverCards();
     let rollText;
     if (feature._rollData) {
@@ -3593,6 +3597,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
   };
 
   const handleCardRoll = (attackData, sourceName, attackerInstances, event) => {
+    if (!sessionPlayAllowed) return;
     dismissAllHoverCards();
     const { name, modifier, range, damage, trait, patterns } = attackData;
     let rollText;
@@ -8224,7 +8229,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                     showInstanceRemove={false}
                     featureCountdowns={featureCountdowns}
                     updateCountdown={null}
-                    onRollAttack={(data, e) => handleCardRoll(data, liveBaseElement.name, liveInstances, e)}
+                    onRollAttack={sessionPlayAllowed ? (data, e) => handleCardRoll(data, liveBaseElement.name, liveInstances, e) : undefined}
                     damageBoost={tableDamageBoost || liveBaseElement._damageBoost || null}
                     scaledMeta={null}
                     onScaledToggle={null}
@@ -8263,7 +8268,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
               showInstanceRemove={false}
               featureCountdowns={featureCountdowns}
               updateCountdown={null}
-              onRollAttack={(data, e) => handleCardRoll(data, potAdvOverlay.data.element.name, [], e)}
+              onRollAttack={sessionPlayAllowed ? (data, e) => handleCardRoll(data, potAdvOverlay.data.element.name, [], e) : undefined}
               damageBoost={null}
               scaledMeta={null}
               onScaledToggle={null}
@@ -8349,7 +8354,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                   showInstanceRemove={false}
                   featureCountdowns={featureCountdowns}
                   updateCountdown={null}
-                  onRollAttack={(data, e) => handleCardRoll(data, el.name, displayElement.instances, e)}
+                  onRollAttack={sessionPlayAllowed ? (data, e) => handleCardRoll(data, el.name, displayElement.instances, e) : undefined}
                   scaledMeta={scaledMeta}
                   onScaledToggle={() => setScaledToggleState(prev => ({ ...prev, [el.id]: !(prev[el.id] ?? true) }))}
                 />

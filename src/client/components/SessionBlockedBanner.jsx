@@ -8,8 +8,8 @@
  */
 export function SessionBlockedBanner({ isPlayer, onResume }) {
   const bodyGm = onResume
-    ? 'Click this banner (or Resume in the Encounter panel) to roll, use features, and apply damage. You can still adjust the map, tokens, conditions, and Fear.'
-    : 'The table went idle. Click Resume in the Encounter panel to roll, use features, and apply damage. You can still adjust the map, tokens, conditions, and Fear.';
+    ? 'Click this banner (or Resume in the Encounter panel) to roll, use features, and apply damage. You can still adjust the map, notes, and Fear.'
+    : 'The table went idle. Click Resume in the Encounter panel to roll, use features, and apply damage. You can still adjust the map, notes, and Fear.';
   const bodyPlayer = 'Waiting for the GM to resume the session.';
   const shellClass =
     'px-5 py-3 rounded-xl shadow-2xl text-center bg-dh-surface/95 border-2 border-dh-strong backdrop-blur-sm';

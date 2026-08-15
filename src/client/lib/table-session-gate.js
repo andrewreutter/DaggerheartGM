@@ -21,19 +21,28 @@ export function isTableSessionActive(tableStateLike) {
   return isTablePlayAllowed(tableStateLike);
 }
 
-/** Allowed `update-element` / `update-elements` keys while play is blocked (prep or idle pause). Token positions require an active session. */
+/**
+ * Allowed `update-element` / `update-elements` keys while play is blocked (prep or idle pause).
+ * Keys that affect gameplay resource state (HP, stress, conditions, token positions, etc.) require
+ * an active session. Setup-only fields (party scale tags, character assignment) are always allowed.
+ */
 export const PREP_MODE_ALLOWED_ELEMENT_UPDATE_KEYS = new Set([
-  'conditions',
+  // Party-scale tag — edit during prep when building the encounter
+  'minPartySize',
+  // Character assignment to a player — prep-safe roster bookkeeping
+  'assignedPlayerEmail',
 ]);
 
 /**
- * Element types that are scene-dressing (battle-map art / drawn shapes), not gameplay tokens.
+ * Element types that are scene-dressing or setup-only, not gameplay tokens.
  * `add-elements` / `remove-element` are already prep-safe for every element type (see the
- * `gateTableOpForPrepMode` switch), so moving or resizing one of these via `update-element`
- * (drag/resize handled by `MapImageObject` / `DrawShapeObject` in `BattleMap.jsx`) is exempted
- * from the token-move gate too — dragging map art around while setting up a scene isn't "play".
+ * `gateTableOpForPrepMode` switch), so updating one of these via `update-element` is exempted
+ * from the token-move gate too.
+ *
+ * - `mapImage` / `drawShape` — battle-map art; dragging/resizing is scene setup.
+ * - `note` — notes (name, body, visibility, imageUrl) are always editable in prep.
  */
-export const PREP_MODE_EXEMPT_ELEMENT_TYPES = new Set(['mapImage', 'drawShape']);
+export const PREP_MODE_EXEMPT_ELEMENT_TYPES = new Set(['mapImage', 'drawShape', 'note']);
 
 /** True if updates contain any key not allowed while play is blocked (e.g. token moves, HP, etc.). */
 export function isPrepModeElementUpdateBlocked(updates, elementType) {

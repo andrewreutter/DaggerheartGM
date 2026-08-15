@@ -64,7 +64,7 @@ const STEP_META = {
     title: 'Play',
     Icon: Play,
     instructionsLines: [
-      "You're in prep mode — you can still adjust the map, tokens, conditions, and Fear.",
+      "You're in prep mode — you can still adjust the map, notes, and Fear.",
       'When you\'re ready, click Start Session in the Encounter panel to roll, use features, and apply damage.',
     ],
     className: 'text-emerald-300 border-emerald-800/60 bg-emerald-950/40',
