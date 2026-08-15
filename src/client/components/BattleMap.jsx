@@ -136,6 +136,7 @@ import {
 } from '../lib/map-image-drop.js';
 import { useUnifiedImport } from '../lib/unified-import-context.jsx';
 import { buildMapStripTileTokenSignature } from '../lib/map-strip-tile-signature.js';
+import { isAdversaryPresentForParty } from '../lib/party-scaled-adversaries.js';
 import {
   canModifyMapObject,
   computeCornerAnchor,
@@ -393,7 +394,7 @@ const MAX_THUMB_TOKEN_PROXIES = 8;
 /**
  * Characters + adversaries whose token footprint intersects the strip thumbnail viewport (same math as the thumb preview).
  */
-function getThumbViewportTokenProxies(mapRow, viewState, activeElements, stripMapId) {
+function getThumbViewportTokenProxies(mapRow, viewState, activeElements, stripMapId, adversaryPartyScaleCount = null) {
   if (!mapConfigHasImage({ mapImageUrl: mapRow?.mapImageUrl }) || stripMapId == null) return [];
   const vw = THUMB_STRIP_W_PX;
   const vh = THUMB_STRIP_H_PX;
@@ -432,6 +433,7 @@ function getThumbViewportTokenProxies(mapRow, viewState, activeElements, stripMa
     if (sR < visL || sL > visR || sB < visT || sT > visB) continue;
 
     const isAdv = el.elementType === 'adversary';
+    if (isAdv && adversaryPartyScaleCount != null && !isAdversaryPresentForParty(el, adversaryPartyScaleCount)) continue;
     const isBoard = el.elementType === 'boardToken';
     const defeated = isAdv && isAdversaryDefeated(el);
     out.push({
@@ -600,7 +602,8 @@ const mapViewStripTilePropsAreEqual = (prev, next) => {
     prev.hideCaption !== next.hideCaption ||
     prev.captionAbove !== next.captionAbove ||
     prev.tooltipTitle !== next.tooltipTitle ||
-    prev.stripMapId !== next.stripMapId
+    prev.stripMapId !== next.stripMapId ||
+    prev.adversaryPartyScaleCount !== next.adversaryPartyScaleCount
   ) {
     return false;
   }
@@ -647,11 +650,12 @@ const MapViewStripTile = memo(function MapViewStripTileRaw({
   /** When set with `stripMapId`, shows small token chips for actors visible in this thumb's viewport. */
   activeElements,
   stripMapId,
+  adversaryPartyScaleCount = null,
 }) {
   const titleAttr = tooltipTitle !== undefined ? tooltipTitle : label;
   const thumbTokenProxies = useMemo(
-    () => getThumbViewportTokenProxies(mapRow, viewState, activeElements, stripMapId),
-    [mapRow, viewState, activeElements, stripMapId],
+    () => getThumbViewportTokenProxies(mapRow, viewState, activeElements, stripMapId, adversaryPartyScaleCount),
+    [mapRow, viewState, activeElements, stripMapId, adversaryPartyScaleCount],
   );
   const thumbClass = `group relative overflow-hidden rounded-md border text-left transition-colors ${
     variant === 'map' && isActive
@@ -2992,6 +2996,8 @@ export function BattleMap({
   extraConditionSuggestions,
   onAddConditionsHistoryEntry,
   onRemoveConditionsHistoryEntry,
+  /** Live table: hide reserved adversaries. `null` (scene editor) shows every instance. */
+  adversaryPartyScaleCount = null,
 }) {
   const { hideAiUi } = useAiUiPreference();
   const showImageGenAiUi = shouldShowImageGenAiUi(imageGenEnabled, hideAiUi);
@@ -4166,7 +4172,11 @@ export function BattleMap({
 
   // Categorize elements
   const characters = useMemo(() => activeElements.filter(el => el.elementType === 'character'), [activeElements]);
-  const adversaries = useMemo(() => activeElements.filter(el => el.elementType === 'adversary'), [activeElements]);
+  const adversaries = useMemo(() => activeElements.filter((el) => {
+    if (el.elementType !== 'adversary') return false;
+    if (adversaryPartyScaleCount == null) return true;
+    return isAdversaryPresentForParty(el, adversaryPartyScaleCount);
+  }), [activeElements, adversaryPartyScaleCount]);
   const boardTokens = useMemo(
     () => activeElements.filter((el) => el.elementType === 'boardToken'),
     [activeElements],
@@ -6343,6 +6353,7 @@ export function BattleMap({
                       : null
                   }
                   activeElements={activeElements}
+                  adversaryPartyScaleCount={adversaryPartyScaleCount}
                   stripMapId={map.id}
                   label={map.name || 'Map'}
                   tooltipTitle={
@@ -6454,6 +6465,7 @@ export function BattleMap({
                       cameraOverlayPng={getRowOverlayPng(view)}
                       viewState={viewStateForStripTile(view)}
                       activeElements={activeElements}
+                      adversaryPartyScaleCount={adversaryPartyScaleCount}
                       stripMapId={map.id}
                       label={label}
                       tooltipTitle={
@@ -6556,6 +6568,7 @@ export function BattleMap({
                       mapOverlayPng={getRowOverlayPng(m)}
                       viewState={null}
                       activeElements={activeElements}
+                      adversaryPartyScaleCount={adversaryPartyScaleCount}
                       stripMapId={m.id}
                       label={m.name || 'Map'}
                       tooltipTitle={`${m.name || 'Map'} — Pan and zoom freely (not a saved view)`}
@@ -6580,6 +6593,7 @@ export function BattleMap({
                         cameraOverlayPng={getRowOverlayPng(view)}
                         viewState={viewStateForStripTile(view)}
                         activeElements={activeElements}
+                        adversaryPartyScaleCount={adversaryPartyScaleCount}
                         stripMapId={m.id}
                         label={view.name || 'View'}
                         isActive={

@@ -16,6 +16,12 @@ import { SessionCountdownsPanel, buildTrackedSessionEntryFromFeature, buildLinke
 import { FeatureDescription } from './FeatureDescription.jsx';
 import { EnvironmentCardContent, AdversaryCardContent, AdversaryCardAttackAndFeatures, CheckboxTrack } from './DetailCardContent.jsx';
 import { EncounterAdversaryDifficultyRow, EncounterAdversaryInstanceCard } from './EncounterAdversaryInstanceCard.jsx';
+import { EncounterAdversaryTypeCard } from './EncounterAdversaryTypeCard.jsx';
+import {
+  characterCountFromElements,
+  isAdversaryPresentForParty,
+  stripPartyScaleFields,
+} from '../lib/party-scaled-adversaries.js';
 import { CharacterSheetEmphasisCard } from './CharacterStatBlockGraphic.jsx';
 import { EditChoiceDialog } from './modals/EditChoiceDialog.jsx';
 import { ItemDetailModal } from './modals/ItemDetailModal.jsx';
@@ -336,7 +342,7 @@ function buildAttackRollText(name, modifier, range, damage, trait, sourceName) {
 // Strip runtime tracking fields to get the base item data for form editing.
 function getItemData(element) {
   const { instanceId, elementType, currentHp, currentStress, conditions, ...rest } = element;
-  return rest;
+  return stripPartyScaleFields(rest);
 }
 
 const COLLECTION_TO_ELEMENT_TYPE = { adversaries: 'adversary', environments: 'environment', characters: 'character', notes: 'note' };
@@ -489,7 +495,7 @@ function buildGameTableNewEnvironmentStub(tier = 1, type = 'exploration') {
   };
 }
 
-export function GMTableView({ tableId, activeElements, updateActiveElement: pushTableElementUpdate, removeActiveElement, updateActiveElementsBaseData, data, saveItem, saveImage, addToTable, sendDoAddToTable, onMergeAdversary, user, route, navigate, featureCountdowns = {}, sessionCountdowns = [], updateCountdown, partySize = 1, partyTier = 1, characters = [], tableBattleMods, setTableBattleMods, fearCount = 0, setFearCount, conditionsHistory = [], onAddConditionsHistoryEntry, onRemoveConditionsHistoryEntry, tableName = '', gmDisplayName = '', tableStateReady = false, onTableNameChange, onDeleteTable, ensureAdventuresLoaded, ensureCharactersLoaded, clearTable, isPlayer = false, playerEmail, connectedPlayers = [], playerEmails = [], playerNames = {}, inviteLink = null, onGenerateInviteLink, onRevokeInviteLink, onRemovePlayerEmail, onLeaveTable, gmUid, onPlayerAddCharacter, pendingBanners = [], pendingPlayerIntent = null, intentDifficultyUpdate = null, onFeatureRequestSuccess, onFeatureRequestCancel, rangerFocusRequestedBannerIds, onRangerFocusRerollRequestSuccess, onRangerFocusRerollRequestCancel, previewAsPlayerEmail = null, onPreviewAsPlayer, onExitPreview, actionLog = [], setActionLog, mapConfig, maps = [], activeMapId = null, gmMapView = null, onSetActiveMap, onAddMap, onAddMapWithImage, onRemoveMap, onRenameMap, onMapConfigChange, onMapViewSync, lifeSupportSelections = {}, onLifeSupportSelect, onLifeSupportClear, restMovesSelections = {}, onRestMoveSelect, onRestMoveClear, tableFeatureState = {}, sessionPlayAllowed = true, sessionStarted = true, sessionPaused = false, mapPings = [], onDismissMapPing = () => {}, appendMapPing = () => {},
+export function GMTableView({ tableId, activeElements, updateActiveElement: pushTableElementUpdate, removeActiveElement, updateActiveElementsBaseData, data, saveItem, saveImage, addToTable, addElements, sendDoAddToTable, onMergeAdversary, user, route, navigate, featureCountdowns = {}, sessionCountdowns = [], updateCountdown, partySize = 1, partyTier = 1, characters = [], tableBattleMods, setTableBattleMods, fearCount = 0, setFearCount, conditionsHistory = [], onAddConditionsHistoryEntry, onRemoveConditionsHistoryEntry, tableName = '', gmDisplayName = '', tableStateReady = false, onTableNameChange, onDeleteTable, ensureAdventuresLoaded, ensureCharactersLoaded, clearTable, isPlayer = false, playerEmail, connectedPlayers = [], playerEmails = [], playerNames = {}, inviteLink = null, onGenerateInviteLink, onRevokeInviteLink, onRemovePlayerEmail, onLeaveTable, gmUid, onPlayerAddCharacter, pendingBanners = [], pendingPlayerIntent = null, intentDifficultyUpdate = null, onFeatureRequestSuccess, onFeatureRequestCancel, rangerFocusRequestedBannerIds, onRangerFocusRerollRequestSuccess, onRangerFocusRerollRequestCancel, previewAsPlayerEmail = null, onPreviewAsPlayer, onExitPreview, actionLog = [], setActionLog, mapConfig, maps = [], activeMapId = null, gmMapView = null, onSetActiveMap, onAddMap, onAddMapWithImage, onRemoveMap, onRenameMap, onMapConfigChange, onMapViewSync, lifeSupportSelections = {}, onLifeSupportSelect, onLifeSupportClear, restMovesSelections = {}, onRestMoveSelect, onRestMoveClear, tableFeatureState = {}, sessionPlayAllowed = true, sessionStarted = true, sessionPaused = false, mapPings = [], onDismissMapPing = () => {}, appendMapPing = () => {},
   mapScribbles = [],
   mapViews = [], gmActiveViewId = null, onSetActiveView, onAddMapViewOp, onRemoveMapView, onRenameMapView, onSetViewBroadcast, onSetViewLocked, onSetMapShare,
   onSetMapOverlay,
@@ -4395,6 +4401,8 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     return result;
   }, [activeElements]);
 
+  const characterCount = useMemo(() => characterCountFromElements(activeElements), [activeElements]);
+
   const consolidatedByCardKey = useMemo(() => {
     const m = new Map();
     for (const item of consolidatedElements) {
@@ -4432,14 +4440,14 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
       .filter(item => item.kind === 'adversary-group')
       .flatMap(item =>
         item.instances
-          .filter(inst => !isAdversaryDefeated({ ...item.baseElement, currentHp: inst.currentHp }))
+          .filter(inst => isAdversaryPresentForParty(inst, characterCount) && !isAdversaryDefeated({ ...item.baseElement, currentHp: inst.currentHp }))
           .map((inst, idx) => ({
             instanceId: inst.instanceId,
             name: item.instances.length > 1 ? `${item.baseElement.name} #${idx + 1}` : item.baseElement.name,
             type: 'adversary',
           }))
       ),
-    [consolidatedElements]);
+    [consolidatedElements, characterCount]);
   actionAdversaryTargetsRef.current = actionAdversaryTargets;
 
   // Flat list of all hittable targets for the damage banner: characters, companions, adversary instances.
@@ -4470,6 +4478,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
       } else if (item.kind === 'adversary-group') {
         const { baseElement, instances } = item;
         instances.forEach((inst, idx) => {
+          if (!isAdversaryPresentForParty(inst, characterCount)) return;
           if (isAdversaryDefeated({ ...baseElement, currentHp: inst.currentHp })) return;
           targets.push({
             instanceId: inst.instanceId,
@@ -4490,7 +4499,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     }
     targets.push(...collectCompanionDamageTargets(activeElements));
     return targets;
-  }, [consolidatedElements, activeElements, srdData]);
+  }, [consolidatedElements, activeElements, srdData, characterCount]);
 
   // Returns names of adversaries within Very Close of the Water Druid attacker that will mark Stress.
   const getV2DamageBannerAckNotices = useCallback(
@@ -4572,11 +4581,14 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     const seenAdvIds = new Set();
     const adversaryIdsWithAlive = new Set();
     activeElements.forEach(el => {
-      if (el.elementType === 'adversary' && !isAdversaryDefeated(el)) adversaryIdsWithAlive.add(el.id);
+      if (el.elementType === 'adversary' && isAdversaryPresentForParty(el, characterCount) && !isAdversaryDefeated(el)) {
+        adversaryIdsWithAlive.add(el.id);
+      }
     });
 
     activeElements.forEach(element => {
       if (element.elementType === 'adversary') {
+        if (!isAdversaryPresentForParty(element, characterCount)) return;
         if (!adversaryIdsWithAlive.has(element.id)) return;
         if (seenAdvIds.has(element.id)) return;
         seenAdvIds.add(element.id);
@@ -4652,7 +4664,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
       }
     });
     return menu;
-  }, [activeElements]);
+  }, [activeElements, characterCount]);
 
   const gmMovesPrFeatures = useMemo(
     () => [...(consolidatedMenu.Passives ?? []), ...(consolidatedMenu.Reactions ?? [])],
@@ -4691,7 +4703,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
   };
 
   // Compute total BP from active adversary elements.
-  const advElements = activeElements.filter(e => e.elementType === 'adversary');
+  const advElements = activeElements.filter(e => e.elementType === 'adversary' && isAdversaryPresentForParty(e, characterCount));
   const countById = {};
   const roleAndTierById = {};
   advElements.forEach(e => {
@@ -7061,6 +7073,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
             renderPinnedCharacterPanel={renderPinnedCharacterPanel}
             renderAdversaryEncounterCard={!isPlayer ? renderAdversaryEncounterCard : undefined}
             renderAdversaryTargetAid={renderAdversaryTargetAid}
+            adversaryPartyScaleCount={characterCount}
           />
         </div>
         </div>
@@ -7470,68 +7483,58 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
 
           {consolidatedElements.filter(item => item.kind === 'adversary-group').map((item) => {
             const { baseElement: el, instances } = item;
-            const count = instances.length;
             const displayEl = el._scaledFromTier != null && !(scaledToggleState[el.id] ?? true) ? getUnscaledAdversary(el) : el;
+            const isMinion = (displayEl.role || el.role) === 'minion';
             return (
-              <div
+              <EncounterAdversaryTypeCard
                 key={el.id}
-                className="rounded-lg bg-dh-surface border border-dh-border overflow-hidden group/adv"
-                {...trackerOverlay.triggerProps(e => ({ kind: 'adversary', baseElement: item.baseElement, instances: item.instances, top: e.currentTarget.getBoundingClientRect().top, bottom: e.currentTarget.getBoundingClientRect().bottom }))}
-              >
-                <div className="px-2.5 py-1.5 border-b border-dh-border flex items-center gap-1.5">
-                  <span className="text-xs font-semibold text-dh truncate flex-1">{displayEl.name}</span>
-                  {count > 1 && <span className="text-[10px] text-dh-muted shrink-0 group-hover/adv:hidden tabular-nums">×{count}</span>}
-                  <div className="hidden group-hover/adv:flex items-center gap-0.5 shrink-0">
-                    <button
-                      onClick={() => addToTable(getItemData(el), 'adversaries')}
-                      className="w-4 h-4 rounded bg-dh-raised hover:bg-green-900 text-dh-muted hover:text-green-300 flex items-center justify-center text-[10px] font-bold transition-colors leading-none"
-                      title="Add one more"
-                    >+</button>
-                    <span className="min-w-[1rem] text-center text-[10px] text-dh-muted font-semibold tabular-nums">{count}</span>
-                    <button
-                      onClick={() => {
-                        if (count === 1) {
-                          if (window.confirm(`Remove ${displayEl.name} from the table?`)) {
-                            removeGroup(instances);
-                            trackerOverlay.close();
-                          }
-                        } else {
-                          removeActiveElement(instances[instances.length - 1].instanceId);
-                        }
-                      }}
-                      className="w-4 h-4 rounded bg-dh-raised hover:bg-red-900 text-dh-muted hover:text-red-300 flex items-center justify-center transition-colors leading-none"
-                      title={count === 1 ? 'Remove from table' : 'Remove one'}
-                    >{count === 1 ? <Trash2 size={9} /> : <span className="text-[10px] font-bold">−</span>}</button>
-                  </div>
-                </div>
-                <EncounterAdversaryDifficultyRow displayEl={displayEl} />
-                <div className="p-2 space-y-2">
-                  {instances.map((inst, idx) => (
-                    <div key={inst.instanceId}>
-                      <EncounterAdversaryInstanceCard
-                        displayEl={displayEl}
-                        inst={inst}
-                        showInstanceNum={count > 1}
-                        instanceNum={idx + 1}
-                        showBp={budgetCardOpen}
-                        showInstanceRemove={count > 1}
-                        onRemoveInstance={removeActiveElement}
-                        canEditTracks={gmResourceTrackCheckboxEditsAllowed(isPlayer)}
-                        updateFn={updateActiveElement}
-                        onSetHpFilled={(dmg) => void applyAdversaryManualTrackDirect(inst.instanceId, { currentHp: (displayEl.hp_max || 0) - dmg })}
-                        onSetStressFilled={(s) => void applyAdversaryManualTrackDirect(inst.instanceId, { currentStress: s })}
-                        conditionsHistory={conditionsHistory}
-                        extraConditionSuggestions={extraConditionSuggestions}
-                        onAddConditionsHistoryEntry={onAddConditionsHistoryEntry}
-                        onRemoveConditionsHistoryEntry={!isPlayer ? onRemoveConditionsHistoryEntry : undefined}
-                      />
-                      {idx < instances.length - 1 && (
-                        <div className="border-t border-dh-border mt-1" />
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
+                displayName={displayEl.name}
+                instances={instances}
+                isMinion={isMinion}
+                characterCount={characterCount}
+                scalePartySize={characterCount}
+                canEdit={!isPlayer}
+                onAddElements={(els) => {
+                  if (typeof addElements === 'function') addElements(els);
+                  else els.forEach((one) => addToTable(getItemData(one), 'adversaries'));
+                }}
+                onRemoveInstanceIds={(ids) => {
+                  ids.forEach((id) => removeActiveElement(id));
+                  if (ids.length >= instances.length) trackerOverlay.close();
+                }}
+                onSetMinPartySize={(ids, n) => {
+                  const minPartySize = n > 1 ? n : 1;
+                  ids.forEach((id) => updateActiveElement(id, { minPartySize }));
+                }}
+                afterHeader={<EncounterAdversaryDifficultyRow displayEl={displayEl} />}
+                cardProps={trackerOverlay.triggerProps((e) => ({
+                  kind: 'adversary',
+                  baseElement: item.baseElement,
+                  instances: item.instances,
+                  top: e.currentTarget.getBoundingClientRect().top,
+                  bottom: e.currentTarget.getBoundingClientRect().bottom,
+                }))}
+                renderInstance={({ inst, showInstanceNum, instanceNum, scaleTag }) => (
+                  <EncounterAdversaryInstanceCard
+                    displayEl={displayEl}
+                    inst={inst}
+                    showInstanceNum={showInstanceNum}
+                    instanceNum={instanceNum}
+                    showBp={budgetCardOpen}
+                    showInstanceRemove={!isMinion && instances.length > 1}
+                    onRemoveInstance={removeActiveElement}
+                    canEditTracks={gmResourceTrackCheckboxEditsAllowed(isPlayer)}
+                    updateFn={updateActiveElement}
+                    onSetHpFilled={(dmg) => void applyAdversaryManualTrackDirect(inst.instanceId, { currentHp: (displayEl.hp_max || 0) - dmg })}
+                    onSetStressFilled={(s) => void applyAdversaryManualTrackDirect(inst.instanceId, { currentStress: s })}
+                    conditionsHistory={conditionsHistory}
+                    extraConditionSuggestions={extraConditionSuggestions}
+                    onAddConditionsHistoryEntry={onAddConditionsHistoryEntry}
+                    onRemoveConditionsHistoryEntry={!isPlayer ? onRemoveConditionsHistoryEntry : undefined}
+                    scaleTag={scaleTag}
+                  />
+                )}
+              />
             );
           })}
           {showConceptAiUi && (
@@ -7729,7 +7732,8 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                   const { baseElement: el, instances } = item;
                   const displayEl = el._scaledFromTier != null && !(scaledToggleState[el.id] ?? true) ? getUnscaledAdversary(el) : el;
                   const damagedInstances = instances.filter((inst) =>
-                    playerEncounterInstanceRowVisible(displayEl, inst),
+                    isAdversaryPresentForParty(inst, characterCount)
+                    && playerEncounterInstanceRowVisible(displayEl, inst),
                   );
                   return { displayEl, instances, damagedInstances };
                 })

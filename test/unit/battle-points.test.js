@@ -191,6 +191,17 @@ describe('collectSceneAdversaries', () => {
     expect(result[1]).toMatchObject({ role: 'minion', tier: 1, count: 1, name: 'Goblin' });
   });
 
+  it('ignores reserved minPartySize rows when characterCount is passed', () => {
+    const scene = sceneWithAdversaries([
+      adv({ instanceId: 'a1', name: 'Reaper', role: 'solo', tier: 3 }),
+      adv({ instanceId: 'a2', name: 'Reaper', role: 'solo', tier: 3, minPartySize: 5 }),
+    ]);
+    expect(collectSceneAdversaries(scene, 4)).toHaveLength(1);
+    expect(collectSceneAdversaries(scene, 5)).toHaveLength(2);
+    expect(computeSceneBudget(scene, 4).bp).toBe(5);
+    expect(computeSceneBudget(scene, 5).bp).toBe(10);
+  });
+
   it('reads role/tier/name from the inline element (no library data)', () => {
     const scene = sceneWithAdversaries([
       adv({ instanceId: 'a1', name: 'Orc', role: 'bruiser', tier: 2 }),

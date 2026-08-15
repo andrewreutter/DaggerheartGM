@@ -15,6 +15,8 @@ function makeSceneData() {
       { instanceId: 'el-adv-1', elementType: 'adversary', name: 'Goblin', mapId: 'map-old-1', viewId: 'view-old-1' },
       { instanceId: 'el-env-1', elementType: 'environment', name: 'Grove', mapId: 'map-old-2', viewId: 'view-old-2' },
       { instanceId: 'el-unplaced', elementType: 'adversary', name: 'Wolf', mapId: null },
+      { instanceId: 'el-minion-1', elementType: 'adversary', name: 'Rat', minionGroupId: 'group-old' },
+      { instanceId: 'el-minion-2', elementType: 'adversary', name: 'Rat', minionGroupId: 'group-old' },
       {
         instanceId: 'el-shape-1',
         elementType: 'drawShape',
@@ -43,7 +45,7 @@ describe('regenerateSceneIdsForTablePlacement', () => {
     const sceneData = makeSceneData();
     const inputIds = [
       'map-old-1', 'map-old-2', 'view-old-1', 'view-old-2',
-      'el-adv-1', 'el-env-1', 'el-unplaced', 'el-shape-1', 'cd-old-1',
+      'el-adv-1', 'el-env-1', 'el-unplaced', 'el-minion-1', 'el-minion-2', 'el-shape-1', 'cd-old-1',
     ];
     const a = regenerateSceneIdsForTablePlacement(sceneData);
     const b = regenerateSceneIdsForTablePlacement(sceneData);
@@ -77,8 +79,9 @@ describe('regenerateSceneIdsForTablePlacement', () => {
     expect(out.elements[0].viewId).toBe(viewByOld['view-old-1']);
     expect(out.elements[1].mapId).toBe(mapByOld['map-old-2']);
     expect(out.elements[1].viewId).toBe(viewByOld['view-old-2']);
-    expect(out.elements[3].mapId).toBe(mapByOld['map-old-1']);
-    expect(out.elements[3].viewId).toBe(viewByOld['view-old-1']);
+    const shape = out.elements.find((el) => el.elementType === 'drawShape');
+    expect(shape.mapId).toBe(mapByOld['map-old-1']);
+    expect(shape.viewId).toBe(viewByOld['view-old-1']);
     expect(out.sessionCountdowns[0].mapId).toBe(mapByOld['map-old-2']);
     expect(out.sessionCountdowns[0].viewId).toBe(viewByOld['view-old-2']);
     expect(out.sessionCountdowns[0].sourceRef.elementInstanceId).toBe(out.elements[0].instanceId);
@@ -89,25 +92,29 @@ describe('regenerateSceneIdsForTablePlacement', () => {
     const a = regenerateSceneIdsForTablePlacement(sceneData);
     const b = regenerateSceneIdsForTablePlacement(sceneData);
 
+    const aShape = a.elements.find((el) => el.elementType === 'drawShape');
+    const bShape = b.elements.find((el) => el.elementType === 'drawShape');
+    const inShape = sceneData.activeElements.find((el) => el.elementType === 'drawShape');
+
     expect(a.maps).not.toBe(sceneData.maps);
     expect(a.maps[0]).not.toBe(sceneData.maps[0]);
-    expect(a.elements[3].pointsFt).not.toBe(sceneData.activeElements[3].pointsFt);
+    expect(aShape.pointsFt).not.toBe(inShape.pointsFt);
     expect(a.maps).not.toBe(b.maps);
     expect(a.maps[0]).not.toBe(b.maps[0]);
     expect(a.mapViews[0]).not.toBe(b.mapViews[0]);
-    expect(a.elements[3]).not.toBe(b.elements[3]);
-    expect(a.elements[3].pointsFt).not.toBe(b.elements[3].pointsFt);
+    expect(aShape).not.toBe(bShape);
+    expect(aShape.pointsFt).not.toBe(bShape.pointsFt);
     expect(a.sessionCountdowns[0]).not.toBe(b.sessionCountdowns[0]);
     expect(a.sessionCountdowns[0].sourceRef).not.toBe(b.sessionCountdowns[0].sourceRef);
 
     a.maps[0].name = 'MUTATED';
-    a.elements[3].pointsFt[0].x = 99;
+    aShape.pointsFt[0].x = 99;
     a.sessionCountdowns[0].label = 'MUTATED';
     expect(sceneData.maps[0].name).toBe('Forest');
-    expect(sceneData.activeElements[3].pointsFt[0].x).toBe(1);
+    expect(inShape.pointsFt[0].x).toBe(1);
     expect(sceneData.sessionCountdowns[0].label).toBe('Collapse');
     expect(b.maps[0].name).toBe('Forest');
-    expect(b.elements[3].pointsFt[0].x).toBe(1);
+    expect(bShape.pointsFt[0].x).toBe(1);
     expect(b.sessionCountdowns[0].label).toBe('Collapse');
   });
 
@@ -115,6 +122,19 @@ describe('regenerateSceneIdsForTablePlacement', () => {
     const out = regenerateSceneIdsForTablePlacement(makeSceneData());
     const unplaced = out.elements.find((el) => el.name === 'Wolf');
     expect(unplaced.mapId).toBeNull();
+  });
+
+  it('remaps minionGroupId so two placements do not share a group', () => {
+    const sceneData = makeSceneData();
+    const a = regenerateSceneIdsForTablePlacement(sceneData);
+    const b = regenerateSceneIdsForTablePlacement(sceneData);
+    const aRats = a.elements.filter((el) => el.name === 'Rat');
+    const bRats = b.elements.filter((el) => el.name === 'Rat');
+    expect(aRats).toHaveLength(2);
+    expect(aRats[0].minionGroupId).toBe(aRats[1].minionGroupId);
+    expect(aRats[0].minionGroupId).not.toBe('group-old');
+    expect(bRats[0].minionGroupId).toBe(bRats[1].minionGroupId);
+    expect(bRats[0].minionGroupId).not.toBe(aRats[0].minionGroupId);
   });
 
   it('preserves mapImageUrl strings byte-identical', () => {

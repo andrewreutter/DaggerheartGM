@@ -5,7 +5,9 @@ import { BattleMap } from '../BattleMap.jsx';
 import { ItemPickerModal } from '../modals/ItemPickerModal.jsx';
 import { SessionCountdownsPanel } from '../SessionCountdownsPanel.jsx';
 import { EncounterAdversaryDifficultyRow, EncounterAdversaryInstanceCard } from '../EncounterAdversaryInstanceCard.jsx';
+import { EncounterAdversaryTypeCard } from '../EncounterAdversaryTypeCard.jsx';
 import { computeSceneBudget } from '../../lib/battle-points.js';
+import { buildLibraryAdversaryElements } from '../../lib/party-scaled-adversaries.js';
 import {
   DEFAULT_SCENE_BATTLE_MODS,
   applySceneTableOp,
@@ -37,20 +39,6 @@ function groupSceneElements(activeElements) {
     }
   }
   return result;
-}
-
-function cloneAdversaryInstance(el) {
-  return {
-    ...el,
-    instanceId: generateId(),
-    currentHp: el.hp_max || 0,
-    currentStress: 0,
-    conditions: '',
-    tokenX: null,
-    tokenY: null,
-    mapId: null,
-    altitude: 0,
-  };
 }
 
 /**
@@ -117,6 +105,13 @@ export function SceneTableEditor({
   };
 
   const addLibraryItem = (item, collection) => {
+    if (collection === 'adversaries') {
+      applyOp({
+        op: 'add-elements',
+        elements: buildLibraryAdversaryElements(item, { characterCount: partySize }),
+      });
+      return;
+    }
     const el = buildSceneElementFromLibraryItem(item, collection);
     applyOp({ op: 'add-elements', elements: [el] });
   };
@@ -349,63 +344,40 @@ export function SceneTableEditor({
           </div>
           {grouped.filter((item) => item.kind === 'adversary-group').map((item) => {
             const { baseElement: el, instances } = item;
-            const count = instances.length;
+            const isMinion = el.role === 'minion';
             return (
-              <div key={el.id || el.instanceId} className="rounded-lg bg-dh-surface border border-dh-border overflow-hidden group/adv">
-                <div className="px-2.5 py-1.5 border-b border-dh-border flex items-center gap-1.5">
-                  <span className="text-xs font-semibold text-dh truncate flex-1">{el.name || 'Adversary'}</span>
-                  {count > 1 && <span className="text-[10px] text-dh-muted shrink-0 group-hover/adv:hidden tabular-nums">×{count}</span>}
-                  <div className="hidden group-hover/adv:flex items-center gap-0.5 shrink-0">
-                    <button
-                      type="button"
-                      onClick={() => applyOp({ op: 'add-elements', elements: [cloneAdversaryInstance(el)] })}
-                      className="w-4 h-4 rounded bg-dh-raised hover:bg-green-900 text-dh-muted hover:text-green-300 flex items-center justify-center text-[10px] font-bold transition-colors leading-none"
-                      title="Add one more"
-                    >
-                      +
-                    </button>
-                    <span className="min-w-[1rem] text-center text-[10px] text-dh-muted font-semibold tabular-nums">{count}</span>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (count === 1) {
-                          if (window.confirm(`Remove ${el.name || 'this adversary'} from the scene?`)) {
-                            applyOp({ op: 'remove-element', instanceId: instances[0].instanceId });
-                          }
-                        } else {
-                          applyOp({ op: 'remove-element', instanceId: instances[instances.length - 1].instanceId });
-                        }
-                      }}
-                      className="w-4 h-4 rounded bg-dh-raised hover:bg-red-900 text-dh-muted hover:text-red-300 flex items-center justify-center transition-colors leading-none"
-                      title={count === 1 ? 'Remove from scene' : 'Remove one'}
-                    >
-                      {count === 1 ? <Trash2 size={9} /> : <span className="text-[10px] font-bold">−</span>}
-                    </button>
-                  </div>
-                </div>
-                <EncounterAdversaryDifficultyRow displayEl={el} />
-                <div className="p-2 space-y-2">
-                  {instances.map((inst, idx) => (
-                    <div key={inst.instanceId}>
-                      <EncounterAdversaryInstanceCard
-                        displayEl={el}
-                        inst={inst}
-                        showInstanceNum={count > 1}
-                        instanceNum={idx + 1}
-                        showBp
-                        showInstanceRemove={count > 1}
-                        onRemoveInstance={(id) => applyOp({ op: 'remove-element', instanceId: id })}
-                        canEditTracks
-                        updateFn={(instanceId, updates) => applyOp({ op: 'update-element', instanceId, updates })}
-                        conditionsHistory={sceneData.conditionsHistory}
-                        onAddConditionsHistoryEntry={(entry) => applyOp({ op: 'add-conditions-history-entry', entry })}
-                        onRemoveConditionsHistoryEntry={(entry) => applyOp({ op: 'remove-conditions-history-entry', entry })}
-                      />
-                      {idx < instances.length - 1 && <div className="border-t border-dh-border mt-1" />}
-                    </div>
-                  ))}
-                </div>
-              </div>
+              <EncounterAdversaryTypeCard
+                key={el.id || el.instanceId}
+                displayName={el.name || 'Adversary'}
+                instances={instances}
+                isMinion={isMinion}
+                characterCount={null}
+                scalePartySize={partySize}
+                onAddElements={(els) => applyOp({ op: 'add-elements', elements: els })}
+                onRemoveInstanceIds={(ids) => ids.forEach((id) => applyOp({ op: 'remove-element', instanceId: id }))}
+                onSetMinPartySize={(ids, n) => {
+                  const minPartySize = n > 1 ? n : 1;
+                  ids.forEach((id) => applyOp({ op: 'update-element', instanceId: id, updates: { minPartySize } }));
+                }}
+                afterHeader={<EncounterAdversaryDifficultyRow displayEl={el} />}
+                renderInstance={({ inst, showInstanceNum, instanceNum, scaleTag }) => (
+                  <EncounterAdversaryInstanceCard
+                    displayEl={el}
+                    inst={inst}
+                    showInstanceNum={showInstanceNum}
+                    instanceNum={instanceNum}
+                    showBp
+                    showInstanceRemove={!isMinion && instances.length > 1}
+                    onRemoveInstance={(id) => applyOp({ op: 'remove-element', instanceId: id })}
+                    canEditTracks
+                    updateFn={(instanceId, updates) => applyOp({ op: 'update-element', instanceId, updates })}
+                    conditionsHistory={sceneData.conditionsHistory}
+                    onAddConditionsHistoryEntry={(entry) => applyOp({ op: 'add-conditions-history-entry', entry })}
+                    onRemoveConditionsHistoryEntry={(entry) => applyOp({ op: 'remove-conditions-history-entry', entry })}
+                    scaleTag={scaleTag}
+                  />
+                )}
+              />
             );
           })}
         </div>

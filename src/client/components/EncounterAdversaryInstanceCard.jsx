@@ -62,6 +62,7 @@ export function EncounterAdversaryInstanceCard({
   extraConditionSuggestions,
   onAddConditionsHistoryEntry,
   onRemoveConditionsHistoryEntry,
+  scaleTag = null,
 }) {
   const [conditionsOpen, setConditionsOpen] = useState(false);
   const hpDamage = (displayEl.hp_max || 0) - (inst.currentHp ?? displayEl.hp_max ?? 0);
@@ -87,7 +88,7 @@ export function EncounterAdversaryInstanceCard({
 
   return (
     <div className="space-y-1 rounded group/inst">
-      {(showInstanceNum || showBp) && (
+      {(showInstanceNum || showBp || scaleTag) && (
         <div className="flex items-center gap-1.5 text-[10px] text-dh-muted">
           {showInstanceNum && instanceNum != null && (
             <span className="text-dh-muted font-medium">#{instanceNum}</span>
@@ -103,6 +104,7 @@ export function EncounterAdversaryInstanceCard({
               }
             </>
           )}
+          {scaleTag}
           {showInstanceRemove && (
             <button
               type="button"

@@ -9,7 +9,7 @@ function remapRef(id, lookup) {
 /**
  * Deep-clone a scene snapshot and assign fresh map / view / element ids for
  * placing that scene onto a live table. Cross-references (`mapId`, `viewId`,
- * `parentInstanceId`, countdown `sourceRef.elementInstanceId`) are rewritten
+ * `parentInstanceId`, `minionGroupId`, countdown `sourceRef.elementInstanceId`) are rewritten
  * through the same old→new lookups. `mapImageUrl` strings are copied as-is.
  *
  * Capture ("Create Scene") keeps original ids; remap only at add-time.
@@ -38,6 +38,12 @@ export function regenerateSceneIdsForTablePlacement(sceneData) {
   for (const el of cloned.activeElements) {
     if (el && el.instanceId != null) instanceIdMap.set(el.instanceId, generateId());
   }
+  const minionGroupIdMap = new Map();
+  for (const el of cloned.activeElements) {
+    if (el && el.minionGroupId != null && !minionGroupIdMap.has(el.minionGroupId)) {
+      minionGroupIdMap.set(el.minionGroupId, generateId());
+    }
+  }
 
   const maps = cloned.maps.map((m) => {
     if (!m || typeof m !== 'object') return m;
@@ -61,6 +67,9 @@ export function regenerateSceneIdsForTablePlacement(sceneData) {
     if ('viewId' in next) next.viewId = remapRef(next.viewId, viewIdMap);
     if (next.parentInstanceId != null) {
       next.parentInstanceId = remapRef(next.parentInstanceId, instanceIdMap);
+    }
+    if (next.minionGroupId != null) {
+      next.minionGroupId = remapRef(next.minionGroupId, minionGroupIdMap);
     }
     return next;
   });

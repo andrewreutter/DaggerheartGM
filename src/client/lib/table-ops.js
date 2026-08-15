@@ -171,6 +171,8 @@ export const UPDATE_BASE_DATA_RUNTIME_KEYS = [
   'v2PendingMove',
   'v2MoveLockRollDbId',
   'v2MoveLockSource',
+  'minPartySize',
+  'minionGroupId',
 ];
 
 /**

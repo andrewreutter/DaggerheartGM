@@ -289,11 +289,12 @@ export function buildSceneTableAdapterProps(setSceneData, opts = {}) {
  */
 export function buildSceneElementFromLibraryItem(item, collection) {
   if (collection === 'adversaries') {
+    const { minPartySize: _minPartySize, minionGroupId: _minionGroupId, ...advItem } = item || {};
     return {
-      ...item,
+      ...advItem,
       instanceId: generateId(),
       elementType: 'adversary',
-      currentHp: item.hp_max || 0,
+      currentHp: advItem.hp_max || 0,
       currentStress: 0,
       conditions: '',
     };

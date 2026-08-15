@@ -6,6 +6,14 @@
 import { isAdversaryDefeated } from './helpers.js';
 import { effectiveTokenMapId } from './map-table-state.js';
 import { getTokenFootprintFt } from './token-size.js';
+import {
+  characterCountFromElements,
+  isAdversaryPresentForParty,
+} from './party-scaled-adversaries.js';
+
+function isPlayFacingAdversary(el, characterCount) {
+  return el?.elementType === 'adversary' && isAdversaryPresentForParty(el, characterCount);
+}
 
 /**
  * Encounter panel order: all environments (activeElements order), then adversary
@@ -18,11 +26,12 @@ import { getTokenFootprintFt } from './token-size.js';
 export function encounterSourceOrder(activeElements) {
   const keys = [];
   const seenAdv = new Set();
+  const characterCount = characterCountFromElements(activeElements);
   for (const el of activeElements || []) {
     if (el.elementType === 'environment' && el.instanceId) keys.push(el.instanceId);
   }
   for (const el of activeElements || []) {
-    if (el.elementType === 'adversary' && el.id && !seenAdv.has(el.id)) {
+    if (isPlayFacingAdversary(el, characterCount) && el.id && !seenAdv.has(el.id)) {
       seenAdv.add(el.id);
       keys.push(el.id);
     }
@@ -38,8 +47,9 @@ export function encounterSourceOrder(activeElements) {
  */
 export function livingAdversaryCardKeys(activeElements) {
   const keys = new Set();
+  const characterCount = characterCountFromElements(activeElements);
   for (const el of activeElements || []) {
-    if (el.elementType === 'adversary' && el.id && !isAdversaryDefeated(el)) keys.add(el.id);
+    if (isPlayFacingAdversary(el, characterCount) && el.id && !isAdversaryDefeated(el)) keys.add(el.id);
   }
   return keys;
 }
@@ -103,8 +113,9 @@ export function tokenOverlapsViewportFt(el, viewportFt) {
 export function inCameraAdversaryCardKeys(activeElements, viewportFt) {
   const keys = new Set();
   if (!viewportFt) return keys;
+  const characterCount = characterCountFromElements(activeElements);
   for (const el of activeElements || []) {
-    if (el.elementType !== 'adversary' || !el.id) continue;
+    if (!isPlayFacingAdversary(el, characterCount) || !el.id) continue;
     if (isAdversaryDefeated(el)) continue;
     if (tokenOverlapsViewportFt(el, viewportFt)) keys.add(el.id);
   }

@@ -36,6 +36,7 @@
  */
 
 import { ROLE_BP_COST } from './constants.js';
+import { isAdversaryPresentForParty } from './party-scaled-adversaries.js';
 
 // ---------------------------------------------------------------------------
 // Adversary collection (flat activeElements — no nesting, no library lookup)
@@ -47,12 +48,14 @@ import { ROLE_BP_COST } from './constants.js';
  * (`count: 1`).
  *
  * @param {object} scene  - scene item data (`activeElements` array)
+ * @param {number|null} [characterCount] — when set, skip reserved `minPartySize` rows
  * @returns {{ role: string, tier: number, count: number, name: string }[]}
  */
-export function collectSceneAdversaries(scene) {
+export function collectSceneAdversaries(scene, characterCount = null) {
   const result = [];
   for (const el of scene?.activeElements || []) {
     if (!el || el.elementType !== 'adversary') continue;
+    if (characterCount != null && !isAdversaryPresentForParty(el, characterCount)) continue;
     result.push({
       role: el.role || 'standard',
       tier: el.tier ?? 1,
@@ -72,10 +75,11 @@ export function collectSceneAdversaries(scene) {
  * Returns null when no adversaries are present.
  *
  * @param {object} scene
+ * @param {number|null} [characterCount]
  * @returns {number|null}
  */
-export function computeSceneTier(scene) {
-  const adversaries = collectSceneAdversaries(scene);
+export function computeSceneTier(scene, characterCount = null) {
+  const adversaries = collectSceneAdversaries(scene, characterCount);
   if (adversaries.length === 0) return null;
   return Math.max(...adversaries.map(a => a.tier ?? 1));
 }
@@ -239,8 +243,8 @@ function sceneUserMods(scene) {
  * }}
  */
 export function computeSceneBudget(scene, partySize = 4, partyTier = null) {
-  const adversaries = collectSceneAdversaries(scene);
-  const tier = computeSceneTier(scene);
+  const adversaries = collectSceneAdversaries(scene, partySize);
+  const tier = computeSceneTier(scene, partySize);
   const bp = computeBattlePoints(adversaries, partySize);
   const budget = computeBudget(partySize);
   const autoMods = computeAutoModifiers(adversaries, partyTier);

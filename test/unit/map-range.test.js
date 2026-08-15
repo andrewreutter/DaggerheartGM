@@ -382,6 +382,20 @@ describe('getAdversariesWithinRangeFt', () => {
     expect(result).toEqual([]);
   });
 
+  it('excludes reserved minPartySize adversaries', () => {
+    const reserved = { instanceId: 'adv1', elementType: 'adversary', name: 'Reaper', tokenX: 0, tokenY: 0, minPartySize: 5 };
+    expect(getAdversariesWithinRangeFt([source, reserved], 'src', 30)).toEqual([]);
+    const chars = [
+      source,
+      { instanceId: 'c2', elementType: 'character', tokenX: 1, tokenY: 1 },
+      { instanceId: 'c3', elementType: 'character', tokenX: 2, tokenY: 2 },
+      { instanceId: 'c4', elementType: 'character', tokenX: 3, tokenY: 3 },
+      { instanceId: 'c5', elementType: 'character', tokenX: 4, tokenY: 4 },
+      reserved,
+    ];
+    expect(getAdversariesWithinRangeFt(chars, 'src', 30)).toEqual([{ instanceId: 'adv1', name: 'Reaper' }]);
+  });
+
   it('returns [] when maxFt is invalid (negative or non-number)', () => {
     const adv = { instanceId: 'adv1', elementType: 'adversary', name: 'Goblin', tokenX: 0, tokenY: 0 };
     expect(getAdversariesWithinRangeFt([source, adv], 'src', -1)).toEqual([]);

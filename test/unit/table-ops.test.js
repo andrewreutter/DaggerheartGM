@@ -9,6 +9,7 @@ import { describe, it, expect } from 'vitest';
 import {
   applyTableOp,
   RUNTIME_KEYS,
+  UPDATE_BASE_DATA_RUNTIME_KEYS,
   CHARACTER_RUNTIME_KEYS,
   TABLE_STATE_V2_ROOT_KEYS,
   applyV2ActiveModifierMutations,
@@ -526,6 +527,22 @@ describe('applyTableOp', () => {
     expect(updated.currentStress).toBe(1);
     expect(updated.conditions).toBe('poisoned');
     expect(updated.tier).toBe(3);
+  });
+
+  it('update-base-data preserves minPartySize and minionGroupId', () => {
+    const el = mkElement({
+      id: 'adv-1', instanceId: 'inst-1', elementType: 'adversary',
+      name: 'Rat', role: 'minion',
+      minPartySize: 5, minionGroupId: 'g-rats',
+    });
+    const result = applyTableOp({
+      op: 'update-base-data',
+      elementId: 'adv-1',
+      newBaseData: { id: 'adv-1', name: 'Giant Rat', role: 'minion' },
+    }, { activeElements: [el] });
+    expect(result.activeElements[0].minPartySize).toBe(5);
+    expect(result.activeElements[0].minionGroupId).toBe('g-rats');
+    expect(result.activeElements[0].name).toBe('Giant Rat');
   });
 
   it('update-base-data replaces stale empty stub name/tier with saved library data', () => {
@@ -1398,6 +1415,13 @@ describe('applyTableOp', () => {
 // ---------------------------------------------------------------------------
 // RUNTIME_KEYS sanity check
 // ---------------------------------------------------------------------------
+
+describe('UPDATE_BASE_DATA_RUNTIME_KEYS', () => {
+  it('includes party-scale adversary fields', () => {
+    expect(UPDATE_BASE_DATA_RUNTIME_KEYS).toContain('minPartySize');
+    expect(UPDATE_BASE_DATA_RUNTIME_KEYS).toContain('minionGroupId');
+  });
+});
 
 describe('RUNTIME_KEYS', () => {
   it('contains expected core keys', () => {

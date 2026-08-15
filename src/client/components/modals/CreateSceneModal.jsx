@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Camera, X } from 'lucide-react';
 import { generateId } from '../../lib/helpers.js';
 import { computeBattlePoints } from '../../lib/battle-points.js';
+import { formatPartyScaleNameSuffix } from '../../lib/party-scaled-adversaries.js';
 
 const CAPTURE_ELEMENT_TYPES = new Set(['adversary', 'environment', 'note']);
 const MAP_DRESSING_TYPES = new Set(['mapImage', 'drawShape']);
@@ -307,7 +308,7 @@ export function CreateSceneModal({
                   <CheckRow
                     checked={selectedElementIds.has(g.instances[0].instanceId)}
                     onChange={(on) => setSelectedElementIds((prev) => toggleSet(prev, g.instances[0].instanceId, on))}
-                    label={g.name}
+                    label={`${g.name}${formatPartyScaleNameSuffix(g.instances[0])}`}
                   />
                 ) : (
                   <>
@@ -318,7 +319,7 @@ export function CreateSceneModal({
                           key={el.instanceId}
                           checked={selectedElementIds.has(el.instanceId)}
                           onChange={(on) => setSelectedElementIds((prev) => toggleSet(prev, el.instanceId, on))}
-                          label={`${g.name} #${idx + 1}`}
+                          label={`${g.name} #${idx + 1}${formatPartyScaleNameSuffix(el)}`}
                         />
                       ))}
                     </div>

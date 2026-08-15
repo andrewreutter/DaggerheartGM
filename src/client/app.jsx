@@ -23,6 +23,11 @@ import { isOwnItem, DEFAULT_CHARACTER_STARTING_HOPE } from './lib/constants.js';
 import { shouldCloneOnAddToTable } from './lib/add-to-table-clone.js';
 import { shouldOfferReplaceOrAdd, buildSceneSnapshotTableOp } from './lib/scene-load-dialog.js';
 import { UPDATE_BASE_DATA_RUNTIME_KEYS, applyTableOp } from './lib/table-ops.js';
+import {
+  buildLibraryAdversaryElements,
+  characterCountFromElements,
+  planMinionGroupReconcile,
+} from './lib/party-scaled-adversaries.js';
 import { isTablePlayAllowed, isPrepModeElementUpdateBlocked } from './lib/table-session-gate.js';
 import { billingNavIndicatorCopy } from './lib/billing-status-copy.js';
 import { shouldPersistMapViewToTable } from './lib/map-view-sync.js';
@@ -1145,6 +1150,34 @@ function App() {
     }
   }, [pendingBanners, sessionCountdowns, activeElements, effectiveIsPlayer, route.view, route.tableId, user?.uid]);
 
+  const minionReconcileRef = useRef({ tableId: null, count: null });
+  useEffect(() => {
+    if (effectiveIsPlayer || route.view !== 'table' || !tableStateReady) return;
+    const tid = route.tableId;
+    if (!tid) return;
+    if (minionReconcileRef.current.tableId !== tid) {
+      minionReconcileRef.current = { tableId: tid, count: null };
+    }
+    const characterCount = characterCountFromElements(activeElements);
+    const prevCount = minionReconcileRef.current.count;
+    const justChanged = prevCount !== null && prevCount !== characterCount;
+    minionReconcileRef.current.count = characterCount;
+    if (characterCount < 1 && !justChanged) return;
+    const plan = planMinionGroupReconcile(activeElements, characterCount);
+    if (!plan.add.length && !plan.removeInstanceIds.length) return;
+    const removeSet = new Set(plan.removeInstanceIds);
+    setActiveElements((prev) => {
+      let next = prev;
+      if (plan.add.length) next = [...next, ...plan.add];
+      if (removeSet.size) next = next.filter((el) => !removeSet.has(el.instanceId));
+      return next;
+    });
+    if (plan.add.length) postTableOp({ op: 'add-elements', elements: plan.add }, tid);
+    for (const instanceId of plan.removeInstanceIds) {
+      postTableOp({ op: 'remove-element', instanceId }, tid);
+    }
+  }, [activeElements, effectiveIsPlayer, route.view, route.tableId, tableStateReady]);
+
   // Remember last library tab so we can return there when navigating back from Game Table
   useEffect(() => {
     if (route.view === 'library' && route.tab) {
@@ -1296,7 +1329,9 @@ function App() {
         }
       }
       if (collectionName === 'adversaries') {
-        newElements.push({ ...tableItem, instanceId: generateId(), elementType: 'adversary', currentHp: tableItem.hp_max || 0, currentStress: 0, conditions: '' });
+        newElements.push(...buildLibraryAdversaryElements(tableItem, {
+          characterCount: characterCountFromElements(activeElements),
+        }));
       } else {
         newElements.push({ ...tableItem, instanceId: generateId(), elementType: 'environment' });
       }
@@ -1499,6 +1534,12 @@ function App() {
 
   const sendClearTable = () => {
     postTableOp({ op: 'clear-table' }, tableId);
+  };
+
+  const sendAddElements = (elements) => {
+    if (!elements?.length) return;
+    setActiveElements((prev) => [...prev, ...elements]);
+    postTableOp({ op: 'add-elements', elements }, tableId);
   };
 
   const sendDoAddToTable = async (item, collectionName, targetTableId, opts) => {
@@ -2195,6 +2236,7 @@ function App() {
                   : (col, id, url, opts) => col === 'characters' ? saveImage(col, id, url, { ...opts, tableId }) : saveImage(col, id, url, opts)
                 }
                 addToTable={effectiveIsPlayer ? () => {} : sendAddToTable}
+                addElements={effectiveIsPlayer ? undefined : sendAddElements}
                 sendDoAddToTable={effectiveIsPlayer ? undefined : sendDoAddToTable}
                 onMergeAdversary={mergeAdversaryIntoData}
                 user={user}

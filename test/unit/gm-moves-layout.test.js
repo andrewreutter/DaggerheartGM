@@ -31,6 +31,16 @@ describe('encounterSourceOrder', () => {
     ];
     expect(encounterSourceOrder(elements)).toEqual(['cave', 'woods', 'goblin', 'ogre']);
   });
+
+  it('omits adversary types that are only reserved for the current party', () => {
+    const elements = [
+      env({ instanceId: 'cave', name: 'Cave' }),
+      adv({ id: 'reaper', instanceId: 'r1' }),
+      { ...adv({ id: 'wraith', instanceId: 'w1' }), minPartySize: 5 },
+    ];
+    expect(encounterSourceOrder(elements)).toEqual(['cave', 'reaper']);
+    expect([...livingAdversaryCardKeys(elements)]).toEqual(['reaper']);
+  });
 });
 
 describe('sortGmMovesBySourceOrder', () => {

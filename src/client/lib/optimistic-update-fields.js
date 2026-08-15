@@ -22,6 +22,8 @@ export const OPTIMISTIC_ELEMENT_UPDATE_FIELDS = new Set([
   'currentArmor',
   // Beastbound companion bag (stress / conditions live on the parent character)
   'companion',
+  // Party-scaled adversary present-at tag
+  'minPartySize',
 ]);
 
 /**

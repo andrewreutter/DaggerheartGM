@@ -36,6 +36,8 @@ See [Maintenance Instructions](#maintenance-instructions) at the bottom.
 
 **Status: Done.** All 129 SRD adversaries are browsable and searchable in the Library tab, filterable by tier/role/source. On the Game Table, adversary cards display all fields and their primary attacks and action-type features are clickable for dice rolls. HP/Stress tracks are interactive. Scaled-up display is supported for lower-tier adversaries.
 
+VTT party scaling (not an SRD mechanic): Encounter **+ / −** can tag instances **Always** or **N+ players** (`minPartySize`). Reserved rows stay in `activeElements`; live Encounter cards stay visible but faded, and tokens stay hidden until the character count reaches N. The Scene editor shows every instance at full opacity. The first minion add (picker or **+**) creates a group of `max(1, characterCount)` instances sharing `minionGroupId`; further **+** adds another group. Group size follows the party on the live table. The type-card title shows group count with a people icon. Legacy ungrouped minions are not auto-resized.
+
 No per-element tracking needed — all adversaries share the same rendering and automation pipeline.
 
 ---

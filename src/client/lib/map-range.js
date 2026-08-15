@@ -1,5 +1,9 @@
 import { effectiveTokenMapId } from './map-table-state.js';
 import { getTokenFootprintFt } from './token-size.js';
+import {
+  characterCountFromElements,
+  isAdversaryPresentForParty,
+} from './party-scaled-adversaries.js';
 
 export { getTokenFootprintFt };
 
@@ -298,9 +302,11 @@ export function getAdversariesWithinMeleeRange(activeElements, sourceInstanceId)
   const source = activeElements.find(e => e.instanceId === sourceInstanceId);
   if (!source || source.tokenX == null || source.tokenY == null) return [];
 
+  const characterCount = characterCountFromElements(activeElements);
   return activeElements
     .filter(e =>
       e.elementType === 'adversary' &&
+      isAdversaryPresentForParty(e, characterCount) &&
       sameTokenMapPlane(source, e) &&
       e.tokenX != null &&
       e.tokenY != null &&
@@ -323,9 +329,11 @@ export function getAdversariesWithinRangeFt(activeElements, sourceInstanceId, ma
   if (!source || source.tokenX == null || source.tokenY == null) return [];
   if (typeof maxFt !== 'number' || maxFt < 0) return [];
 
+  const characterCount = characterCountFromElements(activeElements);
   return activeElements
     .filter(e =>
       e.elementType === 'adversary' &&
+      isAdversaryPresentForParty(e, characterCount) &&
       sameTokenMapPlane(source, e) &&
       e.tokenX != null &&
       e.tokenY != null &&
