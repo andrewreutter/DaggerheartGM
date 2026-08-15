@@ -1,6 +1,8 @@
 /** Match battle map size bounds in BattleMap.jsx / ai-image-prompts */
 export const MAP_SIZE_FT_MIN = 1;
 export const MAP_SIZE_FT_MAX = 3000;
+/** Default edge length (feet) for new / unset battle maps. */
+export const DEFAULT_MAP_SIZE_FT = 250;
 
 /**
  * Footprint of the battle map: one edge length (`mapSizeFt`) is user-edited; the other follows
@@ -9,9 +11,12 @@ export const MAP_SIZE_FT_MAX = 3000;
  * @returns {{ mapWidthFt: number, mapHeightFt: number }}
  */
 export function getMapDimensionsFt(mapConfig) {
-  const { mapSizeFt = 100, mapDimension = 'width', mapImageNaturalWidth, mapImageNaturalHeight } =
+  const { mapSizeFt = DEFAULT_MAP_SIZE_FT, mapDimension = 'width', mapImageNaturalWidth, mapImageNaturalHeight } =
     mapConfig ?? {};
-  const sizeFt = Math.max(MAP_SIZE_FT_MIN, Math.min(MAP_SIZE_FT_MAX, Number(mapSizeFt) || 100));
+  const sizeFt = Math.max(
+    MAP_SIZE_FT_MIN,
+    Math.min(MAP_SIZE_FT_MAX, Number(mapSizeFt) || DEFAULT_MAP_SIZE_FT)
+  );
   if (mapImageNaturalWidth > 0 && mapImageNaturalHeight > 0) {
     const aspect = mapImageNaturalWidth / mapImageNaturalHeight;
     return mapDimension === 'width'

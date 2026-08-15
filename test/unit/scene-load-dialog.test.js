@@ -2,7 +2,6 @@ import { describe, it, expect } from 'vitest';
 import {
   shouldOfferReplaceOrAdd,
   sceneHasActiveBattleMods,
-  sceneBattleMods,
   buildSceneSnapshotTableOp,
 } from '../../src/client/lib/scene-load-dialog.js';
 

@@ -83,7 +83,7 @@ import {
   trayProxyShouldSnapBullseye,
   bullseyeFtForPlacedTokenHover,
 } from '../lib/tray-proxy-hover.js';
-import { getMapDimensionsFt as getMapDimensions, MAP_SIZE_FT_MIN, MAP_SIZE_FT_MAX } from '../lib/map-dimensions-ft.js';
+import { getMapDimensionsFt as getMapDimensions, MAP_SIZE_FT_MIN, MAP_SIZE_FT_MAX, DEFAULT_MAP_SIZE_FT } from '../lib/map-dimensions-ft.js';
 import { getPlayerTotMEmptyMapHint } from '../lib/battle-map-totm-hint.js';
 import { isAdversaryDefeated } from '../lib/helpers.js';
 import { EncounterAdversaryMarkedSummary } from './EncounterAdversaryMarkedSummary.jsx';
@@ -346,7 +346,7 @@ function copyMapViewState(viewState) {
  */
 function computeThumbViewRender(mapRow, viewState, viewportW, viewportH) {
   const mc = {
-    mapSizeFt: mapRow?.mapSizeFt ?? 100,
+    mapSizeFt: mapRow?.mapSizeFt ?? DEFAULT_MAP_SIZE_FT,
     mapDimension: mapRow?.mapDimension ?? 'width',
     mapImageNaturalWidth: mapRow?.mapImageNaturalWidth,
     mapImageNaturalHeight: mapRow?.mapImageNaturalHeight,
@@ -396,7 +396,7 @@ function getThumbViewportTokenProxies(mapRow, viewState, activeElements, stripMa
   const vw = THUMB_STRIP_W_PX;
   const vh = THUMB_STRIP_H_PX;
   const mc = {
-    mapSizeFt: mapRow?.mapSizeFt ?? 100,
+    mapSizeFt: mapRow?.mapSizeFt ?? DEFAULT_MAP_SIZE_FT,
     mapDimension: mapRow?.mapDimension ?? 'width',
     mapImageNaturalWidth: mapRow?.mapImageNaturalWidth,
     mapImageNaturalHeight: mapRow?.mapImageNaturalHeight,
@@ -844,7 +844,7 @@ function MapConfigToolbar({
 }) {
   const {
     mapDimension = 'width',
-    mapSizeFt = 100,
+    mapSizeFt = DEFAULT_MAP_SIZE_FT,
     mapImageUrl,
     mapImageNaturalWidth,
     mapImageNaturalHeight,
@@ -886,7 +886,7 @@ function MapConfigToolbar({
   };
 
   const commitSize = () => {
-    const v = Math.max(MAP_SIZE_FT_MIN, Math.min(MAP_SIZE_FT_MAX, parseInt(sizeInput, 10) || 100));
+    const v = Math.max(MAP_SIZE_FT_MIN, Math.min(MAP_SIZE_FT_MAX, parseInt(sizeInput, 10) || DEFAULT_MAP_SIZE_FT));
     setSizeInput(String(v));
     if (v !== mapSizeFt) {
       const { mapWidthFt: oldW } = getMapDimensions(mapConfig);

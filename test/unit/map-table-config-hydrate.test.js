@@ -3,7 +3,7 @@ import { describe, it, expect } from 'vitest';
 const DEFAULT_MAP_CONFIG = {
   mapImageUrl: null,
   mapDimension: 'width',
-  mapSizeFt: 100,
+  mapSizeFt: 250,
   mapImageNaturalWidth: null,
   mapImageNaturalHeight: null,
   mapAiImagePrompt: null,

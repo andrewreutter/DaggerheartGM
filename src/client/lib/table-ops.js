@@ -16,6 +16,7 @@ import {
   newViewId,
   normalizeMapState,
 } from './map-table-state.js';
+import { DEFAULT_MAP_SIZE_FT } from './map-dimensions-ft.js';
 import { playerCanAccessMapViewSelection } from './map-view-player-sync.js';
 
 /** Keep legacy `gmMapView` + `activeMapId` aligned with `gmActiveViewId` for snapshots. */
@@ -778,7 +779,7 @@ export function applyTableOp(op, state) {
         name,
         mapImageUrl: op.mapImageUrl ?? null,
         mapDimension: op.mapDimension ?? 'width',
-        mapSizeFt: op.mapSizeFt ?? 100,
+        mapSizeFt: op.mapSizeFt ?? DEFAULT_MAP_SIZE_FT,
         mapImageNaturalWidth: op.mapImageNaturalWidth ?? null,
         mapImageNaturalHeight: op.mapImageNaturalHeight ?? null,
         mapAiImagePrompt: op.mapAiImagePrompt ?? null,

@@ -8,6 +8,7 @@
 import { computeBudget, computeBattlePoints, computeSceneBudget } from './client/lib/battle-points.js';
 import { ROLE_BP_COST } from './game-constants.js';
 import { slugifySrdListName } from './srd/srd-list-ids.js';
+import { DEFAULT_MAP_SIZE_FT } from './client/lib/map-dimensions-ft.js';
 
 /** Party size used when filling the encounter budget (3×4+2 = 14 BP). */
 export const STARTER_SCENE_PARTY_SIZE = 4;
@@ -273,7 +274,7 @@ export function buildSrdStarterScene(env, opts = {}) {
         name,
         mapImageUrl,
         mapDimension: 'width',
-        mapSizeFt: 100,
+        mapSizeFt: DEFAULT_MAP_SIZE_FT,
         mapImageNaturalWidth: SCENE_PLACEHOLDER_SVG_WIDTH,
         mapImageNaturalHeight: SCENE_PLACEHOLDER_SVG_HEIGHT,
         mapAiImagePrompt: null,

@@ -283,7 +283,7 @@ describe('buildSrdStarterScene', () => {
     expect(scene._source).toBe('srd');
     expect(scene.maps[0].id).toBe(STARTER_SCENE_MAP_ID);
     expect(scene.maps[0].mapImageUrl).toBe(buildOpts().mapImageUrl);
-    expect(scene.maps[0].mapSizeFt).toBe(100);
+    expect(scene.maps[0].mapSizeFt).toBe(250);
     expect(scene.maps[0].mapDimension).toBe('width');
     expect(scene.maps[0].shareWithPlayers).toBe(true);
     expect(scene.mapViews[0].id).toBe(STARTER_SCENE_VIEW_ID);

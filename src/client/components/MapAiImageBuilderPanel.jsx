@@ -4,13 +4,14 @@ import { generateImage, editImage, postMapImageFile } from '../lib/api.js';
 import { buildBattleMapDefaultPrompt } from '../lib/ai-image-prompts.js';
 import { imageSrcToDataUrlForApi, loadImageNaturalSizeFromUrl } from '../lib/map-image-data-url.js';
 import { AiImageWorkbench } from './AiImageWorkbench.jsx';
+import { DEFAULT_MAP_SIZE_FT } from '../lib/map-dimensions-ft.js';
 
 /**
  * Shared generate/edit/upload flow for battle map AI images.
  * Used by MapAiImageDialog (modal) and BattleMap Theatre of the Mind inline panel.
  */
 export function MapAiImageBuilderPanel({
-  mapSizeFt = 100,
+  mapSizeFt = DEFAULT_MAP_SIZE_FT,
   mapDimension = 'width',
   mapImageNaturalWidth,
   mapImageNaturalHeight,

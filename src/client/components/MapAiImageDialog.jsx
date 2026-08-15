@@ -2,6 +2,7 @@ import { useState, useCallback } from 'react';
 import { Sparkles } from 'lucide-react';
 import { FullPageOverlay, FullPageOverlayHeader } from './FullPageOverlay.jsx';
 import { MapAiImageBuilderPanel } from './MapAiImageBuilderPanel.jsx';
+import { DEFAULT_MAP_SIZE_FT } from '../lib/map-dimensions-ft.js';
 
 /**
  * Modal: generate/edit a battle map with x.ai Grok Imagine, upload the result via POST /api/room/my/map-image, then apply with set-map.
@@ -9,7 +10,7 @@ import { MapAiImageBuilderPanel } from './MapAiImageBuilderPanel.jsx';
 export function MapAiImageDialog({
   open,
   onClose,
-  mapSizeFt = 100,
+  mapSizeFt = DEFAULT_MAP_SIZE_FT,
   mapDimension = 'width',
   mapImageNaturalWidth,
   mapImageNaturalHeight,

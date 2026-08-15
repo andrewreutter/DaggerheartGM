@@ -3,6 +3,8 @@
  * Normalized rows: `maps`, `mapViews`, `gmActiveViewId`; `activeMapId` is derived from the active view.
  */
 
+import { DEFAULT_MAP_SIZE_FT } from './map-dimensions-ft.js';
+
 export const DEFAULT_LEGACY_MAP_ID = 'm-default';
 
 /**
@@ -32,7 +34,7 @@ function defaultMapRow(mc, id, name) {
     name: name || 'Map 1',
     mapImageUrl: mc.mapImageUrl ?? null,
     mapDimension: mc.mapDimension ?? 'width',
-    mapSizeFt: mc.mapSizeFt ?? 100,
+    mapSizeFt: mc.mapSizeFt ?? DEFAULT_MAP_SIZE_FT,
     mapImageNaturalWidth: mc.mapImageNaturalWidth ?? null,
     mapImageNaturalHeight: mc.mapImageNaturalHeight ?? null,
     /** Last AI text-to-image prompt saved with the current map art (for Generate with AI dialog). */
@@ -188,7 +190,7 @@ export function deriveMapConfigFromState(state) {
       return {
         mapImageUrl: null,
         mapDimension: 'width',
-        mapSizeFt: 100,
+        mapSizeFt: DEFAULT_MAP_SIZE_FT,
         mapImageNaturalWidth: null,
         mapImageNaturalHeight: null,
         mapAiImagePrompt: null,
@@ -200,7 +202,7 @@ export function deriveMapConfigFromState(state) {
     return {
       mapImageUrl: map.mapImageUrl ?? null,
       mapDimension: map.mapDimension ?? 'width',
-      mapSizeFt: map.mapSizeFt ?? 100,
+      mapSizeFt: map.mapSizeFt ?? DEFAULT_MAP_SIZE_FT,
       mapImageNaturalWidth: map.mapImageNaturalWidth ?? null,
       mapImageNaturalHeight: map.mapImageNaturalHeight ?? null,
       mapAiImagePrompt: map.mapAiImagePrompt ?? null,
@@ -215,7 +217,7 @@ export function deriveMapConfigFromState(state) {
       return {
         mapImageUrl: null,
         mapDimension: 'width',
-        mapSizeFt: 100,
+        mapSizeFt: DEFAULT_MAP_SIZE_FT,
         mapImageNaturalWidth: null,
         mapImageNaturalHeight: null,
         mapAiImagePrompt: null,
@@ -227,7 +229,7 @@ export function deriveMapConfigFromState(state) {
     return {
       mapImageUrl: map.mapImageUrl ?? null,
       mapDimension: map.mapDimension ?? 'width',
-      mapSizeFt: map.mapSizeFt ?? 100,
+      mapSizeFt: map.mapSizeFt ?? DEFAULT_MAP_SIZE_FT,
       mapImageNaturalWidth: map.mapImageNaturalWidth ?? null,
       mapImageNaturalHeight: map.mapImageNaturalHeight ?? null,
       mapAiImagePrompt: map.mapAiImagePrompt ?? null,
@@ -249,7 +251,7 @@ export function deriveMapConfigForMapId(state, mapId) {
   return {
     mapImageUrl: map.mapImageUrl ?? null,
     mapDimension: map.mapDimension ?? 'width',
-    mapSizeFt: map.mapSizeFt ?? 100,
+    mapSizeFt: map.mapSizeFt ?? DEFAULT_MAP_SIZE_FT,
     mapImageNaturalWidth: map.mapImageNaturalWidth ?? null,
     mapImageNaturalHeight: map.mapImageNaturalHeight ?? null,
     mapAiImagePrompt: map.mapAiImagePrompt ?? null,
@@ -273,7 +275,7 @@ export function deriveMapConfigForViewId(state, viewId) {
   return {
     mapImageUrl: map.mapImageUrl ?? null,
     mapDimension: map.mapDimension ?? 'width',
-    mapSizeFt: map.mapSizeFt ?? 100,
+    mapSizeFt: map.mapSizeFt ?? DEFAULT_MAP_SIZE_FT,
     mapImageNaturalWidth: map.mapImageNaturalWidth ?? null,
     mapImageNaturalHeight: map.mapImageNaturalHeight ?? null,
     mapAiImagePrompt: map.mapAiImagePrompt ?? null,

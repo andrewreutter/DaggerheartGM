@@ -27,6 +27,7 @@ import { isTablePlayAllowed, isPrepModeElementUpdateBlocked } from './lib/table-
 import { billingNavIndicatorCopy } from './lib/billing-status-copy.js';
 import { shouldPersistMapViewToTable } from './lib/map-view-sync.js';
 import { DEFAULT_LEGACY_MAP_ID, deriveMapConfigForViewId, deriveMapConfigForMapId } from './lib/map-table-state.js';
+import { DEFAULT_MAP_SIZE_FT } from './lib/map-dimensions-ft.js';
 import { playerCanAccessMapViewSelection } from './lib/map-view-player-sync.js';
 import { reconcileElementsById } from './lib/reconcile-active-elements.js';
 import { reconcileMapsById, reconcileMapViewsById, reconcileMapConfig } from './lib/reconcile-map-state.js';
@@ -139,7 +140,7 @@ function App() {
   const DEFAULT_MAP_CONFIG = {
     mapImageUrl: null,
     mapDimension: 'width',
-    mapSizeFt: 100,
+    mapSizeFt: DEFAULT_MAP_SIZE_FT,
     mapImageNaturalWidth: null,
     mapImageNaturalHeight: null,
     mapAiImagePrompt: null,
