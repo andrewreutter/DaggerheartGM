@@ -183,17 +183,24 @@ export function isMinionRole(el) {
 /**
  * First picker / library add: Always-present. Minions become one group of
  * {@link minionGroupSize}; other roles are a single instance.
+ * `copies` repeats that unit (N instances, or N minion groups).
  * @param {object} item
- * @param {{ characterCount?: number }} [opts]
+ * @param {{ characterCount?: number, copies?: number }} [opts]
  * @returns {object[]}
  */
-export function buildLibraryAdversaryElements(item, { characterCount } = {}) {
-  if (isMinionRole(item)) {
-    return buildMinionGroupElements(stripPartyScaleFields(item), {
-      count: minionGroupSize(characterCount),
-    });
+export function buildLibraryAdversaryElements(item, { characterCount, copies = 1 } = {}) {
+  const n = Math.max(1, Math.floor(Number(copies) || 1));
+  const out = [];
+  for (let i = 0; i < n; i += 1) {
+    if (isMinionRole(item)) {
+      out.push(...buildMinionGroupElements(stripPartyScaleFields(item), {
+        count: minionGroupSize(characterCount),
+      }));
+    } else {
+      out.push(buildAlwaysPresentClone(item));
+    }
   }
-  return [buildAlwaysPresentClone(item)];
+  return out;
 }
 
 function isUnplaced(el) {

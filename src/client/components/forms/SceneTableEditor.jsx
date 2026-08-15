@@ -104,16 +104,20 @@ export function SceneTableEditor({
     applyOp({ op: 'set-battle-mods', tableBattleMods: next });
   };
 
-  const addLibraryItem = (item, collection) => {
-    if (collection === 'adversaries') {
-      applyOp({
-        op: 'add-elements',
-        elements: buildLibraryAdversaryElements(item, { characterCount: partySize }),
-      });
-      return;
+  const addLibraryPicks = (picks, collection) => {
+    const elements = [];
+    for (const { item, count } of picks || []) {
+      if (collection === 'adversaries') {
+        elements.push(...buildLibraryAdversaryElements(item, {
+          characterCount: partySize,
+          copies: count,
+        }));
+      } else {
+        const el = buildSceneElementFromLibraryItem(item, collection);
+        if (el) elements.push(el);
+      }
     }
-    const el = buildSceneElementFromLibraryItem(item, collection);
-    applyOp({ op: 'add-elements', elements: [el] });
+    if (elements.length) applyOp({ op: 'add-elements', elements });
   };
 
   const addEmptyNote = () => {
@@ -387,9 +391,12 @@ export function SceneTableEditor({
         <ItemPickerModal
           collection={pickerCollection}
           showDaggerstackImport={false}
+          selectionMode="multi"
+          partySize={partySize}
+          partyTier={partyTier}
           onClose={() => setPickerCollection(null)}
-          onSelect={(item) => {
-            addLibraryItem(item, pickerCollection);
+          onSelectMany={(picks) => {
+            addLibraryPicks(picks, pickerCollection);
             setPickerCollection(null);
           }}
         />

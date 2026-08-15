@@ -11,6 +11,7 @@ import { coerceLibraryAttack } from '../../lib/library-attack-display.js';
 import { libraryTierBodyLine, showLibraryLevelBadge } from '../../lib/library-tier-subtitle.js';
 import { expandDomainCardEntries } from '../../lib/library-domain-cards.js';
 import { TierShieldBadge } from '../TierShieldBadge.jsx';
+import { collectSceneLibraryCardGroups, formatSceneLibraryRowTitle } from '../../lib/scene-library-card-contents.js';
 
 const GENERIC_DETAIL_SET = new Set(LIBRARY_GENERIC_DETAIL_COLLECTIONS);
 
@@ -587,31 +588,23 @@ function GenericLibraryRecordBody({ item, collection, srdData }) {
   );
 }
 
-function countSceneElementsByType(item, elementType) {
-  const elements = Array.isArray(item?.activeElements) ? item.activeElements : [];
-  return elements.filter(el => el?.elementType === elementType).length;
-}
+const SCENE_LIBRARY_GROUP_ICONS = {
+  maps: Map,
+  environments: Trees,
+  adversaries: Swords,
+  notes: StickyNote,
+};
 
 /**
- * Lightweight scene summary: first-map thumbnail, denormalized tier/BP, and element counts.
+ * Lightweight scene summary: first-map thumbnail, denormalized tier/BP, and item titles.
  * @param {{ item: object, compact?: boolean, fill?: boolean }} props
  *   `fill` — library grid card: map grows into available height and keeps aspect via object-contain.
  */
 export function SceneLibraryCard({ item, compact = false, fill = false }) {
   const mapImageUrl = item?.maps?.[0]?.mapImageUrl;
-  const mapCount = Array.isArray(item?.maps) ? item.maps.length : 0;
-  const envCount = countSceneElementsByType(item, 'environment');
-  const advCount = countSceneElementsByType(item, 'adversary');
-  const noteCount = countSceneElementsByType(item, 'note');
+  const groups = collectSceneLibraryCardGroups(item);
   const showTier = item?.tier != null && item.tier !== '';
   const showBp = item?.bp != null && item.bp !== '';
-
-  const counts = [
-    { Icon: Map, label: 'Maps', count: mapCount },
-    { Icon: Trees, label: 'Environments', count: envCount },
-    { Icon: Swords, label: 'Adversaries', count: advCount },
-    { Icon: StickyNote, label: 'Notes', count: noteCount },
-  ];
 
   const mapBoxClass = fill
     ? 'flex-1 min-h-0 flex items-center justify-center overflow-hidden rounded border border-dh-border/80 bg-dh-canvas/40'
@@ -652,15 +645,45 @@ export function SceneLibraryCard({ item, compact = false, fill = false }) {
           ) : null}
         </div>
       )}
-      <div className={`flex flex-wrap gap-x-3 gap-y-1 text-xs text-dh-muted ${fill ? 'shrink-0' : ''}`}>
-        {counts.map(({ Icon, label, count }) => (
-          <span key={label} className="inline-flex items-center gap-1" title={label}>
-            <Icon size={12} className="shrink-0" aria-hidden />
-            <span className="tabular-nums font-medium text-dh">{count}</span>
-            <span>{label}</span>
-          </span>
-        ))}
-      </div>
+      {groups.length > 0 ? (
+        <div className={`flex flex-col ${compact || fill ? 'gap-1.5' : 'gap-2.5'} ${fill ? 'shrink-0' : ''}`}>
+          {groups.map(({ key, label, entries }) => {
+            const Icon = SCENE_LIBRARY_GROUP_ICONS[key];
+            const titleCls = compact || fill
+              ? 'text-[10px] font-semibold text-dh-muted uppercase tracking-wide flex items-center gap-1 pb-0.5 border-b border-dh-border'
+              : `${LIB_SECTION_HEADER_BORDER} flex items-center gap-1`;
+            return (
+              <section key={key} className="min-w-0">
+                <h4 className={titleCls}>
+                  {Icon ? <Icon size={compact || fill ? 10 : 12} className="shrink-0" aria-hidden /> : null}
+                  {label}
+                </h4>
+                <ul>
+                  {entries.map(({ name, count, tier, kind }) => (
+                    <li
+                      key={name}
+                      className={`w-full flex items-center justify-between gap-2 border-b border-dh-border/50 last:border-b-0 ${
+                        compact || fill ? 'px-1 py-1' : 'px-1.5 py-1.5'
+                      }`}
+                    >
+                      <span className={`font-medium truncate text-white ${compact || fill ? 'text-xs' : 'text-sm'}`}>
+                        {formatSceneLibraryRowTitle(name, count)}
+                      </span>
+                      {(tier != null || kind) ? (
+                        <span className={`text-dh-muted shrink-0 flex items-center gap-1.5 ${compact || fill ? 'text-[10px]' : 'text-xs'}`}>
+                          {tier != null ? <span>Tier {tier}</span> : null}
+                          {tier != null && kind ? <span>·</span> : null}
+                          {kind ? <span className="capitalize">{kind}</span> : null}
+                        </span>
+                      ) : null}
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            );
+          })}
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -2,9 +2,9 @@ import { useState } from 'react';
 import { sceneHasActiveBattleMods } from '../lib/scene-load-dialog.js';
 
 /**
- * SceneAdoptDialog — shown after the GM picks a scene in Load Scene / Add to Table.
- * One decision UI: Add vs Replace, plus optional Apply Scene Factors when the
- * scene has active budget mods (avoids stacking two modals).
+ * SceneAdoptDialog — shown after the GM picks one or more scenes in Load Scene / Add to Table.
+ * One decision UI: Add vs Replace, plus optional Apply Scene Factors when a
+ * selected scene has active budget mods (avoids stacking two modals).
  */
 
 const MOD_LABELS = {
@@ -33,10 +33,14 @@ function ActiveModList({ mods, emptyLabel }) {
   );
 }
 
-export function SceneAdoptDialog({ scene, tableHref, currentTableMods, onConfirm, onCancel }) {
-  const hasSceneMods = sceneHasActiveBattleMods(scene);
+export function SceneAdoptDialog({ scene, scenes, tableHref, currentTableMods, onConfirm, onCancel }) {
+  const list = Array.isArray(scenes) && scenes.length ? scenes : (scene ? [scene] : []);
+  const sceneCount = list.length;
+  const factorScene = list.find((s) => sceneHasActiveBattleMods(s)) || scene || list[0];
+  const hasSceneMods = sceneHasActiveBattleMods(factorScene);
   const tableHasActive = currentTableMods && Object.keys(MOD_LABELS).some(k => currentTableMods[k]);
   const [applyFactors, setApplyFactors] = useState(hasSceneMods);
+  const multi = sceneCount > 1;
 
   const confirm = (mode) => {
     onConfirm?.({ mode, applySceneBattleMods: hasSceneMods && applyFactors });
@@ -46,11 +50,17 @@ export function SceneAdoptDialog({ scene, tableHref, currentTableMods, onConfirm
     <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/70">
       <div className="bg-dh-raised border border-dh-strong rounded-xl shadow-2xl w-full max-w-md mx-4 p-6 space-y-5">
         <div>
-          <h2 className="text-lg font-bold text-white mb-1">Load scene</h2>
+          <h2 className="text-lg font-bold text-white mb-1">{multi ? `Load ${sceneCount} scenes` : 'Load scene'}</h2>
           <p className="text-dh-muted text-sm">
-            How should{' '}
-            <span className="text-amber-300 font-medium">{scene?.name || 'this scene'}</span>
-            {' '}join the table?
+            {multi ? (
+              <>How should these <span className="text-amber-300 font-medium">{sceneCount} scenes</span> join the table?</>
+            ) : (
+              <>
+                How should{' '}
+                <span className="text-amber-300 font-medium">{scene?.name || 'this scene'}</span>
+                {' '}join the table?
+              </>
+            )}
           </p>
         </div>
 
@@ -58,7 +68,7 @@ export function SceneAdoptDialog({ scene, tableHref, currentTableMods, onConfirm
           <div className="space-y-3">
             <div>
               <p className="text-xs font-semibold text-dh-muted uppercase tracking-wide mb-1.5">Scene factors</p>
-              <ActiveModList mods={scene?.battleMods || scene?.tableBattleMods} emptyLabel="None" />
+              <ActiveModList mods={factorScene?.battleMods || factorScene?.tableBattleMods} emptyLabel="None" />
             </div>
 
             {tableHasActive && (
@@ -90,7 +100,9 @@ export function SceneAdoptDialog({ scene, tableHref, currentTableMods, onConfirm
             Add to table
           </button>
           <p className="text-xs text-dh-muted -mt-1 px-0.5">
-            Append this scene onto existing maps, adversaries, environments, notes, and countdowns.
+            {multi
+              ? 'Append these scenes onto existing maps, adversaries, environments, notes, and countdowns.'
+              : 'Append this scene onto existing maps, adversaries, environments, notes, and countdowns.'}
           </p>
           <button
             type="button"
@@ -101,7 +113,9 @@ export function SceneAdoptDialog({ scene, tableHref, currentTableMods, onConfirm
             Replace table content
           </button>
           <p className="text-xs text-dh-muted -mt-1 px-0.5">
-            Remove current maps, adversaries, environments, notes, and countdowns, then load this scene. Characters stay on the table.
+            {multi
+              ? 'Remove current maps, adversaries, environments, notes, and countdowns, then load these scenes. Characters stay on the table.'
+              : 'Remove current maps, adversaries, environments, notes, and countdowns, then load this scene. Characters stay on the table.'}
           </p>
           <button
             type="button"

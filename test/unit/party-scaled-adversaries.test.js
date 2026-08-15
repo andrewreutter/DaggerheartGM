@@ -194,6 +194,16 @@ describe('partition / hints / header plans', () => {
     expect(buildLibraryAdversaryElements(adv({ role: 'solo' }), { characterCount: 4 })).toHaveLength(1);
   });
 
+  it('copies repeats Always instances or minion groups', () => {
+    const solos = buildLibraryAdversaryElements(adv({ role: 'solo' }), { copies: 3 });
+    expect(solos).toHaveLength(3);
+    expect(new Set(solos.map((e) => e.instanceId)).size).toBe(3);
+
+    const minions = buildLibraryAdversaryElements(adv({ role: 'minion' }), { characterCount: 4, copies: 2 });
+    expect(minions).toHaveLength(8);
+    expect(new Set(minions.map((e) => e.minionGroupId)).size).toBe(2);
+  });
+
   it('header − removes last instance or the last minion group', () => {
     expect(planTypeHeaderRemove([adv({ instanceId: 'a' }), adv({ instanceId: 'b' })], { isMinion: false }))
       .toEqual(['b']);

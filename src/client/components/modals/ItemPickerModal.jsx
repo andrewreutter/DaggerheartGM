@@ -1,5 +1,5 @@
 import { useMemo, useEffect, useRef, useState, useCallback } from 'react';
-import { X, AlertTriangle, UserPlus, ChevronDown, ChevronRight, Swords, Trees } from 'lucide-react';
+import { X, AlertTriangle, UserPlus, ChevronDown, ChevronRight, Swords, Trees, Minus, Plus } from 'lucide-react';
 import { CollectionFilters } from '../CollectionFilters.jsx';
 import { useCollectionSearch } from '../../lib/useCollectionSearch.js';
 import { DaggerstackImport } from '../DaggerstackImport.jsx';
@@ -9,10 +9,20 @@ import { shouldShowConceptAiUi } from '../../lib/ai-ui-visibility.js';
 import { AiDismissBuildWithAiLink } from '../AiDismissBuildWithAiLink.jsx';
 import { generateId } from '../../lib/helpers.js';
 import { isCharacterComplete } from '../../lib/character-calc.js';
-import { TIERS, ENV_TYPES } from '../../lib/constants.js';
+import { TIERS, ENV_TYPES, SOURCE_BADGE } from '../../lib/constants.js';
 import { CustomSelect } from '../forms/CustomSelect.jsx';
 import { RoleSelect } from '../forms/RoleSelect.jsx';
 import { handleAiConceptTextareaKeyDown } from '../../lib/ai-concept-textarea.js';
+import { LibraryItemDisplayContent } from '../library/LibraryItemDisplayContent.jsx';
+import { TierShieldBadge } from '../TierShieldBadge.jsx';
+import { showLibraryTierShield } from '../../lib/library-tier-subtitle.js';
+import {
+  togglePickerSelection,
+  setPickerSelectionCount,
+  PICKER_COUNT_MIN,
+  PICKER_COUNT_MAX,
+} from '../../lib/item-picker-selection.js';
+import { libraryPickerRowMeta } from '../../lib/scene-library-card-contents.js';
 
 export const ITEM_PICKER_SINGULAR = {
   adversaries: 'Adversary',
@@ -20,6 +30,14 @@ export const ITEM_PICKER_SINGULAR = {
   scenes: 'Scene',
   adventures: 'Adventure',
   characters: 'Character',
+};
+
+export const ITEM_PICKER_PLURAL = {
+  adversaries: 'Adversaries',
+  environments: 'Environments',
+  scenes: 'Scenes',
+  adventures: 'Adventures',
+  characters: 'Characters',
 };
 
 const ENV_TYPE_LABEL = {
@@ -41,7 +59,10 @@ const ENV_TYPE_LABEL = {
  *   title         — optional override for the modal header (default: "Add <Singular>")
  *   initialSearch — pre-fill the search input on open (useful for "Link placeholder" flow)
  *   onClose       — called when the modal is dismissed
- *   onSelect      — called with the selected item; modal closes itself after
+ *   onSelect      — called with the selected item; modal closes itself after (immediate mode)
+ *   selectionMode — 'immediate' (default, click adds) | 'multi' (select then Add)
+ *   onSelectMany  — multi mode: called with [{ item, count }] then modal closes
+ *   partySize / partyTier — optional; forwarded to the hover card preview
  *   onCreateNew   — optional; creates a new library entry and adds to table (Game Table)
  *   onCharacterAiConceptSubmit — optional (characters); opens editor + runs AI with concept
  *   onAdversaryAiConceptSubmit — optional (adversaries); (concept, tier, role)
@@ -55,6 +76,10 @@ export function ItemPickerModal({
   initialSearch,
   onClose,
   onSelect,
+  selectionMode = 'immediate',
+  onSelectMany,
+  partySize = 4,
+  partyTier = 1,
   onCreateNew,
   onCharacterAiConceptSubmit,
   onAdversaryAiConceptSubmit,
@@ -68,7 +93,11 @@ export function ItemPickerModal({
   const isPaginated = collection === 'adversaries' || collection === 'environments' || collection === 'scenes';
   const showNonPaginatedLoading = !isPaginated && isLoading;
   const singular = ITEM_PICKER_SINGULAR[collection] || collection;
+  const plural = ITEM_PICKER_PLURAL[collection] || collection;
   const actionLabel = title || `Add ${singular}`;
+  const isMulti = selectionMode === 'multi';
+  const [selected, setSelected] = useState([]);
+  const [hoveredItem, setHoveredItem] = useState(null);
 
   const [pickerSubMode, setPickerSubMode] = useState('browse');
   const [charAiConcept, setCharAiConcept] = useState('');
@@ -84,6 +113,8 @@ export function ItemPickerModal({
     setCharAiConcept('');
     setAdvAiConcept('');
     setEnvAiConcept('');
+    setSelected([]);
+    setHoveredItem(null);
   }, [collection]);
 
   // Add Adversary / Add Environment dialogs default to Mine + SRD (not just Mine).
@@ -118,6 +149,25 @@ export function ItemPickerModal({
     const filtered = lowerSearch ? list.filter(item => item.name?.toLowerCase().includes(lowerSearch)) : list;
     return excludeSet.size ? filtered.filter(item => !excludeSet.has(item.id)) : filtered;
   }, [isPaginated, search.items, search.filters.search, data, collection, excludeSet]);
+
+  const selectedById = useMemo(() => {
+    const map = new Map();
+    for (const row of selected) map.set(row.item?.id, row);
+    return map;
+  }, [selected]);
+
+  const addCount = useMemo(() => {
+    if (collection === 'adversaries') {
+      return selected.reduce((sum, row) => sum + (row.count || 1), 0);
+    }
+    return selected.length;
+  }, [collection, selected]);
+
+  const commitSelection = useCallback(() => {
+    if (!selected.length) return;
+    onSelectMany?.(selected.map((row) => ({ item: row.item, count: row.count || 1 })));
+    onClose();
+  }, [selected, onSelectMany, onClose]);
 
   useEffect(() => {
     const handleKey = (e) => {
@@ -173,7 +223,9 @@ export function ItemPickerModal({
   return (
     <div className="fixed inset-0 z-[60] bg-black/70 flex items-start justify-center pt-24 p-4" onClick={onClose}>
       <div
-        className="bg-dh-surface border border-dh-border rounded-xl shadow-2xl w-full max-w-lg flex flex-col max-h-[75vh]"
+        className={`bg-dh-surface border border-dh-border rounded-xl shadow-2xl w-full flex flex-col ${
+          isMulti ? 'max-w-5xl max-h-[80vh]' : 'max-w-lg max-h-[75vh]'
+        }`}
         onClick={e => e.stopPropagation()}
       >
         {/* Header */}
@@ -474,8 +526,9 @@ export function ItemPickerModal({
           </div>
         )}
 
-        {/* Results */}
+        {/* Results + optional hover preview */}
         {showBrowse && (
+        <div className={`flex-1 min-h-0 flex ${isMulti ? 'border-t border-dh-border' : ''}`}>
         <div ref={resultsRef} className="flex-1 overflow-y-auto min-h-0">
           {(search.loading || showNonPaginatedLoading) && !search.isLoadingMore && (
             <div className="text-center text-dh-muted text-sm py-10">Loading…</div>
@@ -486,16 +539,36 @@ export function ItemPickerModal({
           {clientItems.map(item => {
             const charCheck = collection === 'characters' ? isCharacterComplete(item) : null;
             const incomplete = charCheck && !charCheck.complete;
+            const rowMeta = libraryPickerRowMeta(item);
+            const picked = selectedById.get(item.id);
+            const isPicked = Boolean(picked);
+            const toggleOrAdd = () => {
+              if (isMulti) {
+                setSelected((prev) => togglePickerSelection(prev, item));
+                return;
+              }
+              onSelect(item);
+              onClose();
+            };
+            const RowTag = isMulti ? 'div' : 'button';
             return (
-              <button
-                type="button"
+              <RowTag
+                type={isMulti ? undefined : 'button'}
+                role={isMulti ? 'button' : undefined}
                 tabIndex={0}
                 key={item.id}
-                onClick={() => {
-                  onSelect(item);
-                  onClose();
-                }}
-                className={`w-full text-left px-5 py-3 border-b border-dh-border/50 transition-colors flex items-baseline justify-between gap-4 hover:bg-dh-hover`}
+                aria-pressed={isMulti ? isPicked : undefined}
+                onMouseEnter={() => { if (isMulti) setHoveredItem(item); }}
+                onClick={toggleOrAdd}
+                onKeyDown={isMulti ? (e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    toggleOrAdd();
+                  }
+                } : undefined}
+                className={`w-full text-left px-5 py-3 border-b border-dh-border/50 transition-colors flex items-center justify-between gap-4 cursor-pointer ${
+                  isPicked ? 'bg-amber-950/40 hover:bg-amber-950/55' : 'hover:bg-dh-hover'
+                }`}
                 title={incomplete ? `Incomplete — missing: ${charCheck.missing.join(', ')}` : undefined}
               >
                 <span className="font-medium text-sm truncate text-white">{item.name}</span>
@@ -506,13 +579,13 @@ export function ItemPickerModal({
                       <span className="text-[10px]">Incomplete</span>
                     </span>
                   )}
-                  {item.tier != null && <span>Tier {item.tier}</span>}
-                  {item.tier != null && (item.role || item.type || item.class) && <span>·</span>}
-                  {(item.role || item.type) && <span className="capitalize">{item.role || item.type}</span>}
+                  {rowMeta.tier != null && <span>Tier {rowMeta.tier}</span>}
+                  {rowMeta.tier != null && (rowMeta.kind || item.class) && <span>·</span>}
+                  {rowMeta.kind && <span className="capitalize">{rowMeta.kind}</span>}
                   {collection === 'characters' && item.class && <span>{item.class}</span>}
                   {collection === 'characters' && item.level != null && <span>Lvl {item.level}</span>}
                 </span>
-              </button>
+              </RowTag>
             );
           })}
           {search.isLoadingMore && (
@@ -528,6 +601,122 @@ export function ItemPickerModal({
           {search.hasMore && !search.isLoadingMore && <div style={{ height: 200 }} />}
           <div ref={sentinelRef} className="h-1" />
         </div>
+        {isMulti && (
+          <div className="w-1/2 shrink-0 border-l border-dh-border overflow-y-auto min-h-0 bg-dh-canvas/40">
+            {hoveredItem ? (
+              <div className="p-4">
+                <div className="flex items-center gap-1.5 mb-3">
+                  {showLibraryTierShield(collection, hoveredItem) ? (
+                    <TierShieldBadge
+                      tier={hoveredItem.tier}
+                      scaledFromTier={hoveredItem._scaledFromTier}
+                      className="shrink-0"
+                    />
+                  ) : null}
+                  <h3 className="min-w-0 flex-1 truncate font-bold text-sm text-white">{hoveredItem.name}</h3>
+                  {SOURCE_BADGE[hoveredItem._source] ?? SOURCE_BADGE.own ? (
+                    <span className={`shrink-0 text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded ${(SOURCE_BADGE[hoveredItem._source] ?? SOURCE_BADGE.own).className}`}>
+                      {(SOURCE_BADGE[hoveredItem._source] ?? SOURCE_BADGE.own).label}
+                    </span>
+                  ) : null}
+                </div>
+                <LibraryItemDisplayContent
+                  item={hoveredItem}
+                  collection={collection}
+                  data={data}
+                  partySize={partySize}
+                  partyTier={partyTier}
+                  layout="libraryCard"
+                  cardKey={`picker-preview-${hoveredItem.id}`}
+                />
+              </div>
+            ) : (
+              <div className="h-full flex items-center justify-center px-6 text-center text-sm text-dh-muted">
+                Hover a result or chip to preview
+              </div>
+            )}
+          </div>
+        )}
+        </div>
+        )}
+
+        {isMulti && showBrowse && (
+          <div className="shrink-0 border-t border-dh-border px-5 py-3 flex items-center gap-3 min-w-0">
+            <div className="flex-1 min-w-0 overflow-x-auto">
+              <div className="flex items-center gap-1.5 w-max min-h-[2rem]">
+                {selected.map((row) => {
+                  const name = row.item?.name || 'Untitled';
+                  return (
+                    <span
+                      key={row.item?.id}
+                      onMouseEnter={() => { if (row.item) setHoveredItem(row.item); }}
+                      className="shrink-0 inline-flex items-center gap-1 rounded-full border border-amber-700/50 bg-amber-950/50 pl-2.5 pr-1 py-0.5 text-xs text-amber-100"
+                    >
+                      <button
+                        type="button"
+                        tabIndex={0}
+                        onClick={() => setSelected((prev) => togglePickerSelection(prev, row.item))}
+                        className="inline-flex items-center gap-1 hover:text-white max-w-[12rem]"
+                        aria-label={`Remove ${name}`}
+                      >
+                        <span className="truncate">{name}</span>
+                        <X size={12} className="shrink-0 opacity-70" />
+                      </button>
+                      {collection === 'adversaries' && (
+                        <span
+                          className="inline-flex items-center gap-0.5 pl-0.5"
+                          onClick={(e) => e.stopPropagation()}
+                          onPointerDown={(e) => e.stopPropagation()}
+                          onKeyDown={(e) => e.stopPropagation()}
+                        >
+                          <button
+                            type="button"
+                            tabIndex={0}
+                            disabled={row.count <= PICKER_COUNT_MIN}
+                            onClick={() => setSelected((prev) => setPickerSelectionCount(prev, row.item.id, row.count - 1))}
+                            className="w-5 h-5 rounded-full border border-amber-800/60 text-amber-100 hover:bg-amber-900/70 disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center"
+                            aria-label={`Decrease ${name} count`}
+                          >
+                            <Minus size={10} />
+                          </button>
+                          <input
+                            type="number"
+                            min={PICKER_COUNT_MIN}
+                            max={PICKER_COUNT_MAX}
+                            value={row.count}
+                            aria-label={`${name} count`}
+                            onChange={(e) => setSelected((prev) => setPickerSelectionCount(prev, row.item.id, e.target.value))}
+                            className="w-8 h-5 bg-transparent border-0 text-center text-[11px] text-amber-50 tabular-nums outline-none"
+                          />
+                          <button
+                            type="button"
+                            tabIndex={0}
+                            disabled={row.count >= PICKER_COUNT_MAX}
+                            onClick={() => setSelected((prev) => setPickerSelectionCount(prev, row.item.id, row.count + 1))}
+                            className="w-5 h-5 rounded-full border border-amber-800/60 text-amber-100 hover:bg-amber-900/70 disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center"
+                            aria-label={`Increase ${name} count`}
+                          >
+                            <Plus size={10} />
+                          </button>
+                        </span>
+                      )}
+                    </span>
+                  );
+                })}
+              </div>
+            </div>
+            <button
+              type="button"
+              tabIndex={0}
+              disabled={addCount < 1}
+              onClick={commitSelection}
+              className="shrink-0 px-4 py-2 rounded-md text-sm font-semibold bg-amber-700 hover:bg-amber-600 text-white disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              {addCount < 1
+                ? `Add ${plural}`
+                : `Add ${addCount} ${addCount === 1 ? singular : plural}`}
+            </button>
+          </div>
         )}
       </div>
     </div>

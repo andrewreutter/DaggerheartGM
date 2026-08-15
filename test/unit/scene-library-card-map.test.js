@@ -16,6 +16,12 @@ describe('scene library card map preview', () => {
     expect(src).not.toMatch(/object-cover/);
     expect(src).toMatch(/fill\s*=\s*false/);
     expect(src).toMatch(/flex-1 min-h-0 flex items-center justify-center/);
+    expect(src).toMatch(/<section key=\{key\}/);
+    expect(src).toMatch(/LIB_SECTION_HEADER_BORDER/);
+    expect(src).toMatch(/entries\.map\(\(\{ name, count, tier, kind \}\)/);
+    expect(src).toMatch(/formatSceneLibraryRowTitle\(name, count\)/);
+    expect(src).toMatch(/Tier \{tier\}/);
+    expect(src).not.toMatch(/titles\.join\(', '/);
   });
 
   it('ItemCard uses unzoomed fill preview for scenes with a map image', () => {

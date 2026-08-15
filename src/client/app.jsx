@@ -21,7 +21,7 @@ import { computeSessionCountdownUpdatesFromRoll } from './lib/session-countdowns
 import { resetOnboardingState } from './lib/onboarding-storage.js';
 import { isOwnItem, DEFAULT_CHARACTER_STARTING_HOPE } from './lib/constants.js';
 import { shouldCloneOnAddToTable } from './lib/add-to-table-clone.js';
-import { shouldOfferReplaceOrAdd, buildSceneSnapshotTableOp } from './lib/scene-load-dialog.js';
+import { shouldOfferReplaceOrAdd, buildSceneSnapshotTableOp, sceneHasActiveBattleMods } from './lib/scene-load-dialog.js';
 import { UPDATE_BASE_DATA_RUNTIME_KEYS, applyTableOp } from './lib/table-ops.js';
 import {
   buildLibraryAdversaryElements,
@@ -173,7 +173,7 @@ function App() {
   const [tableFeatureState, setTableFeatureState] = useState({});
   /** `table_state.top` — when absent (legacy), session is treated as active */
   const [tableTop, setTableTop] = useState(null);
-  const [pendingSceneAdd, setPendingSceneAdd] = useState(null); // { scene }
+  const [pendingSceneAdd, setPendingSceneAdd] = useState(null); // { scene, moreScenes?, targetTableId }
   // tableStateReady: true after we've applied table state for the current table (avoids opening name editor before load)
   const [tableStateReady, setTableStateReady] = useState(false);
   const tableStateReadyRef = useRef(false);
@@ -1331,6 +1331,7 @@ function App() {
       if (collectionName === 'adversaries') {
         newElements.push(...buildLibraryAdversaryElements(tableItem, {
           characterCount: characterCountFromElements(activeElements),
+          copies: opts.copies,
         }));
       } else {
         newElements.push({ ...tableItem, instanceId: generateId(), elementType: 'environment' });
@@ -1349,7 +1350,7 @@ function App() {
         applySceneBattleMods: opts.applySceneBattleMods,
         scene: item,
       });
-      postTableOp(snapshotOp, target);
+      await postTableOp(snapshotOp, target);
       return [];
     } else if (collectionName === 'notes') {
       const id = item.id || generateId();
@@ -1549,12 +1550,16 @@ function App() {
     return newElements;
   };
 
-  const sendAddToTable = (item, collectionName, targetTableId) => {
+  const sendAddToTable = (item, collectionName, targetTableId, opts) => {
     if (shouldOfferReplaceOrAdd(collectionName)) {
-      setPendingSceneAdd({ scene: item, targetTableId: resolveTargetTableId(targetTableId) });
+      setPendingSceneAdd({
+        scene: item,
+        moreScenes: Array.isArray(opts?.moreScenes) ? opts.moreScenes : [],
+        targetTableId: resolveTargetTableId(targetTableId),
+      });
       return;
     }
-    return sendDoAddToTable(item, collectionName, targetTableId);
+    return sendDoAddToTable(item, collectionName, targetTableId, opts);
   };
 
   const sendUpdateActiveElementsBaseData = (predicate, newBaseData) => {
@@ -2404,14 +2409,22 @@ function App() {
       {pendingSceneAdd && (
         <SceneAdoptDialog
           scene={{ ...pendingSceneAdd.scene, battleMods: pendingSceneAdd.scene.tableBattleMods || pendingSceneAdd.scene.battleMods }}
+          scenes={[pendingSceneAdd.scene, ...(pendingSceneAdd.moreScenes || [])]}
           tableHref={pendingSceneAdd.targetTableId ? `/table/${encodeURIComponent(pendingSceneAdd.targetTableId)}` : undefined}
           currentTableMods={tableBattleMods}
           onConfirm={({ mode, applySceneBattleMods }) => {
-            sendDoAddToTable(pendingSceneAdd.scene, 'scenes', pendingSceneAdd.targetTableId, {
-              replaceScene: mode === 'replace',
-              applySceneBattleMods,
-            });
+            const batch = [pendingSceneAdd.scene, ...(pendingSceneAdd.moreScenes || [])];
+            const factorIdx = batch.findIndex((s) => sceneHasActiveBattleMods(s));
+            const applyAt = factorIdx >= 0 ? factorIdx : 0;
             setPendingSceneAdd(null);
+            void (async () => {
+              for (let i = 0; i < batch.length; i += 1) {
+                await sendDoAddToTable(batch[i], 'scenes', pendingSceneAdd.targetTableId, {
+                  replaceScene: mode === 'replace' && i === 0,
+                  applySceneBattleMods: applySceneBattleMods && i === applyAt,
+                });
+              }
+            })();
           }}
           onCancel={() => setPendingSceneAdd(null)}
         />

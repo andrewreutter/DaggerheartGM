@@ -7777,6 +7777,13 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
         data={data}
         showDaggerstackImport={false}
         onClose={() => setModalOpen(null)}
+        selectionMode={
+          modalOpen === 'scenes' || modalOpen === 'environments' || modalOpen === 'adversaries'
+            ? 'multi'
+            : 'immediate'
+        }
+        partySize={partySize}
+        partyTier={partyTier}
         onSelect={(item) => {
           void (async () => {
             if (modalOpen === 'characters' && isPlayer && onPlayerAddCharacter) {
@@ -7799,6 +7806,29 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
             }
           })();
           setModalOpen(null);
+        }}
+        onSelectMany={(picks) => {
+          const col = modalOpen;
+          setModalOpen(null);
+          void (async () => {
+            if (col === 'scenes') {
+              const [first, ...rest] = picks;
+              if (!first) return;
+              await addToTable(first.item, 'scenes', undefined, {
+                moreScenes: rest.map((p) => p.item),
+              });
+              return;
+            }
+            if (col === 'adversaries') {
+              for (const { item, count } of picks) {
+                await addToTable(item, 'adversaries', undefined, { copies: count });
+              }
+              return;
+            }
+            for (const { item } of picks) {
+              await addToTable(item, col);
+            }
+          })();
         }}
         onCreateNew={modalOpen === 'characters' ? () => {
           setModalOpen(null);
