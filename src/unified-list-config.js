@@ -18,6 +18,7 @@ export function unifiedListConfig(collection) {
     domains: { tierExprSql: `1` },
     items: { tierExprSql: `1` },
     subclasses: { tierExprSql: `1` },
+    scenes: { tierExprSql: `COALESCE((data->>'tier')::int, 1)` },
   };
   return { ...d, ...map[collection] };
 }

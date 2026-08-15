@@ -248,6 +248,111 @@ describe('applyTableOp', () => {
     expect(kept).not.toHaveProperty('tableBattleMods');
   });
 
+  it('replace-scene-snapshot clears scene content and keeps characters, boardTokens, fear, and session meta', () => {
+    const state = {
+      maps: [{ id: 'm-old', name: 'Keep' }],
+      mapViews: [{ id: 'v-old', mapId: 'm-old' }],
+      activeElements: [
+        mkElement({ instanceId: 'adv-old', name: 'Old Goblin' }),
+        mkElement({ instanceId: 'env-old', elementType: 'environment', name: 'Old Grove' }),
+        mkElement({ instanceId: 'note-old', elementType: 'note', name: 'Old note' }),
+        mkElement({ instanceId: 'img-old', elementType: 'mapImage', name: 'Old art' }),
+        mkElement({ instanceId: 'draw-old', elementType: 'drawShape', name: 'Old scribble' }),
+        mkElement({
+          instanceId: 'char-1',
+          elementType: 'character',
+          name: 'Hero',
+          tokenX: 10,
+          tokenY: 20,
+          mapId: 'm-old',
+          altitude: 15,
+        }),
+        {
+          instanceId: 'bt-1',
+          elementType: 'boardToken',
+          parentInstanceId: 'char-1',
+          tokenKind: 'companion',
+          label: 'Wolf',
+          tokenX: 12,
+          tokenY: 22,
+          mapId: 'm-old',
+        },
+        {
+          instanceId: 'bt-orphan',
+          elementType: 'boardToken',
+          parentInstanceId: 'missing',
+          tokenKind: 'companion',
+        },
+      ],
+      sessionCountdowns: [{ id: 'cd-old', label: 'Old' }],
+      tableBattleMods: { lessDifficult: true },
+      fearCount: 4,
+      playerEmails: ['gm@example.com'],
+      top: { sessionStarted: true },
+      featureState: { partyDice: [6] },
+    };
+    const result = applyTableOp({
+      op: 'replace-scene-snapshot',
+      maps: [{ id: 'm-new', name: 'Grove' }],
+      mapViews: [{ id: 'v-new', mapId: 'm-new' }],
+      elements: [mkElement({ instanceId: 'adv-new', name: 'Bear' })],
+      sessionCountdowns: [{ id: 'cd-new', label: 'Collapse', current: 3 }],
+    }, state);
+
+    expect(result.maps.map((m) => m.id)).toEqual(['m-new']);
+    expect(result.mapViews.map((v) => v.id)).toEqual(['v-new']);
+    expect(result.activeElements.map((e) => e.instanceId)).toEqual(['char-1', 'bt-1', 'adv-new']);
+    expect(result.activeElements.find((e) => e.instanceId === 'char-1')).toMatchObject({
+      elementType: 'character',
+      tokenX: null,
+      tokenY: null,
+      mapId: null,
+      altitude: 0,
+    });
+    expect(result.activeElements.find((e) => e.instanceId === 'bt-1')).toMatchObject({
+      elementType: 'boardToken',
+      tokenX: null,
+      tokenY: null,
+      mapId: null,
+    });
+    expect(result.activeElements.find((e) => e.instanceId === 'adv-new').name).toBe('Bear');
+    expect(result.sessionCountdowns).toEqual([{ id: 'cd-new', label: 'Collapse', current: 3 }]);
+    expect(result.activeMapId).toBe('m-new');
+    expect(result.gmActiveViewId).toBe('v-new');
+    expect(result).not.toHaveProperty('fearCount');
+    expect(result).not.toHaveProperty('playerEmails');
+    expect(result).not.toHaveProperty('top');
+    expect(result).not.toHaveProperty('featureState');
+    expect(result).not.toHaveProperty('tableBattleMods');
+  });
+
+  it('replace-scene-snapshot clears sessionCountdowns when omitted and applies tableBattleMods when present', () => {
+    const state = {
+      maps: [{ id: 'm-old' }],
+      mapViews: [],
+      activeElements: [mkElement()],
+      sessionCountdowns: [{ id: 'keep-me' }],
+      tableBattleMods: { lessDifficult: true },
+    };
+    const cleared = applyTableOp({
+      op: 'replace-scene-snapshot',
+      maps: [{ id: 'm-new' }],
+      mapViews: [],
+      elements: [],
+    }, state);
+    expect(cleared.sessionCountdowns).toEqual([]);
+    expect(cleared).not.toHaveProperty('tableBattleMods');
+
+    const withMods = applyTableOp({
+      op: 'replace-scene-snapshot',
+      maps: [{ id: 'm-new' }],
+      mapViews: [],
+      elements: [],
+      tableBattleMods: { moreDangerous: true },
+    }, state);
+    expect(withMods.tableBattleMods).toEqual({ moreDangerous: true });
+  });
+
   it('set-player-emails sets playerEmails', () => {
     const result = applyTableOp({ op: 'set-player-emails', playerEmails: ['a@b.com'] }, {});
     expect(result.playerEmails).toEqual(['a@b.com']);

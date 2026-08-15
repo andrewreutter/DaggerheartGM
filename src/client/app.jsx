@@ -20,6 +20,8 @@ import { regenerateSceneIdsForTablePlacement } from './lib/scene-id-remap.js';
 import { computeSessionCountdownUpdatesFromRoll } from './lib/session-countdowns.js';
 import { resetOnboardingState } from './lib/onboarding-storage.js';
 import { isOwnItem, DEFAULT_CHARACTER_STARTING_HOPE } from './lib/constants.js';
+import { shouldCloneOnAddToTable } from './lib/add-to-table-clone.js';
+import { shouldOfferReplaceOrAdd, buildSceneSnapshotTableOp } from './lib/scene-load-dialog.js';
 import { UPDATE_BASE_DATA_RUNTIME_KEYS, applyTableOp } from './lib/table-ops.js';
 import { isTablePlayAllowed, isPrepModeElementUpdateBlocked } from './lib/table-session-gate.js';
 import { billingNavIndicatorCopy } from './lib/billing-status-copy.js';
@@ -1272,7 +1274,7 @@ function App() {
       if (isOwnItem(item)) {
         // Own item: just record the play
         recordPlay(collectionName, item.id).catch(err => console.warn('recordPlay failed:', err));
-      } else {
+      } else if (shouldCloneOnAddToTable(collectionName, item)) {
         // Non-own item: auto-clone into library (find-or-create) and record play
         try {
           tableItem = await cloneItemToLibrary(collectionName, item, { play: true });
@@ -1298,30 +1300,19 @@ function App() {
         newElements.push({ ...tableItem, instanceId: generateId(), elementType: 'environment' });
       }
     } else if (collectionName === 'scenes') {
-      let tableItem = item;
+      // Scenes are value-semantic snapshots — place onto the table without
+      // cloning into the user's library (own or SRD/public).
       if (isOwnItem(item)) {
         recordPlay('scenes', item.id).catch(err => console.warn('recordPlay failed:', err));
-      } else {
-        try {
-          tableItem = await cloneItemToLibrary('scenes', item, { play: true });
-        } catch (err) {
-          console.warn('Auto-clone failed, using original:', err);
-          tableItem = item;
-        }
       }
-      const remapped = regenerateSceneIdsForTablePlacement(tableItem);
+      const remapped = regenerateSceneIdsForTablePlacement(item);
       const target = resolveTargetTableId(explicitTargetTableId);
-      const snapshotOp = {
-        op: 'add-scene-snapshot',
-        maps: remapped.maps,
-        mapViews: remapped.mapViews,
-        elements: remapped.elements,
-        sessionCountdowns: remapped.sessionCountdowns,
-      };
-      if (opts.applySceneBattleMods) {
-        const mods = tableItem.tableBattleMods || tableItem.battleMods;
-        if (mods) snapshotOp.tableBattleMods = { ...mods };
-      }
+      const snapshotOp = buildSceneSnapshotTableOp({
+        mode: opts.replaceScene ? 'replace' : 'add',
+        remapped,
+        applySceneBattleMods: opts.applySceneBattleMods,
+        scene: item,
+      });
       postTableOp(snapshotOp, target);
       return [];
     } else if (collectionName === 'notes') {
@@ -1517,13 +1508,9 @@ function App() {
   };
 
   const sendAddToTable = (item, collectionName, targetTableId) => {
-    if (collectionName === 'scenes') {
-      const mods = item?.tableBattleMods || item?.battleMods;
-      const hasActiveMods = mods && (mods.lessDifficult || mods.slightlyMoreDangerous || mods.damageBoostPlusOne || mods.damageBoostD4 || mods.damageBoostStatic || mods.moreDangerous);
-      if (hasActiveMods) {
-        setPendingSceneAdd({ scene: item, targetTableId: resolveTargetTableId(targetTableId) });
-        return;
-      }
+    if (shouldOfferReplaceOrAdd(collectionName)) {
+      setPendingSceneAdd({ scene: item, targetTableId: resolveTargetTableId(targetTableId) });
+      return;
     }
     return sendDoAddToTable(item, collectionName, targetTableId);
   };
@@ -2376,12 +2363,11 @@ function App() {
           scene={{ ...pendingSceneAdd.scene, battleMods: pendingSceneAdd.scene.tableBattleMods || pendingSceneAdd.scene.battleMods }}
           tableHref={pendingSceneAdd.targetTableId ? `/table/${encodeURIComponent(pendingSceneAdd.targetTableId)}` : undefined}
           currentTableMods={tableBattleMods}
-          onApply={() => {
-            sendDoAddToTable(pendingSceneAdd.scene, 'scenes', pendingSceneAdd.targetTableId, { applySceneBattleMods: true });
-            setPendingSceneAdd(null);
-          }}
-          onKeep={() => {
-            sendDoAddToTable(pendingSceneAdd.scene, 'scenes', pendingSceneAdd.targetTableId);
+          onConfirm={({ mode, applySceneBattleMods }) => {
+            sendDoAddToTable(pendingSceneAdd.scene, 'scenes', pendingSceneAdd.targetTableId, {
+              replaceScene: mode === 'replace',
+              applySceneBattleMods,
+            });
             setPendingSceneAdd(null);
           }}
           onCancel={() => setPendingSceneAdd(null)}

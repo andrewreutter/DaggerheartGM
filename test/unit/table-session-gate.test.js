@@ -127,6 +127,18 @@ describe('table-session-gate', () => {
     expect(g.ok).toBe(true);
   });
 
+  it('allows replace-scene-snapshot during prep and idle pause', () => {
+    const g = gateTableOpForPrepMode(prepState, {
+      op: 'replace-scene-snapshot',
+      maps: [{ id: 'm1' }],
+      mapViews: [],
+      elements: [{ instanceId: 'e1', elementType: 'adversary' }],
+    });
+    expect(g.ok).toBe(true);
+    const paused = { top: { sessionStarted: true, sessionPaused: true } };
+    expect(gateTableOpForPrepMode(paused, { op: 'replace-scene-snapshot', maps: [], mapViews: [], elements: [] }).ok).toBe(true);
+  });
+
   it('bypassPrepGate allows a single blocked update without changing session state in the gate', () => {
     const g = gateTableOpForPrepMode(prepState, {
       op: 'update-element',

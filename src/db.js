@@ -951,13 +951,17 @@ async function fetchFeaturesLibraryAllBranch(opts, countOnly) {
 }
 
 /**
- * Own + public `scenes` rows for Library "All" (no SRD/HoD cache — scenes are DB-only).
+ * Own + public `scenes` rows for Library "All", plus `external_item_cache` when
+ * `includeSrd` / `includeHod` is on (SRD starter scenes are cache-backed, not in the parser).
+ * Scenes are not in `SRD_COLLECTION_NAMES`, so this is the only Library All scenes branch.
  * @param {boolean} countOnly - pass through to getUnifiedItems (no row fetch when true)
  */
 async function fetchScenesLibraryAllBranch(appId, userId, opts, countOnly) {
   const {
     includeMine = true,
     includePublic = false,
+    includeSrd = false,
+    includeHod = false,
     search = '',
     tiers = [],
     levels = [],
@@ -981,6 +985,8 @@ async function fetchScenesLibraryAllBranch(appId, userId, opts, countOnly) {
   const result = await getUnifiedItems(appId, userId, 'scenes', {
     includeMine,
     includePublic,
+    includeSrd,
+    includeHod,
     search,
     tierMax,
     tierMaxExclusive,

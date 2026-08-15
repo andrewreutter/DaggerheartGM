@@ -111,6 +111,7 @@ export function gateTableOpForPrepMode(state, op) {
     case 'remove-element':
     /** Library scene → table: same as add-map + add-elements; prep/pause-safe setup. */
     case 'add-scene-snapshot':
+    case 'replace-scene-snapshot':
     /** Sync saved library row onto a table element (adversary/environment base data). Prep-safe — not play mechanics. */
     case 'update-base-data':
     case 'set-map':

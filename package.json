@@ -12,6 +12,7 @@
     "crawl:hod": "node --env-file=.env scripts/crawl.js hod",
     "refresh:daggerstack": "node scripts/refresh-daggerstack-uuids.js",
     "generate:beastforms": "node scripts/generate-beastform-srd-data.mjs",
+    "generate:srd-scenes": "node --env-file=.env scripts/generate-srd-starter-scenes.mjs",
     "generate:feature-source-paths": "node scripts/gen-feature-source-paths.mjs",
     "gen:feature-catalog": "node scripts/gen-v2-feature-catalog.mjs",
     "predev": "node --env-file=.env scripts/kill-port.mjs",

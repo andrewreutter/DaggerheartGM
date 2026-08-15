@@ -314,6 +314,48 @@ export function applyTableOp(op, state) {
       }
       return out;
     }
+    // Load Scene → Replace: drop scene dressing (maps, mapViews, adversaries,
+    // environments, notes, mapImage, drawShape, sessionCountdowns), keep
+    // characters + attached companion boardTokens (returned to tray), then
+    // append the remapped snapshot. Fear, player emails, session top, and
+    // other table meta are unchanged (not in the returned patch).
+    case 'replace-scene-snapshot': {
+      const chars = activeElements.filter((el) => el.elementType === 'character');
+      const charIds = new Set(chars.map((c) => c.instanceId));
+      const boardKept = activeElements.filter(
+        (el) => el.elementType === 'boardToken' && charIds.has(el.parentInstanceId),
+      );
+      const unplace = (el) => {
+        if (el.tokenX == null && el.tokenY == null && el.mapId == null && (el.altitude == null || el.altitude === 0)) {
+          return el;
+        }
+        return { ...el, tokenX: null, tokenY: null, mapId: null, altitude: 0 };
+      };
+      const maps = [...(op.maps || [])];
+      const mapViews = [...(op.mapViews || [])];
+      const firstMapId = maps[0]?.id ?? null;
+      const firstViewId = (firstMapId && mapViews.find((v) => v.mapId === firstMapId)?.id)
+        || mapViews[0]?.id
+        || null;
+      const out = {
+        maps,
+        mapViews,
+        activeElements: [...chars.map(unplace), ...boardKept.map(unplace), ...(op.elements || [])],
+        sessionCountdowns: Array.isArray(op.sessionCountdowns) ? [...op.sessionCountdowns] : [],
+        activeMapId: firstMapId,
+        gmActiveViewId: firstViewId,
+      };
+      if (maps.length) {
+        const nextState = { ...state, ...out };
+        syncGmMapViewFromActiveView(nextState);
+        out.gmMapView = nextState.gmMapView;
+        out.mapConfig = deriveMapConfigFromState(nextState);
+      }
+      if ('tableBattleMods' in op) {
+        out.tableBattleMods = op.tableBattleMods;
+      }
+      return out;
+    }
     case 'set-player-emails':
       return { playerEmails: op.playerEmails };
     case 'add-player-email': {

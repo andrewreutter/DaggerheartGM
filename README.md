@@ -39,6 +39,7 @@ DaggerheartGM/
 │   ├── refresh-daggerstack-uuids.js # Regenerates daggerstack-uuid-map.json (npm run refresh:daggerstack)
 │   ├── migrate-map-images-to-storage.mjs # One-time: move inline data: map images out of table_state rows into Supabase Storage (npm run migrate:map-images -- --apply)
 │   ├── migrate-item-images-to-storage.mjs # One-time: move inline data: item images (characters/adversaries/environments/scenes/adventures) into Supabase Storage (npm run migrate:item-images -- --apply)
+│   ├── generate-srd-starter-scenes.mjs # Manual seed: one SRD starter scene per environment (except Ambushed/Ambushers) into external_item_cache (npm run generate:srd-scenes)
 │   ├── orchestrate.js          # Parallel overnight Cloud Agents orchestrator (npm run agents)
 │   ├── dev-agent-queue-worker.mjs # GitHub Issues + Cursor CLI worker (spawned from npm run dev when enabled)
 │   ├── setup-dev-agent-labels.mjs # One-time GitHub label creation (npm run setup:dev-agent-labels)
@@ -140,6 +141,7 @@ DaggerheartGM/
 │   ├── stripe.js               # Stripe client (optional; gated on STRIPE_SECRET_KEY); CAMPAIGN_PASS_PRICE_CENTS; constructWebhookEvent for raw-byte HMAC verify
 │   ├── external-sync.js        # Background sync of FCG + HoD (parallel; HoD incremental + weekly full)
 │   ├── srd-loader.js           # Loads all SRD collections into external_item_cache at startup (unified Library API)
+│   ├── srd-starter-scenes.js   # Pure helpers for generated SRD starter scenes (used by generate:srd-scenes)
 │   ├── external-sources.js     # EXTERNAL_SOURCES for legacy /api/data bulk endpoint
 │   ├── fcg-search.js           # FreshCutGrass public search API (used by external-sync)
 │   ├── hod-search.js           # Heart of Daggers Vault integration (used by external-sync)
@@ -187,7 +189,7 @@ npm run dev    # kills any process on PORT (default 3456), then server + Tailwin
 
 ### SRD Content
 
-SRD content is served from the `daggerheart-srd` git submodule via the `src/srd/` sub-application (public `/api/srd/:collection`). All 13 SRD collections are also **upserted into `external_item_cache`** on startup via `loadSrdIntoDb` so authenticated `GET /api/data/:collection` can merge user items with SRD/HoD in one query; Fresh Cut Grass adversaries/environments are **public `items`**, not the external cache. In-memory and DB copies stay in sync when the SRD hash changes.
+SRD content is served from the `daggerheart-srd` git submodule via the `src/srd/` sub-application (public `/api/srd/:collection`). All 13 SRD collections are also **upserted into `external_item_cache`** on startup via `loadSrdIntoDb` so authenticated `GET /api/data/:collection` can merge user items with SRD/HoD in one query; Fresh Cut Grass adversaries/environments are **public `items`**, not the external cache. In-memory and DB copies stay in sync when the SRD hash changes. Starter scenes (one per SRD environment) are **not** in the parser `COLLECTION_NAMES` and are **not** loaded by `loadSrdIntoDb` — seed them manually with `npm run generate:srd-scenes` (requires `DATABASE_URL`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`). The script upserts `external_item_cache` rows (`source='srd'`, `collection='scenes'`) and uploads SVG map placeholders to `whiteboard-assets` at `map-images/srd-public/{uuid}.svg`. With `includeSrd` on, `GET /api/data/scenes` and Library All include those cache rows.
 
 The `/api/srd` routes are public (no auth). To update SRD content to a newer upstream version:
 
@@ -399,6 +401,7 @@ npm run crawl:fcg     # sync FCG only
 npm run crawl:hod     # sync HoD only (incremental)
 npm run crawl:hod -- --full          # HoD full refresh (same as weekly cron)
 npm run refresh:daggerstack          # regenerate Daggerstack UUID map (same as nightly 4 AM cron)
+npm run generate:srd-scenes          # seed SRD starter scenes into external_item_cache (requires DATABASE_URL + Supabase)
 ```
 
 ### Overnight V2 Feature Agents

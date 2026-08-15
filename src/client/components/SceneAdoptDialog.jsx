@@ -1,6 +1,10 @@
+import { useState } from 'react';
+import { sceneHasActiveBattleMods } from '../lib/scene-load-dialog.js';
+
 /**
- * SceneAdoptDialog — shown when a scene with active budget factors is added to
- * the Game Table.  Asks whether to apply the scene's factors to the table.
+ * SceneAdoptDialog — shown after the GM picks a scene in Load Scene / Add to Table.
+ * One decision UI: Add vs Replace, plus optional Apply Scene Factors when the
+ * scene has active budget mods (avoids stacking two modals).
  */
 
 const MOD_LABELS = {
@@ -29,58 +33,83 @@ function ActiveModList({ mods, emptyLabel }) {
   );
 }
 
-export function SceneAdoptDialog({ scene, tableHref, currentTableMods, onApply, onKeep, onCancel }) {
+export function SceneAdoptDialog({ scene, tableHref, currentTableMods, onConfirm, onCancel }) {
+  const hasSceneMods = sceneHasActiveBattleMods(scene);
   const tableHasActive = currentTableMods && Object.keys(MOD_LABELS).some(k => currentTableMods[k]);
+  const [applyFactors, setApplyFactors] = useState(hasSceneMods);
+
+  const confirm = (mode) => {
+    onConfirm?.({ mode, applySceneBattleMods: hasSceneMods && applyFactors });
+  };
 
   return (
     <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/70">
       <div className="bg-dh-raised border border-dh-strong rounded-xl shadow-2xl w-full max-w-md mx-4 p-6 space-y-5">
         <div>
-          <h2 className="text-lg font-bold text-white mb-1">Apply Budget Factors?</h2>
+          <h2 className="text-lg font-bold text-white mb-1">Load scene</h2>
           <p className="text-dh-muted text-sm">
-            <span className="text-amber-300 font-medium">{scene?.name || 'This scene'}</span> has battle budget factors set.
-            Apply them to the table?
+            How should{' '}
+            <span className="text-amber-300 font-medium">{scene?.name || 'this scene'}</span>
+            {' '}join the table?
           </p>
         </div>
 
-        <div className="space-y-3">
-          <div>
-            <p className="text-xs font-semibold text-dh-muted uppercase tracking-wide mb-1.5">Scene factors</p>
-            <ActiveModList mods={scene?.battleMods} emptyLabel="None" />
-          </div>
-
-          {tableHasActive && (
+        {hasSceneMods && (
+          <div className="space-y-3">
             <div>
-              <p className="text-xs font-semibold text-dh-muted uppercase tracking-wide mb-1.5">Current table factors (will be replaced)</p>
-              <ActiveModList mods={currentTableMods} emptyLabel="None" />
+              <p className="text-xs font-semibold text-dh-muted uppercase tracking-wide mb-1.5">Scene factors</p>
+              <ActiveModList mods={scene?.battleMods || scene?.tableBattleMods} emptyLabel="None" />
             </div>
-          )}
-        </div>
+
+            {tableHasActive && (
+              <div>
+                <p className="text-xs font-semibold text-dh-muted uppercase tracking-wide mb-1.5">Current table factors (replaced if applied)</p>
+                <ActiveModList mods={currentTableMods} emptyLabel="None" />
+              </div>
+            )}
+
+            <label className="flex items-start gap-2.5 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={applyFactors}
+                onChange={(e) => setApplyFactors(e.target.checked)}
+                className="mt-0.5 accent-amber-500"
+              />
+              <span className="text-sm text-dh">Apply scene factors to the table</span>
+            </label>
+          </div>
+        )}
 
         <div className="flex flex-col gap-2 pt-1">
           <button
             type="button"
             tabIndex={0}
-            onClick={onApply}
+            onClick={() => confirm('add')}
             className="w-full bg-amber-600 hover:bg-amber-500 text-white font-semibold rounded-lg px-4 py-2.5 text-sm transition-colors"
           >
-            Apply Scene Factors to Table
+            Add to table
           </button>
+          <p className="text-xs text-dh-muted -mt-1 px-0.5">
+            Append this scene onto existing maps, adversaries, environments, notes, and countdowns.
+          </p>
           <button
             type="button"
             tabIndex={0}
-            onClick={onKeep}
+            onClick={() => confirm('replace')}
             className="w-full bg-dh-hover hover:bg-dh-hover text-dh rounded-lg px-4 py-2.5 text-sm transition-colors"
           >
-            Keep Current Table Factors
+            Replace table content
           </button>
+          <p className="text-xs text-dh-muted -mt-1 px-0.5">
+            Remove current maps, adversaries, environments, notes, and countdowns, then load this scene. Characters stay on the table.
+          </p>
           <button
             type="button"
             tabIndex={0}
             onClick={onCancel}
             className="text-dh-muted hover:text-dh text-xs py-1 transition-colors"
           >
-            Cancel (don't add scene)
+            Cancel
           </button>
           {tableHref && (
             <p className="text-center pt-1">

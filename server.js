@@ -1202,7 +1202,7 @@ async function applyOpToTableState(tableId, op, opts = {}) {
       if (pngField) {
         op = { ...op, [pngField]: await uploadDataUrlToMapStorageIfNeeded(userId, op[pngField], 'map-overlays') };
       }
-    } else if (op.op === 'add-elements') {
+    } else if (op.op === 'add-elements' || op.op === 'add-scene-snapshot' || op.op === 'replace-scene-snapshot') {
       // Defense in depth: sanitize inline data: URLs on any element's imageUrl/_additionalImages.
       // mapImage elements use the 'map-images' folder; all other elements use 'item-images'.
       const anyInline = (op.elements || []).some(
@@ -1228,6 +1228,18 @@ async function applyOpToTableState(tableId, op, opts = {}) {
           }),
         );
         op = { ...op, elements: sanitized };
+      }
+      if ((op.op === 'add-scene-snapshot' || op.op === 'replace-scene-snapshot') && Array.isArray(op.maps)) {
+        const anyMapInline = op.maps.some((m) => typeof m?.mapImageUrl === 'string' && m.mapImageUrl.startsWith('data:'));
+        if (anyMapInline) {
+          const sanitizedMaps = await Promise.all(
+            op.maps.map(async (m) => {
+              if (typeof m?.mapImageUrl !== 'string' || !m.mapImageUrl.startsWith('data:')) return m;
+              return { ...m, mapImageUrl: await uploadDataUrlToMapStorageIfNeeded(userId, m.mapImageUrl, 'map-images') };
+            }),
+          );
+          op = { ...op, maps: sanitizedMaps };
+        }
       }
     } else if (op.op === 'update-element') {
       const hasInlineImageUrl = typeof op.updates?.imageUrl === 'string' && op.updates.imageUrl.startsWith('data:');
@@ -1342,7 +1354,8 @@ app.get('/api/data', requireAuth, async (req, res) => {
 
 /** SRD-backed unified list + app-only collections */
 const PAGINATED_COLLECTIONS = [...SRD_COLLECTION_NAMES, 'features', 'scenes', 'adventures', 'characters'];
-const UNIFIED_COLLECTIONS = SRD_COLLECTION_NAMES;
+/** Parser collections plus scenes (SRD starter scenes live in `external_item_cache`, not the SRD parser). */
+const UNIFIED_COLLECTIONS = [...SRD_COLLECTION_NAMES, 'scenes'];
 
 async function fetchDbCounts(appId, uid, collection, { includeMine = true, includePublic, includeMirrors = true, search, tier, tierMax, tiers = [], typeField, typeValue, typeValues = [] }) {
   const opts = tierMax != null

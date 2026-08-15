@@ -212,24 +212,53 @@ function normalizeAdversary(raw) {
 const ENV_TYPE_MAP = { exploration: 'exploration', social: 'social', traversal: 'traversal', event: 'event' };
 
 /**
+ * Short inner names from SRD group lists that are not the full adversary name.
+ * Chaos Realm: "Outer Realms Monstrosities (Abomination, Corruptor, Thrall)"
+ * otherwise slugs to `srd-adv-abomination` instead of `srd-adv-outer-realms-abomination`.
+ */
+const POTENTIAL_ADVERSARY_NAME_ALIASES = {
+  abomination: 'Outer Realms Abomination',
+  corruptor: 'Outer Realms Corruptor',
+  thrall: 'Outer Realms Thrall',
+};
+
+function isJunkPotentialAdversaryName(name) {
+  const t = String(name || '').trim();
+  if (!t) return true;
+  if (/^any$/i.test(t)) return true;
+  // Parser leftovers like `see "Ghostly Form"` — not real adversary names.
+  if (/^see\b/i.test(t)) return true;
+  return false;
+}
+
+function canonicalizePotentialAdversaryName(name) {
+  const t = String(name || '').trim();
+  if (isJunkPotentialAdversaryName(t)) return null;
+  return POTENTIAL_ADVERSARY_NAME_ALIASES[t.toLowerCase()] || t;
+}
+
+/**
  * Parse the SRD `potential_adversaries` string into an array of structured references.
  *
  * SRD strings use mixed formats:
  *   "Beasts (Bear, Dire Wolf), Grove Guardians (Minor Treant, Sylvan Soldier)"
  *   "Guards (Bladed Guard, Head Guard), Masked Thief, Merchant"
+ *   "Outer Realms Monstrosities (Abomination, Corruptor, Thrall)"
  *   "Any"
  *
  * Groups (Category (A, B)) are flattened — category labels are discarded and only
- * individual adversary names are kept. Each name becomes a linked reference using
- * the deterministic SRD adversary ID so it resolves against SRD data.
+ * individual adversary names are kept. Short group-member aliases (Chaos Realm)
+ * are expanded to the full SRD adversary name. Junk tokens (`Any`, `see "…"`)
+ * are dropped. Each name becomes a linked reference using the deterministic
+ * SRD adversary ID so it resolves against SRD data.
  */
-function parseSrdPotentialAdversaries(raw) {
+export function parseSrdPotentialAdversaries(raw) {
   if (!raw || !raw.trim() || raw.trim().toLowerCase() === 'any') return [];
   const names = [];
   // Replace each "Category (Name1, Name2)" group with just its contents
   const expanded = raw.replace(/[^,()]+\(([^)]+)\)/g, (_, inner) => inner);
   for (const part of expanded.split(',')) {
-    const name = part.trim();
+    const name = canonicalizePotentialAdversaryName(part);
     if (name) names.push(name);
   }
   return names.map(name => ({ adversaryId: makeId('adversaries', name), name }));
