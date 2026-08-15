@@ -76,6 +76,8 @@ import { getAuthToken, postMapPing, postMapScribble, postBannerAck, CLIENT_ID, i
 import { useAiUiPreference } from '../lib/ai-ui-preference-context.jsx';
 import { shouldShowImageGenAiUi } from '../lib/ai-ui-visibility.js';
 import { MapAiImageDialog } from './MapAiImageDialog.jsx';
+import { MapDetailsDialog } from './modals/MapDetailsDialog.jsx';
+import { MapArtistCredit } from './MapArtistCredit.jsx';
 import Fireworks from 'fireworks-js';
 import { effectiveTokenMapId, DEFAULT_LEGACY_MAP_ID, mapConfigHasImage } from '../lib/map-table-state.js';
 import { buildCharacterTrayTokenEntries, buildBoardTrayTokenEntries } from '../lib/character-tray-tokens.js';
@@ -3100,6 +3102,8 @@ export function BattleMap({
   const [mapAiGenPreviewUrl, setMapAiGenPreviewUrl] = useState(null);
   /** Shared with MapConfigToolbar "Generate with AI" and Theatre of the Mind overlay. */
   const [aiMapOpen, setAiMapOpen] = useState(false);
+  /** GM: pencil on a map strip tile → name / artist / artist URL dialog. */
+  const [mapDetailsEdit, setMapDetailsEdit] = useState(null);
   const mapAiGenPreviewUrlRef = useRef(null);
   mapAiGenPreviewUrlRef.current = mapAiGenPreviewUrl;
   const gmCameraLockedRef = useRef(false);
@@ -3199,6 +3203,11 @@ export function BattleMap({
     gmActiveViewId,
     gmMapView,
   ]);
+
+  const activeMapRow = useMemo(
+    () => maps.find((m) => m.id === activeMapIdResolved) ?? maps[0] ?? null,
+    [maps, activeMapIdResolved],
+  );
 
   const sortedMapViews = useMemo(() => {
     const order = new Map(maps.map((m, i) => [m.id, i]));
@@ -3988,6 +3997,14 @@ export function BattleMap({
     () => shouldShowPlayerMapViewStrip(playerViewBatches),
     [playerViewBatches],
   );
+
+  const showMapCornerZoomControls =
+    canControlMapView &&
+    !(
+      (!isPlayer && maps.length > 0 && onSetActiveView && onMapFreeExplore) ||
+      (isPlayer && tableId && showPlayerMapViewStrip)
+    );
+  const showMapArtistCredit = !!activeMapRow?.artist?.trim();
 
   useEffect(() => {
     if (!isPlayer) return;
@@ -6384,17 +6401,20 @@ export function BattleMap({
                           </Tooltip>
                         ) : null}
                         {onRenameMap ? (
-                          <Tooltip label="Rename map">
+                          <Tooltip label="Edit map">
                             <button
                               type="button"
                               onClick={(e) => {
                                 e.stopPropagation();
-                                const cur = map.name ?? '';
-                                const name = window.prompt('Map name', cur);
-                                if (name != null && name.trim()) onRenameMap(map.id, name.trim());
+                                setMapDetailsEdit({
+                                  id: map.id,
+                                  name: map.name ?? '',
+                                  artist: map.artist ?? '',
+                                  artistUrl: map.artistUrl ?? '',
+                                });
                               }}
                               className="rounded p-0.5 text-dh-muted hover:bg-dh-hover/80 hover:text-dh"
-                              aria-label="Rename map"
+                              aria-label="Edit map"
                             >
                               <Pencil size={11} aria-hidden />
                             </button>
@@ -7385,13 +7405,9 @@ export function BattleMap({
               </div>
             </div>
           ) : null}
-          {canControlMapView &&
-            !(
-              (!isPlayer && maps.length > 0 && onSetActiveView && onMapFreeExplore) ||
-              (isPlayer && tableId && showPlayerMapViewStrip)
-            ) && (
+          {(showMapCornerZoomControls || showMapArtistCredit) && (
             <div className="pointer-events-none absolute right-2 bottom-2 z-20 flex flex-col items-end gap-1.5">
-              {isPlayer && onAddMapImageObject && (
+              {showMapCornerZoomControls && isPlayer && onAddMapImageObject && (
                 <Tooltip label="Place an image on the map">
                   <button
                     type="button"
@@ -7403,13 +7419,16 @@ export function BattleMap({
                   </button>
                 </Tooltip>
               )}
-              <ZoomToFitControls
-                variant="icon"
-                iconSize={14}
-                onZoomToFit={applyZoomToFit}
-                hasPlacedByKind={hasPlacedByKind}
-                extraDisabled={mapAiPreviewActive}
-              />
+              {showMapCornerZoomControls ? (
+                <ZoomToFitControls
+                  variant="icon"
+                  iconSize={14}
+                  onZoomToFit={applyZoomToFit}
+                  hasPlacedByKind={hasPlacedByKind}
+                  extraDisabled={mapAiPreviewActive}
+                />
+              ) : null}
+              {showMapArtistCredit ? <MapArtistCredit map={activeMapRow} /> : null}
             </div>
           )}
           </div>
@@ -7561,6 +7580,20 @@ export function BattleMap({
           />
         );
       })()}
+
+      {onRenameMap ? (
+        <MapDetailsDialog
+          open={!!mapDetailsEdit}
+          initialName={mapDetailsEdit?.name ?? ''}
+          initialArtist={mapDetailsEdit?.artist ?? ''}
+          initialArtistUrl={mapDetailsEdit?.artistUrl ?? ''}
+          onClose={() => setMapDetailsEdit(null)}
+          onSave={({ name, artist, artistUrl }) => {
+            if (!mapDetailsEdit?.id) return;
+            onRenameMap(mapDetailsEdit.id, name, { artist, artistUrl });
+          }}
+        />
+      ) : null}
 
       {typeof document !== 'undefined' && fireworksViewport && fireworksViewport.width > 0 && createPortal(
         <div

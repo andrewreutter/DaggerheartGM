@@ -194,7 +194,7 @@ export function buildSceneTableAdapterProps(setSceneData, opts = {}) {
     onSetActiveMap: (id) => applyOp({ op: 'set-active-map', activeMapId: id }),
     onAddMap: () => applyOp({ op: 'add-map' }),
     onRemoveMap: (mapId) => applyOp({ op: 'remove-map', mapId }),
-    onRenameMap: (mapId, name) => applyOp({ op: 'rename-map', mapId, name }),
+    onRenameMap: (mapId, name, extras = {}) => applyOp({ op: 'rename-map', mapId, name, ...extras }),
     onMapFreeExplore: (mapId) => applyOp({ op: 'set-map-free-explore', mapId }),
 
     onAddMapWithImage: async (img) => {

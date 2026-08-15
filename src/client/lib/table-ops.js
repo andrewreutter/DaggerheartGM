@@ -18,6 +18,7 @@ import {
 } from './map-table-state.js';
 import { DEFAULT_MAP_SIZE_FT } from './map-dimensions-ft.js';
 import { playerCanAccessMapViewSelection } from './map-view-player-sync.js';
+import { normalizeMapArtistFields } from './map-artist.js';
 
 /** Keep legacy `gmMapView` + `activeMapId` aligned with `gmActiveViewId` for snapshots. */
 function syncGmMapViewFromActiveView(state) {
@@ -874,7 +875,16 @@ export function applyTableOp(op, state) {
       const targetId = op.mapId;
       const name = op.name != null ? String(op.name).trim() : '';
       if (!targetId || !name) return {};
-      const maps = base.maps.map(m => (m.id === targetId ? { ...m, name } : m));
+      const maps = base.maps.map(m => {
+        if (m.id !== targetId) return m;
+        const next = { ...m, name };
+        if ('artist' in op || 'artistUrl' in op) {
+          const credit = normalizeMapArtistFields(op.artist, op.artistUrl);
+          next.artist = credit.artist;
+          next.artistUrl = credit.artistUrl;
+        }
+        return next;
+      });
       const nextState = { ...base, maps };
       return { maps, mapConfig: deriveMapConfigFromState(nextState) };
     }

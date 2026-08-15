@@ -1737,8 +1737,8 @@ function App() {
     postTableOp({ op: 'remove-map', mapId }, tableId);
   }, [tableId]);
 
-  const sendRenameMap = useCallback((mapId, name) => {
-    postTableOp({ op: 'rename-map', mapId, name }, tableId);
+  const sendRenameMap = useCallback((mapId, name, extras = {}) => {
+    postTableOp({ op: 'rename-map', mapId, name, ...extras }, tableId);
   }, [tableId]);
 
   const sendLifeSupportSelect = (rollDbId, instanceId) => {

@@ -1073,6 +1073,88 @@ describe('applyTableOp', () => {
     expect(result.maps[0].shareWithPlayers).toBe(false);
   });
 
+  it('rename-map updates name and optional artist credit', () => {
+    const state = {
+      maps: [
+        {
+          id: 'a',
+          name: 'A',
+          mapImageUrl: 'x',
+          mapDimension: 'width',
+          mapSizeFt: 100,
+          mapImageNaturalWidth: null,
+          mapImageNaturalHeight: null,
+          shareWithPlayers: true,
+        },
+      ],
+      mapViews: [
+        {
+          id: 'v1',
+          mapId: 'a',
+          name: 'Main',
+          mapViewZoomRatio: null,
+          mapViewPanNorm: null,
+          broadcastToPlayers: true,
+        },
+      ],
+      gmActiveViewId: 'v1',
+      activeElements: [],
+    };
+    const named = applyTableOp({ op: 'rename-map', mapId: 'a', name: ' Woods ' }, state);
+    expect(named.maps[0].name).toBe('Woods');
+    expect(named.maps[0].artist).toBeUndefined();
+
+    const credited = applyTableOp(
+      { op: 'rename-map', mapId: 'a', name: 'Woods', artist: ' Ada ', artistUrl: 'example.com/ada' },
+      named,
+    );
+    expect(credited.maps[0].artist).toBe('Ada');
+    expect(credited.maps[0].artistUrl).toBe('https://example.com/ada');
+
+    const nameOnly = applyTableOp({ op: 'rename-map', mapId: 'a', name: 'Forest' }, credited);
+    expect(nameOnly.maps[0].name).toBe('Forest');
+    expect(nameOnly.maps[0].artist).toBe('Ada');
+    expect(nameOnly.maps[0].artistUrl).toBe('https://example.com/ada');
+
+    const cleared = applyTableOp(
+      { op: 'rename-map', mapId: 'a', name: 'Forest', artist: '', artistUrl: 'https://example.com' },
+      nameOnly,
+    );
+    expect(cleared.maps[0].artist).toBe('');
+    expect(cleared.maps[0].artistUrl).toBe('');
+  });
+
+  it('rename-map no-ops when name is empty', () => {
+    const state = {
+      maps: [
+        {
+          id: 'a',
+          name: 'A',
+          mapImageUrl: 'x',
+          mapDimension: 'width',
+          mapSizeFt: 100,
+          mapImageNaturalWidth: null,
+          mapImageNaturalHeight: null,
+          shareWithPlayers: true,
+        },
+      ],
+      mapViews: [
+        {
+          id: 'v1',
+          mapId: 'a',
+          name: 'Main',
+          mapViewZoomRatio: null,
+          mapViewPanNorm: null,
+          broadcastToPlayers: true,
+        },
+      ],
+      gmActiveViewId: 'v1',
+      activeElements: [],
+    };
+    const result = applyTableOp({ op: 'rename-map', mapId: 'a', name: '   ' }, state);
+    expect(result).toEqual({});
+  });
+
   it('set-view-locked toggles view locked', () => {
     const state = {
       maps: [
