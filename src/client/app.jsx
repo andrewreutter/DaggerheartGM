@@ -1188,9 +1188,6 @@ function App() {
   };
 
   const saveItem = async (collectionName, item) => {
-    // #region agent log
-    fetch('/api/debug-log',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({_debugUrl:'http://127.0.0.1:7803/ingest/b8b9e013-5af1-438e-8ea4-5198e805186a',_debugSessionId:'167b91',sessionId:'167b91',runId:'post-fix',hypothesisId:'B,C',location:'app.jsx:1190',message:'saveItem -> library write',data:{collection:collectionName,id:item?.id??null,name:item?.name??null,stack:(new Error().stack||'').split('\n').slice(1,6).join(' | ')},timestamp:Date.now()})}).catch(()=>{});
-    // #endregion
     const key = `${collectionName}:${item?.id ?? 'new'}`;
     const gen = ++saveGenerationRef.current;
     lastSaveGenRef.current[key] = gen;

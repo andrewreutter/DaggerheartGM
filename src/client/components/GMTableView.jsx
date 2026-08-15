@@ -3187,9 +3187,6 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
           characterOverlay.show({ element: newEl, top: rect.top, bottom: rect.bottom });
           navigate(`${gameTableBasePath}/characters/${stub.id}`, { replace: true });
         });
-        // #region agent log
-        fetch('/api/debug-log',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({_debugUrl:'http://127.0.0.1:7803/ingest/b8b9e013-5af1-438e-8ea4-5198e805186a',_debugSessionId:'167b91',sessionId:'167b91',runId:'run3',hypothesisId:'F',location:'GMTableView.jsx:3186',message:'openNewCharacterEditor: editState+navigate flushed together, mode=new',data:{stubId:stub.id,newElInstanceId:newEl?.instanceId,newElId:newEl?.id,isPlayer:!!isPlayer},timestamp:Date.now()})}).catch(()=>{});
-        // #endregion
       };
       if (isPlayer && onPlayerAddCharacter) {
         const res = await onPlayerAddCharacter({ ...stub, elementType: 'character' });
@@ -3320,9 +3317,6 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
         ? (data[modalCollection]?.find(i => i.id === baseElement.id) || getItemData(baseElement))
         : getItemData(baseElement);
     }
-    // #region agent log
-    fetch('/api/debug-log',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({_debugUrl:'http://127.0.0.1:7803/ingest/b8b9e013-5af1-438e-8ea4-5198e805186a',_debugSessionId:'167b91',sessionId:'167b91',runId:'run2',hypothesisId:'H',location:'GMTableView.jsx:3323-deep-link-open',message:'deep-link OPEN modal effect is setting editState from URL',data:{modalCollection,modalItemId,mode,baseElementId:baseElement?.id,baseElementInstanceId:baseElement?.instanceId},timestamp:Date.now()})}).catch(()=>{});
-    // #endregion
     setEditState({
       step: 'form',
       item,
@@ -3341,14 +3335,23 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
   // Close modal when URL no longer has item (e.g. user pressed back).
   useEffect(() => {
     if (!modalCollection && !modalItemId && editState) {
-      // #region agent log
-      fetch('/api/debug-log',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({_debugUrl:'http://127.0.0.1:7803/ingest/b8b9e013-5af1-438e-8ea4-5198e805186a',_debugSessionId:'167b91',sessionId:'167b91',runId:'run2',hypothesisId:'F',location:'GMTableView.jsx:3341-close-if-no-item',message:'CLOSE-if-no-item effect is nulling editState',data:{modalCollection,modalItemId,editStateModeBeforeNull:editState.mode,editStateBaseInstanceId:editState.baseElement?.instanceId},timestamp:Date.now()})}).catch(()=>{});
-      // #endregion
       setEditState(null);
     }
   }, [modalCollection, modalItemId, editState]);
 
   const closeEditModal = () => {
+    // A brand-new character stub is placed on the table immediately (openNewCharacterEditor)
+    // but only actually persisted to the library once named (isNew name-gate in useAutoSaveUndo).
+    // If the editor is closed before that first save ever happened, discard the stub instead of
+    // leaving an orphaned "Unnamed" card on the table forever.
+    if (
+      editState?.mode === 'new' &&
+      editState?.collection === 'characters' &&
+      characterTableDetailModalRef.current?.savedOnce === false &&
+      editState?.baseElement?.instanceId
+    ) {
+      removeActiveElement(editState.baseElement.instanceId);
+    }
     setEditState(null);
     navigate(gameTableBasePath, { replace: true });
   };
@@ -3410,9 +3413,6 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
       // effect above and resolve mode from whether the id actually exists in data.characters.
       const canEditOriginal = isOwnItem(liveEl);
       const mode = resolveGameTableCharacterEditMode(liveEl, data?.characters, canEditOriginal);
-      // #region agent log
-      fetch('/api/debug-log',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({_debugUrl:'http://127.0.0.1:7803/ingest/b8b9e013-5af1-438e-8ea4-5198e805186a',_debugSessionId:'167b91',sessionId:'167b91',runId:'run4',hypothesisId:'I',location:'GMTableView.jsx:openTableCharacterEditor',message:'openTableCharacterEditor (has id): resolved mode',data:{liveId:liveEl.id,liveInstanceId:liveEl.instanceId,mode,libraryCharactersLoaded:Array.isArray(data?.characters),libraryCount:data?.characters?.length??null,foundInLibrary:!!data?.characters?.some(c=>c.id===liveEl.id)},timestamp:Date.now()})}).catch(()=>{});
-      // #endregion
       navigate(`${gameTableBasePath}/characters/${liveEl.id}`);
       setEditState({
         step: 'form',
@@ -3436,12 +3436,6 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
       });
     }
   }, [gameTableBasePath, navigate, data?.characters]);
-
-  // #region agent log
-  useEffect(() => {
-    fetch('/api/debug-log',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({_debugUrl:'http://127.0.0.1:7803/ingest/b8b9e013-5af1-438e-8ea4-5198e805186a',_debugSessionId:'167b91',sessionId:'167b91',runId:'run2',hypothesisId:'F,H',location:'GMTableView.jsx:editState-watch',message:editState ? 'editState changed' : 'editState became NULL',data:editState ? {step:editState.step,collection:editState.collection,mode:editState.mode,itemId:editState.item?.id,itemName:editState.item?.name,baseInstanceId:editState.baseElement?.instanceId,presentation:editState.presentation} : {isNull:true},timestamp:Date.now()})}).catch(()=>{});
-  }, [editState]);
-  // #endregion
 
   const handleAddPotentialAdversary = async (adversaryId) => {
     try {
@@ -4962,9 +4956,6 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     ) {
       return;
     }
-    // #region agent log
-    fetch('/api/debug-log',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({_debugUrl:'http://127.0.0.1:7803/ingest/b8b9e013-5af1-438e-8ea4-5198e805186a',_debugSessionId:'167b91',sessionId:'167b91',runId:'post-fix',hypothesisId:'E',location:'GMTableView.jsx:4938',message:'auto-open incomplete editor -> openTableCharacterEditor',data:{liveInstanceId:live.instanceId,liveId:live.id,prevMode:editState?.mode??null,prevBaseInstanceId:editState?.baseElement?.instanceId??null},timestamp:Date.now()})}).catch(()=>{});
-    // #endregion
     openTableCharacterEditor(live);
   }, [
     characterOverlay.isOpen,

@@ -232,7 +232,7 @@ export const ItemDetailModal = forwardRef(function ItemDetailModal({
     return () => cancelAnimationFrame(id);
   }, [isRightDrawer, rightDrawerPortalTo, editorSessionKey]);
 
-  const { formData, setFormData, undo, redo, canUndo, canRedo, isSaving, debouncePending, showUnsavedDirtyHint, savedFlash } = useAutoSaveUndo({
+  const { formData, setFormData, undo, redo, canUndo, canRedo, isSaving, savedOnce, debouncePending, showUnsavedDirtyHint, savedFlash } = useAutoSaveUndo({
     initial: initialRef.current,
     onSave: useCallback(async (d) => {
       if (onSave) await onSave(d);
@@ -681,8 +681,11 @@ export const ItemDetailModal = forwardRef(function ItemDetailModal({
       redo,
       canUndo,
       canRedo,
+      // Lets a caller (Game Table) check on close whether a `isNew` stub was ever
+      // actually persisted, so it can discard an abandoned-before-naming stub.
+      savedOnce,
     }),
-    [undo, redo, canUndo, canRedo],
+    [undo, redo, canUndo, canRedo, savedOnce],
   );
 
   useEffect(() => {
