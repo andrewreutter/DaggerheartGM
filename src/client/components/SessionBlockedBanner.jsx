@@ -1,21 +1,16 @@
 /**
- * Prep / idle-pause hint — portaled to `document.body` from `app.jsx` so GM and player
+ * Idle-pause hint — portaled to `document.body` from `app.jsx` so GM and player
  * always see it above the Game Table layout (not behind dice canvas or column stacking).
+ * Prep mode guidance lives on the floating Play setup card instead.
  *
  * Keep `z-[52]` below fullscreen modal backdrops (e.g. `z-[53]` in EditChoiceDialog /
  * ImportModalShell) and below `ItemDetailModal` (`z-[80]`), but above battle-map chrome (`z-50`).
  */
-export function SessionBlockedBanner({ isPlayer, sessionStarted, onResume }) {
-  const isPrep = sessionStarted === false;
-  const title = isPrep ? 'Prep mode' : 'Session paused';
-  const bodyGm = isPrep
-    ? 'Click Start Session in the Encounter panel to roll, use features, and apply damage. You can still adjust the map, tokens, conditions, and Fear.'
-    : onResume
-      ? 'Click this banner (or Resume in the Encounter panel) to roll, use features, and apply damage. You can still adjust the map, tokens, conditions, and Fear.'
-      : 'The table went idle. Click Resume in the Encounter panel to roll, use features, and apply damage. You can still adjust the map, tokens, conditions, and Fear.';
-  const bodyPlayer = isPrep
-    ? 'Waiting for the GM to start the session.'
-    : 'Waiting for the GM to resume the session.';
+export function SessionBlockedBanner({ isPlayer, onResume }) {
+  const bodyGm = onResume
+    ? 'Click this banner (or Resume in the Encounter panel) to roll, use features, and apply damage. You can still adjust the map, tokens, conditions, and Fear.'
+    : 'The table went idle. Click Resume in the Encounter panel to roll, use features, and apply damage. You can still adjust the map, tokens, conditions, and Fear.';
+  const bodyPlayer = 'Waiting for the GM to resume the session.';
   const shellClass =
     'px-5 py-3 rounded-xl shadow-2xl text-center bg-dh-surface/95 border-2 border-dh-strong backdrop-blur-sm';
   const resumeInteractive =
@@ -29,7 +24,7 @@ export function SessionBlockedBanner({ isPlayer, sessionStarted, onResume }) {
       {typeof onResume === 'function' ? (
         <button type="button" className={`${shellClass} ${resumeInteractive}`} onClick={onResume}>
           <div className="text-[11px] uppercase tracking-widest text-dh-muted mb-1">Table</div>
-          <div className="text-base font-bold text-dh mb-1">{title}</div>
+          <div className="text-base font-bold text-dh mb-1">Session paused</div>
           <p className="text-[12px] text-dh-muted text-left leading-snug">
             {isPlayer ? bodyPlayer : bodyGm}
           </p>
@@ -37,7 +32,7 @@ export function SessionBlockedBanner({ isPlayer, sessionStarted, onResume }) {
       ) : (
         <div className={shellClass}>
           <div className="text-[11px] uppercase tracking-widest text-dh-muted mb-1">Table</div>
-          <div className="text-base font-bold text-dh mb-1">{title}</div>
+          <div className="text-base font-bold text-dh mb-1">Session paused</div>
           <p className="text-[12px] text-dh-muted text-left leading-snug">
             {isPlayer ? bodyPlayer : bodyGm}
           </p>

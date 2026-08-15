@@ -39,6 +39,7 @@ import {
   ChevronsLeft,
   ChevronsRight,
   Pencil,
+  Settings,
   Eraser,
   Eye,
   EyeOff,
@@ -54,7 +55,6 @@ import {
   Square,
   Circle,
   Pipette,
-  Plus,
   Sparkles,
   Image as ImageIcon,
   Maximize2,
@@ -84,7 +84,7 @@ import {
   bullseyeFtForPlacedTokenHover,
 } from '../lib/tray-proxy-hover.js';
 import { getMapDimensionsFt as getMapDimensions, MAP_SIZE_FT_MIN, MAP_SIZE_FT_MAX } from '../lib/map-dimensions-ft.js';
-import { getGmTotMEmptyMapHint, getPlayerTotMEmptyMapHint } from '../lib/battle-map-totm-hint.js';
+import { getPlayerTotMEmptyMapHint } from '../lib/battle-map-totm-hint.js';
 import { isAdversaryDefeated } from '../lib/helpers.js';
 import { EncounterAdversaryMarkedSummary } from './EncounterAdversaryMarkedSummary.jsx';
 import { playerEncounterInstanceRowVisible } from '../lib/encounter-adversary-player-summary.js';
@@ -866,9 +866,9 @@ function MapConfigToolbar({
     if (tableStateReady) setIsEditingName(isNewTable);
   }, [tableStateReady, isNewTable]);
 
-  // On new table, focus name input when editor is open
+  // Focus name input whenever the editor opens (gear click or new-table auto-edit)
   useEffect(() => {
-    if (!isNewTable || !isEditingName) return;
+    if (!isEditingName) return;
     const el = nameInputRef.current;
     if (!el) return;
     const id = requestAnimationFrame(() => {
@@ -876,7 +876,7 @@ function MapConfigToolbar({
       el.select();
     });
     return () => cancelAnimationFrame(id);
-  }, [isNewTable, isEditingName]);
+  }, [isEditingName]);
 
   const commitName = () => {
     const trimmed = (nameInput || '').trim() || 'New Table';
@@ -908,33 +908,50 @@ function MapConfigToolbar({
       <div className="flex items-center gap-2">
         {onTableNameChange ? (
           isEditingName ? (
-            <input
-              ref={nameInputRef}
-              type="text"
-              value={nameInput}
-              onChange={e => setNameInput(e.target.value)}
-              onBlur={commitName}
-              onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); commitName(); } }}
-              className="min-w-[120px] max-w-[240px] px-2 py-1 rounded bg-dh-raised border border-dh-strong text-dh font-semibold text-sm focus:outline-none focus:border-sky-500"
-              placeholder="Table name"
-            />
+            <>
+              <button
+                type="button"
+                onMouseDown={e => e.preventDefault()}
+                onClick={() => {
+                  nameInputRef.current?.focus();
+                  nameInputRef.current?.select();
+                }}
+                className="flex items-center gap-1 py-1 pl-1 pr-0 rounded hover:bg-dh-hover/80 text-dh-muted hover:text-dh transition-colors"
+                title="Table settings"
+                aria-label="Table settings"
+              >
+                <Settings size={12} className="shrink-0" />
+              </button>
+              <input
+                ref={nameInputRef}
+                type="text"
+                value={nameInput}
+                onChange={e => setNameInput(e.target.value)}
+                onBlur={commitName}
+                onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); commitName(); } }}
+                className="min-w-[120px] max-w-[240px] px-2 py-1 rounded bg-dh-raised border border-dh-strong text-dh font-semibold text-sm focus:outline-none focus:border-sky-500"
+                placeholder="Table name"
+              />
+            </>
           ) : (
             <button
               type="button"
               onClick={() => setIsEditingName(true)}
-              className="flex items-center gap-1.5 px-2 py-1 rounded hover:bg-dh-hover/80 text-dh font-semibold text-sm transition-colors"
-              title="Edit table name"
+              className="flex items-center gap-1 px-1.5 py-1 rounded hover:bg-dh-hover/80 text-dh font-semibold text-sm transition-colors"
+              title="Table settings"
+              aria-label="Table settings"
             >
+              <Settings size={12} className="shrink-0 text-dh-muted" />
               <span className="truncate max-w-[200px]">{tableName || 'Untitled'}</span>
-              <Pencil size={12} className="shrink-0 text-dh-muted" />
             </button>
           )
         ) : (
           <span className="px-2 py-1 text-dh font-semibold text-sm truncate max-w-[200px]">{tableName || 'Untitled'}</span>
         )}
-        {onDeleteTable && (
+        {onDeleteTable && isEditingName && (
           <button
             type="button"
+            onMouseDown={e => e.preventDefault()}
             onClick={onDeleteTable}
             className="flex items-center gap-1.5 px-2 py-1 rounded text-dh-muted hover:text-red-400 hover:bg-dh-raised/80 transition-colors"
             title="Delete table"
@@ -958,24 +975,26 @@ function MapConfigToolbar({
             type="button"
             onClick={() => onOpenQuickPick()}
             disabled={isUploading}
-            className={`flex items-center gap-1.5 px-2 py-1 rounded cursor-pointer transition-colors ${
+            className={`flex items-center gap-1.5 px-2 py-1 rounded cursor-pointer transition-colors border ${
               isUploading
-                ? 'bg-dh-hover text-dh-muted cursor-not-allowed'
-                : 'bg-dh-hover hover:bg-dh-hover text-dh hover:opacity-90'
+                ? 'bg-dh-hover text-dh-muted cursor-not-allowed border-transparent'
+                : 'text-violet-300/90 border-violet-500/35 bg-violet-950/25 hover:bg-violet-900/35'
             }`}
             title="Upload map image or place image on map"
+            data-prep-target="build"
           >
             <Upload size={12} />
             {isUploading ? 'Uploading…' : mapImageUrl ? 'Map Image…' : 'Upload Map Image…'}
           </button>
         ) : (
           <label
-            className={`flex items-center gap-1.5 px-2 py-1 rounded cursor-pointer transition-colors ${
+            className={`flex items-center gap-1.5 px-2 py-1 rounded cursor-pointer transition-colors border ${
               isUploading
-                ? 'bg-dh-hover text-dh-muted cursor-not-allowed'
-                : 'bg-dh-hover hover:bg-dh-hover text-dh hover:opacity-90'
+                ? 'bg-dh-hover text-dh-muted cursor-not-allowed border-transparent'
+                : 'text-violet-300/90 border-violet-500/35 bg-violet-950/25 hover:bg-violet-900/35'
             }`}
             title="Upload or replace map image"
+            data-prep-target="build"
           >
             <Upload size={12} />
             {isUploading ? 'Uploading…' : mapImageUrl ? 'Replace Map' : 'Upload Map Image'}
@@ -2217,10 +2236,10 @@ const ZOOM_FIT_CONTROL_ITEMS = [
 /** Width for the ZOOM TO column (icon + label in a row). */
 const MAP_STRIP_ZOOM_COL_WIDTH_PX = 112;
 
-/** Underlined group label spanning the button column beneath (ZOOM TO / CAMERAS / SCENE). */
+/** Underlined group label spanning the button column beneath (Zoom to / Maps & Cameras / Scene). */
 function MapStripGroupLabel({ children }) {
   return (
-    <div className="mb-0.5 w-full border-b border-dh-muted/55 pb-0.5 text-center text-[9px] font-semibold uppercase tracking-wide text-dh-muted leading-none">
+    <div className="mb-0.5 w-full border-b border-dh-muted/55 pb-0.5 text-center text-[9px] font-semibold uppercase tracking-wide text-dh-muted leading-none whitespace-nowrap">
       {children}
     </div>
   );
@@ -2229,7 +2248,7 @@ function MapStripGroupLabel({ children }) {
 /**
  * Compact map-strip button: icon left, label right.
  * `grow` — fill leftover height in a stretched pair column.
- * `width` — fixed px, or `'fit'` for content-sized (SCENE).
+ * `width` — fixed px, `'fit'` for content-sized (SCENE), or `'fill'` to stretch to the parent column.
  */
 function MapStripActionButton({
   onClick,
@@ -2240,12 +2259,18 @@ function MapStripActionButton({
   iconSize,
   Icon,
   label,
+  /** Optional stacked lines (icon left, multi-line text right). Takes precedence over `label`. */
+  labelLines = null,
   tooltip,
   tooltipPlacement = 'bottom',
   grow = false,
   width = MAP_STRIP_ZOOM_COL_WIDTH_PX,
+  /** Prep checklist hover target: `build` | `invite` | `play` */
+  dataPrepTarget = null,
 }) {
   const fit = width === 'fit';
+  const fill = width === 'fill';
+  const stacked = Array.isArray(labelLines) && labelLines.length > 0;
   return (
     <Tooltip
       label={tooltip}
@@ -2262,14 +2287,25 @@ function MapStripActionButton({
         disabled={disabled}
         aria-label={ariaLabel}
         aria-pressed={ariaPressed}
+        data-prep-target={dataPrepTarget || undefined}
         className={`w-full min-w-0 flex flex-row items-center gap-1.5 rounded px-1.5 py-0.5 text-[10px] leading-tight border disabled:opacity-40 disabled:pointer-events-none box-border ${
           grow ? 'flex-1' : ''
         } ${className}`}
-        style={fit ? undefined : { width, maxWidth: width }}
+        style={fit || fill ? undefined : { width, maxWidth: width }}
       >
         <Icon size={iconSize} strokeWidth={1.25} className="shrink-0" aria-hidden />
-        <span className={`min-w-0 text-left font-medium ${fit ? 'whitespace-nowrap' : 'flex-1 truncate'}`}>
-          {label}
+        <span
+          className={`min-w-0 text-left font-medium leading-tight ${
+            fit ? 'whitespace-nowrap' : stacked ? 'flex-1' : 'flex-1 truncate'
+          }`}
+        >
+          {stacked
+            ? labelLines.map((line, i) => (
+                <span key={`${i}-${line}`} className="block">
+                  {line}
+                </span>
+              ))
+            : label}
         </span>
       </button>
     </Tooltip>
@@ -2954,10 +2990,6 @@ export function BattleMap({
   extraConditionSuggestions,
   onAddConditionsHistoryEntry,
   onRemoveConditionsHistoryEntry,
-  /** GM: open Create Scene (capture current table into a library scene). */
-  onOpenCreateScene,
-  /** GM: open Add Scene picker. */
-  onOpenAddScene,
 }) {
   const { hideAiUi } = useAiUiPreference();
   const showImageGenAiUi = shouldShowImageGenAiUi(imageGenEnabled, hideAiUi);
@@ -3071,9 +3103,8 @@ export function BattleMap({
   const mapAiGenPreviewUrlRef = useRef(null);
   mapAiGenPreviewUrlRef.current = mapAiGenPreviewUrl;
   const gmCameraLockedRef = useRef(false);
-  /** ZOOM TO + CAMERAS column pair — Scene column mirrors this height. */
+  /** Zoom to + Maps & Cameras column pair. */
   const mapStripZoomCamerasRef = useRef(null);
-  const mapStripSceneRef = useRef(null);
 
   // Track scroll area size for pxPerFt and display zoom bounds
   useLayoutEffect(() => {
@@ -3509,34 +3540,6 @@ export function BattleMap({
   const gmCameraLocked = !!activeGmMapView?.locked;
   gmCameraLockedRef.current = gmCameraLocked;
 
-  // Keep SCENE column the same height as ZOOM TO + CAMERAS (not the taller map-tile strip).
-  useLayoutEffect(() => {
-    const src = mapStripZoomCamerasRef.current;
-    const dst = mapStripSceneRef.current;
-    if (!src || !dst) {
-      if (dst) dst.style.height = '';
-      return undefined;
-    }
-    const sync = () => {
-      dst.style.height = `${src.offsetHeight}px`;
-    };
-    sync();
-    const ro = new ResizeObserver(sync);
-    ro.observe(src);
-    return () => {
-      ro.disconnect();
-      if (mapStripSceneRef.current) mapStripSceneRef.current.style.height = '';
-    };
-  }, [
-    isPlayer,
-    maps.length,
-    canControlMapView,
-    onOpenCreateScene,
-    onOpenAddScene,
-    onAddMap,
-    gmCanCreateCameraView,
-    trayTokenSizePx,
-  ]);
 
   const mapViewSig = useMemo(
     () =>
@@ -6220,20 +6223,12 @@ export function BattleMap({
 
   const hasMapArt = mapConfigHasImage(mapConfig);
   const displayMapImageUrl = mapAiGenPreviewUrl ?? mapConfig?.mapImageUrl ?? null;
-  const gmEmptyMapHint =
-    !isPlayer &&
-    getGmTotMEmptyMapHint({
-      tableStateReady,
-      mapConfigHasImage: hasMapArt,
-    });
   const playerEmptyMapHint =
     isPlayer &&
     getPlayerTotMEmptyMapHint({
       tableStateReady,
       mapConfigHasImage: hasMapArt,
     });
-
-  const showTotmOverlay = !hasMapArt && (gmEmptyMapHint || playerEmptyMapHint);
 
   return (
     <div className={`flex flex-col ${className}`}>
@@ -6268,67 +6263,40 @@ export function BattleMap({
               tooltipPlacement="bottom"
             />
           ) : null}
-          <div
-            className="flex shrink-0 flex-col items-stretch min-w-0 self-stretch box-border"
-            style={{ width: CHARACTER_TRAY_WIDTH_PX, maxWidth: CHARACTER_TRAY_WIDTH_PX }}
-          >
-            <MapStripGroupLabel>Cameras</MapStripGroupLabel>
-            <div className="flex min-h-0 flex-1 flex-col items-stretch gap-0.5">
-              <Tooltip
-                label={
+          <div className="flex w-max shrink-0 flex-col items-stretch self-stretch box-border">
+            <MapStripGroupLabel>Maps & Cameras</MapStripGroupLabel>
+            {/* w-0 min-w-full: column width comes from the label; buttons fill it without expanding it */}
+            <div className="flex w-0 min-w-full min-h-0 flex-1 flex-col items-stretch gap-0.5">
+              <MapStripActionButton
+                onClick={() => void handleSplitCamera()}
+                disabled={!gmCanCreateCameraView}
+                ariaLabel="Add Camera"
+                className="text-violet-300/90 border-violet-500/35 bg-violet-950/25 hover:bg-violet-900/35"
+                iconSize={Math.max(12, trayTokenSizePx - 8)}
+                Icon={Camera}
+                labelLines={['Add', 'Camera']}
+                tooltip={
                   gmCanCreateCameraView
                     ? 'Add camera at the current zoom and pan'
                     : 'Cameras'
                 }
-                placement="right"
-                className="relative flex min-h-0 min-w-0 flex-1 flex-col"
-              >
-                {gmCanCreateCameraView ? (
-                  <button
-                    type="button"
-                    onClick={() => void handleSplitCamera()}
-                    className="flex min-h-0 w-full flex-1 items-center justify-center rounded px-0.5 py-0.5 text-violet-300/90 border border-violet-500/35 bg-violet-950/25 hover:bg-violet-900/35 hover:underline box-border"
-                    aria-label="Add camera at the current zoom and pan"
-                  >
-                    <span className="relative inline-flex shrink-0">
-                      <Camera size={trayTokenSizePx - 6} strokeWidth={1.25} aria-hidden />
-                      <Plus
-                        className="absolute -bottom-0.5 -right-0.5 text-violet-100"
-                        size={16}
-                        strokeWidth={3.5}
-                        aria-hidden
-                      />
-                    </span>
-                  </button>
-                ) : (
-                  <span
-                    className="flex min-h-0 w-full flex-1 flex-col items-center justify-center text-dh-muted"
-                    role="img"
-                    aria-label="Camera views"
-                  >
-                    <Camera size={trayTokenSizePx} strokeWidth={1.25} aria-hidden />
-                  </span>
-                )}
-              </Tooltip>
+                tooltipPlacement="bottom"
+                grow
+                width="fill"
+              />
               {onAddMap ? (
-                <Tooltip label="Add map" placement="right" className="relative flex min-h-0 min-w-0 flex-1 flex-col">
-                  <button
-                    type="button"
-                    onClick={onAddMap}
-                    className="flex min-h-0 w-full flex-1 items-center justify-center rounded px-0.5 py-0.5 text-violet-300/90 border border-violet-500/35 bg-violet-950/25 hover:bg-violet-900/35 hover:underline box-border"
-                    aria-label="Add map"
-                  >
-                    <span className="relative inline-flex shrink-0">
-                      <MapIcon size={trayTokenSizePx - 6} strokeWidth={1.25} aria-hidden />
-                      <Plus
-                        className="absolute -bottom-0.5 -right-0.5 text-violet-100"
-                        size={16}
-                        strokeWidth={3.5}
-                        aria-hidden
-                      />
-                    </span>
-                  </button>
-                </Tooltip>
+                <MapStripActionButton
+                  onClick={onAddMap}
+                  ariaLabel="Add Map"
+                  className="text-violet-300/90 border-violet-500/35 bg-violet-950/25 hover:bg-violet-900/35"
+                  iconSize={Math.max(12, trayTokenSizePx - 8)}
+                  Icon={MapIcon}
+                  labelLines={['Add', 'Map']}
+                  tooltip="Add map"
+                  tooltipPlacement="bottom"
+                  grow
+                  width="fill"
+                />
               ) : null}
             </div>
           </div>
@@ -6543,44 +6511,6 @@ export function BattleMap({
               </Fragment>
             ))}
           </div>
-          {!isPlayer && (onOpenCreateScene || onOpenAddScene) ? (
-            <div
-              ref={mapStripSceneRef}
-              className="ml-auto flex shrink-0 flex-col items-stretch min-w-0 self-start w-max"
-            >
-              <MapStripGroupLabel>Scene</MapStripGroupLabel>
-              <div className="flex min-h-0 flex-1 flex-col items-stretch gap-0.5">
-                {onOpenCreateScene ? (
-                  <MapStripActionButton
-                    onClick={onOpenCreateScene}
-                    ariaLabel="Create Scene"
-                    className="text-dh-muted border-dh-strong/50 bg-dh-raised/40 hover:bg-dh-raised/70 hover:text-dh"
-                    iconSize={Math.max(12, trayTokenSizePx - 8)}
-                    Icon={Camera}
-                    label="Create"
-                    tooltip="Create Scene from this table"
-                    tooltipPlacement="left"
-                    grow
-                    width="fit"
-                  />
-                ) : null}
-                {onOpenAddScene ? (
-                  <MapStripActionButton
-                    onClick={onOpenAddScene}
-                    ariaLabel="Add Scene"
-                    className="text-dh-muted border-dh-strong/50 bg-dh-raised/40 hover:bg-dh-raised/70 hover:text-dh"
-                    iconSize={Math.max(12, trayTokenSizePx - 8)}
-                    Icon={FolderOpen}
-                    label="Add"
-                    tooltip="Add a Scene from the library"
-                    tooltipPlacement="left"
-                    grow
-                    width="fit"
-                  />
-                ) : null}
-              </div>
-            </div>
-          ) : null}
         </div>
       )}
       {isPlayer && tableId && showPlayerMapViewStrip && (
@@ -7444,39 +7374,14 @@ export function BattleMap({
               style={{ pointerEvents: 'auto' }}
             />
           ) : null}
-          {showTotmOverlay ? (
+          {playerEmptyMapHint ? (
             <div
               className="pointer-events-none absolute inset-0 z-10 flex items-start justify-center px-4 overflow-y-auto py-8"
               role="status"
             >
               <div className="text-dh-muted text-sm text-center max-w-3xl w-full space-y-2">
                 <MapIcon size={32} className="mx-auto mb-1 opacity-50" aria-hidden />
-                {gmEmptyMapHint ? (
-                  <>
-                    <div className="text-dh font-semibold tracking-wide text-base">Theatre of the Mind</div>
-                    <p className="leading-snug">Drag tokens here and use relative positioning</p>
-                    <div className="text-dh-muted/90 text-xs font-medium py-0.5">OR</div>
-                    <p className="leading-snug">Drag / paste an image here and use a map</p>
-                    {showImageGenAiUi ? (
-                      <>
-                        <div className="text-dh-muted/90 text-xs font-medium py-0.5">OR</div>
-                        <div className="pointer-events-auto flex justify-center pt-1">
-                          <button
-                            type="button"
-                            onClick={() => setAiMapOpen(true)}
-                            className="flex items-center gap-1.5 px-2 py-1 rounded border border-purple-800/50 hover:border-purple-600 text-purple-300 hover:text-purple-100 bg-purple-950/30 hover:bg-purple-900/40 transition-colors"
-                            title="Generate map image with AI (x.ai)"
-                          >
-                            <Sparkles size={12} />
-                            Generate with AI
-                          </button>
-                        </div>
-                      </>
-                    ) : null}
-                  </>
-                ) : (
-                  <p className="leading-snug">No map loaded</p>
-                )}
+                <p className="leading-snug">No map loaded</p>
               </div>
             </div>
           ) : null}

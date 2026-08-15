@@ -153,6 +153,7 @@ export function SessionCountdownsPanel({
                   type="button"
                   onClick={addBlank}
                   title="Add countdown"
+                  data-prep-target="build"
                   className="shrink-0 rounded px-1 py-0.5 text-[10px] font-semibold text-dh-muted hover:text-dh hover:bg-dh-hover/60 transition-colors"
                 >
                   + Add

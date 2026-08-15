@@ -2,7 +2,7 @@ import { useMemo, useState, useEffect, useLayoutEffect, useRef, useCallback } fr
 import { createPortal } from 'react-dom';
 import { useTouchDevice } from '../lib/useTouchDevice.js';
 import { useHoverOverlay } from '../lib/useHoverOverlay.js';
-import { Zap, Trash2, Dices, ChevronDown, ChevronRight, X, Plus, Swords, AlertTriangle, Flame, Edit, Users, RefreshCw, ExternalLink, Eye, EyeOff, Circle, Square, CheckSquare, StickyNote, Heart, LogOut } from 'lucide-react';
+import { Zap, Trash2, Dices, ChevronDown, ChevronRight, X, Plus, Swords, AlertTriangle, Flame, Edit, Users, RefreshCw, ExternalLink, Eye, EyeOff, Circle, Square, CheckSquare, StickyNote, Heart, LogOut, Camera, FolderOpen } from 'lucide-react';
 import { BattleMap, CHARACTER_TRAY_WIDTH_PX, TokenTrayActionButton } from './BattleMap.jsx';
 import { EncounterAdversaryInstancePlayerSummary } from './EncounterAdversaryMarkedSummary.jsx';
 import { playerEncounterInstanceRowVisible } from '../lib/encounter-adversary-player-summary.js';
@@ -71,6 +71,7 @@ import {
   fetchTableBillingStatus,
 } from '../lib/api.js';
 import { SupportTableModal } from './SupportTableModal.jsx';
+import { PrepSetupChecklist } from './PrepSetupChecklist.jsx';
 import {
   billingDowngradeBannerCopy,
   billingSessionBlockedCopy,
@@ -5920,6 +5921,17 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
+      {!isPlayer && (
+        <PrepSetupChecklist
+          tableStateReady={tableStateReady}
+          maps={maps}
+          mapConfigHasImage={mapConfigHasImage(mapConfig)}
+          activeElements={activeElements}
+          sessionCountdowns={sessionCountdowns}
+          inviteLink={inviteLink}
+          sessionStarted={sessionStarted}
+        />
+      )}
       {/* Preview-as-player banner */}
       {previewAsPlayerEmail && (() => {
         const p = connectedPlayers.find(c => c.email === previewAsPlayerEmail);
@@ -5973,14 +5985,27 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                 <>
                   <p className="text-[10px] text-dh-muted uppercase tracking-wider font-semibold">Invite Link</p>
                   {!inviteLink ? (
-                    <button
-                      type="button"
-                      onClick={onGenerateInviteLink}
-                      className="w-full rounded-lg border border-dashed border-dh-strong bg-dh-raised/60 hover:border-sky-500/50 hover:bg-dh-hover px-2.5 py-1.5 flex items-center justify-center gap-1.5 transition-colors"
-                    >
-                      <Plus size={12} className="text-sky-500" />
-                      <span className="text-xs font-semibold text-dh">Generate Invite Link</span>
-                    </button>
+                    playerEmails.length === 0 ? (
+                      <button
+                        type="button"
+                        onClick={onGenerateInviteLink}
+                        data-prep-target="invite"
+                        className="w-full flex flex-col items-center justify-center gap-1.5 min-h-[4.25rem] px-2 py-3 rounded border border-yellow-400/35 bg-yellow-400/10 text-yellow-100 hover:bg-yellow-400/15 hover:border-yellow-300/45 transition-colors"
+                      >
+                        <Plus size={22} className="shrink-0" strokeWidth={2.5} />
+                        <span className="text-sm font-bold tracking-wide">Generate Invite Link</span>
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={onGenerateInviteLink}
+                        data-prep-target="invite"
+                        className="w-full rounded-lg border border-dashed border-dh-strong bg-dh-raised/60 hover:border-sky-500/50 hover:bg-dh-hover px-2.5 py-1.5 flex items-center justify-center gap-1.5 transition-colors"
+                      >
+                        <Plus size={12} className="text-sky-500" />
+                        <span className="text-xs font-semibold text-dh">Generate Invite Link</span>
+                      </button>
+                    )
                   ) : (
                     <div className="space-y-1">
                       <div className="flex gap-1">
@@ -6067,10 +6092,11 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
             type="button"
             ref={addCharacterAnchorRef}
             onClick={() => setModalOpen('characters')}
-            className="w-full rounded-lg border border-dashed border-dh-strong bg-dh-raised/60 hover:border-sky-500/50 hover:bg-dh-hover px-2.5 py-1.5 flex items-center justify-center gap-1.5 transition-colors"
+            data-prep-target="invite"
+            className="w-full rounded-lg border border-dashed border-yellow-400/30 bg-yellow-400/[0.06] hover:border-yellow-300/45 hover:bg-yellow-400/10 px-2.5 py-1.5 flex items-center justify-center gap-1.5 transition-colors"
           >
-            <Plus size={12} className="text-sky-500" />
-            <span className="text-xs font-semibold text-dh">Add Character</span>
+            <Plus size={12} className="text-yellow-300/80" />
+            <span className="text-xs font-semibold text-yellow-100/80">Add Character</span>
           </button>
 
           {/* Support this table — visible to GM and all players */}
@@ -6998,8 +7024,6 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
             renderPinnedCharacterPanel={renderPinnedCharacterPanel}
             renderAdversaryEncounterCard={!isPlayer ? renderAdversaryEncounterCard : undefined}
             renderAdversaryTargetAid={renderAdversaryTargetAid}
-            onOpenCreateScene={!isPlayer ? () => setCreateSceneOpen(true) : undefined}
-            onOpenAddScene={!isPlayer ? () => setModalOpen('scenes') : undefined}
           />
         </div>
         </div>
@@ -7029,49 +7053,57 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
               ><Trash2 size={13} /></button>
             </div>
           </div>
-          {/* Session / Rest cycle buttons */}
-          <div className="flex items-center gap-1">
-            {sessionPlayAllowed ? (
-              <button
-                type="button"
-                title="End Session — pause play mechanics until you start again"
-                onClick={() => { void handleEndSession(); }}
-                className="flex-1 text-[10px] font-semibold px-1.5 py-1 rounded border border-rose-800/60 bg-rose-950/30 text-rose-300 hover:bg-rose-900/40 hover:border-rose-600 transition-colors"
-              >■ End</button>
-            ) : sessionPaused ? (
-              <button
-                type="button"
-                title="Resume Session — table was idle; click to continue play"
-                onClick={() => { void handleResumeSession(); }}
-                className="flex-1 text-[10px] font-semibold px-1.5 py-1 rounded border border-emerald-800/60 bg-emerald-950/30 text-emerald-400 hover:bg-emerald-900/40 hover:border-emerald-700 transition-colors"
-              >▶ Resume</button>
-            ) : (
-              <button
-                type="button"
-                title="Start Session — acknowledge to reset session uses, modifiers, and session-start hooks"
-                onClick={() => handleSessionCycle('session')}
-                className="flex-1 text-[10px] font-semibold px-1.5 py-1 rounded border border-emerald-800/60 bg-emerald-950/30 text-emerald-400 hover:bg-emerald-900/40 hover:border-emerald-700 transition-colors"
-              >▶ Session</button>
-            )}
+          {/* Session / Rest cycle buttons — prep mode: Start Session alone fills both rows */}
+          {!sessionPlayAllowed && !sessionPaused ? (
             <button
-              title="Short Rest — refresh rest-use features for all characters"
-              onClick={() => handleSessionCycle('rest')}
-              className="flex-1 text-[10px] font-semibold px-1.5 py-1 rounded border border-sky-800/60 bg-sky-950/30 text-sky-400 hover:bg-sky-900/40 hover:border-sky-700 transition-colors"
-            >⏸ Short</button>
-            <button
-              title="Long Rest — refresh rest and long-rest features for all characters"
-              onClick={() => handleSessionCycle('longRest')}
-              className="flex-1 text-[10px] font-semibold px-1.5 py-1 rounded border border-dh-strong bg-dh-hover text-dh hover:bg-dh-strong transition-colors"
-            >⏹ Long</button>
-          </div>
-          <button
-            type="button"
-            title="Call for Reaction — pick characters, trait, and difficulty"
-            onClick={() => openReactionCallModal([])}
-            className="w-full text-[10px] font-semibold px-1.5 py-1 rounded border border-sky-800/60 bg-sky-950/30 text-sky-300 hover:bg-sky-900/40 hover:border-sky-700 transition-colors"
-          >
-            ⚡ Call for Reaction
-          </button>
+              type="button"
+              title="Start Session — acknowledge to reset session uses, modifiers, and session-start hooks"
+              onClick={() => handleSessionCycle('session')}
+              data-prep-target="play"
+              className="w-full flex flex-col items-center justify-center gap-1.5 min-h-[4.25rem] px-2 py-3 rounded border border-emerald-800/60 bg-emerald-950/30 text-emerald-400 hover:bg-emerald-900/40 hover:border-emerald-700 transition-colors"
+            >
+              <span className="text-2xl leading-none font-bold">▶</span>
+              <span className="text-sm font-bold tracking-wide">Start Session</span>
+            </button>
+          ) : (
+            <>
+              <div className="flex items-center gap-1">
+                {sessionPlayAllowed ? (
+                  <button
+                    type="button"
+                    title="End Session — pause play mechanics until you start again"
+                    onClick={() => { void handleEndSession(); }}
+                    className="flex-1 text-[10px] font-semibold px-1.5 py-1 rounded border border-rose-800/60 bg-rose-950/30 text-rose-300 hover:bg-rose-900/40 hover:border-rose-600 transition-colors"
+                  >■ End</button>
+                ) : (
+                  <button
+                    type="button"
+                    title="Resume Session — table was idle; click to continue play"
+                    onClick={() => { void handleResumeSession(); }}
+                    className="flex-1 text-[10px] font-semibold px-1.5 py-1 rounded border border-emerald-800/60 bg-emerald-950/30 text-emerald-400 hover:bg-emerald-900/40 hover:border-emerald-700 transition-colors"
+                  >▶ Resume</button>
+                )}
+                <button
+                  title="Short Rest — refresh rest-use features for all characters"
+                  onClick={() => handleSessionCycle('rest')}
+                  className="flex-1 text-[10px] font-semibold px-1.5 py-1 rounded border border-sky-800/60 bg-sky-950/30 text-sky-400 hover:bg-sky-900/40 hover:border-sky-700 transition-colors"
+                >⏸ Short</button>
+                <button
+                  title="Long Rest — refresh rest and long-rest features for all characters"
+                  onClick={() => handleSessionCycle('longRest')}
+                  className="flex-1 text-[10px] font-semibold px-1.5 py-1 rounded border border-dh-strong bg-dh-hover text-dh hover:bg-dh-strong transition-colors"
+                >⏹ Long</button>
+              </div>
+              <button
+                type="button"
+                title="Call for Reaction — pick characters, trait, and difficulty"
+                onClick={() => openReactionCallModal([])}
+                className="w-full text-[10px] font-semibold px-1.5 py-1 rounded border border-sky-800/60 bg-sky-950/30 text-sky-300 hover:bg-sky-900/40 hover:border-sky-700 transition-colors"
+              >
+                ⚡ Call for Reaction
+              </button>
+            </>
+          )}
           {/* Fear tracker */}
           <div className="rounded-lg border border-dh-strong bg-dh-surface px-2.5 py-2">
             <div className="grid grid-cols-[auto_auto_minmax(0,1fr)] items-center gap-x-1.5 gap-y-1.5">
@@ -7126,12 +7158,35 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
 
         <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-2">
           <div className="border-t border-dh-border" role="separator" />
+          {!isPlayer && (
+            <div className="flex gap-1.5">
+              <button
+                type="button"
+                onClick={() => setModalOpen('scenes')}
+                data-prep-target="build"
+                className="flex flex-1 items-center gap-1.5 rounded border border-violet-700/60 bg-violet-950/40 px-2 py-1.5 text-[11px] font-semibold text-violet-300 transition-colors hover:border-violet-600 hover:bg-violet-900/50"
+              >
+                <FolderOpen size={13} className="shrink-0" />
+                Load Scene
+              </button>
+              <button
+                type="button"
+                onClick={() => setCreateSceneOpen(true)}
+                className="flex flex-1 items-center gap-1.5 whitespace-nowrap rounded border border-dh-strong/50 bg-dh-raised/40 px-2 py-1.5 text-[11px] font-semibold text-dh-muted transition-colors hover:border-dh-strong hover:bg-dh-raised/70 hover:text-dh"
+              >
+                <Camera size={13} className="shrink-0" />
+                Save Scene
+              </button>
+            </div>
+          )}
+          <div className="border-t border-dh-border" role="separator" />
           <div className="flex items-center justify-between gap-2">
             <p className="text-[10px] font-semibold uppercase tracking-wide text-dh-muted">Notes</p>
             <button
               type="button"
               onClick={() => handleAddEmptyNote()}
               title="Add note"
+              data-prep-target="build"
               className="shrink-0 rounded px-1 py-0.5 text-[10px] font-semibold text-dh-muted hover:text-dh hover:bg-dh-hover/60 transition-colors"
             >
               + Add
@@ -7224,6 +7279,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
               type="button"
               onClick={() => setModalOpen('environments')}
               title="Add environment"
+              data-prep-target="build"
               className="shrink-0 rounded px-1 py-0.5 text-[10px] font-semibold text-dh-muted hover:text-dh hover:bg-dh-hover/60 transition-colors"
             >
               + Add
@@ -7256,6 +7312,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
               type="button"
               onClick={() => setModalOpen('adversaries')}
               title="Add adversary"
+              data-prep-target="build"
               className="shrink-0 rounded px-1 py-0.5 text-[10px] font-semibold text-dh-muted hover:text-dh hover:bg-dh-hover/60 transition-colors"
             >
               + Add

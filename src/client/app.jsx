@@ -1885,11 +1885,10 @@ function App() {
       mapViewportAspect={battleMapViewportAspect}
     >
     <div className="h-[100dvh] bg-dh-surface text-dh font-sans flex flex-col overflow-hidden">
-      {typeof document !== 'undefined' && route.view === 'table' && user && !sessionPlayAllowed && createPortal(
+      {typeof document !== 'undefined' && route.view === 'table' && user && sessionPaused && createPortal(
         <SessionBlockedBanner
           isPlayer={effectiveIsPlayer}
-          sessionStarted={sessionStarted}
-          onResume={!effectiveIsPlayer && sessionPaused ? handleSessionBannerResume : undefined}
+          onResume={!effectiveIsPlayer ? handleSessionBannerResume : undefined}
         />,
         document.body
       )}

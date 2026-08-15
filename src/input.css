@@ -534,6 +534,9 @@ a, button, input[type="submit"], input[type="button"], input[type="checkbox"], i
   animation: dice-banner-in 0.35s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
 }
 
+/* Prep setup card pulse animations are injected by PrepSetupChecklist.jsx
+   to avoid Tailwind's attribute-selector purging. */
+
 /* Pre-roll intent sheet: slide up from the bottom of the map column */
 @keyframes dh-preroll-sheet-in {
   from { transform: translateY(100%); }

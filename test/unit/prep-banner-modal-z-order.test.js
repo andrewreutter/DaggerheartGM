@@ -16,7 +16,8 @@ describe('prep banner vs modal z-order', () => {
     expect(banner).toMatch(/type="button"/);
     expect(banner).toMatch(/onClick=\{onResume\}/);
     const app = readFileSync(join(root, 'src/client/app.jsx'), 'utf8');
-    expect(app).toMatch(/onResume=\{!effectiveIsPlayer && sessionPaused \? handleSessionBannerResume/);
+    expect(app).toMatch(/sessionPaused && createPortal/);
+    expect(app).toMatch(/onResume=\{!effectiveIsPlayer \? handleSessionBannerResume/);
     expect(app).toMatch(/set-table-top.*sessionPaused: false/s);
   });
 
