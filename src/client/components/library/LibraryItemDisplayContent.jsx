@@ -11,7 +11,7 @@ import { coerceLibraryAttack } from '../../lib/library-attack-display.js';
 import { libraryTierBodyLine, showLibraryLevelBadge } from '../../lib/library-tier-subtitle.js';
 import { expandDomainCardEntries } from '../../lib/library-domain-cards.js';
 import { TierShieldBadge } from '../TierShieldBadge.jsx';
-import { collectSceneLibraryCardGroups, formatSceneLibraryRowTitle } from '../../lib/scene-library-card-contents.js';
+import { collectSceneLibraryCardGroups, formatSceneLibraryRowTitle, sceneMapPreviewAspectRatio } from '../../lib/scene-library-card-contents.js';
 
 const GENERIC_DETAIL_SET = new Set(LIBRARY_GENERIC_DETAIL_COLLECTIONS);
 
@@ -595,44 +595,36 @@ const SCENE_LIBRARY_GROUP_ICONS = {
   notes: StickyNote,
 };
 
+/** Fill-mode map: preferred size from image aspect (`basis-auto` + grow). Shrinks only after below-content is gone. */
+const SCENE_CARD_FILL_MAP_BOX =
+  'min-h-0 grow basis-auto overflow-hidden rounded border border-dh-border/80 bg-dh-canvas/40 flex items-center justify-center';
+/** Fill-mode lists/tier: truncate first (`shrink-[999]` + overflow-hidden) so the map is not squeezed. */
+const SCENE_CARD_FILL_BELOW =
+  'min-h-0 shrink-[999] basis-auto overflow-hidden flex flex-col gap-1.5';
+
 /**
  * Lightweight scene summary: first-map thumbnail, denormalized tier/BP, and item titles.
  * @param {{ item: object, compact?: boolean, fill?: boolean }} props
- *   `fill` — library grid card: map grows into available height and keeps aspect via object-contain.
+ *   `fill` — library grid card: map keeps its aspect preferred size and grows into leftover
+ *   height; content below truncates first, and the map shrinks only after that is gone.
  */
 export function SceneLibraryCard({ item, compact = false, fill = false }) {
-  const mapImageUrl = item?.maps?.[0]?.mapImageUrl;
+  const map = item?.maps?.[0];
+  const mapImageUrl = map?.mapImageUrl;
+  const mapAspect = sceneMapPreviewAspectRatio(map);
   const groups = collectSceneLibraryCardGroups(item);
   const showTier = item?.tier != null && item.tier !== '';
   const showBp = item?.bp != null && item.bp !== '';
+  const showBelow = showTier || showBp || groups.length > 0;
 
   const mapBoxClass = fill
-    ? 'flex-1 min-h-0 flex items-center justify-center overflow-hidden rounded border border-dh-border/80 bg-dh-canvas/40'
+    ? SCENE_CARD_FILL_MAP_BOX
     : `overflow-hidden rounded border border-dh-border/80 ${compact ? 'h-20' : 'h-36'}`;
 
-  return (
-    <div
-      className={
-        fill
-          ? 'h-full min-h-0 flex flex-col gap-1.5 p-1.5 bg-dh-inset border border-dh-border rounded-lg'
-          : 'mb-3 p-2.5 bg-dh-inset border border-dh-border rounded-lg space-y-2.5'
-      }
-    >
-      {mapImageUrl ? (
-        <div className={mapBoxClass}>
-          <img
-            src={mapImageUrl}
-            alt=""
-            className={
-              fill
-                ? 'max-h-full max-w-full w-auto h-auto object-contain'
-                : 'h-full w-full object-contain'
-            }
-          />
-        </div>
-      ) : null}
+  const belowInner = (
+    <>
       {(showTier || showBp) && (
-        <div className={`flex items-center gap-2 flex-wrap ${fill ? 'shrink-0' : ''}`}>
+        <div className="flex items-center gap-2 flex-wrap shrink-0">
           {showTier ? (
             <span className="shrink-0" title={`Tier ${item.tier}`}>
               <TierShieldBadge tier={item.tier} size={compact || fill ? 'sm' : 'md'} />
@@ -646,7 +638,7 @@ export function SceneLibraryCard({ item, compact = false, fill = false }) {
         </div>
       )}
       {groups.length > 0 ? (
-        <div className={`flex flex-col ${compact || fill ? 'gap-1.5' : 'gap-2.5'} ${fill ? 'shrink-0' : ''}`}>
+        <div className={`flex flex-col shrink-0 ${compact || fill ? 'gap-1.5' : 'gap-2.5'}`}>
           {groups.map(({ key, label, entries }) => {
             const Icon = SCENE_LIBRARY_GROUP_ICONS[key];
             const titleCls = compact || fill
@@ -683,6 +675,36 @@ export function SceneLibraryCard({ item, compact = false, fill = false }) {
             );
           })}
         </div>
+      ) : null}
+    </>
+  );
+
+  return (
+    <div
+      className={
+        fill
+          ? 'h-full min-h-0 flex flex-col gap-1.5 p-1.5 bg-dh-inset border border-dh-border rounded-lg'
+          : 'mb-3 p-2.5 bg-dh-inset border border-dh-border rounded-lg space-y-2.5'
+      }
+    >
+      {mapImageUrl ? (
+        <div
+          className={mapBoxClass}
+          style={fill && mapAspect ? { aspectRatio: mapAspect } : undefined}
+        >
+          <img
+            src={mapImageUrl}
+            alt=""
+            className={
+              fill
+                ? 'w-full h-auto max-h-full object-contain'
+                : 'h-full w-full object-contain'
+            }
+          />
+        </div>
+      ) : null}
+      {showBelow ? (
+        fill ? <div className={SCENE_CARD_FILL_BELOW}>{belowInner}</div> : belowInner
       ) : null}
     </div>
   );

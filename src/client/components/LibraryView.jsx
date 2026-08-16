@@ -43,6 +43,7 @@ import { shouldShowConceptAiUi } from '../lib/ai-ui-visibility.js';
 import { generateId } from '../lib/helpers.js';
 import { DEFAULT_LIBRARY_TAB } from '../lib/router.js';
 import { buildLibraryBrowsePath, buildLibraryModalPath } from '../lib/library-modal-path.js';
+import { resolveLibraryItemDeepLink } from '../lib/library-item-deep-link.js';
 import { useUnifiedImport } from '../lib/unified-import-context.jsx';
 import {
   SRD_UNIFIED_COLLECTIONS,
@@ -473,6 +474,9 @@ export function LibraryView({
   // Handle deep-link routes: /library/:tab/:id opens the modal.
   const { itemId, action, libraryNewCollection } = route;
   const deepLinkProcessedRef = useRef(false);
+  const deepLinkRefreshAttemptedRef = useRef(false);
+  const searchRefreshRef = useRef(search.refresh);
+  searchRefreshRef.current = search.refresh;
   const appliedRouteQuerySigRef = useRef('');
 
   useEffect(() => {
@@ -499,7 +503,15 @@ export function LibraryView({
     search,
   ]);
 
+  const deepLinkKeyRef = useRef('');
   useEffect(() => {
+    const key = `${activeTab}:${itemId || ''}`;
+    if (deepLinkKeyRef.current !== key) {
+      deepLinkKeyRef.current = key;
+      deepLinkProcessedRef.current = false;
+      deepLinkRefreshAttemptedRef.current = false;
+    }
+
     if (deepLinkProcessedRef.current) return;
     if (!itemId) return;
 
@@ -518,27 +530,39 @@ export function LibraryView({
       return;
     }
 
-    // Wait for items to load before resolving the deep link.
-    const found = items.find(i => i.id === itemId);
-    if (!found && isPaginatedTab && search.loading) return; // still loading
-    if (!found && !isPaginatedTab && (items.length === 0 || nonPaginatedLoading)) return; // not ready yet
+    const { action: deepLinkAction, item: found } = resolveLibraryItemDeepLink({
+      itemId,
+      items,
+      fallbackItems: data?.[activeTab] || [],
+      loading: isPaginatedTab && search.loading,
+      isPaginated: isPaginatedTab,
+      refreshAttempted: deepLinkRefreshAttemptedRef.current,
+      modalItemId: modalState?.item?.id ?? null,
+      nonPaginatedReady: items.length > 0 && !nonPaginatedLoading,
+    });
+
+    if (deepLinkAction === 'wait' || deepLinkAction === 'ignore') return;
+    if (deepLinkAction === 'refresh') {
+      deepLinkRefreshAttemptedRef.current = true;
+      searchRefreshRef.current?.();
+      return;
+    }
+    if (deepLinkAction === 'open-and-refresh') {
+      deepLinkRefreshAttemptedRef.current = true;
+      searchRefreshRef.current?.();
+    }
 
     deepLinkProcessedRef.current = true;
-    if (found) {
+    if (deepLinkAction === 'open' || deepLinkAction === 'open-and-refresh') {
       setModalState({ item: found, isNew: false });
       // Keep URL as /library/:tab/:id for back/forward/link/reload
-    } else if (modalState?.item?.id === itemId) {
+    } else if (deepLinkAction === 'keep-modal') {
       // Item not in items list (e.g. slot evicted, or click before items synced) but we have it from openModal — keep modal
     } else {
       // Item not found (e.g. deleted) — clear URL to avoid stuck state
       navigate(`/library/${activeTab}`, { replace: true });
     }
-  }, [itemId, items, isPaginatedTab, search.loading, nonPaginatedLoading, activeTab, navigate, action, modalState, libraryNewCollection]);
-
-  // Reset deep-link flag when tab or route changes.
-  useEffect(() => {
-    deepLinkProcessedRef.current = false;
-  }, [activeTab, itemId]);
+  }, [itemId, items, isPaginatedTab, search.loading, nonPaginatedLoading, activeTab, navigate, action, modalState, libraryNewCollection, data]);
 
   // Close modal when URL no longer has itemId (e.g. user pressed back).
   useEffect(() => {

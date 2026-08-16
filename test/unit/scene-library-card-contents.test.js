@@ -3,6 +3,7 @@ import {
   collectSceneLibraryCardGroups,
   formatSceneLibraryRowTitle,
   libraryPickerRowMeta,
+  sceneMapPreviewAspectRatio,
 } from '../../src/client/lib/scene-library-card-contents.js';
 
 describe('formatSceneLibraryRowTitle', () => {
@@ -106,5 +107,17 @@ describe('collectSceneLibraryCardGroups', () => {
   it('returns no groups for an empty or missing scene', () => {
     expect(collectSceneLibraryCardGroups(null)).toEqual([]);
     expect(collectSceneLibraryCardGroups({})).toEqual([]);
+  });
+});
+
+describe('sceneMapPreviewAspectRatio', () => {
+  it('returns a CSS aspect-ratio from stored natural pixels', () => {
+    expect(sceneMapPreviewAspectRatio({ mapImageNaturalWidth: 1600, mapImageNaturalHeight: 900 })).toBe('1600 / 900');
+  });
+
+  it('omits a ratio when natural size is missing or invalid', () => {
+    expect(sceneMapPreviewAspectRatio(null)).toBeUndefined();
+    expect(sceneMapPreviewAspectRatio({})).toBeUndefined();
+    expect(sceneMapPreviewAspectRatio({ mapImageNaturalWidth: 0, mapImageNaturalHeight: 900 })).toBeUndefined();
   });
 });

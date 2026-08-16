@@ -3,6 +3,18 @@
  */
 
 /**
+ * CSS `aspect-ratio` for a scene card map preview, from stored natural pixels.
+ * @param {object|null|undefined} map
+ * @returns {string|undefined}
+ */
+export function sceneMapPreviewAspectRatio(map) {
+  const w = Number(map?.mapImageNaturalWidth);
+  const h = Number(map?.mapImageNaturalHeight);
+  if (!(w > 0 && h > 0)) return undefined;
+  return `${w} / ${h}`;
+}
+
+/**
  * Right-side picker decorations: Tier and role/type (e.g. "Tier 1" · "minion").
  * @param {object|null|undefined} item
  * @returns {{ tier: number|string|null, kind: string|null }}

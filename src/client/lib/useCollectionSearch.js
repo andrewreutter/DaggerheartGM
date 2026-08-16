@@ -296,7 +296,10 @@ export function useCollectionSearch(collection, {
   };
 
   const setOffset = (newOffset) => setOffsetState(newOffset);
-  const refresh = () => setRefreshKey(k => k + 1);
+  const refresh = useCallback(() => {
+    setLoading(true);
+    setRefreshKey(k => k + 1);
+  }, []);
 
   const patchItems = (patchMap) => {
     setItems(prev => prev.map(item => patchMap[item.id] ? { ...item, ...patchMap[item.id] } : item));

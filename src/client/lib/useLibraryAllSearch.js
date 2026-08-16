@@ -240,7 +240,10 @@ export function useLibraryAllSearch({
     setLoading(true);
   };
 
-  const refresh = () => setRefreshKey(k => k + 1);
+  const refresh = useCallback(() => {
+    setLoading(true);
+    setRefreshKey(k => k + 1);
+  }, []);
 
   const patchItems = (patchMap) => {
     setItems(prev => prev.map(item => {

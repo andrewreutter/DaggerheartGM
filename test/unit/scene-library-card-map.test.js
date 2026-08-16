@@ -15,13 +15,31 @@ describe('scene library card map preview', () => {
     expect(src).toMatch(/object-contain/);
     expect(src).not.toMatch(/object-cover/);
     expect(src).toMatch(/fill\s*=\s*false/);
-    expect(src).toMatch(/flex-1 min-h-0 flex items-center justify-center/);
     expect(src).toMatch(/<section key=\{key\}/);
     expect(src).toMatch(/LIB_SECTION_HEADER_BORDER/);
     expect(src).toMatch(/entries\.map\(\(\{ name, count, tier, kind \}\)/);
     expect(src).toMatch(/formatSceneLibraryRowTitle\(name, count\)/);
     expect(src).toMatch(/Tier \{tier\}/);
     expect(src).not.toMatch(/titles\.join\(', '/);
+  });
+
+  it('fill layout keeps the map preferred size and truncates lists below first', () => {
+    const src = readFileSync(
+      join(root, 'src/client/components/library/LibraryItemDisplayContent.jsx'),
+      'utf8'
+    );
+    expect(src).toMatch(/SCENE_CARD_FILL_MAP_BOX/);
+    expect(src).toMatch(/grow basis-auto/);
+    expect(src).toMatch(/SCENE_CARD_FILL_BELOW/);
+    expect(src).toMatch(/shrink-\[999\]/);
+    expect(src).toMatch(/aspectRatio: mapAspect/);
+    const mapBox = src.match(/SCENE_CARD_FILL_MAP_BOX\s*=\s*'([^']+)'/)?.[1] ?? '';
+    expect(mapBox).toMatch(/grow/);
+    expect(mapBox).toMatch(/basis-auto/);
+    expect(mapBox).not.toMatch(/flex-1/);
+    const below = src.match(/SCENE_CARD_FILL_BELOW\s*=\s*'([^']+)'/)?.[1] ?? '';
+    expect(below).toMatch(/shrink-\[999\]/);
+    expect(below).toMatch(/overflow-hidden/);
   });
 
   it('ItemCard uses unzoomed fill preview for scenes with a map image', () => {

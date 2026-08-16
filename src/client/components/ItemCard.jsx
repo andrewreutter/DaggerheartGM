@@ -56,7 +56,7 @@ export function ItemCard({
   const levelByName = showLibraryLevelBadge(tab, item);
   const showPreview = cardHeight >= LIBRARY_CARD_PREVIEW_VISIBLE_MIN_HEIGHT;
   const showCompactTitleThumb = !showPreview && getLibraryItemImageUrls(item).length > 0;
-  /** Scene cards with a map: fill the preview without CSS zoom so the map can use card height. */
+  /** Scene cards with a map: fill the preview without CSS zoom so the map can use leftover height after lists truncate. */
   const sceneMapFillPreview =
     showPreview && tab === 'scenes' && Boolean(item?.maps?.[0]?.mapImageUrl);
   const v2LibrarySourcePath = useMemo(() => {
@@ -378,7 +378,8 @@ export function ItemCard({
         {/*
           Use CSS zoom (not transform:scale) so layout + clipping work inside flex/virtualized rows.
           Transform scaling kept the modal-sized layout box huge and often produced an empty clip region.
-          Scene cards with a map skip zoom and fill the preview so the map grows with the card.
+          Scene cards with a map skip zoom and fill the preview so the map keeps its aspect
+          preferred size, grows into leftover height, and shrinks only after lists below are truncated.
         */}
         {showPreview ? (
         sceneMapFillPreview ? (
