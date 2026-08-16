@@ -3,6 +3,7 @@ import { FormRow } from './FormRow.jsx';
 import { MarkdownHelpTooltip } from '../MarkdownHelpTooltip.jsx';
 import { ImageEditor } from './ImageEditor.jsx';
 import { SceneTableEditor } from './SceneTableEditor.jsx';
+import { resolveItems } from '../../lib/api.js';
 import { computeSceneBudget } from '../../lib/battle-points.js';
 import { normalizeSceneTableData } from '../../lib/scene-table-adapter.js';
 
@@ -180,6 +181,7 @@ export function SceneForm({
             partySize={partySize}
             partyTier={partyTier}
             characters={characters}
+            resolveItems={resolveItems}
           />
         </div>
       </div>

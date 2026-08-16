@@ -15,20 +15,9 @@ import { MarkdownHelpTooltip } from '../MarkdownHelpTooltip.jsx';
 import { ImageEditor } from './ImageEditor.jsx';
 import { ConceptAiStrip } from '../ConceptAiStrip.jsx';
 import { postEnvironmentAiBuild } from '../../lib/api.js';
+import { normalizePotentialAdversaries } from '../../lib/environment-potential-adversaries.js';
 
-/**
- * Normalize the potential_adversaries field from any legacy or current format
- * into an array of { adversaryId?, name } objects.
- */
-export function normalizePotentialAdversaries(raw) {
-  if (!raw) return [];
-  if (Array.isArray(raw)) return raw;
-  if (typeof raw === 'string') {
-    return raw.split(',').map(s => s.trim()).filter(Boolean).map(name => ({ name }));
-  }
-  return [];
-}
-
+export { normalizePotentialAdversaries };
 export { coerceEnvironmentType, coerceEnvironmentTier };
 
 const ENV_TYPE_LABEL = {

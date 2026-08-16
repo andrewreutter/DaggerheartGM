@@ -2,7 +2,7 @@ import { useMemo, useState, useEffect, useLayoutEffect, useRef, useCallback } fr
 import { createPortal, flushSync } from 'react-dom';
 import { useTouchDevice } from '../lib/useTouchDevice.js';
 import { useHoverOverlay } from '../lib/useHoverOverlay.js';
-import { Zap, Trash2, Dices, ChevronDown, ChevronRight, X, Plus, Swords, AlertTriangle, Flame, Edit, Users, RefreshCw, ExternalLink, Eye, EyeOff, Circle, Square, CheckSquare, StickyNote, Heart, LogOut, Camera, FolderOpen } from 'lucide-react';
+import { Zap, Trash2, Dices, ChevronDown, ChevronRight, X, Plus, Swords, AlertTriangle, Flame, Edit, Users, RefreshCw, ExternalLink, Eye, EyeOff, Circle, Square, CheckSquare, Heart, LogOut, Camera, FolderOpen } from 'lucide-react';
 import { BattleMap, CHARACTER_TRAY_WIDTH_PX, TokenTrayActionButton } from './BattleMap.jsx';
 import { EncounterAdversaryInstancePlayerSummary } from './EncounterAdversaryMarkedSummary.jsx';
 import { playerEncounterInstanceRowVisible } from '../lib/encounter-adversary-player-summary.js';
@@ -174,6 +174,15 @@ import {
   HOPE_END,
   buildConsolidatedGmMovesMenu,
 } from '../lib/gm-moves-menu.js';
+import { groupEncounterElements } from '../lib/encounter-elements.js';
+import {
+  EncounterEnvironmentCard,
+  EncounterNoteCard,
+  EncounterPotentialAdversaryOverlay,
+  EncounterTrackerOverlay,
+  encounterAdversaryCardProps,
+  useEncounterHoverOverlays,
+} from './EncounterHoverOverlays.jsx';
 import { useCharacterSrdData } from '../lib/useCharacterSrdData.js';
 import { recomputeCharacter, isCharacterComplete, getEffectiveWeaponRange, projectCharacterFormToLevel } from '../lib/character-calc.js';
 import { mergeV2DeclarativeSheetOverlay, buildV2RegistryWithSrdItems } from '../lib/v2-declarative-sheet.js';
@@ -269,36 +278,6 @@ function stripRallyVolatileSessionKeys(fs) {
   if (Object.keys(bag).length === 0) delete next[RALLY_FEATURE_STATE_BAG_KEY];
   else next[RALLY_FEATURE_STATE_BAG_KEY] = bag;
   return next;
-}
-
-/**
- * Shared hook: after layout, measure a fixed-position overlay and compute a
- * vertical pixel adjustment so it stays within the viewport (8px padding).
- * Returns the adjustment value to add to the overlay's `top` style.
- */
-function useViewportClamp(ref, isActive, key) {
-  const [adjust, setAdjust] = useState(0);
-  const keyRef = useRef(null);
-
-  useLayoutEffect(() => {
-    if (!isActive || !ref.current) {
-      keyRef.current = null;
-      if (adjust !== 0) setAdjust(0);
-      return;
-    }
-    if (keyRef.current !== key) {
-      keyRef.current = key;
-      if (adjust !== 0) { setAdjust(0); return; }
-    } else if (adjust !== 0) {
-      return;
-    }
-    const rect = ref.current.getBoundingClientRect();
-    const vh = window.innerHeight;
-    if (rect.top < 102) setAdjust(102 - rect.top);
-    else if (rect.bottom > vh - 8) setAdjust(vh - 8 - rect.bottom);
-  }, [isActive, key, adjust]);
-
-  return adjust;
 }
 
 function parseFearCost(description) {
@@ -643,7 +622,14 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
 
   // ── Hover overlay hooks (desktop: mouseenter/leave; touch: tap-to-toggle) ──
   const suppressCharacterOverlayOutsideDismissRef = useRef(false);
-  const trackerOverlay    = useHoverOverlay({ hideDelay: 120, isTouch });
+  const encounterAsideRef = useRef(null);
+  const {
+    trackerOverlay,
+    potAdvOverlay,
+    trackerAdjust,
+    potAdvAdjust,
+    handlePotentialAdversaryHover,
+  } = useEncounterHoverOverlays({ isTouch, resolveItems });
   const characterOverlay  = useHoverOverlay({
     hideDelay: 120,
     isTouch,
@@ -651,7 +637,6 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     getClickToggleKey: (d) => d?.element?.instanceId,
     suppressOutsideDismissRef: suppressCharacterOverlayOutsideDismissRef,
   });
-  const potAdvOverlay     = useHoverOverlay({ hideDelay: 120, isTouch });
   const gmMovesOverlay    = useHoverOverlay({ hideDelay: 150, isTouch, mode: 'click', getClickToggleKey: () => 'gm-moves' });
   const gmMovesPortalTooltip = usePortalHoverTooltip();
   const [gmMovesOffCameraOpen, setGmMovesOffCameraOpen] = useState(false);
@@ -825,10 +810,6 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
   }, [characterDrawerChromeSync?.formData?.level]);
 
   const [scaledToggleState, setScaledToggleState] = useState({});
-  const trackerKey = trackerOverlay.data
-    ? (trackerOverlay.data.kind === 'environment' ? trackerOverlay.data.element.instanceId : trackerOverlay.data.baseElement.id)
-    : null;
-  const trackerAdjust = useViewportClamp(trackerOverlay.overlayRef, trackerOverlay.isOpen, trackerKey);
 
   const [resyncingCharId, setResyncingCharId] = useState(null);
   const [preRollBanner, setPreRollBanner] = useState(null); // { rollWrapper, chips, characterEl, onProceed } when player has onAct chips
@@ -852,22 +833,6 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
   const [preRollTargetInstanceId, setPreRollTargetInstanceId] = useState(null);
   /** GM Call for Reaction modal: `{ seedInstanceIds: string[] }` or null. */
   const [reactionCallModal, setReactionCallModal] = useState(null);
-
-  const potAdvKey = potAdvOverlay.data?.element?.id ?? null;
-  const potAdvAdjust = useViewportClamp(potAdvOverlay.overlayRef, potAdvOverlay.isOpen, potAdvKey);
-
-  const handlePotentialAdversaryHover = async (adversaryId, rect) => {
-    potAdvOverlay.cancelClose();
-    try {
-      const result = await resolveItems({ adversaries: [adversaryId] });
-      const adversary = result.adversaries?.[0];
-      if (adversary) {
-        potAdvOverlay.show({ element: adversary, top: rect.top, bottom: rect.bottom });
-      }
-    } catch (err) {
-      console.warn('Failed to resolve potential adversary for hover:', err);
-    }
-  };
 
   const handleResyncCharacter = async (el) => {
     if (!el.daggerstackUrl || !el.daggerstackEmail || !el.daggerstackPassword) return;
@@ -4383,30 +4348,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
 
   // Group adversaries of the same type (same id) into consolidated entries.
   // Environments remain as individual entries.
-  const consolidatedElements = useMemo(() => {
-    const result = [];
-    const seenAdvKeys = {}; // key -> index in result
-
-    activeElements.forEach(el => {
-      if (el.elementType === 'character') {
-        result.push({ kind: 'character', element: el });
-      } else if (el.elementType === 'note') {
-        result.push({ kind: 'note', element: el });
-      } else if (el.elementType === 'environment') {
-        result.push({ kind: 'environment', element: el });
-      } else if (el.elementType === 'adversary') {
-        const key = el.id;
-        if (seenAdvKeys[key] === undefined) {
-          seenAdvKeys[key] = result.length;
-          result.push({ kind: 'adversary-group', baseElement: el, instances: [el] });
-        } else {
-          result[seenAdvKeys[key]].instances.push(el);
-        }
-      }
-    });
-
-    return result;
-  }, [activeElements]);
+  const consolidatedElements = useMemo(() => groupEncounterElements(activeElements), [activeElements]);
 
   const characterCount = useMemo(() => characterCountFromElements(activeElements), [activeElements]);
 
@@ -7019,7 +6961,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
       </div>
 
       {/* Encounter Panel — hidden for players */}
-      {!isPlayer && <div className="w-56 bg-dh-canvas border-l border-dh-border flex min-h-0 shrink-0 flex-col overflow-hidden">
+      {!isPlayer && <div ref={encounterAsideRef} className="w-56 bg-dh-canvas border-l border-dh-border flex min-h-0 shrink-0 flex-col overflow-hidden">
         <div className="px-2 py-2 bg-dh-canvas border-b border-dh-border sticky top-0 z-10 space-y-2">
           <div className="flex items-center justify-between">
             <h2 className="font-bold text-dh uppercase tracking-wider flex items-center gap-2 text-sm">
@@ -7176,76 +7118,32 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
               + Add
             </button>
           </div>
-          {consolidatedElements.filter(item => item.kind === 'note').map((item) => {
-            const el = item.element;
-            const noteBodyTrimmed = String(el.body || '').trim();
-            const noteTitleOnly = !noteBodyTrimmed && !el.imageUrl;
-            return (
-              <div
-                key={el.instanceId}
-                className={`flex gap-1 rounded-lg border border-amber-900/50 bg-amber-950/25 px-2 transition-colors hover:border-amber-700/60 hover:bg-amber-950/40 ${noteTitleOnly ? 'py-1.5' : 'py-2'}`}
-              >
-                <button
-                  type="button"
-                  onClick={() =>
-                    updateActiveElement(el.instanceId, {
-                      visibility: el.visibility === 'gm' ? 'players' : 'gm',
-                    })
-                  }
-                  className="shrink-0 self-start rounded p-0.5 text-dh-muted hover:bg-dh-hover/60 hover:text-dh"
-                  title={
-                    el.visibility === 'gm'
-                      ? 'GM only — click to show players'
-                      : 'Visible to players — click for GM only'
-                  }
-                  aria-label={el.visibility === 'gm' ? 'Show to players' : 'GM only'}
-                  aria-pressed={el.visibility === 'gm'}
-                >
-                  {el.visibility === 'gm' ? <EyeOff size={12} /> : <Eye size={12} />}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    navigate(`${gameTableBasePath}/notes/${el.id}`);
-                    setEditState({
-                      step: 'note',
-                      item: {
-                        id: el.id,
-                        name: el.name || 'Note',
-                        body: el.body || '',
-                        imageUrl: el.imageUrl || '',
-                        visibility: el.visibility === 'gm' ? 'gm' : 'players',
-                      },
-                      baseElement: el,
-                    });
-                  }}
-                  className="flex min-w-0 flex-1 items-start gap-2 text-left"
-                >
-                  {el.imageUrl ? (
-                    <span className="mt-0.5 h-10 w-10 shrink-0 overflow-hidden rounded border border-amber-800/50 bg-dh-inset">
-                      <img src={el.imageUrl} alt="" className="h-full w-full object-cover" />
-                    </span>
-                  ) : (
-                    <StickyNote size={14} className="mt-0.5 shrink-0 text-amber-400/90" />
-                  )}
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate text-xs font-semibold text-amber-100/90">{el.name || 'Note'}</div>
-                    {noteBodyTrimmed ? (
-                      <div className="mt-1 max-h-24 overflow-hidden text-left">
-                        <MarkdownText text={noteBodyTrimmed} className="dh-md text-[11px] leading-snug text-dh-muted line-clamp-6" />
-                      </div>
-                    ) : null}
-                  </div>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => removeActiveElement(el.instanceId)}
-                  className="shrink-0 self-start text-dh-muted hover:text-red-400 transition-colors p-0.5"
-                  title="Remove note"
-                ><Trash2 size={12} /></button>
-              </div>
-            );
-          })}
+          {consolidatedElements.filter(item => item.kind === 'note').map((item) => (
+            <EncounterNoteCard
+              key={item.element.instanceId}
+              element={item.element}
+              onToggleVisibility={(el) =>
+                updateActiveElement(el.instanceId, {
+                  visibility: el.visibility === 'gm' ? 'players' : 'gm',
+                })
+              }
+              onOpen={(el) => {
+                navigate(`${gameTableBasePath}/notes/${el.id}`);
+                setEditState({
+                  step: 'note',
+                  item: {
+                    id: el.id,
+                    name: el.name || 'Note',
+                    body: el.body || '',
+                    imageUrl: el.imageUrl || '',
+                    visibility: el.visibility === 'gm' ? 'gm' : 'players',
+                  },
+                  baseElement: el,
+                });
+              }}
+              onRemove={(el) => removeActiveElement(el.instanceId)}
+            />
+          ))}
 
           <div className="border-t border-dh-border" role="separator" />
           <SessionCountdownsPanel
@@ -7269,25 +7167,14 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
               + Add
             </button>
           </div>
-          {consolidatedElements.filter(item => item.kind === 'environment').map((item) => {
-            const el = item.element;
-            return (
-              <div
-                key={el.instanceId}
-                className="rounded-lg bg-emerald-950/30 border border-emerald-900/40 overflow-hidden group/env"
-                {...trackerOverlay.triggerProps(e => ({ kind: 'environment', element: item.element, top: e.currentTarget.getBoundingClientRect().top, bottom: e.currentTarget.getBoundingClientRect().bottom }))}
-              >
-                <div className="px-2.5 py-1.5 flex items-center gap-1.5">
-                  <span className="text-xs font-semibold text-emerald-300/80 truncate flex-1">{el.name}</span>
-                  <button
-                    onClick={() => { removeActiveElement(el.instanceId); trackerOverlay.close(); }}
-                    className="hidden group-hover/env:block text-dh-muted hover:text-red-400 transition-colors shrink-0"
-                    title="Remove from table"
-                  ><Trash2 size={12} /></button>
-                </div>
-              </div>
-            );
-          })}
+          {consolidatedElements.filter(item => item.kind === 'environment').map((item) => (
+            <EncounterEnvironmentCard
+              key={item.element.instanceId}
+              element={item.element}
+              trackerOverlay={trackerOverlay}
+              onRemove={(el) => removeActiveElement(el.instanceId)}
+            />
+          ))}
 
           <div className="border-t border-dh-border" role="separator" />
           <div className="flex items-center justify-between gap-2">
@@ -7441,13 +7328,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                   ids.forEach((id) => updateActiveElement(id, { minPartySize }));
                 }}
                 afterHeader={<EncounterAdversaryDifficultyRow displayEl={displayEl} />}
-                cardProps={trackerOverlay.triggerProps((e) => ({
-                  kind: 'adversary',
-                  baseElement: item.baseElement,
-                  instances: item.instances,
-                  top: e.currentTarget.getBoundingClientRect().top,
-                  bottom: e.currentTarget.getBoundingClientRect().bottom,
-                }))}
+                cardProps={encounterAdversaryCardProps(trackerOverlay, item)}
                 renderInstance={({ inst, showInstanceNum, instanceNum, scaleTag }) => (
                   <EncounterAdversaryInstanceCard
                     displayEl={displayEl}
@@ -8068,144 +7949,35 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
       />
     )}
 
-    {/* Hover overlay for tracker panel (adversary or environment) */}
-    {trackerOverlay.isOpen && (
-      <div
-        ref={trackerOverlay.overlayRef}
-        className="fixed z-[55]"
-        style={{ right: 'calc(14rem)', paddingRight: '12px', top: (trackerOverlay.data.top + trackerOverlay.data.bottom) / 2 + trackerAdjust, transform: 'translateY(-50%)', width: 'calc(26rem + 12px)', maxHeight: 'calc(100dvh - 110px)' }}
-        {...trackerOverlay.overlayHandlers}
-      >
-        <div className="bg-dh-surface border border-dh-strong rounded-xl shadow-2xl overflow-y-auto" style={{ maxHeight: 'calc(100dvh - 110px)' }}>
-          <div className="p-5 relative">
-            {trackerOverlay.data.kind === 'environment' ? (() => {
-              const el = trackerOverlay.data.element;
-              return (
-                <>
-                  <div className="absolute top-3 right-3 z-10 flex items-center gap-1">
-                    <button
-                      onClick={() => { trackerOverlay.close(); handleEditClick([el], el, 'environments'); }}
-                      className="p-1.5 rounded-lg bg-dh-raised/90 text-dh-muted hover:text-blue-400 hover:bg-dh-hover transition-colors"
-                      title="Edit"
-                    ><Edit size={14} /></button>
-                    <button
-                      onClick={() => { removeActiveElement(el.instanceId); trackerOverlay.close(); }}
-                      className="p-1.5 rounded-lg bg-dh-raised/90 text-dh-muted hover:text-red-400 hover:bg-dh-hover transition-colors"
-                      title="Remove from table"
-                    ><Trash2 size={14} /></button>
-                  </div>
-                  {el.imageUrl && (
-                    <div className="absolute top-0 right-0 w-16 aspect-square overflow-hidden rounded-bl-xl">
-                      <img src={el.imageUrl} alt={el.name} className="w-full h-full object-cover opacity-80" />
-                    </div>
-                  )}
-                  <h3 className={`text-xl font-bold text-dh mb-1 pr-20`}>
-                    {el.name}
-                  </h3>
-                  <EnvironmentCardContent
-                    element={el}
-                    hoveredFeature={null}
-                    cardKey={el.instanceId}
-                    featureCountdowns={featureCountdowns}
-                    updateCountdown={null}
-                    onAddAdversary={handleAddPotentialAdversary}
-                    onPotentialAdversaryHover={handlePotentialAdversaryHover}
-                    onPotentialAdversaryLeave={potAdvOverlay.scheduleClose}
-                  />
-                </>
-              );
-            })(            ) : (() => {
-              // Derive live instances from consolidatedElements so the overlay
-              // re-renders when HP/stress is updated from the Encounters panel.
-              const liveGroup = consolidatedElements.find(
-                g => g.kind === 'adversary-group' && g.baseElement.id === trackerOverlay.data.baseElement.id
-              );
-              const liveInstances = liveGroup?.instances ?? trackerOverlay.data.instances;
-              const liveBaseElement = liveGroup?.baseElement ?? trackerOverlay.data.baseElement;
-              return (
-                <>
-                  <div className="absolute top-3 right-3 z-10 flex items-center gap-1">
-                    <button
-                      onClick={() => { trackerOverlay.close(); handleEditClick(liveInstances, liveBaseElement, 'adversaries'); }}
-                      className="p-1.5 rounded-lg bg-dh-raised/90 text-dh-muted hover:text-blue-400 hover:bg-dh-hover transition-colors"
-                      title="Edit"
-                    ><Edit size={14} /></button>
-                    <button
-                      onClick={() => { removeGroup(liveInstances); trackerOverlay.close(); }}
-                      className="p-1.5 rounded-lg bg-dh-raised/90 text-dh-muted hover:text-red-400 hover:bg-dh-hover transition-colors"
-                      title="Remove from table"
-                    ><Trash2 size={14} /></button>
-                  </div>
-                  {liveBaseElement.imageUrl && (
-                    <div className="absolute top-0 right-0 w-16 aspect-square overflow-hidden rounded-bl-xl">
-                      <img src={liveBaseElement.imageUrl} alt={liveBaseElement.name} className="w-full h-full object-cover opacity-80" />
-                    </div>
-                  )}
-                  <h3 className={`text-xl font-bold text-dh mb-1 pr-20`}>
-                    {liveBaseElement.name}
-                    {liveInstances.length > 1 && (
-                      <span className="text-dh-muted font-normal ml-1.5">×{liveInstances.length}</span>
-                    )}
-                  </h3>
-                  <AdversaryCardContent
-                    element={liveBaseElement}
-                    hoveredFeature={null}
-                    cardKey={liveBaseElement.id}
-                    count={liveInstances.length}
-                    instances={liveInstances}
-                    updateFn={updateActiveElement}
-                    allowResourceTrackEdits={gmResourceTrackCheckboxEditsAllowed(isPlayer)}
-                    showInstanceRemove={false}
-                    featureCountdowns={featureCountdowns}
-                    updateCountdown={null}
-                    onRollAttack={sessionPlayAllowed ? (data, e) => handleCardRoll(data, liveBaseElement.name, liveInstances, e) : undefined}
-                    damageBoost={tableDamageBoost || liveBaseElement._damageBoost || null}
-                    scaledMeta={null}
-                    onScaledToggle={null}
-                  />
-                </>
-              );
-            })()}
-          </div>
-        </div>
-      </div>
-    )}
-
-    {/* Potential adversary hover card — shown to the left of the environment hover card */}
-    {potAdvOverlay.isOpen && (
-      <div
-        ref={potAdvOverlay.overlayRef}
-        className="fixed z-[56]"
-        style={{ right: 'calc(40rem + 12px)', paddingRight: '8px', top: (potAdvOverlay.data.top + potAdvOverlay.data.bottom) / 2 + potAdvAdjust, transform: 'translateY(-50%)', width: 'calc(24rem + 8px)', maxHeight: 'calc(100dvh - 110px)' }}
-        {...potAdvOverlay.overlayHandlers}
-      >
-        <div className="bg-dh-surface border border-dh-strong rounded-xl shadow-2xl overflow-y-auto" style={{ maxHeight: 'calc(100dvh - 110px)' }}>
-          <div className="p-5 relative">
-            {potAdvOverlay.data.element.imageUrl && (
-              <div className="absolute top-0 right-0 w-16 aspect-square overflow-hidden rounded-bl-xl">
-                <img src={potAdvOverlay.data.element.imageUrl} alt={potAdvOverlay.data.element.name} className="w-full h-full object-cover opacity-80" />
-              </div>
-            )}
-            <h3 className="text-xl font-bold text-dh mb-1 pr-16">{potAdvOverlay.data.element.name}</h3>
-            <AdversaryCardContent
-              element={potAdvOverlay.data.element}
-              hoveredFeature={null}
-              cardKey={potAdvOverlay.data.element.id}
-              count={1}
-              instances={[]}
-              updateFn={null}
-              showInstanceRemove={false}
-              featureCountdowns={featureCountdowns}
-              updateCountdown={null}
-              onRollAttack={sessionPlayAllowed ? (data, e) => handleCardRoll(data, potAdvOverlay.data.element.name, [], e) : undefined}
-              damageBoost={null}
-              scaledMeta={null}
-              onScaledToggle={null}
-            />
-          </div>
-        </div>
-      </div>
-    )}
+    <EncounterTrackerOverlay
+      overlay={trackerOverlay}
+      adjust={trackerAdjust}
+      asideRef={encounterAsideRef}
+      grouped={consolidatedElements}
+      featureCountdowns={featureCountdowns}
+      onEditEnvironment={(el) => handleEditClick([el], el, 'environments')}
+      onRemoveEnvironment={(el) => removeActiveElement(el.instanceId)}
+      onEditAdversary={(instances, base) => handleEditClick(instances, base, 'adversaries')}
+      onRemoveAdversaryGroup={(instances) => removeGroup(instances)}
+      updateFn={updateActiveElement}
+      allowResourceTrackEdits={gmResourceTrackCheckboxEditsAllowed(isPlayer)}
+      onRollAttack={sessionPlayAllowed
+        ? (data, liveBaseElement, liveInstances, e) => handleCardRoll(data, liveBaseElement.name, liveInstances, e)
+        : undefined}
+      damageBoost={tableDamageBoost}
+      onAddAdversary={handleAddPotentialAdversary}
+      onPotentialAdversaryHover={handlePotentialAdversaryHover}
+      onPotentialAdversaryLeave={potAdvOverlay.scheduleClose}
+    />
+    <EncounterPotentialAdversaryOverlay
+      overlay={potAdvOverlay}
+      adjust={potAdvAdjust}
+      asideRef={encounterAsideRef}
+      featureCountdowns={featureCountdowns}
+      onRollAttack={sessionPlayAllowed
+        ? (data, el, _instances, e) => handleCardRoll(data, el.name, [], e)
+        : undefined}
+    />
 
     <PortalHoverTooltipLayer
       tooltip={gmMovesPortalTooltip.tooltip}

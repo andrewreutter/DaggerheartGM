@@ -1,12 +1,21 @@
 import { useMemo, useRef, useState, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { Eye, EyeOff, StickyNote, Trash2, X } from 'lucide-react';
+import { X } from 'lucide-react';
 import { BattleMap } from '../BattleMap.jsx';
 import { ItemPickerModal } from '../modals/ItemPickerModal.jsx';
 import { EncounterNoteEditorModal } from '../modals/EncounterNoteEditorModal.jsx';
 import { SessionCountdownsPanel } from '../SessionCountdownsPanel.jsx';
 import { EncounterAdversaryDifficultyRow, EncounterAdversaryInstanceCard } from '../EncounterAdversaryInstanceCard.jsx';
 import { EncounterAdversaryTypeCard } from '../EncounterAdversaryTypeCard.jsx';
+import {
+  EncounterEnvironmentCard,
+  EncounterNoteCard,
+  EncounterPotentialAdversaryOverlay,
+  EncounterTrackerOverlay,
+  encounterAdversaryCardProps,
+  resolvePotentialAdversary,
+  useEncounterHoverOverlays,
+} from '../EncounterHoverOverlays.jsx';
 import {
   GmMovesOverlay,
   GmMovesTrigger,
@@ -15,7 +24,7 @@ import {
 } from '../GmMovesPanel.jsx';
 import { computeSceneBudget } from '../../lib/battle-points.js';
 import { buildLibraryAdversaryElements } from '../../lib/party-scaled-adversaries.js';
-import { MarkdownText } from '../../lib/markdown.js';
+import { groupEncounterElements } from '../../lib/encounter-elements.js';
 import {
   DEFAULT_SCENE_BATTLE_MODS,
   applySceneTableOp,
@@ -28,27 +37,6 @@ import { generateId } from '../../lib/helpers.js';
 const DIFFICULTY_KEYS = ['lessDifficult', 'slightlyMoreDangerous', 'moreDangerous'];
 const DAMAGE_BOOST_KEYS = ['damageBoostPlusOne', 'damageBoostD4', 'damageBoostStatic'];
 
-function groupSceneElements(activeElements) {
-  const result = [];
-  const seenAdvKeys = {};
-  for (const el of activeElements || []) {
-    if (el.elementType === 'note') {
-      result.push({ kind: 'note', element: el });
-    } else if (el.elementType === 'environment') {
-      result.push({ kind: 'environment', element: el });
-    } else if (el.elementType === 'adversary') {
-      const key = el.id || el.instanceId;
-      if (seenAdvKeys[key] === undefined) {
-        seenAdvKeys[key] = result.length;
-        result.push({ kind: 'adversary-group', baseElement: el, instances: [el] });
-      } else {
-        result[seenAdvKeys[key]].instances.push(el);
-      }
-    }
-  }
-  return result;
-}
-
 /**
  * BattleMap + Encounter-style side panel for editing a Scene's table snapshot
  * (including a GM Moves preview of the live-table board).
@@ -59,6 +47,7 @@ function groupSceneElements(activeElements) {
  * @param {number} [props.partySize]
  * @param {number|null} [props.partyTier]
  * @param {Array<{ name?: string, tier?: number }>} [props.characters]
+ * @param {(body: object) => Promise<{ adversaries?: object[] }>} [props.resolveItems] — library/SRD resolve (live table + Scene form)
  */
 export function SceneTableEditor({
   value,
@@ -66,6 +55,7 @@ export function SceneTableEditor({
   partySize = 4,
   partyTier = 1,
   characters = [],
+  resolveItems,
 }) {
   const sceneData = normalizeSceneTableData(value);
   const viewportCenterRef = useRef(null);
@@ -76,6 +66,14 @@ export function SceneTableEditor({
   const [pickerCollection, setPickerCollection] = useState(null);
   const [lightboxUrl, setLightboxUrl] = useState(null);
   const [editingNote, setEditingNote] = useState(null);
+  const encounterAsideRef = useRef(null);
+  const {
+    trackerOverlay,
+    potAdvOverlay,
+    trackerAdjust,
+    potAdvAdjust,
+    handlePotentialAdversaryHover,
+  } = useEncounterHoverOverlays({ resolveItems });
   const gmMovesOverlay = useGmMovesOverlay();
   const { inViewAdvCardKeys, mapViewportKnown, onViewportFt } = useGmMovesCameraPartition(
     sceneData.activeElements,
@@ -104,7 +102,7 @@ export function SceneTableEditor({
     };
   }, [setSceneData, onViewportFt]);
 
-  const grouped = useMemo(() => groupSceneElements(sceneData.activeElements), [sceneData.activeElements]);
+  const grouped = useMemo(() => groupEncounterElements(sceneData.activeElements), [sceneData.activeElements]);
   const battleMods = sceneData.tableBattleMods || DEFAULT_SCENE_BATTLE_MODS;
   const { tier, bp, budget, autoMods, totalMod, adjustedBudget } = computeSceneBudget(
     sceneData,
@@ -147,6 +145,20 @@ export function SceneTableEditor({
     setEditingNote(el);
   };
 
+  const addPotentialAdversary = async (adversaryId) => {
+    try {
+      const adversary = await resolvePotentialAdversary(adversaryId, resolveItems);
+      if (!adversary) return;
+      const elements = buildLibraryAdversaryElements(adversary, {
+        characterCount: partySize,
+        copies: 1,
+      });
+      if (elements.length) applyOp({ op: 'add-elements', elements });
+    } catch (err) {
+      console.warn('Failed to resolve potential adversary:', err);
+    }
+  };
+
   return (
     <div className="relative flex min-h-[36rem] h-full w-full min-w-0 overflow-hidden rounded-lg border border-dh-border bg-dh-canvas">
       <BattleMap
@@ -163,7 +175,7 @@ export function SceneTableEditor({
         className="flex-1 min-w-0 min-h-0"
       />
 
-      <aside className="relative z-10 w-56 shrink-0 bg-dh-canvas border-l border-dh-border flex min-h-0 flex-col overflow-hidden">
+      <aside ref={encounterAsideRef} className="relative z-10 w-56 shrink-0 bg-dh-canvas border-l border-dh-border flex min-h-0 flex-col overflow-hidden">
         <div className="sticky top-0 z-10 border-b border-dh-border bg-dh-canvas px-2 py-2">
           <GmMovesTrigger
             overlay={gmMovesOverlay}
@@ -271,61 +283,19 @@ export function SceneTableEditor({
               + Add
             </button>
           </div>
-          {grouped.filter((item) => item.kind === 'note').map((item) => {
-            const el = item.element;
-            const noteBodyTrimmed = String(el.body || '').trim();
-            const noteTitleOnly = !noteBodyTrimmed && !el.imageUrl;
-            return (
-              <div
-                key={el.instanceId}
-                className={`flex gap-1 rounded-lg border border-amber-900/50 bg-amber-950/25 px-2 transition-colors hover:border-amber-700/60 hover:bg-amber-950/40 ${noteTitleOnly ? 'py-1.5' : 'py-2'}`}
-              >
-                <button
-                  type="button"
-                  onClick={() => applyOp({
-                    op: 'update-element',
-                    instanceId: el.instanceId,
-                    updates: { visibility: el.visibility === 'gm' ? 'players' : 'gm' },
-                  })}
-                  className="shrink-0 self-start rounded p-0.5 text-dh-muted hover:bg-dh-hover/60 hover:text-dh"
-                  title={el.visibility === 'gm' ? 'GM only — click to show players' : 'Visible to players — click for GM only'}
-                  aria-label={el.visibility === 'gm' ? 'Show to players' : 'GM only'}
-                  aria-pressed={el.visibility === 'gm'}
-                >
-                  {el.visibility === 'gm' ? <EyeOff size={12} /> : <Eye size={12} />}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setEditingNote(el)}
-                  className="flex min-w-0 flex-1 items-start gap-2 text-left"
-                >
-                  {el.imageUrl ? (
-                    <span className="mt-0.5 h-10 w-10 shrink-0 overflow-hidden rounded border border-amber-800/50 bg-dh-inset">
-                      <img src={el.imageUrl} alt="" className="h-full w-full object-cover" />
-                    </span>
-                  ) : (
-                    <StickyNote size={14} className="mt-0.5 shrink-0 text-amber-400/90" />
-                  )}
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate text-xs font-semibold text-amber-100/90">{el.name || 'Note'}</div>
-                    {noteBodyTrimmed ? (
-                      <div className="mt-1 max-h-24 overflow-hidden text-left">
-                        <MarkdownText text={noteBodyTrimmed} className="dh-md text-[11px] leading-snug text-dh-muted line-clamp-6" />
-                      </div>
-                    ) : null}
-                  </div>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => applyOp({ op: 'remove-element', instanceId: el.instanceId })}
-                  className="shrink-0 self-start text-dh-muted hover:text-red-400 p-0.5"
-                  title="Remove note"
-                >
-                  <Trash2 size={12} />
-                </button>
-              </div>
-            );
-          })}
+          {grouped.filter((item) => item.kind === 'note').map((item) => (
+            <EncounterNoteCard
+              key={item.element.instanceId}
+              element={item.element}
+              onToggleVisibility={(el) => applyOp({
+                op: 'update-element',
+                instanceId: el.instanceId,
+                updates: { visibility: el.visibility === 'gm' ? 'players' : 'gm' },
+              })}
+              onOpen={setEditingNote}
+              onRemove={(el) => applyOp({ op: 'remove-element', instanceId: el.instanceId })}
+            />
+          ))}
 
           <div className="border-t border-dh-border" role="separator" />
           <SessionCountdownsPanel
@@ -348,22 +318,15 @@ export function SceneTableEditor({
               + Add
             </button>
           </div>
-          {grouped.filter((item) => item.kind === 'environment').map((item) => {
-            const el = item.element;
-            return (
-              <div key={el.instanceId} className="rounded-lg bg-emerald-950/30 border border-emerald-900/40 px-2.5 py-1.5 flex items-center gap-1.5 group/env">
-                <span className="text-xs font-semibold text-emerald-300/80 truncate flex-1">{el.name || 'Environment'}</span>
-                <button
-                  type="button"
-                  onClick={() => applyOp({ op: 'remove-element', instanceId: el.instanceId })}
-                  className="hidden group-hover/env:block text-dh-muted hover:text-red-400 shrink-0"
-                  title="Remove from scene"
-                >
-                  <Trash2 size={12} />
-                </button>
-              </div>
-            );
-          })}
+          {grouped.filter((item) => item.kind === 'environment').map((item) => (
+            <EncounterEnvironmentCard
+              key={item.element.instanceId}
+              element={item.element}
+              trackerOverlay={trackerOverlay}
+              removeTitle="Remove from scene"
+              onRemove={(el) => applyOp({ op: 'remove-element', instanceId: el.instanceId })}
+            />
+          ))}
 
           <div className="border-t border-dh-border" role="separator" />
           <div className="flex items-center justify-between gap-2">
@@ -395,6 +358,7 @@ export function SceneTableEditor({
                   ids.forEach((id) => applyOp({ op: 'update-element', instanceId: id, updates: { minPartySize } }));
                 }}
                 afterHeader={<EncounterAdversaryDifficultyRow displayEl={el} />}
+                cardProps={encounterAdversaryCardProps(trackerOverlay, item)}
                 renderInstance={({ inst, showInstanceNum, instanceNum, scaleTag }) => (
                   <EncounterAdversaryInstanceCard
                     displayEl={el}
@@ -424,6 +388,32 @@ export function SceneTableEditor({
         characterCount={partySize}
         inViewAdvCardKeys={inViewAdvCardKeys}
         mapViewportKnown={mapViewportKnown}
+      />
+
+      <EncounterTrackerOverlay
+        overlay={trackerOverlay}
+        adjust={trackerAdjust}
+        asideRef={encounterAsideRef}
+        zIndexClass="z-[90]"
+        grouped={grouped}
+        featureCountdowns={sceneData.featureCountdowns}
+        onRemoveEnvironment={(el) => applyOp({ op: 'remove-element', instanceId: el.instanceId })}
+        onRemoveAdversaryGroup={(instances) => {
+          instances.forEach((inst) => applyOp({ op: 'remove-element', instanceId: inst.instanceId }));
+        }}
+        updateFn={(instanceId, updates) => applyOp({ op: 'update-element', instanceId, updates })}
+        allowResourceTrackEdits
+        onAddAdversary={addPotentialAdversary}
+        onPotentialAdversaryHover={handlePotentialAdversaryHover}
+        onPotentialAdversaryLeave={potAdvOverlay.scheduleClose}
+        removeTitle="Remove from scene"
+      />
+      <EncounterPotentialAdversaryOverlay
+        overlay={potAdvOverlay}
+        adjust={potAdvAdjust}
+        asideRef={encounterAsideRef}
+        zIndexClass="z-[91]"
+        featureCountdowns={sceneData.featureCountdowns}
       />
 
       {pickerCollection && (

@@ -15,6 +15,10 @@ vi.mock('../../src/client/components/modals/ItemPickerModal.jsx', () => ({
   ItemPickerModal: () => null,
 }));
 
+vi.mock('../../src/client/components/features/FeatureSourceModal.jsx', () => ({
+  FeatureSourceModal: () => null,
+}));
+
 import { SceneTableEditor } from '../../src/client/components/forms/SceneTableEditor.jsx';
 
 function sceneWithBear() {

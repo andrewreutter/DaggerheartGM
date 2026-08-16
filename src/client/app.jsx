@@ -29,6 +29,7 @@ import {
   planMinionGroupReconcile,
 } from './lib/party-scaled-adversaries.js';
 import { isTablePlayAllowed, isPrepModeElementUpdateBlocked } from './lib/table-session-gate.js';
+import { showChooseSpotlightBanner } from './lib/spotlight.js';
 import { billingNavIndicatorCopy } from './lib/billing-status-copy.js';
 import { shouldPersistMapViewToTable } from './lib/map-view-sync.js';
 import { DEFAULT_LEGACY_MAP_ID, deriveMapConfigForViewId, deriveMapConfigForMapId } from './lib/map-table-state.js';
@@ -51,6 +52,7 @@ import { GMTableView } from './components/GMTableView.jsx';
 import { SceneAdoptDialog } from './components/SceneAdoptDialog.jsx';
 import { FeatureAuthoringGuideModal } from './components/FeatureAuthoringGuideModal.jsx';
 import { SessionBlockedBanner } from './components/SessionBlockedBanner.jsx';
+import { ChooseSpotlightBanner } from './components/ChooseSpotlightBanner.jsx';
 import { AppRoot } from './components/AppRoot.jsx';
 import { UnifiedImportProvider, useUnifiedImport } from './lib/unified-import-context.jsx';
 import { AuthLanding } from './components/AuthLanding.jsx';
@@ -1938,6 +1940,10 @@ function App() {
           isPlayer={effectiveIsPlayer}
           onResume={!effectiveIsPlayer ? handleSessionBannerResume : undefined}
         />,
+        document.body
+      )}
+      {typeof document !== 'undefined' && route.view === 'table' && user && tableStateReady && showChooseSpotlightBanner(sessionPlayAllowed, spotlight) && createPortal(
+        <ChooseSpotlightBanner />,
         document.body
       )}
       <nav className="bg-dh-canvas border-b border-dh-border p-4 flex items-center justify-between shadow-md z-[70]">

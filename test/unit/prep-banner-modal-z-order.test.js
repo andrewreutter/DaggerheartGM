@@ -36,6 +36,16 @@ describe('prep banner vs modal z-order', () => {
     }
   });
 
+  it('ChooseSpotlightBanner uses the same slot and stacks below modal backdrops', () => {
+    const banner = readFileSync(join(root, 'src/client/components/ChooseSpotlightBanner.jsx'), 'utf8');
+    expect(banner).toMatch(/Choose Spotlight/);
+    expect(banner).toMatch(/bottom-\[7rem\]/);
+    expect(banner).toMatch(/z-\[52\]/);
+    const app = readFileSync(join(root, 'src/client/app.jsx'), 'utf8');
+    expect(app).toMatch(/showChooseSpotlightBanner\(sessionPlayAllowed, spotlight\)/);
+    expect(app).toMatch(/<ChooseSpotlightBanner \/>/);
+  });
+
   it('PrepSetupChecklist unmounts when leaving the table view (body portal)', () => {
     // Game Table stays mounted with display:none; the checklist portals to document.body,
     // so it must be gated on route.view === 'table' or cards linger over Library/Home.

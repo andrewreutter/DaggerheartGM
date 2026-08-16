@@ -73,6 +73,7 @@ import {
   isSpotlightHolder,
   SPOTLIGHT_ACTIVE_BEAM_OPACITY,
   spotlightCatchUpCount,
+  spotlightCharacterTooltip,
   spotlightInactiveBeamOpacity,
 } from '../lib/spotlight.js';
 import { ConditionsEditor } from './ConditionsEditor.jsx';
@@ -2137,21 +2138,26 @@ function TokenDetailPanel({
 
 // ─── SpotlightBeam ───────────────────────────────────────────────────────────
 
-function SpotlightBeam({ side, active, dimGlow, count, clickable, onClick, label }) {
+function SpotlightBeam({ side, active, dimGlow, count, clickable, onClick, label, tooltip }) {
   const pointingLeft = side === 'right';
   const opacity = active ? SPOTLIGHT_ACTIVE_BEAM_OPACITY : spotlightInactiveBeamOpacity(count);
-  const glowPx = active ? 10 : Math.min(14, 3 + count * 3);
+  const glowPx = active ? 14 : Math.min(14, 3 + count * 3);
+  const gold = `rgba(253, 224, 71, ${opacity})`;
   const coneStyle = {
     width: SPOTLIGHT_BEAM_WIDTH_PX,
     height: SPOTLIGHT_BEAM_HEIGHT_PX,
     background: pointingLeft
-      ? `linear-gradient(to left, transparent, rgba(253, 224, 71, ${opacity}))`
-      : `linear-gradient(to right, transparent, rgba(253, 224, 71, ${opacity}))`,
+      ? (active
+        ? `linear-gradient(to left, transparent 0%, ${gold} 28%, ${gold} 100%)`
+        : `linear-gradient(to left, transparent, ${gold})`)
+      : (active
+        ? `linear-gradient(to right, transparent 0%, ${gold} 28%, ${gold} 100%)`
+        : `linear-gradient(to right, transparent, ${gold})`),
     clipPath: pointingLeft
       ? 'polygon(0 28%, 100% 0, 100% 100%, 0 72%)'
       : 'polygon(0 0, 100% 28%, 100% 72%, 0 100%)',
     filter: count > 0 || active
-      ? `drop-shadow(0 0 ${glowPx}px rgba(253, 224, 71, ${active ? 0.7 : Math.min(0.85, opacity + 0.15)}))`
+      ? `drop-shadow(0 0 ${glowPx}px rgba(253, 224, 71, ${active ? 0.95 : Math.min(0.85, opacity + 0.15)}))`
       : undefined,
   };
   const inner = (
@@ -2161,12 +2167,24 @@ function SpotlightBeam({ side, active, dimGlow, count, clickable, onClick, label
         style={coneStyle}
         aria-hidden
       />
+      {active && (
+        <span
+          className={`absolute inset-0 flex flex-col justify-center leading-[1.05] font-extrabold text-[8px] text-white drop-shadow-[0_0_2px_rgba(0,0,0,0.85)] pointer-events-none ${
+            pointingLeft ? 'items-end pr-0.5 text-right' : 'items-start pl-0.5 text-left'
+          }`}
+          style={{ transform: pointingLeft ? 'translateX(-2px)' : 'translateX(2px)' }}
+          aria-hidden
+        >
+          <span>Spot</span>
+          <span>light</span>
+        </span>
+      )}
       {!active && count > 0 && (
         <span
           className={`absolute inset-0 flex items-center text-[8px] leading-none font-bold tabular-nums text-amber-50 drop-shadow-[0_0_2px_rgba(0,0,0,0.85)] pointer-events-none ${
             pointingLeft ? 'justify-end pr-0.5' : 'justify-start pl-0.5'
           }`}
-          style={{ transform: 'translateX(2px)' }}
+          style={{ transform: pointingLeft ? 'translateX(-2px)' : 'translateX(2px)' }}
         >
           {count}
         </span>
@@ -2175,26 +2193,30 @@ function SpotlightBeam({ side, active, dimGlow, count, clickable, onClick, label
   );
   const commonClass = `relative shrink-0 flex items-center justify-center ${clickable ? 'cursor-pointer hover:brightness-125' : ''}`;
   const commonStyle = { width: SPOTLIGHT_BEAM_WIDTH_PX, height: SPOTLIGHT_BEAM_HEIGHT_PX };
-  if (clickable) {
-    return (
-      <button
-        type="button"
-        className={commonClass}
-        style={commonStyle}
-        aria-label={label || (active ? 'Spotlight (active)' : 'Give spotlight')}
-        onClick={(e) => {
-          e.stopPropagation();
-          onClick?.();
-        }}
-      >
-        {inner}
-      </button>
-    );
-  }
-  return (
-    <div className={commonClass} style={commonStyle} aria-hidden={!active}>
+  const ariaLabel = tooltip || label || (active ? 'Spotlight (active)' : 'Give spotlight');
+  const beam = clickable ? (
+    <button
+      type="button"
+      className={commonClass}
+      style={commonStyle}
+      aria-label={ariaLabel}
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick?.();
+      }}
+    >
+      {inner}
+    </button>
+  ) : (
+    <div className={commonClass} style={commonStyle} aria-hidden={!active && !tooltip}>
       {inner}
     </div>
+  );
+  if (!tooltip) return beam;
+  return (
+    <Tooltip label={tooltip} placement={pointingLeft ? 'bottom-right' : 'right'} className="relative inline-flex">
+      {beam}
+    </Tooltip>
   );
 }
 
@@ -2290,6 +2312,7 @@ function TrayColumn({
                     count={count}
                     clickable={spotlightClickable}
                     label={active ? `${element.name || 'Character'} holds the spotlight` : `Give spotlight to ${element.name || 'character'}`}
+                    tooltip={spotlightCharacterTooltip(count, element.name, { active })}
                     onClick={() => onAssignCharacterSpotlight?.(element.instanceId)}
                   />
                 </div>
@@ -6382,8 +6405,7 @@ export function BattleMap({
 
   const spotlightCatchUpKeySet = useMemo(() => {
     if (!showSpotlight) return null;
-    const keys = ['gm', ...characters.map((c) => c.instanceId)];
-    return new Set(highestCatchUpKeys(spotlight, keys));
+    return new Set(highestCatchUpKeys(spotlight, characters.map((c) => c.instanceId)));
   }, [showSpotlight, spotlight, characters]);
 
   const handleAssignCharacterSpotlight = useCallback((instanceId) => {
@@ -7642,10 +7664,10 @@ export function BattleMap({
                   <SpotlightBeam
                     side="right"
                     active={isGmHolder(spotlight)}
-                    dimGlow={!isGmHolder(spotlight) && spotlightCatchUpCount(spotlight, 'gm') > 0 && spotlightCatchUpKeySet?.has('gm')}
-                    count={spotlightCatchUpCount(spotlight, 'gm')}
+                    dimGlow={false}
+                    count={0}
                     clickable={!isPlayer && typeof onSpotlightChange === 'function'}
-                    label={isGmHolder(spotlight) ? 'GM holds the spotlight' : 'Give spotlight to the GM'}
+                    label={isGmHolder(spotlight) ? 'GM holds the spotlight — click to clear' : 'Give spotlight to the GM'}
                     onClick={handleAssignGmSpotlight}
                   />
                 </div>

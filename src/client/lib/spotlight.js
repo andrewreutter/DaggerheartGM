@@ -40,23 +40,46 @@ export function isGmHolder(spotlight) {
   return normalizeSpotlight(spotlight).holderType === 'gm';
 }
 
-/** Catch-up for an inactive token key (`'gm'` or a character instanceId). */
+/**
+ * Catch-up for a character instanceId (`rollSeq - lastSeenSeq[key]`).
+ * The GM token does not track rolls-since-spotlight — always 0 for `'gm'`.
+ */
 export function spotlightCatchUpCount(spotlight, key) {
+  if (key == null || key === '' || key === 'gm') return 0;
   const s = normalizeSpotlight(spotlight);
   const seen = s.lastSeenSeq?.[key];
   const last = Number.isFinite(seen) ? seen : 0;
   return s.rollSeq - last;
 }
 
-/** Inactive-beam opacity: 0 → 0.10, then +0.16 per catch-up, capped below the active beam. */
-export const SPOTLIGHT_ACTIVE_BEAM_OPACITY = 0.95;
-const INACTIVE_BEAM_OPACITY_BASE = 0.10;
+/** Inactive-beam opacity: 0 → 0.16, then +0.16 per catch-up, capped well below the active beam. */
+export const SPOTLIGHT_ACTIVE_BEAM_OPACITY = 0.98;
+const INACTIVE_BEAM_OPACITY_BASE = 0.16;
 const INACTIVE_BEAM_OPACITY_STEP = 0.16;
 const INACTIVE_BEAM_OPACITY_MAX = 0.70;
 
 export function spotlightInactiveBeamOpacity(count) {
   const n = Math.max(0, Math.floor(Number(count) || 0));
   return Math.min(INACTIVE_BEAM_OPACITY_MAX, INACTIVE_BEAM_OPACITY_BASE + n * INACTIVE_BEAM_OPACITY_STEP);
+}
+
+/**
+ * Hover copy for a character tray spotlight beam.
+ * @param {number} count
+ * @param {string | null | undefined} name
+ * @param {{ active?: boolean }} [opts]
+ */
+export function spotlightCharacterTooltip(count, name, { active = false } = {}) {
+  const n = Math.max(0, Math.floor(Number(count) || 0));
+  const who = typeof name === 'string' && name.trim() ? name.trim() : 'character';
+  const first = `${n} turns since last Spotlight.`;
+  if (active) return `${first}\nClick to clear Spotlight.`;
+  return `${first}\nClick to give Spotlight to ${who}.`;
+}
+
+/** True when play is allowed and no one currently holds the spotlight. */
+export function showChooseSpotlightBanner(sessionPlayAllowed, spotlight) {
+  return sessionPlayAllowed === true && spotlightHolderKey(spotlight) == null;
 }
 
 /** Current holder's catch-up key (`'gm'` or instanceId), or null when open. */
@@ -68,8 +91,8 @@ export function spotlightHolderKey(spotlight) {
 }
 
 /**
- * Keys tied for the highest catch-up count among *inactive* tokens (the current
- * holder is skipped). Empty when the max is ≤ 0 (nothing to hint).
+ * Character keys tied for the highest catch-up among *inactive* PCs (the current
+ * holder and `'gm'` are skipped). Empty when the max is ≤ 0 (nothing to hint).
  */
 export function highestCatchUpKeys(spotlight, allKeys) {
   if (!Array.isArray(allKeys) || allKeys.length === 0) return [];
@@ -77,7 +100,7 @@ export function highestCatchUpKeys(spotlight, allKeys) {
   let max = -Infinity;
   const tied = [];
   for (const key of allKeys) {
-    if (key === holderKey) continue;
+    if (key === holderKey || key === 'gm') continue;
     const n = spotlightCatchUpCount(spotlight, key);
     if (n > max) {
       max = n;
@@ -118,14 +141,20 @@ export function isSpotlightGatedRollMeta(rollMeta) {
 
 /**
  * Manual GM assignment. Does not change `rollSeq` / `lastSeenSeq`.
+ * Clicking the current holder again clears the spotlight (open).
  * @param {'gm' | 'character' | null} holderType
  */
 export function assignSpotlightHolder(spotlight, holderType, holderInstanceId = null) {
   const current = normalizeSpotlight(spotlight);
   const nextType = holderType === 'gm' || holderType === 'character' ? holderType : null;
+  const nextInstanceId = nextType === 'character' ? (holderInstanceId ?? null) : null;
+  const togglingOff =
+    nextType != null &&
+    nextType === current.holderType &&
+    (nextType !== 'character' || nextInstanceId === current.holderInstanceId);
   return {
-    holderType: nextType,
-    holderInstanceId: nextType === 'character' ? (holderInstanceId ?? null) : null,
+    holderType: togglingOff ? null : nextType,
+    holderInstanceId: togglingOff || nextType !== 'character' ? null : nextInstanceId,
     rollSeq: current.rollSeq,
     lastSeenSeq: { ...current.lastSeenSeq },
   };

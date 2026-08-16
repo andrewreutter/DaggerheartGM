@@ -1,7 +1,7 @@
 import { X, Dices, Link2, Zap, Trash2 } from 'lucide-react';
 import { stripHtml } from '../lib/helpers.js';
 import { GuideFeatureCard } from './features/GuideFeatureCard.jsx';
-import { normalizePotentialAdversaries } from './forms/EnvironmentForm.jsx';
+import { normalizePotentialAdversaries } from '../lib/environment-potential-adversaries.js';
 import { MarkdownText } from '../lib/markdown.js';
 import { ConditionsEditor } from './ConditionsEditor.jsx';
 import { applyDamageBoost } from '../lib/battle-points.js';

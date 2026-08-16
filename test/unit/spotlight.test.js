@@ -4,6 +4,9 @@ import {
   isSpotlightHolder,
   isGmHolder,
   spotlightCatchUpCount,
+  SPOTLIGHT_ACTIVE_BEAM_OPACITY,
+  spotlightCharacterTooltip,
+  showChooseSpotlightBanner,
   spotlightInactiveBeamOpacity,
   highestCatchUpKeys,
   qualifiesForSpotlightRoll,
@@ -100,27 +103,39 @@ describe('applySpotlightRollAck', () => {
     expect(next.rollSeq).toBe(1);
     expect(next.lastSeenSeq['pc-1']).toBeUndefined();
     expect(spotlightCatchUpCount(next, 'pc-1')).toBe(1);
-    expect(spotlightCatchUpCount(next, 'gm')).toBe(1);
+    expect(spotlightCatchUpCount(next, 'gm')).toBe(0);
   });
 });
 
 describe('spotlightCatchUpCount / highestCatchUpKeys', () => {
-  it('treats a missing lastSeenSeq key as 0', () => {
+  it('treats a missing lastSeenSeq key as 0 for characters, and never tracks the GM', () => {
     const s = { holderType: null, holderInstanceId: null, rollSeq: 4, lastSeenSeq: { 'pc-1': 1 } };
     expect(spotlightCatchUpCount(s, 'pc-1')).toBe(3);
-    expect(spotlightCatchUpCount(s, 'gm')).toBe(4);
+    expect(spotlightCatchUpCount(s, 'gm')).toBe(0);
     expect(spotlightCatchUpCount(s, 'pc-2')).toBe(4);
   });
 
-  it('returns keys tied for the max catch-up, and none when max is 0', () => {
+  it('returns character keys tied for the max catch-up, and none when max is 0', () => {
     const s = { holderType: null, holderInstanceId: null, rollSeq: 5, lastSeenSeq: { gm: 2, 'pc-1': 2, 'pc-2': 4 } };
-    expect(highestCatchUpKeys(s, ['gm', 'pc-1', 'pc-2'])).toEqual(['gm', 'pc-1']);
+    expect(highestCatchUpKeys(s, ['gm', 'pc-1', 'pc-2'])).toEqual(['pc-1']);
     expect(highestCatchUpKeys(DEFAULT_SPOTLIGHT, ['gm', 'pc-1'])).toEqual([]);
   });
 
   it('skips the current holder when ranking catch-up', () => {
     const s = { holderType: 'gm', holderInstanceId: null, rollSeq: 5, lastSeenSeq: { gm: 0, 'pc-1': 3, 'pc-2': 4, 'pc-3': 3 } };
     expect(highestCatchUpKeys(s, ['gm', 'pc-1', 'pc-2', 'pc-3'])).toEqual(['pc-1', 'pc-3']);
+  });
+
+  it('builds the character-beam tooltip with turn count and give-spotlight line', () => {
+    expect(spotlightCharacterTooltip(3, 'Mira')).toBe(
+      '3 turns since last Spotlight.\nClick to give Spotlight to Mira.',
+    );
+    expect(spotlightCharacterTooltip(0, '  ')).toBe(
+      '0 turns since last Spotlight.\nClick to give Spotlight to character.',
+    );
+    expect(spotlightCharacterTooltip(2, 'Mira', { active: true })).toBe(
+      '2 turns since last Spotlight.\nClick to clear Spotlight.',
+    );
   });
 
   it('scales inactive beam opacity with catch-up so higher counts read brighter', () => {
@@ -130,7 +145,17 @@ describe('spotlightCatchUpCount / highestCatchUpKeys', () => {
     expect(one).toBeGreaterThan(zero);
     expect(two).toBeGreaterThan(one);
     expect(two - one).toBeCloseTo(one - zero);
-    expect(spotlightInactiveBeamOpacity(99)).toBeLessThan(0.95);
+    expect(spotlightInactiveBeamOpacity(99)).toBeLessThan(SPOTLIGHT_ACTIVE_BEAM_OPACITY);
+  });
+});
+
+describe('showChooseSpotlightBanner', () => {
+  it('is true only when play is allowed and the spotlight is open', () => {
+    expect(showChooseSpotlightBanner(true, DEFAULT_SPOTLIGHT)).toBe(true);
+    expect(showChooseSpotlightBanner(true, { holderType: null, holderInstanceId: null, rollSeq: 2, lastSeenSeq: {} })).toBe(true);
+    expect(showChooseSpotlightBanner(true, assignSpotlightHolder(DEFAULT_SPOTLIGHT, 'gm'))).toBe(false);
+    expect(showChooseSpotlightBanner(true, assignSpotlightHolder(DEFAULT_SPOTLIGHT, 'character', 'pc-1'))).toBe(false);
+    expect(showChooseSpotlightBanner(false, DEFAULT_SPOTLIGHT)).toBe(false);
   });
 });
 
@@ -145,5 +170,18 @@ describe('holder helpers / assignSpotlightHolder', () => {
     expect(gm.holderInstanceId).toBe(null);
     expect(gm.rollSeq).toBe(pc.rollSeq);
     expect(gm.lastSeenSeq).toEqual(pc.lastSeenSeq);
+  });
+
+  it('clears the spotlight when the current holder is assigned again', () => {
+    const pc = assignSpotlightHolder(DEFAULT_SPOTLIGHT, 'character', 'pc-1');
+    const clearedPc = assignSpotlightHolder(pc, 'character', 'pc-1');
+    expect(clearedPc.holderType).toBe(null);
+    expect(clearedPc.holderInstanceId).toBe(null);
+    expect(clearedPc.rollSeq).toBe(pc.rollSeq);
+
+    const gm = assignSpotlightHolder(DEFAULT_SPOTLIGHT, 'gm');
+    const clearedGm = assignSpotlightHolder(gm, 'gm');
+    expect(clearedGm.holderType).toBe(null);
+    expect(isGmHolder(clearedGm)).toBe(false);
   });
 });
