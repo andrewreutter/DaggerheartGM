@@ -551,6 +551,21 @@ describe('applyTableOp', () => {
     expect(result.activeElements[0].name).toBe('Giant Rat');
   });
 
+  it('update-base-data preserves visibleToPlayers', () => {
+    const el = mkElement({
+      id: 'adv-1', instanceId: 'inst-1', elementType: 'adversary',
+      name: 'Rat', role: 'minion',
+      visibleToPlayers: false,
+    });
+    const result = applyTableOp({
+      op: 'update-base-data',
+      elementId: 'adv-1',
+      newBaseData: { id: 'adv-1', name: 'Giant Rat', role: 'minion' },
+    }, { activeElements: [el] });
+    expect(result.activeElements[0].visibleToPlayers).toBe(false);
+    expect(result.activeElements[0].name).toBe('Giant Rat');
+  });
+
   it('update-base-data replaces stale empty stub name/tier with saved library data', () => {
     const el = mkElement({
       name: '',
@@ -1426,6 +1441,7 @@ describe('UPDATE_BASE_DATA_RUNTIME_KEYS', () => {
   it('includes party-scale adversary fields', () => {
     expect(UPDATE_BASE_DATA_RUNTIME_KEYS).toContain('minPartySize');
     expect(UPDATE_BASE_DATA_RUNTIME_KEYS).toContain('minionGroupId');
+    expect(UPDATE_BASE_DATA_RUNTIME_KEYS).toContain('visibleToPlayers');
   });
 });
 

@@ -80,6 +80,18 @@ describe('redactTableStateForPlayerAudience', () => {
     expect(out.elements[0].elementType).toBe('adversary');
   });
 
+  it('removes adversaries hidden from players', () => {
+    const state = {
+      elements: [
+        { instanceId: 'a1', elementType: 'adversary' },
+        { instanceId: 'a2', elementType: 'adversary', visibleToPlayers: false },
+        { instanceId: 'c1', elementType: 'character' },
+      ],
+    };
+    const out = redactTableStateForPlayerAudience(state);
+    expect(out.elements.map((e) => e.instanceId)).toEqual(['a1', 'c1']);
+  });
+
   it('strips inviteLink for the player audience', () => {
     const state = {
       inviteLink: { token: 'secret', createdAt: '2026-01-01' },

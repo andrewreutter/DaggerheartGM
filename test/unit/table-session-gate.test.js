@@ -86,6 +86,16 @@ describe('table-session-gate', () => {
     expect(g.ok).toBe(true);
   });
 
+  it('allows visibleToPlayers updates during prep (staging hidden adversaries)', () => {
+    expect(isPrepModeElementUpdateBlocked({ visibleToPlayers: false })).toBe(false);
+    const g = gateTableOpForPrepMode(prepState, {
+      op: 'update-element',
+      instanceId: 'a',
+      updates: { visibleToPlayers: false },
+    });
+    expect(g.ok).toBe(true);
+  });
+
   it('allows assignedPlayerEmail updates during prep (roster bookkeeping)', () => {
     expect(isPrepModeElementUpdateBlocked({ assignedPlayerEmail: 'player@example.com' })).toBe(false);
     const g = gateTableOpForPrepMode(prepState, {

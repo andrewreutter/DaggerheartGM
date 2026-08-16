@@ -3,6 +3,8 @@
  * Pure helpers — safe to import from server (subscriptions, GET handler).
  */
 
+import { redactHiddenAdversariesForAudience } from './adversary-player-visibility.js';
+
 /** @typedef {'standard' | 'progress' | 'consequence'} SessionCountdownKind */
 /** @typedef {'gm' | 'players'} SessionCountdownVisibility */
 
@@ -116,11 +118,12 @@ export function redactInviteLinkForAudience(state, audience) {
   return rest;
 }
 
-/** Apply all GM-only redactions for player SSE / GET table_state (countdowns + notes + invite link). */
+/** Apply all GM-only redactions for player SSE / GET table_state (countdowns + notes + invite link + hidden adversaries). */
 export function redactTableStateForPlayerAudience(state) {
   let s = redactSessionCountdownsForAudience(state, 'player');
   s = redactEncounterNotesForAudience(s, 'player');
   s = redactInviteLinkForAudience(s, 'player');
+  s = redactHiddenAdversariesForAudience(s, 'player');
   return s;
 }
 

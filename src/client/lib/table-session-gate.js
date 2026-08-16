@@ -31,6 +31,8 @@ export const PREP_MODE_ALLOWED_ELEMENT_UPDATE_KEYS = new Set([
   'minPartySize',
   // Character assignment to a player — prep-safe roster bookkeeping
   'assignedPlayerEmail',
+  // Hide/reveal adversaries while staging an encounter (default visible)
+  'visibleToPlayers',
 ]);
 
 /**

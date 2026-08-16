@@ -24,6 +24,8 @@ export const OPTIMISTIC_ELEMENT_UPDATE_FIELDS = new Set([
   'companion',
   // Party-scaled adversary present-at tag
   'minPartySize',
+  // GM hide/reveal — tray eye + map sub-token must flip immediately
+  'visibleToPlayers',
 ]);
 
 /**

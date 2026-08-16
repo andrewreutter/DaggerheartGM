@@ -149,6 +149,11 @@ import { useUnifiedImport } from '../lib/unified-import-context.jsx';
 import { buildMapStripTileTokenSignature } from '../lib/map-strip-tile-signature.js';
 import { isAdversaryPresentForParty } from '../lib/party-scaled-adversaries.js';
 import {
+  isAdversaryVisibleToPlayers,
+  canRevealAnyAdversaries,
+  canHideAnyAdversaries,
+} from '../lib/adversary-player-visibility.js';
+import {
   canModifyMapObject,
   computeCornerAnchor,
   computeCornerResize,
@@ -1344,7 +1349,8 @@ function tokenElementFieldsEqual(pE, nE) {
     pE.tokenSizeLength === nE.tokenSizeLength &&
     pE.tokenSizeLinked === nE.tokenSizeLinked &&
     pE.imageUrl === nE.imageUrl &&
-    pE.conditions === nE.conditions
+    pE.conditions === nE.conditions &&
+    pE.visibleToPlayers === nE.visibleToPlayers
   );
 }
 
@@ -1363,18 +1369,14 @@ const placedTokenPropsAreEqual = (prev, next) => {
     prev.allyColorClasses !== next.allyColorClasses ||
     prev.onPointerDown !== next.onPointerDown ||
     prev.onPointerMove !== next.onPointerMove ||
-    prev.onPointerUp !== next.onPointerUp
+    prev.onPointerUp !== next.onPointerUp ||
+    prev.onRevealHidden !== next.onRevealHidden
   ) {
     return false;
   }
   return tokenElementFieldsEqual(prev.element, next.element);
 };
 
-/**
- * Memoized wrapper for a token placed on the map. During map pan/zoom the parent `BattleMap` only
- * re-renders to translate/scale the shared canvas layer — none of these props change, so React
- * bails out of diffing/rendering every placed token's subtree entirely.
- */
 /**
  * Floating altitude HUD: a map-scale stem from the token center (positive = up the
  * screen, colored to the token's ally/role fill) with a compact always-on value
@@ -1555,6 +1557,7 @@ function TokenAltitudeControl({
   );
 }
 
+/** Memoized wrapper for a token placed on the map (see `placedTokenPropsAreEqual`). */
 const PlacedToken = memo(function PlacedTokenRaw({
   element,
   isMyCharacter,
@@ -1571,8 +1574,11 @@ const PlacedToken = memo(function PlacedTokenRaw({
   onPointerDown,
   onPointerMove,
   onPointerUp,
+  onRevealHidden,
 }) {
   const p = MAP_TOKEN_HIT_PADDING_PX;
+  const showHiddenReveal = typeof onRevealHidden === 'function';
+  const badgeSize = Math.max(14, Math.min(22, Math.round(Math.min(tokenSizeWpx, tokenSizeHpx) * 0.36)));
   return (
     <div
       className="absolute"
@@ -1590,18 +1596,48 @@ const PlacedToken = memo(function PlacedTokenRaw({
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
     >
-      <TokenCircle
-        element={element}
-        sizeW={tokenSizeWpx}
-        sizeH={tokenSizeHpx}
-        instanceNum={instanceNum}
-        isMyCharacter={isMyCharacter}
-        isPlayer={isPlayer}
-        isDragging={isDragging}
-        isPinned={isPinned}
-        rangeBand={rangeBand}
-        allyColorClasses={allyColorClasses}
-      />
+      <div className="relative" style={{ width: tokenSizeWpx, height: tokenSizeHpx }}>
+        <TokenCircle
+          element={element}
+          sizeW={tokenSizeWpx}
+          sizeH={tokenSizeHpx}
+          instanceNum={instanceNum}
+          isMyCharacter={isMyCharacter}
+          isPlayer={isPlayer}
+          isDragging={isDragging}
+          isPinned={isPinned}
+          rangeBand={rangeBand}
+          allyColorClasses={allyColorClasses}
+        />
+        {showHiddenReveal && (
+          <div
+            className="absolute z-20"
+            style={{
+              right: -Math.round(badgeSize * 0.15),
+              bottom: -Math.round(badgeSize * 0.15),
+            }}
+          >
+            <Tooltip label="Hidden from players — click to reveal">
+              <button
+                type="button"
+                aria-label="Reveal adversary to players"
+                onPointerDown={(e) => {
+                  e.stopPropagation();
+                  e.preventDefault();
+                }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onRevealHidden(element);
+                }}
+                className="flex items-center justify-center rounded-full border-2 border-black bg-dh-canvas text-amber-300 hover:text-amber-200 hover:bg-dh-hover shadow-md"
+                style={{ width: badgeSize, height: badgeSize }}
+              >
+                <EyeOff size={Math.max(8, Math.round(badgeSize * 0.55))} />
+              </button>
+            </Tooltip>
+          </div>
+        )}
+      </div>
     </div>
   );
 }, placedTokenPropsAreEqual);
@@ -1620,7 +1656,8 @@ const trayTokenPropsAreEqual = (prev, next) => {
     prev.onPointerMove !== next.onPointerMove ||
     prev.onPointerUp !== next.onPointerUp ||
     prev.onProxyHoverEnter !== next.onProxyHoverEnter ||
-    prev.onProxyHoverLeave !== next.onProxyHoverLeave
+    prev.onProxyHoverLeave !== next.onProxyHoverLeave ||
+    prev.onToggleVisibility !== next.onToggleVisibility
   ) {
     return false;
   }
@@ -1643,10 +1680,14 @@ const TrayToken = memo(function TrayTokenRaw({
   onPointerUp,
   onProxyHoverEnter,
   onProxyHoverLeave,
+  onToggleVisibility,
 }) {
   const snapBullseyeOnHover = trayProxyShouldSnapBullseye({ isProxy, isOtherMapShelf });
+  const showVisibility = typeof onToggleVisibility === 'function' && element.elementType === 'adversary';
+  const visibleToPlayers = isAdversaryVisibleToPlayers(element);
   return (
     <div
+      className="relative"
       style={{ touchAction: 'none' }}
       onPointerDown={(e) => onPointerDown(e, element, true)}
       onPointerMove={onPointerMove}
@@ -1666,6 +1707,30 @@ const TrayToken = memo(function TrayTokenRaw({
         isOtherMapShelf={isOtherMapShelf}
         allyColorClasses={allyColorClasses}
       />
+      {showVisibility && (
+        <div className="absolute z-10" style={{ right: -2, bottom: -2 }}>
+          <Tooltip label={visibleToPlayers ? 'Visible to players — click to hide' : 'Hidden from players — click to reveal'}>
+            <button
+              type="button"
+              aria-label={visibleToPlayers ? 'Hide adversary from players' : 'Reveal adversary to players'}
+              aria-pressed={!visibleToPlayers}
+              onPointerDown={(e) => {
+                e.stopPropagation();
+                e.preventDefault();
+              }}
+              onClick={(e) => {
+                e.stopPropagation();
+                onToggleVisibility(element);
+              }}
+              className={`flex items-center justify-center rounded-full border border-dh-border bg-dh-canvas/95 shadow-sm
+                ${visibleToPlayers ? 'text-dh-muted hover:text-dh' : 'text-amber-300 hover:text-amber-200'}`}
+              style={{ width: 16, height: 16 }}
+            >
+              {visibleToPlayers ? <Eye size={10} /> : <EyeOff size={10} />}
+            </button>
+          </Tooltip>
+        </div>
+      )}
     </div>
   );
 }, trayTokenPropsAreEqual);
@@ -2256,6 +2321,7 @@ function TrayColumn({
   spotlightClickable = false,
   onAssignCharacterSpotlight,
   highestCatchUpKeySet = null,
+  onToggleAdversaryVisibility,
 }) {
   if (tokens.length === 0) return null;
 
@@ -2299,6 +2365,7 @@ function TrayColumn({
                 onPointerUp={onPointerUp}
                 onProxyHoverEnter={onProxyHoverEnter}
                 onProxyHoverLeave={onProxyHoverLeave}
+                onToggleVisibility={onToggleAdversaryVisibility}
               />
               {showBeam && (
                 <div
@@ -2366,6 +2433,40 @@ function TrayBulkActionsHeader({ trayDirection, onPlaceAll, canPlaceAll, onRetur
           className="w-full flex items-center justify-center py-1 rounded text-dh-muted hover:text-amber-400 hover:bg-dh-hover transition-colors disabled:opacity-30 disabled:pointer-events-none"
         >
           <ReturnIcon size={14} />
+        </button>
+      </Tooltip>
+    </div>
+  );
+}
+
+/**
+ * "Reveal all" / "Hide all" adversary visibility pair, docked under the GM token
+ * and above the first adversary tray token. Disabled when the click would not
+ * change any adversary's player-visibility state.
+ */
+function TrayVisibilityActionsHeader({ onRevealAll, canRevealAll, onHideAll, canHideAll }) {
+  return (
+    <div className="flex items-center justify-center gap-1 p-1 border-b border-dh-border shrink-0">
+      <Tooltip label="Reveal all adversaries" className="flex-1 min-w-0">
+        <button
+          type="button"
+          onClick={onRevealAll}
+          disabled={!canRevealAll}
+          aria-label="Reveal all adversaries"
+          className="w-full flex items-center justify-center py-1 rounded text-dh-muted hover:text-sky-400 hover:bg-dh-hover transition-colors disabled:opacity-30 disabled:pointer-events-none"
+        >
+          <Eye size={14} />
+        </button>
+      </Tooltip>
+      <Tooltip label="Hide all adversaries" className="flex-1 min-w-0">
+        <button
+          type="button"
+          onClick={onHideAll}
+          disabled={!canHideAll}
+          aria-label="Hide all adversaries"
+          className="w-full flex items-center justify-center py-1 rounded text-dh-muted hover:text-amber-400 hover:bg-dh-hover transition-colors disabled:opacity-30 disabled:pointer-events-none"
+        >
+          <EyeOff size={14} />
         </button>
       </Tooltip>
     </div>
@@ -3188,6 +3289,8 @@ export function BattleMap({
     handlePointerUp: null,
     handleTrayProxyHoverEnter: null,
     handleTrayProxyHoverLeave: null,
+    handleToggleAdversaryVisibility: null,
+    handleRevealAdversary: null,
   });
   const stableOnPointerDown = useCallback((e, element, fromTray) => {
     handlersRef.current.handlePointerDown?.(e, element, fromTray);
@@ -3203,6 +3306,12 @@ export function BattleMap({
   }, []);
   const stableOnProxyHoverLeave = useCallback((element) => {
     handlersRef.current.handleTrayProxyHoverLeave?.(element);
+  }, []);
+  const stableOnToggleAdversaryVisibility = useCallback((element) => {
+    handlersRef.current.handleToggleAdversaryVisibility?.(element);
+  }, []);
+  const stableOnRevealAdversary = useCallback((element) => {
+    handlersRef.current.handleRevealAdversary?.(element);
   }, []);
   /** After shelf click switches map, center the viewport on that character once `activeMapIdResolved` matches. */
   const pendingShelfNavigateCenterInstanceIdRef = useRef(null);
@@ -4341,9 +4450,10 @@ export function BattleMap({
   const characters = useMemo(() => activeElements.filter(el => el.elementType === 'character'), [activeElements]);
   const adversaries = useMemo(() => activeElements.filter((el) => {
     if (el.elementType !== 'adversary') return false;
+    if (isPlayer && !isAdversaryVisibleToPlayers(el)) return false;
     if (adversaryPartyScaleCount == null) return true;
     return isAdversaryPresentForParty(el, adversaryPartyScaleCount);
-  }), [activeElements, adversaryPartyScaleCount]);
+  }), [activeElements, adversaryPartyScaleCount, isPlayer]);
   const boardTokens = useMemo(
     () => activeElements.filter((el) => el.elementType === 'boardToken'),
     [activeElements],
@@ -4625,6 +4735,40 @@ export function BattleMap({
     },
     [updateActiveElement],
   );
+
+  const handleToggleAdversaryVisibility = useCallback((element) => {
+    if (isPlayer || element?.elementType !== 'adversary') return;
+    updateActiveElement(element.instanceId, {
+      visibleToPlayers: !isAdversaryVisibleToPlayers(element),
+    });
+  }, [isPlayer, updateActiveElement]);
+
+  const handleRevealAdversary = useCallback((element) => {
+    if (isPlayer || element?.elementType !== 'adversary') return;
+    if (isAdversaryVisibleToPlayers(element)) return;
+    updateActiveElement(element.instanceId, { visibleToPlayers: true });
+  }, [isPlayer, updateActiveElement]);
+
+  const handleRevealAllAdversaries = useCallback(() => {
+    if (isPlayer) return;
+    for (const el of adversaries) {
+      if (!isAdversaryVisibleToPlayers(el)) {
+        updateActiveElement(el.instanceId, { visibleToPlayers: true });
+      }
+    }
+  }, [isPlayer, adversaries, updateActiveElement]);
+
+  const handleHideAllAdversaries = useCallback(() => {
+    if (isPlayer) return;
+    for (const el of adversaries) {
+      if (isAdversaryVisibleToPlayers(el)) {
+        updateActiveElement(el.instanceId, { visibleToPlayers: false });
+      }
+    }
+  }, [isPlayer, adversaries, updateActiveElement]);
+
+  const canRevealAllAdversaries = canRevealAnyAdversaries(adversaries);
+  const canHideAllAdversaries = canHideAnyAdversaries(adversaries);
 
   // Left tray (characters + companion board tokens) bulk-action eligibility — mirrors the
   // per-token `canMoveToken` permission check used by the pinned detail panel (players may
@@ -6261,6 +6405,8 @@ export function BattleMap({
     handlePointerUp,
     handleTrayProxyHoverEnter,
     handleTrayProxyHoverLeave,
+    handleToggleAdversaryVisibility,
+    handleRevealAdversary,
   };
 
   const renderTokenAltitudeHud = (element, tokenSizeWpx, tokenSizeHpx, zIndex, { isMyCharacter = false, allyColorClasses = null } = {}) => {
@@ -7548,6 +7694,7 @@ export function BattleMap({
                       onPointerDown={stableOnPointerDown}
                       onPointerMove={stableOnPointerMove}
                       onPointerUp={stableOnPointerUp}
+                      onRevealHidden={!isPlayer && !isAdversaryVisibleToPlayers(element) ? stableOnRevealAdversary : undefined}
                     />
                     {renderTokenAltitudeHud(element, renderPx.widthPx, renderPx.heightPx, zIndex)}
                   </Fragment>
@@ -7675,6 +7822,14 @@ export function BattleMap({
               </div>
             )}
             {showRightAdversaryTray && (
+              <TrayVisibilityActionsHeader
+                onRevealAll={handleRevealAllAdversaries}
+                canRevealAll={canRevealAllAdversaries}
+                onHideAll={handleHideAllAdversaries}
+                canHideAll={canHideAllAdversaries}
+              />
+            )}
+            {showRightAdversaryTray && (
               <div className="flex-1 min-h-0 overflow-hidden">
                 <TrayColumn
                   tokens={advTrayTokens}
@@ -7689,6 +7844,7 @@ export function BattleMap({
                   onProxyHoverEnter={stableOnProxyHoverEnter}
                   onProxyHoverLeave={stableOnProxyHoverLeave}
                   pinnedInstanceId={pinnedToken?.element.instanceId}
+                  onToggleAdversaryVisibility={stableOnToggleAdversaryVisibility}
                 />
               </div>
             )}
