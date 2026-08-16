@@ -3,7 +3,7 @@
  * (`minionGroupId`) that grow/shrink with the live character count.
  */
 
-import { generateId } from './helpers.js';
+import { generateId } from './generate-id.js';
 
 export const PARTY_SCALE_MAX = 8;
 

@@ -4,7 +4,7 @@ import { WingsOfLight } from '../../features-v2/subclasses/WingedSentinel.js';
 import { getV2ToggleStateKey } from '../../features-v2/engine/chip-system.js';
 import { getResolvedActiveBeastformBonuses } from './character-calc.js';
 
-export const generateId = () => crypto.randomUUID();
+export { generateId } from './generate-id.js';
 
 // Returns the initial countdown value from feature description text like "Fear Countdown (8)", or null if none.
 export const parseCountdownValue = (text) => {
