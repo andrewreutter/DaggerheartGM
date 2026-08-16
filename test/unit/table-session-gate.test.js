@@ -189,6 +189,14 @@ describe('table-session-gate', () => {
     expect(gateTableOpForPrepMode(paused, { op: 'replace-scene-snapshot', maps: [], mapViews: [], elements: [] }).ok).toBe(true);
   });
 
+  it('allows set-spotlight during prep so the GM can assign a holder before session start', () => {
+    const g = gateTableOpForPrepMode(prepState, {
+      op: 'set-spotlight',
+      spotlight: { holderType: 'gm', holderInstanceId: null, rollSeq: 0, lastSeenSeq: {} },
+    });
+    expect(g.ok).toBe(true);
+  });
+
   it('bypassPrepGate allows a single blocked update without changing session state in the gate', () => {
     const g = gateTableOpForPrepMode(prepState, {
       op: 'update-element',

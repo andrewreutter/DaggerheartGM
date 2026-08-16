@@ -10,7 +10,7 @@ import { PlayerAdversaryTargetAid } from './PlayerAdversaryTargetAid.jsx';
 import { GameTableCharacterListCard } from './GameTableCharacterListCard.jsx';
 import { AnchoredFloatingPanel } from './AnchoredFloatingPanel.jsx';
 import { ActionLog } from './ActionLog.jsx';
-import { parseFeatureCategory, parseAllCountdownValues, generateId, effectiveThresholds, effectiveEvasion, computeHpLoss, isAdversaryDefeated, getDifficultyLabel, parseBeastformBonus, isWingsOfLightFlying, extractGmFeatureWhenClause } from '../lib/helpers.js';
+import { parseAllCountdownValues, generateId, effectiveThresholds, effectiveEvasion, computeHpLoss, isAdversaryDefeated, getDifficultyLabel, parseBeastformBonus, isWingsOfLightFlying, extractGmFeatureWhenClause } from '../lib/helpers.js';
 import { findSessionCountdownBySource } from '../lib/session-countdowns.js';
 import { SessionCountdownsPanel, buildTrackedSessionEntryFromFeature, buildLinkedPairFromFeatureCountdowns } from './SessionCountdownsPanel.jsx';
 import { FeatureDescription } from './FeatureDescription.jsx';
@@ -40,6 +40,13 @@ import { buildTraitRollText, buildPreRollPanelTitle } from '../lib/trait-roll-te
 import { buildReactionCallRoster, canViewerProceedReaction } from '../lib/reaction-call-roster.js';
 import { buildJoinedPlayerRoster, mergePresenceNamesIntoCache } from '../lib/joined-player-roster.js';
 import { requiresGmFinalizedDifficulty, resolveFinalizedIntentDifficulty } from '../lib/action-roll-difficulty.js';
+import {
+  DEFAULT_SPOTLIGHT,
+  applySpotlightRollAck,
+  isSpotlightGatedRollMeta,
+  isSpotlightHolder,
+  qualifiesForSpotlightRoll,
+} from '../lib/spotlight.js';
 import {
   postRoll as postRollToServer,
   postTableOp,
@@ -159,6 +166,14 @@ import {
   livingAdversaryCardKeys,
   pickTallestGmSection,
 } from '../lib/gm-moves-layout.js';
+import {
+  DEFAULT_GM_MOVES,
+  FEAR_FAILURE_START,
+  FEAR_SUCCESS_END,
+  FEAR_SUCCESS_START,
+  HOPE_END,
+  buildConsolidatedGmMovesMenu,
+} from '../lib/gm-moves-menu.js';
 import { useCharacterSrdData } from '../lib/useCharacterSrdData.js';
 import { recomputeCharacter, isCharacterComplete, getEffectiveWeaponRange, projectCharacterFormToLevel } from '../lib/character-calc.js';
 import { mergeV2DeclarativeSheetOverlay, buildV2RegistryWithSrdItems } from '../lib/v2-declarative-sheet.js';
@@ -285,47 +300,6 @@ function useViewportClamp(ref, isActive, key) {
 
   return adjust;
 }
-
-// Strip boundaries (1-indexed in the spec, 0-indexed here):
-// Amber (Failure w/ Hope): items 1–6, Violet (Success w/ Fear): items 6–13,
-// Navy (Failure w/ Fear): items 12–16. Ranges overlap intentionally.
-const HOPE_END = 6;
-const FEAR_SUCCESS_START = 5;
-const FEAR_SUCCESS_END = 13;
-const FEAR_FAILURE_START = 11;
-const DEFAULT_GM_MOVES = [
-  { name: 'Show how the world reacts.', example: '\u201cThe kick shatters the door. Light spills in from the barracks as a half-dozen sleepy soldiers stumble to their feet, looking worried.\u201d' },
-  { name: 'Ask a question and build on the answer.', example: '\u201cHow is it that you notice the assassin lurking in the treetops?\u201d' },
-  { name: 'Make an NPC act in accordance with their motive.', example: '\u201cThe Jagged Knife Bandit snips the gold purse off the merchant\u2019s hip and attempts to escape.\u201d' },
-  { name: 'Lean on the character\u2019s goals to drive them to action.', example: '\u201cThe relic you\u2019ve been trying to recover for your people floats ominously in the center of the altar, surrounded by cultists preparing to drain its power.\u201d' },
-  { name: 'Signal an imminent off-screen threat.', example: '\u201cYou hear the crashing of falling trees and shattered branches as thundering steps approach. What do you do?\u201d' },
-  { name: 'Reveal an unwelcome truth or unexpected danger.', example: '\u201cHe reaches into his cloak and produces the Orb of Vengeance as you realize that he was the necromancer the entire time.\u201d' },
-  { name: 'Force the group to split up.', example: '\u201cThe elementals are scattering\u2014two heading for the town, three bearing down on the mill. What do you do?\u201d' },
-  { name: 'Make a PC mark Stress as a consequence for their actions.', example: '\u201cYou can pull the baron to safety if you mark a Stress. Otherwise you can only get yourself out of the way. What do you do?\u201d' },
-  { name: 'Make a move the characters don\u2019t see.', example: '\u201cYou brace for the alarm\u2026 but the door clicks open and everything seems fine\u2026 for now.\u201d' },
-  { name: 'Show the collateral damage.', example: '\u201cThe Minotaur Wrecker barrels into the street, shattering a vegetable cart, sending cabbages flying and knocking the merchant into the wall.\u201d' },
-  { name: 'Clear a temporary condition or effect.', example: '\u201cThe guard cuts through the vines that are holding her legs in place. She looks around to find her next target and raises her sword.\u201d' },
-  { name: 'Shift the environment.', example: '\u201cAs soon as you cross, the ancient rope bridge snaps, leaving you stranded.\u201d' },
-  { name: 'Spotlight an adversary.', example: '\u201cAs the Skeleton Dredge shambles forward to strike you, you see the two others on their flank turn their attention toward you as well.\u201d' },
-  { name: 'Capture someone or something important.', example: '\u201cThe thief slides past you and jumps into the cart, grabbing the idol from the seat and stuffing it into their pouch.\u201d' },
-  { name: 'Use a PC\u2019s backstory against them.', example: '\u201cYour mentor sighs, drawing their blade. \u2018I wish it didn\u2019t come to this, child. But you still don\u2019t understand what sacrifices are required to maintain the peace.\u2019\u201d' },
-  { name: 'Take away an opportunity permanently.', example: '\u201cThe door slams shut, cutting you off from the vault as the temple continues to collapse. You\u2019ll need to find another exit if you want to make it out alive.\u201d' },
-];
-
-
-const ROLE_MOVES = {
-  bruiser:  'The {name} roars in anger, preparing for its next strike. The next time the {name} attacks, it gains an additional 1d4 to its attack roll.',
-  horde:    'The {name} rally together, gaining strength. They clear 1 HP or 1 Stress.',
-  leader:   'The {name} encourages one of their allies, giving them advantage on their next attack roll.',
-  minion:   'The {name} moves into a better position, surrounding the target.',
-  ranged:   'The {name} focuses for their next attack, adding +X to the damage of their next attack if it hits.',
-  skulk:    'The {name} retreats to a better position, disengaging from the PCs.',
-  standard: 'The {name} braces for the next attack. Their difficulty increases by 1 until the next GM Turn.',
-  support:  'The {name} clears a condition on themselves or someone else.',
-};
-
-const ATTACK_DESC_RE = /^([+-]?\d+)\s+(Melee|Very Close|Close|Far|Very Far)\s*\|\s*([^\s]+)\s+(\w+)$/i;
-const DICE_PATTERN_RE = /\d+d\d+(?:[+-]\d+)?/gi;
 
 function parseFearCost(description) {
   const m = (description || '').match(/(?:spend|mark)\s+(\d+|a|an)\s+fear/i);
@@ -495,7 +469,7 @@ function buildGameTableNewEnvironmentStub(tier = 1, type = 'exploration') {
   };
 }
 
-export function GMTableView({ tableId, activeElements, updateActiveElement: pushTableElementUpdate, removeActiveElement, updateActiveElementsBaseData, data, saveItem, saveImage, addToTable, addElements, sendDoAddToTable, onMergeAdversary, user, route, navigate, featureCountdowns = {}, sessionCountdowns = [], updateCountdown, partySize = 1, partyTier = 1, characters = [], tableBattleMods, setTableBattleMods, fearCount = 0, setFearCount, conditionsHistory = [], onAddConditionsHistoryEntry, onRemoveConditionsHistoryEntry, tableName = '', gmDisplayName = '', tableStateReady = false, onTableNameChange, onDeleteTable, ensureAdventuresLoaded, ensureCharactersLoaded, clearTable, isPlayer = false, playerEmail, connectedPlayers = [], playerEmails = [], playerNames = {}, inviteLink = null, onGenerateInviteLink, onRevokeInviteLink, onRemovePlayerEmail, onLeaveTable, gmUid, onPlayerAddCharacter, pendingBanners = [], pendingPlayerIntent = null, intentDifficultyUpdate = null, onFeatureRequestSuccess, onFeatureRequestCancel, rangerFocusRequestedBannerIds, onRangerFocusRerollRequestSuccess, onRangerFocusRerollRequestCancel, previewAsPlayerEmail = null, onPreviewAsPlayer, onExitPreview, actionLog = [], setActionLog, mapConfig, maps = [], activeMapId = null, gmMapView = null, onSetActiveMap, onAddMap, onAddMapWithImage, onRemoveMap, onRenameMap, onMapConfigChange, onMapViewSync, lifeSupportSelections = {}, onLifeSupportSelect, onLifeSupportClear, restMovesSelections = {}, onRestMoveSelect, onRestMoveClear, tableFeatureState = {}, sessionPlayAllowed = true, sessionStarted = true, sessionPaused = false, mapPings = [], onDismissMapPing = () => {}, appendMapPing = () => {},
+export function GMTableView({ tableId, activeElements, updateActiveElement: pushTableElementUpdate, removeActiveElement, updateActiveElementsBaseData, data, saveItem, saveImage, addToTable, addElements, sendDoAddToTable, onMergeAdversary, user, route, navigate, featureCountdowns = {}, sessionCountdowns = [], updateCountdown, partySize = 1, partyTier = 1, characters = [], tableBattleMods, setTableBattleMods, fearCount = 0, setFearCount, spotlight = null, onSpotlightChange, conditionsHistory = [], onAddConditionsHistoryEntry, onRemoveConditionsHistoryEntry, tableName = '', gmDisplayName = '', tableStateReady = false, onTableNameChange, onDeleteTable, ensureAdventuresLoaded, ensureCharactersLoaded, clearTable, isPlayer = false, playerEmail, connectedPlayers = [], playerEmails = [], playerNames = {}, inviteLink = null, onGenerateInviteLink, onRevokeInviteLink, onRemovePlayerEmail, onLeaveTable, gmUid, onPlayerAddCharacter, pendingBanners = [], pendingPlayerIntent = null, intentDifficultyUpdate = null, onFeatureRequestSuccess, onFeatureRequestCancel, rangerFocusRequestedBannerIds, onRangerFocusRerollRequestSuccess, onRangerFocusRerollRequestCancel, previewAsPlayerEmail = null, onPreviewAsPlayer, onExitPreview, actionLog = [], setActionLog, mapConfig, maps = [], activeMapId = null, gmMapView = null, onSetActiveMap, onAddMap, onAddMapWithImage, onRemoveMap, onRenameMap, onMapConfigChange, onMapViewSync, lifeSupportSelections = {}, onLifeSupportSelect, onLifeSupportClear, restMovesSelections = {}, onRestMoveSelect, onRestMoveClear, tableFeatureState = {}, sessionPlayAllowed = true, sessionStarted = true, sessionPaused = false, mapPings = [], onDismissMapPing = () => {}, appendMapPing = () => {},
   mapScribbles = [],
   mapViews = [], gmActiveViewId = null, onSetActiveView, onAddMapViewOp, onRemoveMapView, onRenameMapView, onSetViewBroadcast, onSetViewLocked, onSetMapShare,
   onSetMapOverlay,
@@ -542,6 +516,16 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
   const [playBlockedDialog, setPlayBlockedDialog] = useState(null);
   /** Until reload: GM skips prep/pause prompts; blocked ops get `bypassPrepGate` (session flags unchanged). */
   const [playBlockedAllowAllEdits, setPlayBlockedAllowAllEdits] = useState(false);
+  const [spotlightBlockedHint, setSpotlightBlockedHint] = useState(null);
+  const spotlightHintTimerRef = useRef(null);
+  const showSpotlightBlockedHint = useCallback((message) => {
+    setSpotlightBlockedHint(message);
+    if (spotlightHintTimerRef.current) clearTimeout(spotlightHintTimerRef.current);
+    spotlightHintTimerRef.current = setTimeout(() => setSpotlightBlockedHint(null), 2800);
+  }, []);
+  useEffect(() => () => {
+    if (spotlightHintTimerRef.current) clearTimeout(spotlightHintTimerRef.current);
+  }, []);
 
   /** Set when session-start is blocked because the table's trial/pass has lapsed. */
   const [tableNotLiveError, setTableNotLiveError] = useState(null); // { reason, trialEndsAt, paidThroughAt } | null
@@ -618,9 +602,13 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
 
   const handleRollTransportError = useCallback((err, logLabel) => {
     if (err?.playBlocked === 'paused' || err?.playBlocked === 'prep') return;
+    if (err?.spotlightBlocked) {
+      showSpotlightBlockedHint(err.message || "You don't hold the spotlight.");
+      return;
+    }
     if (err?.message === 'cancelled') return;
     if (logLabel) console.error(logLabel, err);
-  }, []);
+  }, [showSpotlightBlockedHint]);
 
   const postRoll = useCallback((rollText, displayName, tid, rollMeta = {}) => {
     if (!sessionPlayAllowed && !rollMeta.silent && rollMeta.bypassPrepGate !== true) {
@@ -2464,6 +2452,12 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
       // Reaction rolls don't generate Hope or Fear (SRD: Reaction Rolls).
       applyRollSideEffects(roll.dominant, roll.rollUser);
     }
+    const spotlightQual = qualifiesForSpotlightRoll(roll);
+    if (spotlightQual) {
+      const currentSpotlight = spotlight ?? DEFAULT_SPOTLIGHT;
+      const nextSpotlight = applySpotlightRollAck(currentSpotlight, roll);
+      if (nextSpotlight !== currentSpotlight) onSpotlightChange?.(nextSpotlight);
+    }
     const dmgPending = pendingDamageRef.current;
     pendingDamageRef.current = null;
     if (dmgPending) {
@@ -3590,7 +3584,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
       }
     }
     const key = `${feature.cardKey}|${feature.featureKey}`;
-    postRoll(rollText, displayName, tableId).then(() => {
+    postRoll(rollText, displayName, tableId, { _attackerType: 'adversary' }).then(() => {
       setRolledKey(key);
       setTimeout(() => setRolledKey(prev => prev === key ? null : prev), 1500);
     }).catch(err => handleRollTransportError(err, 'Roll failed:'));
@@ -3634,7 +3628,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
       setAdversaryTargetMenu({ anchorRect, rollText, displayName, rollMeta, validTargets });
       return;
     }
-    postRoll(rollText, displayName, tableId, Object.keys(rollMeta).length ? rollMeta : undefined).catch(err => handleRollTransportError(err, 'Roll failed:'));
+    postRoll(rollText, displayName, tableId, { ...rollMeta, _attackerType: 'adversary' }).catch(err => handleRollTransportError(err, 'Roll failed:'));
   };
 
   const handleTraitRoll = (rollText, displayName, rollMeta = {}) => {
@@ -3651,6 +3645,14 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     // GM uses /api/room/my/roll (tableId=null) so server uses req.uid and banner subscription key matches; player uses table-scoped endpoint.
     const targetTableId = isPlayer ? tableId : null;
     const meta = { ...rollMeta, _playerInitiated: true };
+
+    if (isPlayer && isSpotlightGatedRollMeta(rollMeta)) {
+      const attackerId = rollMeta._attackerInstanceId;
+      if (!isSpotlightHolder(spotlight, attackerId)) {
+        showSpotlightBlockedHint("You don't hold the spotlight.");
+        return;
+      }
+    }
 
     // `table.sheet.rollThenResume` rolls (e.g. Seraph Prayer Dice, Bard Rally spend) are plain
     // mechanical dice rolls with no modifiers — the deferred `onPhysicalRollResolved` hook applies
@@ -4581,95 +4583,10 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
   }, [activeElements, updateActiveElement, wrappedPartyCharacters]);
 
   // Deduplicate actions by adversary id — same type only appears once in the board. Exclude adversary types that have no living (non-defeated) instances.
-  const consolidatedMenu = useMemo(() => {
-    const menu = { 'Passives': [], 'Reactions': [], 'Fear Actions': [], 'Actions': [] };
-    const seenAdvIds = new Set();
-    const adversaryIdsWithAlive = new Set();
-    activeElements.forEach(el => {
-      if (el.elementType === 'adversary' && isAdversaryPresentForParty(el, characterCount) && !isAdversaryDefeated(el)) {
-        adversaryIdsWithAlive.add(el.id);
-      }
-    });
-
-    activeElements.forEach(element => {
-      if (element.elementType === 'adversary') {
-        if (!isAdversaryPresentForParty(element, characterCount)) return;
-        if (!adversaryIdsWithAlive.has(element.id)) return;
-        if (seenAdvIds.has(element.id)) return;
-        seenAdvIds.add(element.id);
-      }
-
-      const cardKey = element.elementType === 'adversary'
-        ? element.id
-        : element.instanceId;
-
-      if (element.attack && element.attack.name) {
-        menu['Actions'].push({
-          id: `${element.instanceId}-attack`,
-          name: element.attack.name,
-          type: 'action',
-          description: `${element.attack.modifier >= 0 ? '+' : ''}${element.attack.modifier} ${element.attack.range} | ${element.attack.damage} ${element.attack.trait?.toLowerCase()}`,
-          sourceName: element.name,
-          cardKey,
-          featureKey: 'attack',
-          _rollData: {
-            modifier: element.attack.modifier || 0,
-            range: element.attack.range || 'Melee',
-            damage: element.attack.damage || 'd6',
-            trait: element.attack.trait || 'phy',
-          },
-        });
-      }
-
-      element.features?.forEach((feature, featureIdx) => {
-        const category = parseFeatureCategory(feature);
-        const m = feature.type === 'action' && feature.description ? ATTACK_DESC_RE.exec(feature.description) : null;
-        const dicePatterns = feature.description
-          ? [...feature.description.matchAll(DICE_PATTERN_RE)].map(dm => dm[0])
-          : [];
-        const includeAttack = /\bmakes?\b.*?\battack\b/is.test(feature.description || '');
-        menu[category].push({
-          ...feature,
-          sourceName: element.name,
-          cardKey,
-          featureKey: `feat-${featureIdx}`,
-          _rollData: m ? {
-            modifier: parseInt(m[1]),
-            range: m[2],
-            damage: m[3],
-            trait: m[4],
-          } : null,
-          _diceRoll: !m && (dicePatterns.length > 0 || includeAttack) ? {
-            patterns: dicePatterns,
-            includeAttack,
-            attackModifier: includeAttack ? (element.attack?.modifier ?? 0) : null,
-            attackDamage: includeAttack && dicePatterns.length === 0 ? (element.attack?.damage || null) : null,
-            attackTrait: includeAttack && dicePatterns.length === 0 ? (element.attack?.trait || null) : null,
-            attackRange: includeAttack && dicePatterns.length === 0 ? (element.attack?.range || 'Melee') : null,
-          } : null,
-        });
-      });
-
-      if (element.elementType === 'adversary') {
-        const role = (element.role || 'standard').toLowerCase();
-        const template = ROLE_MOVES[role];
-        if (template) {
-          const roleLabel = role.charAt(0).toUpperCase() + role.slice(1);
-          menu['Actions'].push({
-            id: `${element.instanceId}-role-move`,
-            name: `${roleLabel} Move`,
-            type: 'action',
-            description: template.replace(/\{name\}/g, element.name),
-            sourceName: element.name,
-            cardKey,
-            featureKey: 'role-move',
-            _isRoleMove: true,
-          });
-        }
-      }
-    });
-    return menu;
-  }, [activeElements, characterCount]);
+  const consolidatedMenu = useMemo(
+    () => buildConsolidatedGmMovesMenu(activeElements, characterCount),
+    [activeElements, characterCount],
+  );
 
   const gmMovesPrFeatures = useMemo(
     () => [...(consolidatedMenu.Passives ?? []), ...(consolidatedMenu.Reactions ?? [])],
@@ -6816,6 +6733,15 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
             </div>
           </div>
         )}
+        {spotlightBlockedHint && typeof document !== 'undefined' && createPortal(
+          <div
+            role="status"
+            className="fixed bottom-20 left-1/2 -translate-x-1/2 z-[60] max-w-sm px-3 py-2 rounded-lg shadow-2xl bg-dh-surface/95 border border-amber-700/70 text-amber-100 text-xs font-medium pointer-events-none"
+          >
+            {spotlightBlockedHint}
+          </div>,
+          document.body,
+        )}
         {/* GM intent banner: shown when a player has opened their pre-roll banner. Interactive (Difficulty slider + Finalize) when the roll needs a GM-set DC. */}
         {!isPlayer && pendingPlayerIntent && createPortal(
           <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 max-w-sm w-full px-3 py-2.5 rounded-xl shadow-2xl bg-dh-surface/95 border border-dh-strong text-dh flex flex-col gap-1.5 pointer-events-auto">
@@ -7079,6 +7005,9 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
             renderAdversaryEncounterCard={!isPlayer ? renderAdversaryEncounterCard : undefined}
             renderAdversaryTargetAid={renderAdversaryTargetAid}
             adversaryPartyScaleCount={characterCount}
+            showSpotlight
+            spotlight={spotlight}
+            onSpotlightChange={onSpotlightChange}
           />
         </div>
         </div>

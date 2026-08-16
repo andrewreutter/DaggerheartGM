@@ -110,6 +110,8 @@ export function gateTableOpForPrepMode(state, op) {
       return { ok: true, op };
     case 'set-fear':
       return { ok: true, op };
+    case 'set-spotlight':
+      return { ok: true, op };
     case 'set-countdown':
     case 'session-countdown-upsert':
     case 'session-countdown-remove':

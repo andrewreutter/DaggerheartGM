@@ -571,6 +571,7 @@ export const postRoll = async (rollText, displayName, tableId = null, rollMeta =
     const body = await res.json().catch(() => ({}));
     const err = new Error(body.error || `HTTP ${res.status}`);
     if (body.playBlocked) err.playBlocked = body.playBlocked;
+    if (body.spotlightBlocked) err.spotlightBlocked = true;
     err.status = res.status;
     throw err;
   }

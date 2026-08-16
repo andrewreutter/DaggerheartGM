@@ -225,6 +225,8 @@ export function applyTableOp(op, state) {
     }
     case 'set-fear':
       return { fearCount: op.fearCount };
+    case 'set-spotlight':
+      return { spotlight: op.spotlight };
     case 'add-conditions-history-entry':
       return {
         conditionsHistory: addConditionsHistoryEntry(state.conditionsHistory, op.entry),

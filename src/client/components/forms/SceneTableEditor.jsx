@@ -3,11 +3,19 @@ import { createPortal } from 'react-dom';
 import { Eye, EyeOff, StickyNote, Trash2, X } from 'lucide-react';
 import { BattleMap } from '../BattleMap.jsx';
 import { ItemPickerModal } from '../modals/ItemPickerModal.jsx';
+import { EncounterNoteEditorModal } from '../modals/EncounterNoteEditorModal.jsx';
 import { SessionCountdownsPanel } from '../SessionCountdownsPanel.jsx';
 import { EncounterAdversaryDifficultyRow, EncounterAdversaryInstanceCard } from '../EncounterAdversaryInstanceCard.jsx';
 import { EncounterAdversaryTypeCard } from '../EncounterAdversaryTypeCard.jsx';
+import {
+  GmMovesOverlay,
+  GmMovesTrigger,
+  useGmMovesCameraPartition,
+  useGmMovesOverlay,
+} from '../GmMovesPanel.jsx';
 import { computeSceneBudget } from '../../lib/battle-points.js';
 import { buildLibraryAdversaryElements } from '../../lib/party-scaled-adversaries.js';
+import { MarkdownText } from '../../lib/markdown.js';
 import {
   DEFAULT_SCENE_BATTLE_MODS,
   applySceneTableOp,
@@ -42,7 +50,8 @@ function groupSceneElements(activeElements) {
 }
 
 /**
- * BattleMap + Encounter-style side panel for editing a Scene's table snapshot.
+ * BattleMap + Encounter-style side panel for editing a Scene's table snapshot
+ * (including a GM Moves preview of the live-table board).
  *
  * @param {object} props
  * @param {object} props.value — scene table slice (activeElements, maps, …)
@@ -66,6 +75,11 @@ export function SceneTableEditor({
   latestRef.current = sceneData;
   const [pickerCollection, setPickerCollection] = useState(null);
   const [lightboxUrl, setLightboxUrl] = useState(null);
+  const [editingNote, setEditingNote] = useState(null);
+  const gmMovesOverlay = useGmMovesOverlay();
+  const { inViewAdvCardKeys, mapViewportKnown, onViewportFt } = useGmMovesCameraPartition(
+    sceneData.activeElements,
+  );
 
   const setSceneData = useCallback((updater) => {
     const prev = latestRef.current;
@@ -78,10 +92,17 @@ export function SceneTableEditor({
     setSceneData((prev) => applySceneTableOp(prev, op));
   }, [setSceneData]);
 
-  const battleMapCallbacks = useMemo(
-    () => buildSceneTableAdapterProps(setSceneData, { viewportCenterRef }),
-    [setSceneData],
-  );
+  const battleMapCallbacks = useMemo(() => {
+    const base = buildSceneTableAdapterProps(setSceneData, { viewportCenterRef });
+    const adapterOnViewport = base.onViewportCenterChange;
+    return {
+      ...base,
+      onViewportCenterChange: (center) => {
+        adapterOnViewport?.(center);
+        onViewportFt(center?.viewportFt);
+      },
+    };
+  }, [setSceneData, onViewportFt]);
 
   const grouped = useMemo(() => groupSceneElements(sceneData.activeElements), [sceneData.activeElements]);
   const battleMods = sceneData.tableBattleMods || DEFAULT_SCENE_BATTLE_MODS;
@@ -121,14 +142,13 @@ export function SceneTableEditor({
   };
 
   const addEmptyNote = () => {
-    applyOp({
-      op: 'add-elements',
-      elements: [buildSceneElementFromLibraryItem({ id: generateId(), name: 'Note', body: '' }, 'notes')],
-    });
+    const el = buildSceneElementFromLibraryItem({ id: generateId(), name: 'Note', body: '' }, 'notes');
+    applyOp({ op: 'add-elements', elements: [el] });
+    setEditingNote(el);
   };
 
   return (
-    <div className="flex min-h-[36rem] h-full w-full min-w-0 overflow-hidden rounded-lg border border-dh-border bg-dh-canvas">
+    <div className="relative flex min-h-[36rem] h-full w-full min-w-0 overflow-hidden rounded-lg border border-dh-border bg-dh-canvas">
       <BattleMap
         {...battleMapCallbacks}
         activeElements={sceneData.activeElements}
@@ -143,7 +163,14 @@ export function SceneTableEditor({
         className="flex-1 min-w-0 min-h-0"
       />
 
-      <aside className="w-56 shrink-0 bg-dh-canvas border-l border-dh-border flex min-h-0 flex-col overflow-hidden">
+      <aside className="relative z-10 w-56 shrink-0 bg-dh-canvas border-l border-dh-border flex min-h-0 flex-col overflow-hidden">
+        <div className="sticky top-0 z-10 border-b border-dh-border bg-dh-canvas px-2 py-2">
+          <GmMovesTrigger
+            overlay={gmMovesOverlay}
+            activeElements={sceneData.activeElements}
+            characterCount={partySize}
+          />
+        </div>
         <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-2">
           {/* Battle budget + mods */}
           <div className="rounded-lg border border-dh-border bg-dh-surface overflow-hidden">
@@ -246,52 +273,56 @@ export function SceneTableEditor({
           </div>
           {grouped.filter((item) => item.kind === 'note').map((item) => {
             const el = item.element;
+            const noteBodyTrimmed = String(el.body || '').trim();
+            const noteTitleOnly = !noteBodyTrimmed && !el.imageUrl;
             return (
-              <div key={el.instanceId} className="rounded-lg border border-amber-900/50 bg-amber-950/25 px-2 py-1.5 space-y-1">
-                <div className="flex items-center gap-1">
-                  <button
-                    type="button"
-                    onClick={() => applyOp({
-                      op: 'update-element',
-                      instanceId: el.instanceId,
-                      updates: { visibility: el.visibility === 'gm' ? 'players' : 'gm' },
-                    })}
-                    className="shrink-0 rounded p-0.5 text-dh-muted hover:bg-dh-hover/60 hover:text-dh"
-                    title={el.visibility === 'gm' ? 'GM only — click to show players' : 'Visible to players — click for GM only'}
-                  >
-                    {el.visibility === 'gm' ? <EyeOff size={12} /> : <Eye size={12} />}
-                  </button>
-                  <StickyNote size={12} className="shrink-0 text-amber-400/90" />
-                  <input
-                    type="text"
-                    value={el.name || ''}
-                    onChange={(e) => applyOp({
-                      op: 'update-element',
-                      instanceId: el.instanceId,
-                      updates: { name: e.target.value },
-                    })}
-                    className="min-w-0 flex-1 bg-transparent text-xs font-semibold text-amber-100/90 outline-none"
-                    placeholder="Note"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => applyOp({ op: 'remove-element', instanceId: el.instanceId })}
-                    className="shrink-0 text-dh-muted hover:text-red-400 p-0.5"
-                    title="Remove note"
-                  >
-                    <Trash2 size={12} />
-                  </button>
-                </div>
-                <textarea
-                  value={el.body || ''}
-                  onChange={(e) => applyOp({
+              <div
+                key={el.instanceId}
+                className={`flex gap-1 rounded-lg border border-amber-900/50 bg-amber-950/25 px-2 transition-colors hover:border-amber-700/60 hover:bg-amber-950/40 ${noteTitleOnly ? 'py-1.5' : 'py-2'}`}
+              >
+                <button
+                  type="button"
+                  onClick={() => applyOp({
                     op: 'update-element',
                     instanceId: el.instanceId,
-                    updates: { body: e.target.value },
+                    updates: { visibility: el.visibility === 'gm' ? 'players' : 'gm' },
                   })}
-                  className="w-full bg-dh-inset/50 border border-amber-900/40 rounded p-1 text-[11px] text-dh resize-y min-h-[2.5rem]"
-                  placeholder="Note text…"
-                />
+                  className="shrink-0 self-start rounded p-0.5 text-dh-muted hover:bg-dh-hover/60 hover:text-dh"
+                  title={el.visibility === 'gm' ? 'GM only — click to show players' : 'Visible to players — click for GM only'}
+                  aria-label={el.visibility === 'gm' ? 'Show to players' : 'GM only'}
+                  aria-pressed={el.visibility === 'gm'}
+                >
+                  {el.visibility === 'gm' ? <EyeOff size={12} /> : <Eye size={12} />}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEditingNote(el)}
+                  className="flex min-w-0 flex-1 items-start gap-2 text-left"
+                >
+                  {el.imageUrl ? (
+                    <span className="mt-0.5 h-10 w-10 shrink-0 overflow-hidden rounded border border-amber-800/50 bg-dh-inset">
+                      <img src={el.imageUrl} alt="" className="h-full w-full object-cover" />
+                    </span>
+                  ) : (
+                    <StickyNote size={14} className="mt-0.5 shrink-0 text-amber-400/90" />
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-xs font-semibold text-amber-100/90">{el.name || 'Note'}</div>
+                    {noteBodyTrimmed ? (
+                      <div className="mt-1 max-h-24 overflow-hidden text-left">
+                        <MarkdownText text={noteBodyTrimmed} className="dh-md text-[11px] leading-snug text-dh-muted line-clamp-6" />
+                      </div>
+                    ) : null}
+                  </div>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => applyOp({ op: 'remove-element', instanceId: el.instanceId })}
+                  className="shrink-0 self-start text-dh-muted hover:text-red-400 p-0.5"
+                  title="Remove note"
+                >
+                  <Trash2 size={12} />
+                </button>
               </div>
             );
           })}
@@ -387,6 +418,14 @@ export function SceneTableEditor({
         </div>
       </aside>
 
+      <GmMovesOverlay
+        overlay={gmMovesOverlay}
+        activeElements={sceneData.activeElements}
+        characterCount={partySize}
+        inViewAdvCardKeys={inViewAdvCardKeys}
+        mapViewportKnown={mapViewportKnown}
+      />
+
       {pickerCollection && (
         <ItemPickerModal
           collection={pickerCollection}
@@ -398,6 +437,31 @@ export function SceneTableEditor({
           onSelectMany={(picks) => {
             addLibraryPicks(picks, pickerCollection);
             setPickerCollection(null);
+          }}
+        />
+      )}
+
+      {editingNote && (
+        <EncounterNoteEditorModal
+          open
+          name={editingNote.name}
+          body={editingNote.body}
+          imageUrl={editingNote.imageUrl}
+          visibility={editingNote.visibility}
+          onClose={() => setEditingNote(null)}
+          onSave={({ name, body, visibility }) => {
+            const img = editingNote.imageUrl;
+            applyOp({
+              op: 'update-element',
+              instanceId: editingNote.instanceId,
+              updates: {
+                name,
+                body,
+                visibility,
+                ...(img ? { imageUrl: img } : {}),
+              },
+            });
+            setEditingNote(null);
           }}
         />
       )}

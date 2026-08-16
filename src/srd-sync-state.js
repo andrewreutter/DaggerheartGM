@@ -3,7 +3,7 @@
  * Bump REVISION when loader semantics change (e.g. which collections are written)
  * so existing databases re-fill external_item_cache without requiring a submodule change.
  */
-export const SRD_EXTERNAL_CACHE_REVISION = '3';
+export const SRD_EXTERNAL_CACHE_REVISION = '4';
 
 /** @param {string | null | undefined} contentHash */
 export function formatSrdCacheStamp(contentHash) {

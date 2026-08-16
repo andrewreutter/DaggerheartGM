@@ -1,0 +1,164 @@
+/**
+ * Table spotlight: who may take a voluntary action, plus catch-up counts from
+ * acknowledged action / adversary d20 rolls.
+ *
+ * Framework-agnostic — imported by the client and `server.js`.
+ */
+
+import { isAttackRollMeta } from './action-roll-difficulty.js';
+import { isReactionRoll } from './reaction-roll-display.js';
+
+export const DEFAULT_SPOTLIGHT = Object.freeze({
+  holderType: null,
+  holderInstanceId: null,
+  rollSeq: 0,
+  lastSeenSeq: Object.freeze({}),
+});
+
+/** @param {object | null | undefined} spotlight */
+export function normalizeSpotlight(spotlight) {
+  if (!spotlight || typeof spotlight !== 'object') return DEFAULT_SPOTLIGHT;
+  const lastSeenSeq =
+    spotlight.lastSeenSeq && typeof spotlight.lastSeenSeq === 'object' ? spotlight.lastSeenSeq : {};
+  return {
+    holderType: spotlight.holderType === 'gm' || spotlight.holderType === 'character' ? spotlight.holderType : null,
+    holderInstanceId: spotlight.holderType === 'character' ? (spotlight.holderInstanceId ?? null) : null,
+    rollSeq: Number.isFinite(spotlight.rollSeq) ? spotlight.rollSeq : 0,
+    lastSeenSeq,
+  };
+}
+
+/** @param {object | null | undefined} spotlight @param {string | null | undefined} instanceId */
+export function isSpotlightHolder(spotlight, instanceId) {
+  if (instanceId == null || instanceId === '') return false;
+  const s = normalizeSpotlight(spotlight);
+  return s.holderType === 'character' && s.holderInstanceId === instanceId;
+}
+
+/** @param {object | null | undefined} spotlight */
+export function isGmHolder(spotlight) {
+  return normalizeSpotlight(spotlight).holderType === 'gm';
+}
+
+/** Catch-up for an inactive token key (`'gm'` or a character instanceId). */
+export function spotlightCatchUpCount(spotlight, key) {
+  const s = normalizeSpotlight(spotlight);
+  const seen = s.lastSeenSeq?.[key];
+  const last = Number.isFinite(seen) ? seen : 0;
+  return s.rollSeq - last;
+}
+
+/** Inactive-beam opacity: 0 → 0.10, then +0.16 per catch-up, capped below the active beam. */
+export const SPOTLIGHT_ACTIVE_BEAM_OPACITY = 0.95;
+const INACTIVE_BEAM_OPACITY_BASE = 0.10;
+const INACTIVE_BEAM_OPACITY_STEP = 0.16;
+const INACTIVE_BEAM_OPACITY_MAX = 0.70;
+
+export function spotlightInactiveBeamOpacity(count) {
+  const n = Math.max(0, Math.floor(Number(count) || 0));
+  return Math.min(INACTIVE_BEAM_OPACITY_MAX, INACTIVE_BEAM_OPACITY_BASE + n * INACTIVE_BEAM_OPACITY_STEP);
+}
+
+/** Current holder's catch-up key (`'gm'` or instanceId), or null when open. */
+export function spotlightHolderKey(spotlight) {
+  const s = normalizeSpotlight(spotlight);
+  if (s.holderType === 'gm') return 'gm';
+  if (s.holderType === 'character') return s.holderInstanceId;
+  return null;
+}
+
+/**
+ * Keys tied for the highest catch-up count among *inactive* tokens (the current
+ * holder is skipped). Empty when the max is ≤ 0 (nothing to hint).
+ */
+export function highestCatchUpKeys(spotlight, allKeys) {
+  if (!Array.isArray(allKeys) || allKeys.length === 0) return [];
+  const holderKey = spotlightHolderKey(spotlight);
+  let max = -Infinity;
+  const tied = [];
+  for (const key of allKeys) {
+    if (key === holderKey) continue;
+    const n = spotlightCatchUpCount(spotlight, key);
+    if (n > max) {
+      max = n;
+      tied.length = 0;
+      tied.push(key);
+    } else if (n === max) {
+      tied.push(key);
+    }
+  }
+  if (max <= 0) return [];
+  return tied;
+}
+
+/**
+ * `'action'` — PC Duality action (Hope/Fear/Critical transfer).
+ * `'adversary'` — GM/adversary d20 (seq only).
+ * `null` — damage-only, manual dice, reaction, rest, etc.
+ */
+export function qualifiesForSpotlightRoll(roll) {
+  if (!roll || typeof roll !== 'object') return null;
+  if (roll._attackerType === 'adversary') return 'adversary';
+  if (isReactionRoll(roll) || roll._rest) return null;
+  if (roll.dominant != null && roll._attackerInstanceId != null) return 'action';
+  return null;
+}
+
+/**
+ * Voluntary player action (intent-panel trait/feature or attack) — not a reaction,
+ * rest, or `rollThenResume` mechanical die.
+ */
+export function isSpotlightGatedRollMeta(rollMeta) {
+  if (!rollMeta || typeof rollMeta !== 'object') return false;
+  if (rollMeta._isReaction || rollMeta._reactionCallRollDbId) return false;
+  if (rollMeta._rest) return false;
+  if (rollMeta._v2PhysicalRollResume) return false;
+  return rollMeta._intentPanelForActionRoll === true || isAttackRollMeta(rollMeta);
+}
+
+/**
+ * Manual GM assignment. Does not change `rollSeq` / `lastSeenSeq`.
+ * @param {'gm' | 'character' | null} holderType
+ */
+export function assignSpotlightHolder(spotlight, holderType, holderInstanceId = null) {
+  const current = normalizeSpotlight(spotlight);
+  const nextType = holderType === 'gm' || holderType === 'character' ? holderType : null;
+  return {
+    holderType: nextType,
+    holderInstanceId: nextType === 'character' ? (holderInstanceId ?? null) : null,
+    rollSeq: current.rollSeq,
+    lastSeenSeq: { ...current.lastSeenSeq },
+  };
+}
+
+/**
+ * Acknowledge-time reducer. Returns the same reference when the roll does not qualify.
+ */
+export function applySpotlightRollAck(spotlight, roll) {
+  const current = normalizeSpotlight(spotlight);
+  const qual = qualifiesForSpotlightRoll(roll);
+  if (!qual) return spotlight && typeof spotlight === 'object' ? spotlight : current;
+
+  const rollSeq = current.rollSeq + 1;
+  const lastSeenSeq = { ...current.lastSeenSeq };
+
+  if (qual === 'action') {
+    const attackerId = roll._attackerInstanceId;
+    const dominant = roll.dominant;
+    if (dominant === 'fear') {
+      if (attackerId) lastSeenSeq[attackerId] = rollSeq;
+      return { holderType: 'gm', holderInstanceId: null, rollSeq, lastSeenSeq };
+    }
+    if (dominant === 'hope' || dominant === 'critical') {
+      if (attackerId) lastSeenSeq[attackerId] = rollSeq;
+      return { holderType: null, holderInstanceId: null, rollSeq, lastSeenSeq };
+    }
+  }
+
+  return {
+    holderType: current.holderType,
+    holderInstanceId: current.holderInstanceId,
+    rollSeq,
+    lastSeenSeq,
+  };
+}

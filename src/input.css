@@ -544,3 +544,12 @@ a, button, input[type="submit"], input[type="button"], input[type="checkbox"], i
   animation-timing-function: ease-out;
   animation-fill-mode: forwards;
 }
+
+/* Spotlight tray beam: pulse the highest catch-up inactive token(s) */
+@keyframes dh-spotlight-dim-glow {
+  0%, 100% { opacity: 0.82; }
+  50% { opacity: 1; }
+}
+.dh-spotlight-beam-dim-glow {
+  animation: dh-spotlight-dim-glow 1.6s ease-in-out infinite;
+}

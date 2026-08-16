@@ -40,6 +40,7 @@ import compression from 'compression';
 import { createClient as createSupabaseClient } from '@supabase/supabase-js';
 import { CHARACTER_RUNTIME_KEYS, applyTableOp } from './src/client/lib/table-ops.js';
 import { gateTableOpForPrepMode, isTablePlayAllowed } from './src/client/lib/table-session-gate.js';
+import { isSpotlightGatedRollMeta, isSpotlightHolder } from './src/client/lib/spotlight.js';
 import { v2RollDieExtrasFromActionLoopPayload } from './src/client/lib/v2-action-notification-dice.js';
 import { withActionBannerSuppression } from './src/client/lib/action-notification-banner.js';
 import { computePlayerV2CrossSheetChipApply } from './src/server/v2-player-cross-sheet-chip.js';
@@ -4854,6 +4855,12 @@ app.post('/api/room/:tableId/roll', requireAuth, async (req, res) => {
       return res.status(400).json({
         error: paused ? 'Session paused' : 'Session not started',
         playBlocked: paused ? 'paused' : 'prep',
+      });
+    }
+    if (!silent && isSpotlightGatedRollMeta(extraMeta) && !isSpotlightHolder(ctx.tableState?.spotlight, extraMeta._attackerInstanceId)) {
+      return res.status(403).json({
+        error: "You don't hold the spotlight.",
+        spotlightBlocked: true,
       });
     }
     const rollData = buildRollData(rollText, displayName, _clientId, { _playerInitiated: true, _initiatorUid: req.uid, ...extraMeta });

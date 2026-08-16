@@ -64,7 +64,17 @@ import {
   Hand,
   ArrowUpDown,
   Tag,
+  Crown,
 } from 'lucide-react';
+import {
+  assignSpotlightHolder,
+  highestCatchUpKeys,
+  isGmHolder,
+  isSpotlightHolder,
+  SPOTLIGHT_ACTIVE_BEAM_OPACITY,
+  spotlightCatchUpCount,
+  spotlightInactiveBeamOpacity,
+} from '../lib/spotlight.js';
 import { ConditionsEditor } from './ConditionsEditor.jsx';
 import { Tooltip } from './Tooltip.jsx';
 import { CheckboxTrack } from './DetailCardContent.jsx';
@@ -178,6 +188,12 @@ const MAP_TOKEN_HIT_PADDING_PX = 12;
 
 /** Width in px of the character tokens shelf (left tray). Used by DiceRoller to offset the banner strip. */
 export const CHARACTER_TRAY_WIDTH_PX = 36 + 16;
+/** Extra tray width for the spotlight beam beside each character / the GM token. */
+export const SPOTLIGHT_BEAM_WIDTH_PX = 35;
+/** Tall enough that neighboring cones almost meet; width/left edge stay unchanged. */
+const SPOTLIGHT_BEAM_HEIGHT_PX = 56;
+/** How far the beam pulls back over the token so the cone kisses the circle. */
+const SPOTLIGHT_BEAM_OVERLAP_PX = 6;
 
 // Daggerheart range bands — Melee (≤5') through Very Far (≤300')
 const RANGE_BANDS = [
@@ -2119,6 +2135,84 @@ function TokenDetailPanel({
   );
 }
 
+// ─── SpotlightBeam ───────────────────────────────────────────────────────────
+
+function SpotlightBeam({ side, active, dimGlow, count, clickable, onClick, label }) {
+  const pointingLeft = side === 'right';
+  const opacity = active ? SPOTLIGHT_ACTIVE_BEAM_OPACITY : spotlightInactiveBeamOpacity(count);
+  const glowPx = active ? 10 : Math.min(14, 3 + count * 3);
+  const coneStyle = {
+    width: SPOTLIGHT_BEAM_WIDTH_PX,
+    height: SPOTLIGHT_BEAM_HEIGHT_PX,
+    background: pointingLeft
+      ? `linear-gradient(to left, transparent, rgba(253, 224, 71, ${opacity}))`
+      : `linear-gradient(to right, transparent, rgba(253, 224, 71, ${opacity}))`,
+    clipPath: pointingLeft
+      ? 'polygon(0 28%, 100% 0, 100% 100%, 0 72%)'
+      : 'polygon(0 0, 100% 28%, 100% 72%, 0 100%)',
+    filter: count > 0 || active
+      ? `drop-shadow(0 0 ${glowPx}px rgba(253, 224, 71, ${active ? 0.7 : Math.min(0.85, opacity + 0.15)}))`
+      : undefined,
+  };
+  const inner = (
+    <>
+      <div
+        className={`pointer-events-none ${dimGlow && !active ? 'dh-spotlight-beam-dim-glow' : ''}`}
+        style={coneStyle}
+        aria-hidden
+      />
+      {!active && count > 0 && (
+        <span
+          className={`absolute inset-0 flex items-center text-[8px] leading-none font-bold tabular-nums text-amber-50 drop-shadow-[0_0_2px_rgba(0,0,0,0.85)] pointer-events-none ${
+            pointingLeft ? 'justify-end pr-0.5' : 'justify-start pl-0.5'
+          }`}
+          style={{ transform: 'translateX(2px)' }}
+        >
+          {count}
+        </span>
+      )}
+    </>
+  );
+  const commonClass = `relative shrink-0 flex items-center justify-center ${clickable ? 'cursor-pointer hover:brightness-125' : ''}`;
+  const commonStyle = { width: SPOTLIGHT_BEAM_WIDTH_PX, height: SPOTLIGHT_BEAM_HEIGHT_PX };
+  if (clickable) {
+    return (
+      <button
+        type="button"
+        className={commonClass}
+        style={commonStyle}
+        aria-label={label || (active ? 'Spotlight (active)' : 'Give spotlight')}
+        onClick={(e) => {
+          e.stopPropagation();
+          onClick?.();
+        }}
+      >
+        {inner}
+      </button>
+    );
+  }
+  return (
+    <div className={commonClass} style={commonStyle} aria-hidden={!active}>
+      {inner}
+    </div>
+  );
+}
+
+function GmSpotlightToken({ tokenSizePx }) {
+  return (
+    <div className="flex flex-col items-center leading-none pointer-events-none">
+      <div
+        className="relative rounded-full flex items-center justify-center border-2 border-black bg-slate-700"
+        style={{ width: tokenSizePx, height: tokenSizePx, minWidth: tokenSizePx, minHeight: tokenSizePx }}
+        title="GM"
+      >
+        <Crown size={Math.max(12, Math.round(tokenSizePx * 0.45))} className="text-slate-200" />
+      </div>
+      <span className="mt-0.5 text-[8px] font-semibold uppercase tracking-wide text-dh-muted">GM</span>
+    </div>
+  );
+}
+
 // ─── TrayColumn ──────────────────────────────────────────────────────────────
 
 function TrayColumn({
@@ -2135,6 +2229,11 @@ function TrayColumn({
   onProxyHoverLeave,
   pinnedInstanceId,
   allyColorsByInstanceId = null,
+  showSpotlight = false,
+  spotlight = null,
+  spotlightClickable = false,
+  onAssignCharacterSpotlight,
+  highestCatchUpKeySet = null,
 }) {
   if (tokens.length === 0) return null;
 
@@ -2143,30 +2242,71 @@ function TrayColumn({
   return (
     <div
       ref={trayRef}
-      className={`flex flex-col items-center gap-2 py-3 px-1.5 shrink-0 overflow-y-auto
+      className={`flex flex-col items-center gap-2 py-3 px-1.5 shrink-0 pointer-events-auto
+        ${showSpotlight && side === 'left' ? 'overflow-visible' : 'overflow-y-auto'}
         transition-colors duration-150 ${borderClass}
         ${isHighlighted ? 'bg-amber-900/30' : 'bg-dh-surface/60'}`}
       style={{ width: tokenSizePx + 16, minHeight: 0 }}
     >
-      {tokens.map(({ element, instanceNum, isMyCharacter, isProxy, isOtherMapShelf }) => (
-        <TrayToken
-          key={element.instanceId}
-          element={element}
-          instanceNum={instanceNum}
-          isMyCharacter={isMyCharacter}
-          isProxy={isProxy}
-          isOtherMapShelf={isOtherMapShelf}
-          isDragging={dragRef.current?.instanceId === element.instanceId && dragRef.current?.isDragging}
-          isPinned={pinnedInstanceId === element.instanceId}
-          tokenSizePx={tokenSizePx}
-          allyColorClasses={allyColorsByInstanceId?.get(element.instanceId) ?? null}
-          onPointerDown={onPointerDown}
-          onPointerMove={onPointerMove}
-          onPointerUp={onPointerUp}
-          onProxyHoverEnter={onProxyHoverEnter}
-          onProxyHoverLeave={onProxyHoverLeave}
-        />
-      ))}
+      {tokens.map(({ element, instanceNum, isMyCharacter, isProxy, isOtherMapShelf }, i) => {
+        const showBeam = showSpotlight && side === 'left' && element.elementType === 'character';
+        const active = showBeam && isSpotlightHolder(spotlight, element.instanceId);
+        const count = showBeam ? spotlightCatchUpCount(spotlight, element.instanceId) : 0;
+        const dimGlow = showBeam && !active && count > 0 && highestCatchUpKeySet?.has(element.instanceId);
+        const trayName = element.elementType === 'boardToken'
+          ? (element.label || element.name)
+          : element.name;
+        const showTrayName = side === 'left'
+          ? (element.elementType === 'character' || element.elementType === 'boardToken')
+          : element.elementType === 'adversary' && tokens[i + 1]?.element?.id !== element.id;
+        return (
+          <div key={element.instanceId} className="flex flex-col items-center max-w-full">
+            <div className="relative flex items-center justify-center">
+              <TrayToken
+                element={element}
+                instanceNum={instanceNum}
+                isMyCharacter={isMyCharacter}
+                isProxy={isProxy}
+                isOtherMapShelf={isOtherMapShelf}
+                isDragging={dragRef.current?.instanceId === element.instanceId && dragRef.current?.isDragging}
+                isPinned={pinnedInstanceId === element.instanceId}
+                tokenSizePx={tokenSizePx}
+                allyColorClasses={allyColorsByInstanceId?.get(element.instanceId) ?? null}
+                onPointerDown={onPointerDown}
+                onPointerMove={onPointerMove}
+                onPointerUp={onPointerUp}
+                onProxyHoverEnter={onProxyHoverEnter}
+                onProxyHoverLeave={onProxyHoverLeave}
+              />
+              {showBeam && (
+                <div
+                  className="absolute top-1/2 left-full z-30 -translate-y-1/2"
+                  style={{ marginLeft: -SPOTLIGHT_BEAM_OVERLAP_PX }}
+                >
+                  <SpotlightBeam
+                    side="left"
+                    active={active}
+                    dimGlow={dimGlow}
+                    count={count}
+                    clickable={spotlightClickable}
+                    label={active ? `${element.name || 'Character'} holds the spotlight` : `Give spotlight to ${element.name || 'character'}`}
+                    onClick={() => onAssignCharacterSpotlight?.(element.instanceId)}
+                  />
+                </div>
+              )}
+            </div>
+            {showTrayName && (
+              <span
+                className="block mt-0.5 px-0.5 text-[8px] leading-tight font-semibold text-center text-dh-muted whitespace-normal break-keep"
+                style={{ maxWidth: tokenSizePx }}
+                title={trayName || undefined}
+              >
+                {trayName || '—'}
+              </span>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -2998,6 +3138,10 @@ export function BattleMap({
   onRemoveConditionsHistoryEntry,
   /** Live table: hide reserved adversaries. `null` (scene editor) shows every instance. */
   adversaryPartyScaleCount = null,
+  /** Game Table: show GM token + per-character spotlight beams in the trays. */
+  showSpotlight = false,
+  spotlight = null,
+  onSpotlightChange,
 }) {
   const { hideAiUi } = useAiUiPreference();
   const showImageGenAiUi = shouldShowImageGenAiUi(imageGenEnabled, hideAiUi);
@@ -6236,13 +6380,30 @@ export function BattleMap({
     onMapConfigChange(patch, resetTokenPositions);
   }, [activeElements, updateActiveElement, onMapConfigChange, activeMapIdResolved]);
 
+  const spotlightCatchUpKeySet = useMemo(() => {
+    if (!showSpotlight) return null;
+    const keys = ['gm', ...characters.map((c) => c.instanceId)];
+    return new Set(highestCatchUpKeys(spotlight, keys));
+  }, [showSpotlight, spotlight, characters]);
+
+  const handleAssignCharacterSpotlight = useCallback((instanceId) => {
+    if (isPlayer || !onSpotlightChange) return;
+    onSpotlightChange(assignSpotlightHolder(spotlight, 'character', instanceId));
+  }, [isPlayer, onSpotlightChange, spotlight]);
+
+  const handleAssignGmSpotlight = useCallback(() => {
+    if (isPlayer || !onSpotlightChange) return;
+    onSpotlightChange(assignSpotlightHolder(spotlight, 'gm'));
+  }, [isPlayer, onSpotlightChange, spotlight]);
+
   // ─── Render ─────────────────────────────────────────────────────────────
 
   const showLeftTray =
     characters.length > 0 ||
     boardTrayTokens.length > 0 ||
     (!isPlayer && pendingBannerCount > 0);
-  const showRightTray = !isPlayer && adversaries.length > 0;
+  const showRightAdversaryTray = !isPlayer && adversaries.length > 0;
+  const showRightTray = showRightAdversaryTray || showSpotlight;
   const showDiceTrayControls =
     onClearDice ||
     onToggleDiceVisibility ||
@@ -6626,8 +6787,8 @@ export function BattleMap({
         {showLeftTray && (
           <div
             ref={leftTrayRef}
-            className={`flex flex-col shrink-0 border-r border-dh-border ${highlightLeftTray ? 'bg-amber-900/30' : 'bg-dh-surface/60'}`}
-            style={{ width: CHARACTER_TRAY_WIDTH_PX, minHeight: 0 }}
+            className={`relative z-20 flex flex-col shrink-0 border-r border-dh-border overflow-visible ${highlightLeftTray ? 'bg-amber-900/30' : 'bg-dh-surface/60'}`}
+            style={{ width: CHARACTER_TRAY_WIDTH_PX, minWidth: CHARACTER_TRAY_WIDTH_PX, maxWidth: CHARACTER_TRAY_WIDTH_PX, minHeight: 0 }}
           >
             {charTrayTokensMerged.length > 0 && (
               <TrayBulkActionsHeader
@@ -6638,7 +6799,10 @@ export function BattleMap({
                 canReturnAll={leftTrayPlacedOnActiveMapElements.length > 0}
               />
             )}
-            <div className="flex-1 min-h-0 overflow-hidden">
+            <div
+              className={`flex-1 min-h-0 overflow-y-auto ${showSpotlight ? 'pointer-events-none' : ''}`}
+              style={showSpotlight ? { width: CHARACTER_TRAY_WIDTH_PX + SPOTLIGHT_BEAM_WIDTH_PX } : undefined}
+            >
               <TrayColumn
                 tokens={charTrayTokensMerged}
                 side="left"
@@ -6653,6 +6817,11 @@ export function BattleMap({
                 onProxyHoverLeave={stableOnProxyHoverLeave}
                 pinnedInstanceId={pinnedToken?.element.instanceId}
                 allyColorsByInstanceId={allyColorsByInstanceId}
+                showSpotlight={showSpotlight}
+                spotlight={spotlight}
+                spotlightClickable={!isPlayer && typeof onSpotlightChange === 'function'}
+                onAssignCharacterSpotlight={handleAssignCharacterSpotlight}
+                highestCatchUpKeySet={spotlightCatchUpKeySet}
               />
             </div>
             {showDiceTrayControls && (
@@ -7448,14 +7617,14 @@ export function BattleMap({
           </div>
         </div>
 
-        {/* Right tray — adversaries without position (GM only) */}
+        {/* Right tray — GM spotlight token (everyone) + adversaries (GM only) */}
         {showRightTray && (
           <div
             ref={rightTrayRef}
-            className={`flex flex-col shrink-0 border-l border-dh-border ${highlightRightTray ? 'bg-amber-900/30' : 'bg-dh-surface/60'}`}
-            style={{ width: trayTokenSizePx + 16, minHeight: 0 }}
+            className={`relative z-20 flex flex-col shrink-0 border-l border-dh-border overflow-visible ${highlightRightTray ? 'bg-amber-900/30' : 'bg-dh-surface/60'}`}
+            style={{ width: trayTokenSizePx + 16, minWidth: trayTokenSizePx + 16, maxWidth: trayTokenSizePx + 16, minHeight: 0 }}
           >
-            {advTrayTokens.length > 0 && (
+            {showRightAdversaryTray && advTrayTokens.length > 0 && (
               <TrayBulkActionsHeader
                 trayDirection="right"
                 onPlaceAll={() => handlePlaceAllOnMap(rightTrayUnplacedElements)}
@@ -7464,22 +7633,43 @@ export function BattleMap({
                 canReturnAll={rightTrayPlacedOnActiveMapElements.length > 0}
               />
             )}
-            <div className="flex-1 min-h-0 overflow-hidden">
-              <TrayColumn
-                tokens={advTrayTokens}
-                side="right"
-                isHighlighted={highlightRightTray}
-                trayRef={null}
-                tokenSizePx={trayTokenSizePx}
-                dragRef={dragRef}
-                onPointerDown={stableOnPointerDown}
-                onPointerMove={stableOnPointerMove}
-                onPointerUp={stableOnPointerUp}
-                onProxyHoverEnter={stableOnProxyHoverEnter}
-                onProxyHoverLeave={stableOnProxyHoverLeave}
-                pinnedInstanceId={pinnedToken?.element.instanceId}
-              />
-            </div>
+            {showSpotlight && (
+              <div className="relative flex items-center justify-center px-1.5 pt-2 pb-1.5 shrink-0">
+                <div
+                  className="absolute top-1/2 right-full z-30 -translate-y-1/2"
+                  style={{ marginRight: -SPOTLIGHT_BEAM_OVERLAP_PX }}
+                >
+                  <SpotlightBeam
+                    side="right"
+                    active={isGmHolder(spotlight)}
+                    dimGlow={!isGmHolder(spotlight) && spotlightCatchUpCount(spotlight, 'gm') > 0 && spotlightCatchUpKeySet?.has('gm')}
+                    count={spotlightCatchUpCount(spotlight, 'gm')}
+                    clickable={!isPlayer && typeof onSpotlightChange === 'function'}
+                    label={isGmHolder(spotlight) ? 'GM holds the spotlight' : 'Give spotlight to the GM'}
+                    onClick={handleAssignGmSpotlight}
+                  />
+                </div>
+                <GmSpotlightToken tokenSizePx={trayTokenSizePx} />
+              </div>
+            )}
+            {showRightAdversaryTray && (
+              <div className="flex-1 min-h-0 overflow-hidden">
+                <TrayColumn
+                  tokens={advTrayTokens}
+                  side="right"
+                  isHighlighted={highlightRightTray}
+                  trayRef={null}
+                  tokenSizePx={trayTokenSizePx}
+                  dragRef={dragRef}
+                  onPointerDown={stableOnPointerDown}
+                  onPointerMove={stableOnPointerMove}
+                  onPointerUp={stableOnPointerUp}
+                  onProxyHoverEnter={stableOnProxyHoverEnter}
+                  onProxyHoverLeave={stableOnProxyHoverLeave}
+                  pinnedInstanceId={pinnedToken?.element.instanceId}
+                />
+              </div>
+            )}
           </div>
         )}
 

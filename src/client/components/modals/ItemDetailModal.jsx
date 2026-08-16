@@ -361,6 +361,8 @@ export const ItemDetailModal = forwardRef(function ItemDetailModal({
       else if (mod && (e.key === 'Z' || (e.key === 'z' && e.shiftKey))) { e.preventDefault(); redo(); }
       else if (e.key === 'Escape') {
         if (lightboxUrl) setLightboxUrl(null);
+        // Nested FullPageOverlay (scene note / countdown editors, item picker).
+        else if (document.querySelector('[role="dialog"][aria-modal="true"]')) return;
         else if (!aiConceptBusy) onClose();
       }
     };

@@ -137,6 +137,7 @@ function App() {
   const DEFAULT_BATTLE_MODS = { lessDifficult: false, slightlyMoreDangerous: false, damageBoostPlusOne: false, damageBoostD4: false, damageBoostStatic: false, moreDangerous: false };
   const [tableBattleMods, setTableBattleMods] = useState(DEFAULT_BATTLE_MODS);
   const [fearCount, setFearCount] = useState(0);
+  const [spotlight, setSpotlight] = useState(null);
   const [conditionsHistory, setConditionsHistory] = useState([]);
   const [tableName, setTableName] = useState('');
   const [tableGmDisplayName, setTableGmDisplayName] = useState('');
@@ -767,6 +768,7 @@ function App() {
     if (prevTableIdRef.current !== null && prevTableIdRef.current !== route.tableId) {
       setActiveElements([]);
       setFearCount(0);
+      setSpotlight(null);
       setConditionsHistory([]);
       setFeatureCountdowns({});
       setSessionCountdowns([]);
@@ -808,6 +810,7 @@ function App() {
         setSessionCountdowns([]);
         setTableBattleMods(DEFAULT_BATTLE_MODS);
         setFearCount(0);
+        setSpotlight(null);
         setConditionsHistory([]);
         setPlayerEmails([]);
         setInviteLink(null);
@@ -834,6 +837,8 @@ function App() {
       setSessionCountdowns(Array.isArray(tableState.sessionCountdowns) ? tableState.sessionCountdowns : []);
       if (tableState.tableBattleMods) setTableBattleMods(tableState.tableBattleMods);
       if (tableState.fearCount != null) setFearCount(tableState.fearCount);
+      if (tableState.spotlight) setSpotlight(tableState.spotlight);
+      else setSpotlight(null);
       setConditionsHistory(Array.isArray(tableState.conditionsHistory) ? tableState.conditionsHistory : []);
       if (Array.isArray(tableState.playerEmails)) setPlayerEmails(tableState.playerEmails);
       setInviteLink(tableState.inviteLink ?? null);
@@ -909,6 +914,8 @@ function App() {
           setActiveElements(prev => reconcileElementsById(prev, state.elements));
         }
         if (state.fearCount != null) setFearCount(state.fearCount);
+        if (state.spotlight) setSpotlight(state.spotlight);
+        else setSpotlight(null);
         if (Array.isArray(state.conditionsHistory)) setConditionsHistory(state.conditionsHistory);
         if (state.featureCountdowns != null) setFeatureCountdowns(state.featureCountdowns);
         if (Array.isArray(state.sessionCountdowns)) setSessionCountdowns(state.sessionCountdowns);
@@ -1020,6 +1027,8 @@ function App() {
           setActiveElements(prev => reconcileElementsById(prev, state.elements));
         }
         if (state.fearCount != null) setFearCount(state.fearCount);
+        if (state.spotlight) setSpotlight(state.spotlight);
+        else setSpotlight(null);
         if (Array.isArray(state.conditionsHistory)) setConditionsHistory(state.conditionsHistory);
         if (state.featureCountdowns != null) setFeatureCountdowns(state.featureCountdowns);
         if (Array.isArray(state.sessionCountdowns)) setSessionCountdowns(state.sessionCountdowns);
@@ -1469,6 +1478,11 @@ function App() {
     const resolved = typeof valueOrFn === 'function' ? valueOrFn(fearCount) : valueOrFn;
     setFearCount(resolved);
     postTableOp({ op: 'set-fear', fearCount: resolved }, tableId);
+  };
+
+  const sendSetSpotlight = (next) => {
+    setSpotlight(next);
+    postTableOp({ op: 'set-spotlight', spotlight: next }, tableId);
   };
 
   const sendAddConditionsHistoryEntry = useCallback((entry) => {
@@ -2259,6 +2273,8 @@ function App() {
                 setTableBattleMods={effectiveIsPlayer ? () => {} : sendSetTableBattleMods}
                 fearCount={fearCount}
                 setFearCount={effectiveIsPlayer ? () => {} : sendSetFearCount}
+                spotlight={spotlight}
+                onSpotlightChange={effectiveIsPlayer ? undefined : sendSetSpotlight}
                 conditionsHistory={conditionsHistory}
                 onAddConditionsHistoryEntry={effectiveIsPlayer ? undefined : sendAddConditionsHistoryEntry}
                 onRemoveConditionsHistoryEntry={effectiveIsPlayer ? undefined : sendRemoveConditionsHistoryEntry}

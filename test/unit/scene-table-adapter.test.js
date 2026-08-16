@@ -44,6 +44,22 @@ describe('applySceneTableOp', () => {
     expect(next.tableBattleMods.moreDangerous).toBe(true);
   });
 
+  it('updates a note name and body via update-element', () => {
+    const scene = {
+      activeElements: [
+        { instanceId: 'n1', elementType: 'note', name: 'Note', body: '' },
+      ],
+    };
+    const next = applySceneTableOp(scene, {
+      op: 'update-element',
+      instanceId: 'n1',
+      updates: { name: 'Clue', body: 'Look behind the altar' },
+    });
+    expect(next.activeElements).toHaveLength(1);
+    expect(next.activeElements[0].name).toBe('Clue');
+    expect(next.activeElements[0].body).toBe('Look behind the altar');
+  });
+
   it('adds a map via add-map', () => {
     const base = normalizeSceneTableData({});
     const next = applySceneTableOp(base, { op: 'add-map', mapImageUrl: 'https://example.com/map.png' });

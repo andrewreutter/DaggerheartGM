@@ -105,6 +105,12 @@ describe('applyTableOp', () => {
     expect(result.fearCount).toBe(5);
   });
 
+  it('set-spotlight replaces the spotlight object', () => {
+    const spotlight = { holderType: 'gm', holderInstanceId: null, rollSeq: 2, lastSeenSeq: { gm: 2 } };
+    const result = applyTableOp({ op: 'set-spotlight', spotlight }, {});
+    expect(result.spotlight).toEqual(spotlight);
+  });
+
   it('add-conditions-history-entry prepends and dedupes', () => {
     const state = { conditionsHistory: ['Vulnerable', 'Hidden'] };
     const result = applyTableOp(

@@ -212,14 +212,25 @@ function normalizeAdversary(raw) {
 const ENV_TYPE_MAP = { exploration: 'exploration', social: 'social', traversal: 'traversal', event: 'event' };
 
 /**
- * Short inner names from SRD group lists that are not the full adversary name.
- * Chaos Realm: "Outer Realms Monstrosities (Abomination, Corruptor, Thrall)"
- * otherwise slugs to `srd-adv-abomination` instead of `srd-adv-outer-realms-abomination`.
+ * Short inner names / plurals from SRD potential-adversary lists that are not
+ * the full adversary name. Used when no adversary catalog is passed in.
+ *
+ * Official SRD group shorthand (not a transcription error):
+ *   "Outer Realms Monstrosities (Abomination, Corruptor, Thrall)"
+ *   "Jagged Knife Bandits (Hexer, Kneebreaker, Lackey, Lieutenant, Shadow, Sniper)"
+ * Standalone plural: "Fallen Shock Troops" → Fallen Shock Troop
  */
 const POTENTIAL_ADVERSARY_NAME_ALIASES = {
   abomination: 'Outer Realms Abomination',
   corruptor: 'Outer Realms Corruptor',
   thrall: 'Outer Realms Thrall',
+  hexer: 'Jagged Knife Hexer',
+  kneebreaker: 'Jagged Knife Kneebreaker',
+  lackey: 'Jagged Knife Lackey',
+  lieutenant: 'Jagged Knife Lieutenant',
+  shadow: 'Jagged Knife Shadow',
+  sniper: 'Jagged Knife Sniper',
+  'fallen shock troops': 'Fallen Shock Troop',
 };
 
 function isJunkPotentialAdversaryName(name) {
@@ -231,10 +242,112 @@ function isJunkPotentialAdversaryName(name) {
   return false;
 }
 
-function canonicalizePotentialAdversaryName(name) {
+function asKnownAdversaryNameMap(known) {
+  if (!known) return null;
+  if (known instanceof Map) return known;
+  if (Array.isArray(known)) {
+    const map = new Map();
+    for (const name of known) {
+      const t = String(name || '').trim();
+      if (t) map.set(t.toLowerCase(), t);
+    }
+    return map;
+  }
+  return null;
+}
+
+function buildKnownAdversaryNameMap(rawAdversaries) {
+  const map = new Map();
+  for (const raw of rawAdversaries || []) {
+    const name = String(raw?.name || '').trim();
+    if (name) map.set(name.toLowerCase(), name);
+  }
+  return map;
+}
+
+function singularizeAdversaryName(name) {
   const t = String(name || '').trim();
-  if (isJunkPotentialAdversaryName(t)) return null;
-  return POTENTIAL_ADVERSARY_NAME_ALIASES[t.toLowerCase()] || t;
+  if (!t || /ss$/i.test(t) || !/s$/i.test(t)) return null;
+  return t.slice(0, -1);
+}
+
+function groupPrefixCandidates(category, inner) {
+  const cat = String(category || '').trim();
+  const name = String(inner || '').trim();
+  if (!cat || !name) return [];
+  const words = cat.split(/\s+/);
+  const out = [];
+  if (words.length > 1) out.push(`${words.slice(0, -1).join(' ')} ${name}`);
+  out.push(`${cat} ${name}`);
+  return out;
+}
+
+function uniqueLastWordMatch(shortName, knownNames) {
+  if (!knownNames) return null;
+  const key = String(shortName || '').trim().toLowerCase();
+  if (!key) return null;
+  const hits = [];
+  for (const [lower, canon] of knownNames) {
+    const parts = lower.split(/\s+/);
+    if (parts.length > 1 && parts[parts.length - 1] === key) hits.push(canon);
+  }
+  return hits.length === 1 ? hits[0] : null;
+}
+
+function resolvePotentialAdversaryName(rawName, category, knownNames) {
+  const trimmed = String(rawName || '').trim();
+  if (isJunkPotentialAdversaryName(trimmed)) return null;
+
+  const aliased = POTENTIAL_ADVERSARY_NAME_ALIASES[trimmed.toLowerCase()] || null;
+  const candidates = [];
+  if (aliased) candidates.push(aliased);
+  candidates.push(trimmed);
+  candidates.push(...groupPrefixCandidates(category, trimmed));
+  const singular = singularizeAdversaryName(trimmed);
+  if (singular) {
+    candidates.push(singular);
+    candidates.push(...groupPrefixCandidates(category, singular));
+  }
+
+  if (knownNames) {
+    for (const c of candidates) {
+      const hit = knownNames.get(c.toLowerCase());
+      if (hit) return hit;
+    }
+    const unique = uniqueLastWordMatch(trimmed, knownNames)
+      || (singular ? uniqueLastWordMatch(singular, knownNames) : null);
+    if (unique) return unique;
+  }
+
+  return aliased || trimmed;
+}
+
+/**
+ * Walk an SRD potential-adversaries string into { category, name } segments.
+ * Keeps the group label so short members can be prefixed (Jagged Knife Hexer).
+ */
+function splitPotentialAdversarySegments(raw) {
+  const segments = [];
+  const groupRe = /([^,()]+)\(([^)]+)\)/g;
+  let lastIndex = 0;
+  let m;
+  while ((m = groupRe.exec(raw)) !== null) {
+    for (const part of raw.slice(lastIndex, m.index).split(',')) {
+      const t = part.trim();
+      if (t) segments.push({ category: null, name: t });
+    }
+    const category = m[1].trim();
+    for (const inner of m[2].split(',')) {
+      const t = inner.trim();
+      if (t) segments.push({ category, name: t });
+    }
+    lastIndex = m.index + m[0].length;
+  }
+  for (const part of raw.slice(lastIndex).split(',')) {
+    const t = part.trim();
+    if (t) segments.push({ category: null, name: t });
+  }
+  return segments;
 }
 
 /**
@@ -243,28 +356,33 @@ function canonicalizePotentialAdversaryName(name) {
  * SRD strings use mixed formats:
  *   "Beasts (Bear, Dire Wolf), Grove Guardians (Minor Treant, Sylvan Soldier)"
  *   "Guards (Bladed Guard, Head Guard), Masked Thief, Merchant"
+ *   "Jagged Knife Bandits (Hexer, Kneebreaker, Lackey, Lieutenant, Shadow, Sniper)"
  *   "Outer Realms Monstrosities (Abomination, Corruptor, Thrall)"
  *   "Any"
  *
- * Groups (Category (A, B)) are flattened — category labels are discarded and only
- * individual adversary names are kept. Short group-member aliases (Chaos Realm)
- * are expanded to the full SRD adversary name. Junk tokens (`Any`, `see "…"`)
- * are dropped. Each name becomes a linked reference using the deterministic
- * SRD adversary ID so it resolves against SRD data.
+ * Groups (Category (A, B)) are flattened to individual names. Inner names that
+ * already match an adversary stay as-is (Bear, Bladed Guard). Short members
+ * (Hexer, Abomination) are expanded using the group stem, a catalog lookup
+ * when `knownAdversaryNames` is provided, or a fallback alias map. Standalone
+ * plurals (Fallen Shock Troops) singularize against the catalog / aliases.
+ * Junk tokens (`Any`, `see "…"`) are dropped. Each name becomes a linked
+ * reference using the deterministic SRD adversary ID.
+ *
+ * @param {string} raw
+ * @param {Map<string, string>|string[]|null} [knownAdversaryNames]
  */
-export function parseSrdPotentialAdversaries(raw) {
+export function parseSrdPotentialAdversaries(raw, knownAdversaryNames = null) {
   if (!raw || !raw.trim() || raw.trim().toLowerCase() === 'any') return [];
+  const known = asKnownAdversaryNameMap(knownAdversaryNames);
   const names = [];
-  // Replace each "Category (Name1, Name2)" group with just its contents
-  const expanded = raw.replace(/[^,()]+\(([^)]+)\)/g, (_, inner) => inner);
-  for (const part of expanded.split(',')) {
-    const name = canonicalizePotentialAdversaryName(part);
+  for (const seg of splitPotentialAdversarySegments(raw)) {
+    const name = resolvePotentialAdversaryName(seg.name, seg.category, known);
     if (name) names.push(name);
   }
   return names.map(name => ({ adversaryId: makeId('adversaries', name), name }));
 }
 
-function normalizeEnvironment(raw) {
+function normalizeEnvironment(raw, knownAdversaryNames = null) {
   const id = makeId('environments', raw.name || '');
   return {
     id,
@@ -274,7 +392,7 @@ function normalizeEnvironment(raw) {
     difficulty: parseInt(raw.difficulty) || 10,
     description: raw.description || '',
     impulses: raw.impulses || '',
-    potential_adversaries: parseSrdPotentialAdversaries(raw.potential_adversaries),
+    potential_adversaries: parseSrdPotentialAdversaries(raw.potential_adversaries, knownAdversaryNames),
     imageUrl: '',
     features: parseFeatures(raw.feature, id),
   };
@@ -551,20 +669,33 @@ async function readJSON(collection) {
 }
 
 async function loadAll() {
-  const entries = await Promise.all(
-    COLLECTION_NAMES.map(async name => {
-      let normalized;
-      if (EXTRA_COLLECTION_LOADERS[name]) {
-        normalized = await EXTRA_COLLECTION_LOADERS[name]();
-      } else {
-        const raw = await readJSON(name);
-        normalized = raw.map(item => NORMALIZERS[name](item));
-      }
-      const byId = new Map(normalized.map(item => [item.id, item]));
-      return [name, { items: normalized, byId }];
-    })
-  );
-  return Object.fromEntries(entries);
+  const jsonNames = COLLECTION_NAMES.filter((name) => !EXTRA_COLLECTION_LOADERS[name]);
+  const extraNames = COLLECTION_NAMES.filter((name) => EXTRA_COLLECTION_LOADERS[name]);
+
+  const rawPairs = await Promise.all(jsonNames.map(async (name) => [name, await readJSON(name)]));
+  const rawByName = Object.fromEntries(rawPairs);
+  const knownAdversaryNames = buildKnownAdversaryNameMap(rawByName.adversaries);
+
+  const result = {};
+  for (const name of jsonNames) {
+    const raw = rawByName[name];
+    const normalized = name === 'environments'
+      ? raw.map((item) => normalizeEnvironment(item, knownAdversaryNames))
+      : raw.map((item) => NORMALIZERS[name](item));
+    result[name] = {
+      items: normalized,
+      byId: new Map(normalized.map((item) => [item.id, item])),
+    };
+  }
+
+  for (const name of extraNames) {
+    const normalized = await EXTRA_COLLECTION_LOADERS[name]();
+    result[name] = {
+      items: normalized,
+      byId: new Map(normalized.map((item) => [item.id, item])),
+    };
+  }
+  return result;
 }
 
 async function getCache() {
