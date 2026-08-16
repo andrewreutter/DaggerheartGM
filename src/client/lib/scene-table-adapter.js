@@ -3,9 +3,10 @@
  *
  * Scene library rows use the same field names as `table_state` (`activeElements`,
  * `maps`, `mapViews`, `activeMapId`, `gmActiveViewId`, `sessionCountdowns`,
- * `tableBattleMods`). Mutations construct the same op objects used by
- * `postTableOp` and apply them with the existing pure `applyTableOp` — no
- * network table ops, no new op types.
+ * `tableBattleMods`) plus scene-only `partySize` / `partyTier` (designed PC count
+ * and party tier; discarded when the scene is placed on a table). Mutations
+ * construct the same op objects used by `postTableOp` and apply them with the
+ * existing pure `applyTableOp` — no network table ops, no new op types.
  *
  * BattleMap is rendered with `tableId` omitted so ping/scribble/banner-ack
  * no-op. Map-art / overlay / placed-image uploads still hit Storage; only the
@@ -20,6 +21,8 @@ import { applyTableOp } from './table-ops.js';
 import { attachDerivedMapConfig, deriveMapConfigFromState } from './map-table-state.js';
 import { dataUrlToFile, loadImageNaturalSizeFromUrl } from './map-image-data-url.js';
 import { generateId } from './helpers.js';
+import { PARTY_SCALE_MAX, planMinionGroupReconcile } from './party-scaled-adversaries.js';
+import { TIERS } from './constants.js';
 
 export const DEFAULT_SCENE_BATTLE_MODS = {
   lessDifficult: false,
@@ -29,6 +32,58 @@ export const DEFAULT_SCENE_BATTLE_MODS = {
   damageBoostStatic: false,
   moreDangerous: false,
 };
+
+/** Design-time PC count stored on the scene (not copied onto the live table). */
+export const DEFAULT_SCENE_PARTY_SIZE = 4;
+
+/**
+ * Clamp a scene's designed party size to 1…{@link PARTY_SCALE_MAX}. Missing /
+ * invalid values become {@link DEFAULT_SCENE_PARTY_SIZE}.
+ * @param {unknown} value
+ * @returns {number}
+ */
+export function normalizeScenePartySize(value) {
+  if (value == null || value === '') return DEFAULT_SCENE_PARTY_SIZE;
+  const n = Number(value);
+  if (!Number.isFinite(n)) return DEFAULT_SCENE_PARTY_SIZE;
+  return Math.min(PARTY_SCALE_MAX, Math.max(1, Math.floor(n)));
+}
+
+/**
+ * @returns {Array<{ value: number, label: string }>}
+ */
+export function scenePartySizeOptions() {
+  const opts = [];
+  for (let n = 1; n <= PARTY_SCALE_MAX; n += 1) {
+    opts.push({ value: n, label: n === 1 ? '1 PC' : `${n} PCs` });
+  }
+  return opts;
+}
+
+/** Design-time party tier stored on the scene (not copied onto the live table). */
+export const DEFAULT_SCENE_PARTY_TIER = 1;
+
+/**
+ * Clamp a scene's designed party tier to {@link TIERS}. Missing / invalid
+ * values become {@link DEFAULT_SCENE_PARTY_TIER}.
+ * @param {unknown} value
+ * @returns {number}
+ */
+export function normalizeScenePartyTier(value) {
+  if (value == null || value === '') return DEFAULT_SCENE_PARTY_TIER;
+  const n = Number(value);
+  if (!Number.isFinite(n)) return DEFAULT_SCENE_PARTY_TIER;
+  const min = TIERS[0];
+  const max = TIERS[TIERS.length - 1];
+  return Math.min(max, Math.max(min, Math.floor(n)));
+}
+
+/**
+ * @returns {Array<{ value: number, label: string }>}
+ */
+export function scenePartyTierOptions() {
+  return TIERS.map((n) => ({ value: n, label: `Tier ${n}` }));
+}
 
 /**
  * Empty scene table slice with one default map (via `attachDerivedMapConfig`).
@@ -46,6 +101,8 @@ export function emptySceneTableSlice() {
     tableBattleMods: { ...DEFAULT_SCENE_BATTLE_MODS },
     conditionsHistory: [],
     featureCountdowns: {},
+    partySize: DEFAULT_SCENE_PARTY_SIZE,
+    partyTier: DEFAULT_SCENE_PARTY_TIER,
   });
 }
 
@@ -63,8 +120,41 @@ export function normalizeSceneTableData(sceneData) {
     sessionCountdowns: Array.isArray(sceneData?.sessionCountdowns) ? sceneData.sessionCountdowns : [],
     tableBattleMods: { ...DEFAULT_SCENE_BATTLE_MODS, ...(sceneData?.tableBattleMods || {}) },
     conditionsHistory: Array.isArray(sceneData?.conditionsHistory) ? sceneData.conditionsHistory : [],
+    partySize: normalizeScenePartySize(sceneData?.partySize),
+    partyTier: normalizeScenePartyTier(sceneData?.partyTier),
   };
   return attachDerivedMapConfig(merged);
+}
+
+/**
+ * Persist a new designed party size and resize minion groups to match
+ * (same reconcile the live table runs when the PC count changes).
+ * @param {object} sceneData
+ * @param {unknown} nextPartySize
+ * @returns {object}
+ */
+export function applyScenePartySizeChange(sceneData, nextPartySize) {
+  const prev = normalizeSceneTableData(sceneData);
+  const partySize = normalizeScenePartySize(nextPartySize);
+  if (partySize === prev.partySize) return prev;
+  const { add, removeInstanceIds } = planMinionGroupReconcile(prev.activeElements, partySize);
+  const removeSet = new Set(removeInstanceIds);
+  let activeElements = prev.activeElements.filter((el) => !removeSet.has(el.instanceId));
+  if (add.length) activeElements = [...activeElements, ...add];
+  return { ...prev, partySize, activeElements };
+}
+
+/**
+ * Persist a new designed party tier (BP lower-tier modifier). No token changes.
+ * @param {object} sceneData
+ * @param {unknown} nextPartyTier
+ * @returns {object}
+ */
+export function applyScenePartyTierChange(sceneData, nextPartyTier) {
+  const prev = normalizeSceneTableData(sceneData);
+  const partyTier = normalizeScenePartyTier(nextPartyTier);
+  if (partyTier === prev.partyTier) return prev;
+  return { ...prev, partyTier };
 }
 
 /**

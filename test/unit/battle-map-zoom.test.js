@@ -11,6 +11,7 @@ import {
   computePanToCenterInnerPointPx,
   computeZoomAndPanToFitInnerBounds,
   collectPlacedTokenInnerBounds,
+  ZOOM_FIT_FILL_FRACTION,
   ZOOM_FIT_KIND_TYPES,
   scrollAfterZoomTowardPoint,
   computeCameraViewportFt,
@@ -126,6 +127,30 @@ describe('battle-map-zoom', () => {
     expect(r.mapZoom).toBe(3);
     expect(r.scrollLeft).toBeGreaterThanOrEqual(0);
     expect(r.scrollTop).toBeGreaterThanOrEqual(0);
+  });
+
+  it('computeZoomAndPanToFitInnerBounds fillFraction 0.8 leaves 20% container margin around targets', () => {
+    const viewportW = 400;
+    const viewportH = 300;
+    const r = computeZoomAndPanToFitInnerBounds({
+      minInnerX: 0,
+      minInnerY: 0,
+      maxInnerX: 100,
+      maxInnerY: 100,
+      fillFraction: ZOOM_FIT_FILL_FRACTION,
+      minZoom: 0.5,
+      maxZoom: 4,
+      renderedWidthPx: 1000,
+      renderedHeightPx: 800,
+      viewportW,
+      viewportH,
+    });
+    // Tight fit is min(400/100, 300/100) = 3; 80% of the container is 2.4.
+    expect(r.mapZoom).toBeCloseTo(2.4, 5);
+    const fittedW = 100 * r.mapZoom;
+    const fittedH = 100 * r.mapZoom;
+    expect(fittedW / viewportW).toBeLessThanOrEqual(ZOOM_FIT_FILL_FRACTION + 1e-9);
+    expect(fittedH / viewportH).toBeCloseTo(ZOOM_FIT_FILL_FRACTION, 5);
   });
 
   describe('collectPlacedTokenInnerBounds', () => {

@@ -305,9 +305,11 @@ export function buildSrdStarterScene(env, opts = {}) {
     tableBattleMods: { ...DEFAULT_STARTER_TABLE_BATTLE_MODS },
     sessionCountdowns: [],
     conditionsHistory: [],
+    partySize,
+    partyTier: 1,
   };
 
-  const budget = computeSceneBudget(scene, partySize);
+  const budget = computeSceneBudget(scene, partySize, scene.partyTier);
   scene.tier = budget.tier ?? env?.tier ?? 1;
   scene.bp = budget.bp;
   return scene;

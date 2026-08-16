@@ -3,6 +3,7 @@ import { Camera, X } from 'lucide-react';
 import { generateId } from '../../lib/helpers.js';
 import { computeBattlePoints } from '../../lib/battle-points.js';
 import { formatPartyScaleNameSuffix } from '../../lib/party-scaled-adversaries.js';
+import { normalizeScenePartySize, normalizeScenePartyTier } from '../../lib/scene-table-adapter.js';
 
 const CAPTURE_ELEMENT_TYPES = new Set(['adversary', 'environment', 'note']);
 const MAP_DRESSING_TYPES = new Set(['mapImage', 'drawShape']);
@@ -69,6 +70,7 @@ export function CreateSceneModal({
   saveItem,
   navigate,
   partySize = 4,
+  partyTier = 1,
 }) {
   const [name, setName] = useState('');
   const [isPublic, setIsPublic] = useState(false);
@@ -158,7 +160,9 @@ export function CreateSceneModal({
           if ('viewId' in cd) cd.viewId = null;
         }
       }
-      const { tier, bp } = computeTierAndBpFromElements(elementsOut, partySize);
+      const designedPartySize = normalizeScenePartySize(partySize);
+      const designedPartyTier = normalizeScenePartyTier(partyTier);
+      const { tier, bp } = computeTierAndBpFromElements(elementsOut, designedPartySize);
       const item = {
         id: generateId(),
         name: name.trim(),
@@ -169,6 +173,8 @@ export function CreateSceneModal({
         activeElements: elementsOut,
         sessionCountdowns: countdownsOut,
         tableBattleMods: tableBattleMods ? structuredClone(tableBattleMods) : {},
+        partySize: designedPartySize,
+        partyTier: designedPartyTier,
         tier,
         bp,
       };

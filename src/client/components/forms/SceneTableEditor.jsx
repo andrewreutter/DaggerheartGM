@@ -27,10 +27,14 @@ import { buildLibraryAdversaryElements } from '../../lib/party-scaled-adversarie
 import { groupEncounterElements } from '../../lib/encounter-elements.js';
 import {
   DEFAULT_SCENE_BATTLE_MODS,
+  applyScenePartySizeChange,
+  applyScenePartyTierChange,
   applySceneTableOp,
   buildSceneElementFromLibraryItem,
   buildSceneTableAdapterProps,
   normalizeSceneTableData,
+  scenePartySizeOptions,
+  scenePartyTierOptions,
 } from '../../lib/scene-table-adapter.js';
 import { generateId } from '../../lib/helpers.js';
 
@@ -44,17 +48,11 @@ const DAMAGE_BOOST_KEYS = ['damageBoostPlusOne', 'damageBoostD4', 'damageBoostSt
  * @param {object} props
  * @param {object} props.value — scene table slice (activeElements, maps, …)
  * @param {(next: object) => void} props.onChange
- * @param {number} [props.partySize]
- * @param {number|null} [props.partyTier]
- * @param {Array<{ name?: string, tier?: number }>} [props.characters]
  * @param {(body: object) => Promise<{ adversaries?: object[] }>} [props.resolveItems] — library/SRD resolve (live table + Scene form)
  */
 export function SceneTableEditor({
   value,
   onChange,
-  partySize = 4,
-  partyTier = 1,
-  characters = [],
   resolveItems,
 }) {
   const sceneData = normalizeSceneTableData(value);
@@ -104,6 +102,8 @@ export function SceneTableEditor({
 
   const grouped = useMemo(() => groupEncounterElements(sceneData.activeElements), [sceneData.activeElements]);
   const battleMods = sceneData.tableBattleMods || DEFAULT_SCENE_BATTLE_MODS;
+  const partySize = sceneData.partySize;
+  const partyTier = sceneData.partyTier;
   const { tier, bp, budget, autoMods, totalMod, adjustedBudget } = computeSceneBudget(
     sceneData,
     partySize,
@@ -121,6 +121,14 @@ export function SceneTableEditor({
       for (const k of DIFFICULTY_KEYS) if (k !== key) next[k] = false;
     }
     applyOp({ op: 'set-battle-mods', tableBattleMods: next });
+  };
+
+  const updatePartySize = (next) => {
+    setSceneData((prev) => applyScenePartySizeChange(prev, next));
+  };
+
+  const updatePartyTier = (next) => {
+    setSceneData((prev) => applyScenePartyTierChange(prev, next));
   };
 
   const addLibraryPicks = (picks, collection) => {
@@ -201,15 +209,41 @@ export function SceneTableEditor({
               </span>
             </div>
             <div className="border-t border-dh-border px-2.5 py-2 space-y-2">
-              <div className="text-[10px] text-dh-muted">
-                Budget <span className="font-semibold text-dh tabular-nums">{adjustedBudget}</span>
-                {totalMod !== 0 && (
-                  <span className={`ml-1 ${totalMod > 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                    ({totalMod > 0 ? '+' : ''}{totalMod})
-                  </span>
-                )}
-                <span className="text-dh-muted"> · {partySize} PC{partySize !== 1 ? 's' : ''}</span>
-                <span className="sr-only">{budget}</span>
+              <div>
+                <div className="text-xs text-dh-muted">
+                  Budget <span className="text-sm font-semibold text-dh tabular-nums">{adjustedBudget}</span> BP
+                  {totalMod !== 0 && (
+                    <span className={`ml-1 ${totalMod > 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                      ({totalMod > 0 ? '+' : ''}{totalMod})
+                    </span>
+                  )}
+                  <span className="sr-only">{budget}</span>
+                </div>
+                <div className="mt-1 flex items-center gap-1 text-[10px] text-dh-muted">
+                  <select
+                    value={partySize}
+                    aria-label="Number of PCs for this scene"
+                    title="Designed party size — used for BP budget and minion groups"
+                    onChange={(e) => updatePartySize(Number(e.target.value))}
+                    className="h-5 max-w-[4.5rem] rounded border border-dh-border bg-dh-raised px-0.5 text-[10px] font-semibold tabular-nums text-dh-muted hover:text-dh"
+                  >
+                    {scenePartySizeOptions().map((opt) => (
+                      <option key={opt.value} value={opt.value}>{opt.label}</option>
+                    ))}
+                  </select>
+                  <span>of</span>
+                  <select
+                    value={partyTier}
+                    aria-label="Party tier for this scene"
+                    title="Designed party tier — used for the lower-tier adversary BP modifier"
+                    onChange={(e) => updatePartyTier(Number(e.target.value))}
+                    className="h-5 max-w-[5rem] rounded border border-dh-border bg-dh-raised px-0.5 text-[10px] font-semibold tabular-nums text-dh-muted hover:text-dh"
+                  >
+                    {scenePartyTierOptions().map((opt) => (
+                      <option key={opt.value} value={opt.value}>{opt.label}</option>
+                    ))}
+                  </select>
+                </div>
               </div>
 
               {(autoMods.twoOrMoreSolos.active || autoMods.lowerTierAdversary.active || autoMods.noHeavyRoles.active) && (
@@ -264,12 +298,6 @@ export function SceneTableEditor({
               </label>
             </div>
           </div>
-
-          {characters.length > 0 && autoMods.lowerTierAdversary.active && (
-            <p className="text-[10px] text-sky-400/80 px-1 leading-snug">
-              Party T{autoMods.lowerTierAdversary.partyTier ?? partyTier}
-            </p>
-          )}
 
           <div className="border-t border-dh-border" role="separator" />
           <div className="flex items-center justify-between gap-2">

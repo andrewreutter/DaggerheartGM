@@ -3,11 +3,74 @@
  */
 import { describe, it, expect } from 'vitest';
 import {
+  applyScenePartySizeChange,
   applySceneTableOp,
   buildSceneElementFromLibraryItem,
+  applyScenePartyTierChange,
+  normalizeScenePartySize,
+  normalizeScenePartyTier,
   normalizeSceneTableData,
+  scenePartySizeOptions,
+  scenePartyTierOptions,
   DEFAULT_SCENE_BATTLE_MODS,
+  DEFAULT_SCENE_PARTY_SIZE,
+  DEFAULT_SCENE_PARTY_TIER,
 } from '../../src/client/lib/scene-table-adapter.js';
+import { buildMinionGroupElements } from '../../src/client/lib/party-scaled-adversaries.js';
+
+describe('normalizeScenePartySize', () => {
+  it('defaults missing or invalid values to 4', () => {
+    expect(normalizeScenePartySize(undefined)).toBe(DEFAULT_SCENE_PARTY_SIZE);
+    expect(normalizeScenePartySize(null)).toBe(4);
+    expect(normalizeScenePartySize('')).toBe(4);
+    expect(normalizeScenePartySize('nope')).toBe(4);
+  });
+
+  it('clamps to 1–8 and floors fractions', () => {
+    expect(normalizeScenePartySize(0)).toBe(1);
+    expect(normalizeScenePartySize(-3)).toBe(1);
+    expect(normalizeScenePartySize(3.9)).toBe(3);
+    expect(normalizeScenePartySize(8)).toBe(8);
+    expect(normalizeScenePartySize(12)).toBe(8);
+  });
+});
+
+describe('scenePartySizeOptions', () => {
+  it('lists 1 PC through 8 PCs', () => {
+    const opts = scenePartySizeOptions();
+    expect(opts[0]).toEqual({ value: 1, label: '1 PC' });
+    expect(opts[3]).toEqual({ value: 4, label: '4 PCs' });
+    expect(opts).toHaveLength(8);
+  });
+});
+
+describe('normalizeScenePartyTier', () => {
+  it('defaults missing or invalid values to 1', () => {
+    expect(normalizeScenePartyTier(undefined)).toBe(DEFAULT_SCENE_PARTY_TIER);
+    expect(normalizeScenePartyTier(null)).toBe(1);
+    expect(normalizeScenePartyTier('')).toBe(1);
+    expect(normalizeScenePartyTier('nope')).toBe(1);
+  });
+
+  it('clamps to 1–4 and floors fractions', () => {
+    expect(normalizeScenePartyTier(0)).toBe(1);
+    expect(normalizeScenePartyTier(-1)).toBe(1);
+    expect(normalizeScenePartyTier(2.9)).toBe(2);
+    expect(normalizeScenePartyTier(4)).toBe(4);
+    expect(normalizeScenePartyTier(9)).toBe(4);
+  });
+});
+
+describe('scenePartyTierOptions', () => {
+  it('lists Tier 1 through Tier 4', () => {
+    expect(scenePartyTierOptions()).toEqual([
+      { value: 1, label: 'Tier 1' },
+      { value: 2, label: 'Tier 2' },
+      { value: 3, label: 'Tier 3' },
+      { value: 4, label: 'Tier 4' },
+    ]);
+  });
+});
 
 describe('normalizeSceneTableData', () => {
   it('fills maps, activeElements, and tableBattleMods', () => {
@@ -17,7 +80,56 @@ describe('normalizeSceneTableData', () => {
     expect(scene.maps.length).toBeGreaterThanOrEqual(1);
     expect(scene.activeElements).toEqual([]);
     expect(scene.tableBattleMods).toMatchObject(DEFAULT_SCENE_BATTLE_MODS);
+    expect(scene.partySize).toBe(4);
+    expect(scene.partyTier).toBe(1);
     expect(scene.mapConfig).toBeTruthy();
+  });
+
+  it('keeps a stored partySize and does not resize existing minion groups', () => {
+    const group = buildMinionGroupElements(
+      { name: 'Goblin', role: 'minion', hp_max: 1 },
+      { groupId: 'g1', count: 2 },
+    );
+    const scene = normalizeSceneTableData({ partySize: 6, activeElements: group });
+    expect(scene.partySize).toBe(6);
+    expect(scene.activeElements).toHaveLength(2);
+  });
+});
+
+describe('applyScenePartySizeChange', () => {
+  it('grows and shrinks minion groups to the new designed party size', () => {
+    const group = buildMinionGroupElements(
+      { name: 'Goblin', role: 'minion', hp_max: 1 },
+      { groupId: 'g1', count: 4 },
+    );
+    const grown = applyScenePartySizeChange({ partySize: 4, activeElements: group }, 6);
+    expect(grown.partySize).toBe(6);
+    expect(grown.activeElements.filter((el) => el.minionGroupId === 'g1')).toHaveLength(6);
+
+    const shrunk = applyScenePartySizeChange(grown, 3);
+    expect(shrunk.partySize).toBe(3);
+    expect(shrunk.activeElements.filter((el) => el.minionGroupId === 'g1')).toHaveLength(3);
+  });
+
+  it('is a no-op when the size is unchanged', () => {
+    const scene = { partySize: 4, activeElements: [] };
+    const next = applyScenePartySizeChange(scene, 4);
+    expect(next.partySize).toBe(4);
+    expect(next.activeElements).toEqual([]);
+  });
+});
+
+describe('applyScenePartyTierChange', () => {
+  it('updates partyTier without touching elements', () => {
+    const els = [{ instanceId: 'a1', elementType: 'adversary', name: 'Bear' }];
+    const next = applyScenePartyTierChange({ partyTier: 1, activeElements: els }, 3);
+    expect(next.partyTier).toBe(3);
+    expect(next.activeElements).toEqual(els);
+  });
+
+  it('is a no-op when the tier is unchanged', () => {
+    const next = applyScenePartyTierChange({ partyTier: 2, activeElements: [] }, 2);
+    expect(next.partyTier).toBe(2);
   });
 });
 

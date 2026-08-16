@@ -11,6 +11,7 @@ import {
   computePanToCenterInnerPointPx,
   computeZoomAndPanToFitInnerBounds,
   collectPlacedTokenInnerBounds,
+  ZOOM_FIT_FILL_FRACTION,
   ZOOM_FIT_KIND_TYPES,
   scrollAfterZoomTowardPoint,
 } from '../lib/battle-map-zoom.js';
@@ -4379,7 +4380,7 @@ export function BattleMap({
     if (!bounds) return;
     const result = computeZoomAndPanToFitInnerBounds({
       ...bounds,
-      paddingPx: 12,
+      fillFraction: ZOOM_FIT_FILL_FRACTION,
       minZoom: minZoomRef.current,
       maxZoom: maxZoomRef.current,
       renderedWidthPx: renderedWRef.current,

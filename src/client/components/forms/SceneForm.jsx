@@ -5,18 +5,19 @@ import { ImageEditor } from './ImageEditor.jsx';
 import { SceneTableEditor } from './SceneTableEditor.jsx';
 import { resolveItems } from '../../lib/api.js';
 import { computeSceneBudget } from '../../lib/battle-points.js';
-import { normalizeSceneTableData } from '../../lib/scene-table-adapter.js';
+import { normalizeScenePartySize, normalizeScenePartyTier, normalizeSceneTableData } from '../../lib/scene-table-adapter.js';
 
 /**
  * Stamp denormalized `tier` / `bp` so Library cards can read them without recomputing.
+ * Uses the scene's designed `partySize` / `partyTier`, not the live table's PCs.
  * @param {object} scene
- * @param {number} partySize
- * @param {number|null} partyTier
  */
-function withSceneBattleFields(scene, partySize, partyTier) {
+function withSceneBattleFields(scene) {
   const normalized = normalizeSceneTableData(scene);
+  const partySize = normalizeScenePartySize(normalized.partySize);
+  const partyTier = normalizeScenePartyTier(normalized.partyTier);
   const { tier, bp } = computeSceneBudget(normalized, partySize, partyTier);
-  return { ...scene, ...normalized, tier, bp };
+  return { ...scene, ...normalized, partySize, partyTier, tier, bp };
 }
 
 function sceneNeedsTableDefaults(scene) {
@@ -24,6 +25,8 @@ function sceneNeedsTableDefaults(scene) {
   if (!Array.isArray(scene.maps) || scene.maps.length === 0) return true;
   if (!Array.isArray(scene.activeElements)) return true;
   if (scene.tableBattleMods == null) return true;
+  if (scene.partySize == null) return true;
+  if (scene.partyTier == null) return true;
   if (scene.tier === undefined || scene.bp === undefined) return true;
   return false;
 }
@@ -33,11 +36,8 @@ function sceneNeedsTableDefaults(scene) {
  * Uncontrolled mode: pass `initial`, `onSave`, `onCancel` (legacy path).
  *
  * Scene data is a flat table_state snapshot: `activeElements`, `maps`, `mapViews`,
- * `tableBattleMods`, denormalized `tier` / `bp`.
- *
- * partySize — character count from the Game Table, used for BP calculation.
- * partyTier — highest tier among player characters, used for the lower-tier adversary BP modifier.
- * characters — array of { name, tier } for lower-tier adversary detail.
+ * `tableBattleMods`, designed `partySize` (default 4) / `partyTier` (default 1),
+ * denormalized `tier` / `bp`.
  */
 export function SceneForm({
   initial,
@@ -45,15 +45,12 @@ export function SceneForm({
   onChange,
   onSave,
   onCancel,
-  partySize = 4,
-  partyTier = 1,
-  characters = [],
   onImageSaved,
   omitPublicCheckbox = false,
 }) {
   const isControlled = value !== undefined;
 
-  const [localData, setLocalData] = useState(() => withSceneBattleFields(initial || {}, partySize, partyTier));
+  const [localData, setLocalData] = useState(() => withSceneBattleFields(initial || {}));
   // Jump straight into the (larger) Scene editor for an already-named scene; brand-new
   // scenes start on Details so there's somewhere to type a name first.
   const [activeTab, setActiveTab] = useState(() => ((isControlled ? value : initial)?.name ? 'scene' : 'details'));
@@ -63,7 +60,7 @@ export function SceneForm({
   latestFdRef.current = fd;
 
   const emit = (next) => {
-    const stamped = withSceneBattleFields(next, partySize, partyTier);
+    const stamped = withSceneBattleFields(next);
     latestFdRef.current = stamped;
     if (isControlled) onChange(stamped);
     else setLocalData(stamped);
@@ -89,9 +86,9 @@ export function SceneForm({
     seededRef.current = true;
     const source = isControlled ? (value || {}) : localData;
     if (sceneNeedsTableDefaults(source)) {
-      emit(withSceneBattleFields(source, partySize, partyTier));
+      emit(withSceneBattleFields(source));
     }
-    // Seed once so new scenes persist maps / tableBattleMods / tier / bp.
+    // Seed once so new scenes persist maps / tableBattleMods / partySize / partyTier / tier / bp.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -100,7 +97,7 @@ export function SceneForm({
   };
 
   const handleSave = () => {
-    onSave?.(withSceneBattleFields(localData, partySize, partyTier));
+    onSave?.(withSceneBattleFields(localData));
   };
 
   const tabBtnClass = (tab) =>
@@ -178,9 +175,6 @@ export function SceneForm({
           <SceneTableEditor
             value={fd}
             onChange={onTableChange}
-            partySize={partySize}
-            partyTier={partyTier}
-            characters={characters}
             resolveItems={resolveItems}
           />
         </div>

@@ -32,6 +32,8 @@ const REQUIRED_SCENE_KEYS = [
   'tableBattleMods',
   'sessionCountdowns',
   'conditionsHistory',
+  'partySize',
+  'partyTier',
   'tier',
   'bp',
 ];
@@ -292,6 +294,8 @@ describe('buildSrdStarterScene', () => {
     expect(scene.mapViews[0].locked).toBe(false);
     expect(scene.gmActiveViewId).toBe(STARTER_SCENE_VIEW_ID);
     expect(scene.tableBattleMods).toEqual(DEFAULT_STARTER_TABLE_BATTLE_MODS);
+    expect(scene.partySize).toBe(STARTER_SCENE_PARTY_SIZE);
+    expect(scene.partyTier).toBe(1);
     expect(scene.sessionCountdowns).toEqual([]);
     expect(scene.conditionsHistory).toEqual([]);
   });

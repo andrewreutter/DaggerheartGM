@@ -153,17 +153,6 @@ export function computePanToCenterInnerPointPx({
 }
 
 /**
- * Max zoom in (largest z) that still fits an axis-aligned inner bbox (+ padding), then pan to center it.
- * Inner coords are pre-scale map pixels (same space as renderedWidthPx).
- *
- * @param {object} p
- * @param {number} p.minInnerX
- * @param {number} p.minInnerY
- * @param {number} p.maxInnerX
- * @param {number} p.maxInnerY
- * @param {number} [p.paddingPx]
- */
-/**
  * Zoom bounds for a plain image viewport (no game tokens): fully zoomed out fits the image in the container;
  * max zoom matches the spirit of {@link computeMapZoomBounds} using a synthetic detail size (~4% of the shorter side).
  */
@@ -348,6 +337,9 @@ export const ZOOM_FIT_KIND_TYPES = Object.freeze({
   adversaries: Object.freeze(['adversary']),
 });
 
+/** Fraction of the viewport the zoom-to-fit AABB should occupy (margin around targets). */
+export const ZOOM_FIT_FILL_FRACTION = 0.8;
+
 /**
  * Inner-map pixel AABB of placed tokens matching `types` on `activeMapId`.
  * Uses a uniform `tokenSizePx` footprint (same as Zoom to Actors historically).
@@ -389,12 +381,26 @@ export function collectPlacedTokenInnerBounds(elements, {
   return { minInnerX: minX, minInnerY: minY, maxInnerX: maxX, maxInnerY: maxY };
 }
 
+/**
+ * Max zoom in (largest z) that still fits an axis-aligned inner bbox (+ padding)
+ * into `fillFraction` of the viewport, then pan to center it.
+ * Inner coords are pre-scale map pixels (same space as renderedWidthPx).
+ *
+ * @param {object} p
+ * @param {number} p.minInnerX
+ * @param {number} p.minInnerY
+ * @param {number} p.maxInnerX
+ * @param {number} p.maxInnerY
+ * @param {number} [p.paddingPx]
+ * @param {number} [p.fillFraction] — 1 = tight fit; 0.8 leaves 20% container margin
+ */
 export function computeZoomAndPanToFitInnerBounds({
   minInnerX,
   minInnerY,
   maxInnerX,
   maxInnerY,
   paddingPx = 0,
+  fillFraction = 1,
   minZoom,
   maxZoom,
   renderedWidthPx,
@@ -409,7 +415,8 @@ export function computeZoomAndPanToFitInnerBounds({
   const maxY = maxInnerY + pad;
   const W = Math.max(1, maxX - minX);
   const H = Math.max(1, maxY - minY);
-  const zFit = Math.min(viewportW / W, viewportH / H);
+  const frac = Number.isFinite(fillFraction) && fillFraction > 0 ? fillFraction : 1;
+  const zFit = Math.min((viewportW * frac) / W, (viewportH * frac) / H);
   const mapZoom = clampMapZoom(zFit, minZoom, maxZoom);
   const cx = (minX + maxX) / 2;
   const cy = (minY + maxY) / 2;

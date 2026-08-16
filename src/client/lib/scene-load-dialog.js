@@ -37,6 +37,9 @@ export function shouldOfferReplaceOrAdd(collectionName) {
 
 /**
  * Build the table op for placing a remapped scene snapshot.
+ * Scene `partySize` / `partyTier` are intentionally omitted — the live table
+ * uses its actual PC count and highest character tier for BP and minion-group
+ * reconcile.
  *
  * @param {{
  *   mode: 'add' | 'replace',

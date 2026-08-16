@@ -7685,6 +7685,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
       saveItem={saveItem}
       navigate={navigate}
       partySize={partySize}
+      partyTier={partyTier}
     />
 
     {/* Character sheet overlay — right of Characters panel; sheet + editor share one rounded card (editor slides from behind). Mounts before ItemDetailModal so the editor portal target exists. */}

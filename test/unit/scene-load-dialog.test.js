@@ -40,6 +40,18 @@ describe('buildSceneSnapshotTableOp', () => {
     expect(op).not.toHaveProperty('tableBattleMods');
   });
 
+  it('never copies scene partySize or partyTier onto the table op', () => {
+    const op = buildSceneSnapshotTableOp({
+      mode: 'add',
+      remapped,
+      applySceneBattleMods: true,
+      scene: { partySize: 6, partyTier: 3, tableBattleMods: { moreDangerous: true } },
+    });
+    expect(op).not.toHaveProperty('partySize');
+    expect(op).not.toHaveProperty('partyTier');
+    expect(op.tableBattleMods).toEqual({ moreDangerous: true });
+  });
+
   it('builds replace-scene-snapshot and copies mods when applySceneBattleMods is set', () => {
     const mods = { moreDangerous: true };
     const op = buildSceneSnapshotTableOp({

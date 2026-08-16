@@ -76,7 +76,6 @@ describe('SceneTableEditor GM Moves', () => {
         createElement(SceneTableEditor, {
           value: sceneWithBear(),
           onChange: vi.fn(),
-          partySize: 4,
         }),
       );
     });
@@ -94,5 +93,55 @@ describe('SceneTableEditor GM Moves', () => {
     expect(container.textContent).toContain('Claw');
     expect(container.textContent).toContain('Bruiser Move');
     expect(container.textContent).toContain('Default Moves');
+  });
+
+  it('shows a party-size dropdown defaulting to 4 PCs, not the live table count', async () => {
+    const onChange = vi.fn();
+    await act(async () => {
+      root.render(
+        createElement(SceneTableEditor, {
+          value: sceneWithBear(),
+          onChange,
+        }),
+      );
+    });
+
+    const select = container.querySelector('select[aria-label="Number of PCs for this scene"]');
+    expect(select).toBeTruthy();
+    expect(select.value).toBe('4');
+    expect(container.textContent).not.toMatch(/· 1 PC\b/);
+
+    await act(async () => {
+      select.value = '6';
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    expect(onChange).toHaveBeenCalled();
+    const next = onChange.mock.calls.at(-1)[0];
+    expect(next.partySize).toBe(6);
+  });
+
+  it('shows a party-tier dropdown defaulting to Tier 1', async () => {
+    const onChange = vi.fn();
+    await act(async () => {
+      root.render(
+        createElement(SceneTableEditor, {
+          value: sceneWithBear(),
+          onChange,
+        }),
+      );
+    });
+
+    const select = container.querySelector('select[aria-label="Party tier for this scene"]');
+    expect(select).toBeTruthy();
+    expect(select.value).toBe('1');
+    expect(container.textContent).toMatch(/of/);
+
+    await act(async () => {
+      select.value = '3';
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    expect(onChange).toHaveBeenCalled();
+    const next = onChange.mock.calls.at(-1)[0];
+    expect(next.partyTier).toBe(3);
   });
 });
