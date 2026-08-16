@@ -19,6 +19,7 @@ import {
 import { DEFAULT_MAP_SIZE_FT } from './map-dimensions-ft.js';
 import { playerCanAccessMapViewSelection } from './map-view-player-sync.js';
 import { normalizeMapArtistFields } from './map-artist.js';
+import { normalizeNextScenes } from './scene-load-dialog.js';
 
 /** Keep legacy `gmMapView` + `activeMapId` aligned with `gmActiveViewId` for snapshots. */
 function syncGmMapViewFromActiveView(state) {
@@ -308,6 +309,7 @@ export function applyTableOp(op, state) {
     // Used by "Add Scene to Table": append remapped maps/views/elements/countdowns
     // from a library scene snapshot. `tableBattleMods` replaces the table's factors
     // only when present (GM chose "Apply Scene Factors"); omit to keep current factors.
+    // `nextScenes` replaces the table's Next Scenes list when present (including `[]`).
     case 'add-scene-snapshot': {
       const out = {
         maps: [...(state.maps || []), ...(op.maps || [])],
@@ -320,6 +322,9 @@ export function applyTableOp(op, state) {
       if ('tableBattleMods' in op) {
         out.tableBattleMods = op.tableBattleMods;
       }
+      if (Array.isArray(op.nextScenes)) {
+        out.nextScenes = normalizeNextScenes(op.nextScenes);
+      }
       return out;
     }
     // Load Scene → Replace: drop scene dressing (maps, mapViews, adversaries,
@@ -327,6 +332,7 @@ export function applyTableOp(op, state) {
     // characters + attached companion boardTokens (returned to tray), then
     // append the remapped snapshot. Fear, player emails, session top, and
     // other table meta are unchanged (not in the returned patch).
+    // `nextScenes` replaces the table's Next Scenes list when present (including `[]`).
     case 'replace-scene-snapshot': {
       const chars = activeElements.filter((el) => el.elementType === 'character');
       const charIds = new Set(chars.map((c) => c.instanceId));
@@ -361,6 +367,9 @@ export function applyTableOp(op, state) {
       }
       if ('tableBattleMods' in op) {
         out.tableBattleMods = op.tableBattleMods;
+      }
+      if (Array.isArray(op.nextScenes)) {
+        out.nextScenes = normalizeNextScenes(op.nextScenes);
       }
       return out;
     }

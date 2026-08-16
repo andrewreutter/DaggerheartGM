@@ -1,9 +1,9 @@
 import { useMemo, useEffect, useRef, useState, useCallback } from 'react';
-import { X, AlertTriangle, UserPlus, ChevronDown, ChevronRight, Swords, Trees, Minus, Plus } from 'lucide-react';
+import { X, AlertTriangle, UserPlus, ChevronDown, ChevronRight, Swords, Trees, Minus, Plus, FolderOpen } from 'lucide-react';
 import { CollectionFilters } from '../CollectionFilters.jsx';
 import { useCollectionSearch } from '../../lib/useCollectionSearch.js';
 import { DaggerstackImport } from '../DaggerstackImport.jsx';
-import { saveItem, conceptAiEnabled } from '../../lib/api.js';
+import { saveItem, conceptAiEnabled, resolveItems } from '../../lib/api.js';
 import { useAiUiPreference } from '../../lib/ai-ui-preference-context.jsx';
 import { shouldShowConceptAiUi } from '../../lib/ai-ui-visibility.js';
 import { AiDismissBuildWithAiLink } from '../AiDismissBuildWithAiLink.jsx';
@@ -68,6 +68,8 @@ const ENV_TYPE_LABEL = {
  *   onAdversaryAiConceptSubmit — optional (adversaries); (concept, tier, role)
  *   onEnvironmentAiConceptSubmit — optional (environments); (concept, tier, type)
  *   showDaggerstackImport — when true (default) and collection === 'characters', show the collapsible Daggerstack import block (Game Table passes false).
+ *   quickPicks     — optional `{ id, name }[]` (Load Scene Next Scenes); one-click chips when collection === 'scenes'
+ *   overlayClassName — optional extra classes on the fixed overlay (e.g. extra top padding under a host title bar)
  */
 export function ItemPickerModal({
   collection,
@@ -87,6 +89,8 @@ export function ItemPickerModal({
   isLoading,
   excludeIds,
   showDaggerstackImport = true,
+  quickPicks,
+  overlayClassName,
 }) {
   const { hideAiUi } = useAiUiPreference();
   const showConceptAiUi = shouldShowConceptAiUi(conceptAiEnabled, hideAiUi);
@@ -123,6 +127,68 @@ export function ItemPickerModal({
   const resultsRef = useRef(null);
   const sentinelRef = useRef(null);
   const [daggerstackOpen, setDaggerstackOpen] = useState(false);
+  const [resolvedQuickById, setResolvedQuickById] = useState({});
+  const [quickReady, setQuickReady] = useState(false);
+  const [quickResolvingId, setQuickResolvingId] = useState(null);
+
+  const nextScenePicks = collection === 'scenes' && Array.isArray(quickPicks) ? quickPicks.filter((p) => p?.id) : [];
+  const nextScenePickKey = nextScenePicks.map((p) => p.id).join('\0');
+
+  useEffect(() => {
+    if (!nextScenePicks.length) {
+      setResolvedQuickById({});
+      setQuickReady(false);
+      return undefined;
+    }
+    let cancelled = false;
+    setQuickReady(false);
+    resolveItems({ scenes: nextScenePicks.map((p) => p.id) })
+      .then((resolved) => {
+        if (cancelled) return;
+        const map = {};
+        for (const item of resolved.scenes || []) {
+          if (item?.id) map[item.id] = item;
+        }
+        setResolvedQuickById(map);
+        setQuickReady(true);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setResolvedQuickById({});
+        setQuickReady(true);
+      });
+    return () => { cancelled = true; };
+    // nextScenePickKey is the stable identity of nextScenePicks
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [collection, nextScenePickKey]);
+
+  const commitQuickPick = useCallback(async (pick) => {
+    if (!pick?.id) return;
+    const existing = resolvedQuickById[pick.id];
+    const finish = (item) => {
+      if (!item) return;
+      if (isMulti) {
+        onSelectMany?.([{ item, count: 1 }]);
+      } else {
+        onSelect?.(item);
+      }
+      onClose();
+    };
+    if (existing) {
+      finish(existing);
+      return;
+    }
+    setQuickResolvingId(pick.id);
+    try {
+      const resolved = await resolveItems({ scenes: [pick.id] });
+      const item = (resolved.scenes || []).find((s) => s.id === pick.id);
+      finish(item);
+    } catch {
+      /* leave chip in place */
+    } finally {
+      setQuickResolvingId(null);
+    }
+  }, [resolvedQuickById, isMulti, onSelectMany, onSelect, onClose]);
 
   const showBrowse =
     !showConceptAiUi ||
@@ -221,7 +287,7 @@ export function ItemPickerModal({
   );
 
   return (
-    <div className="fixed inset-0 z-[60] bg-black/70 flex items-start justify-center pt-24 p-4" onClick={onClose}>
+    <div className={`fixed inset-0 z-[60] bg-black/70 flex items-start justify-center p-4 ${overlayClassName || 'pt-24'}`} onClick={onClose}>
       <div
         className={`bg-dh-surface border border-dh-border rounded-xl shadow-2xl w-full flex flex-col ${
           isMulti ? 'max-w-5xl max-h-[80vh]' : 'max-w-lg max-h-[75vh]'
@@ -242,6 +308,36 @@ export function ItemPickerModal({
             <X size={18} />
           </button>
         </div>
+
+        {nextScenePicks.length > 0 && (
+          <div className="px-5 py-3 border-b border-dh-border shrink-0 space-y-2">
+            <p className="text-xs font-semibold text-dh-muted uppercase tracking-wide">Next Scenes</p>
+            <div className="flex flex-wrap gap-2">
+              {nextScenePicks.map((pick) => {
+                const missing = quickReady && !resolvedQuickById[pick.id];
+                const busy = quickResolvingId === pick.id;
+                return (
+                  <button
+                    key={pick.id}
+                    type="button"
+                    tabIndex={0}
+                    disabled={missing || busy}
+                    title={missing ? 'This scene is no longer in the library' : `Load ${pick.name || pick.id}`}
+                    onClick={() => { void commitQuickPick(pick); }}
+                    className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm font-medium transition-colors ${
+                      missing || busy
+                        ? 'border-dh-border bg-dh-raised text-dh-muted cursor-not-allowed'
+                        : 'border-violet-700/60 bg-violet-950/40 text-violet-200 hover:border-violet-500 hover:bg-violet-900/50'
+                    }`}
+                  >
+                    <FolderOpen size={14} className="shrink-0" />
+                    <span className="truncate max-w-[14rem]">{pick.name || pick.id}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {collection === 'characters' && onCreateNew && (
           <div className="px-5 py-3 border-b border-dh-border shrink-0">

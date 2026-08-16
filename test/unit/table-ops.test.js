@@ -81,6 +81,7 @@ describe('applyTableOp', () => {
     expect(result.activeElements[1].instanceId).toBe('bt-1');
     expect(result.featureCountdowns).toEqual({});
     expect(result.sessionCountdowns).toEqual([]);
+    expect(result).not.toHaveProperty('nextScenes');
   });
 
   it('remove-element removes boardToken children when removing a character', () => {
@@ -255,6 +256,35 @@ describe('applyTableOp', () => {
     expect(kept).not.toHaveProperty('tableBattleMods');
   });
 
+  it('add-scene-snapshot replaces nextScenes when present and leaves them when omitted', () => {
+    const state = { nextScenes: [{ id: 'old', name: 'Old' }] };
+    const replaced = applyTableOp({
+      op: 'add-scene-snapshot',
+      maps: [],
+      mapViews: [],
+      elements: [],
+      nextScenes: [{ id: 'new', name: 'New' }],
+    }, state);
+    expect(replaced.nextScenes).toEqual([{ id: 'new', name: 'New' }]);
+
+    const cleared = applyTableOp({
+      op: 'add-scene-snapshot',
+      maps: [],
+      mapViews: [],
+      elements: [],
+      nextScenes: [],
+    }, state);
+    expect(cleared.nextScenes).toEqual([]);
+
+    const kept = applyTableOp({
+      op: 'add-scene-snapshot',
+      maps: [],
+      mapViews: [],
+      elements: [],
+    }, state);
+    expect(kept).not.toHaveProperty('nextScenes');
+  });
+
   it('replace-scene-snapshot clears scene content and keeps characters, boardTokens, fear, and session meta', () => {
     const state = {
       maps: [{ id: 'm-old', name: 'Keep' }],
@@ -358,6 +388,31 @@ describe('applyTableOp', () => {
       tableBattleMods: { moreDangerous: true },
     }, state);
     expect(withMods.tableBattleMods).toEqual({ moreDangerous: true });
+  });
+
+  it('replace-scene-snapshot replaces nextScenes when present and leaves them when omitted', () => {
+    const state = {
+      maps: [],
+      mapViews: [],
+      activeElements: [],
+      nextScenes: [{ id: 'old', name: 'Old' }],
+    };
+    const replaced = applyTableOp({
+      op: 'replace-scene-snapshot',
+      maps: [],
+      mapViews: [],
+      elements: [],
+      nextScenes: [{ id: 'new', name: 'New' }],
+    }, state);
+    expect(replaced.nextScenes).toEqual([{ id: 'new', name: 'New' }]);
+
+    const omitted = applyTableOp({
+      op: 'replace-scene-snapshot',
+      maps: [],
+      mapViews: [],
+      elements: [],
+    }, state);
+    expect(omitted).not.toHaveProperty('nextScenes');
   });
 
   it('set-player-emails sets playerEmails', () => {

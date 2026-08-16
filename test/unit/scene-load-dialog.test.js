@@ -3,6 +3,7 @@ import {
   shouldOfferReplaceOrAdd,
   sceneHasActiveBattleMods,
   buildSceneSnapshotTableOp,
+  normalizeNextScenes,
 } from '../../src/client/lib/scene-load-dialog.js';
 
 describe('shouldOfferReplaceOrAdd', () => {
@@ -24,6 +25,29 @@ describe('sceneHasActiveBattleMods', () => {
   });
 });
 
+describe('normalizeNextScenes', () => {
+  it('returns [] for missing or invalid values', () => {
+    expect(normalizeNextScenes(undefined)).toEqual([]);
+    expect(normalizeNextScenes(null)).toEqual([]);
+    expect(normalizeNextScenes('grove')).toEqual([]);
+    expect(normalizeNextScenes({})).toEqual([]);
+  });
+
+  it('keeps { id, name }, drops empties and duplicate ids, and accepts bare id strings', () => {
+    expect(normalizeNextScenes([
+      { id: 'srd-scene-grove', name: 'Abandoned Grove' },
+      { id: '  ', name: 'Nope' },
+      { id: 'srd-scene-grove', name: 'Duplicate' },
+      'srd-scene-keep',
+      { id: 'srd-scene-keep', name: 'Keep' },
+      null,
+    ])).toEqual([
+      { id: 'srd-scene-grove', name: 'Abandoned Grove' },
+      { id: 'srd-scene-keep', name: 'srd-scene-keep' },
+    ]);
+  });
+});
+
 describe('buildSceneSnapshotTableOp', () => {
   const remapped = {
     maps: [{ id: 'm1' }],
@@ -37,7 +61,20 @@ describe('buildSceneSnapshotTableOp', () => {
     expect(op.op).toBe('add-scene-snapshot');
     expect(op.maps).toEqual(remapped.maps);
     expect(op.elements).toEqual(remapped.elements);
+    expect(op.nextScenes).toEqual([]);
     expect(op).not.toHaveProperty('tableBattleMods');
+  });
+
+  it('always copies normalized nextScenes from the scene, including an empty list', () => {
+    const withNext = buildSceneSnapshotTableOp({
+      mode: 'add',
+      remapped,
+      scene: { nextScenes: [{ id: 'srd-scene-b', name: 'B' }, { id: 'srd-scene-b', name: 'Dup' }] },
+    });
+    expect(withNext.nextScenes).toEqual([{ id: 'srd-scene-b', name: 'B' }]);
+
+    const empty = buildSceneSnapshotTableOp({ mode: 'replace', remapped, scene: {} });
+    expect(empty.nextScenes).toEqual([]);
   });
 
   it('never copies scene partySize or partyTier onto the table op', () => {

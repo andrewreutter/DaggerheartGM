@@ -122,6 +122,8 @@ export const ItemDetailModal = forwardRef(function ItemDetailModal({
   characterLevelPreview,
   onCharacterLevelPreviewChange,
   isNew: isNewProp,
+  libraryCardDimensions = null,
+  userUid,
 }, ref) {
   // Prefer explicit override: Game Table new-character stubs carry an id before the first library save.
   const isNew = typeof isNewProp === 'boolean' ? isNewProp : !item?.id;
@@ -547,7 +549,13 @@ export const ItemDetailModal = forwardRef(function ItemDetailModal({
       <>
         {collection === 'adversaries' && <AdversaryForm {...sharedProps} />}
         {collection === 'environments' && <EnvironmentForm {...sharedProps} />}
-        {collection === 'scenes' && <SceneForm {...sharedProps} />}
+        {collection === 'scenes' && (
+          <SceneForm
+            {...sharedProps}
+            libraryCardDimensions={libraryCardDimensions}
+            userUid={userUid}
+          />
+        )}
         {collection === 'adventures' && <AdventureForm {...sharedProps} />}
         {collection === 'characters' && (
           <CharacterForm {...sharedProps} levelingToolsSessionKey={editorSessionKey} />

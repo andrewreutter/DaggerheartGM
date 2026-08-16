@@ -138,6 +138,7 @@ function App() {
   );
   const DEFAULT_BATTLE_MODS = { lessDifficult: false, slightlyMoreDangerous: false, damageBoostPlusOne: false, damageBoostD4: false, damageBoostStatic: false, moreDangerous: false };
   const [tableBattleMods, setTableBattleMods] = useState(DEFAULT_BATTLE_MODS);
+  const [nextScenes, setNextScenes] = useState([]);
   const [fearCount, setFearCount] = useState(0);
   const [spotlight, setSpotlight] = useState(null);
   const [conditionsHistory, setConditionsHistory] = useState([]);
@@ -775,6 +776,7 @@ function App() {
       setFeatureCountdowns({});
       setSessionCountdowns([]);
       setTableBattleMods({});
+      setNextScenes([]);
       setPlayerEmails([]);
       setInviteLink(null);
       setTableName('');
@@ -811,6 +813,7 @@ function App() {
         setFeatureCountdowns({});
         setSessionCountdowns([]);
         setTableBattleMods(DEFAULT_BATTLE_MODS);
+        setNextScenes([]);
         setFearCount(0);
         setSpotlight(null);
         setConditionsHistory([]);
@@ -838,6 +841,7 @@ function App() {
       setFeatureCountdowns(tableState.featureCountdowns || {});
       setSessionCountdowns(Array.isArray(tableState.sessionCountdowns) ? tableState.sessionCountdowns : []);
       if (tableState.tableBattleMods) setTableBattleMods(tableState.tableBattleMods);
+      setNextScenes(Array.isArray(tableState.nextScenes) ? tableState.nextScenes : []);
       if (tableState.fearCount != null) setFearCount(tableState.fearCount);
       if (tableState.spotlight) setSpotlight(tableState.spotlight);
       else setSpotlight(null);
@@ -922,6 +926,7 @@ function App() {
         if (state.featureCountdowns != null) setFeatureCountdowns(state.featureCountdowns);
         if (Array.isArray(state.sessionCountdowns)) setSessionCountdowns(state.sessionCountdowns);
         if (state.tableBattleMods != null) setTableBattleMods(state.tableBattleMods);
+        setNextScenes(Array.isArray(state.nextScenes) ? state.nextScenes : []);
         if (Array.isArray(state.playerEmails)) setPlayerEmails(state.playerEmails);
         if (state.playerNames != null && typeof state.playerNames === 'object') setPlayerNames(state.playerNames);
         setInviteLink(state.inviteLink ?? null);
@@ -1035,6 +1040,7 @@ function App() {
         if (state.featureCountdowns != null) setFeatureCountdowns(state.featureCountdowns);
         if (Array.isArray(state.sessionCountdowns)) setSessionCountdowns(state.sessionCountdowns);
         if (state.tableBattleMods != null) setTableBattleMods(state.tableBattleMods);
+        setNextScenes(Array.isArray(state.nextScenes) ? state.nextScenes : []);
         if (Array.isArray(state.playerEmails)) setPlayerEmails(state.playerEmails);
         if (state.playerNames != null && typeof state.playerNames === 'object') setPlayerNames(state.playerNames);
         setInviteLink(state.inviteLink ?? null);
@@ -2276,6 +2282,8 @@ function App() {
                 partyTier={partyTier}
                 characters={characters}
                 tableBattleMods={tableBattleMods}
+                nextScenes={nextScenes}
+                libraryCardDimensions={user ? libraryCardDimensions : null}
                 setTableBattleMods={effectiveIsPlayer ? () => {} : sendSetTableBattleMods}
                 fearCount={fearCount}
                 setFearCount={effectiveIsPlayer ? () => {} : sendSetFearCount}

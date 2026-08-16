@@ -448,7 +448,7 @@ function buildGameTableNewEnvironmentStub(tier = 1, type = 'exploration') {
   };
 }
 
-export function GMTableView({ tableId, activeElements, updateActiveElement: pushTableElementUpdate, removeActiveElement, updateActiveElementsBaseData, data, saveItem, saveImage, addToTable, addElements, sendDoAddToTable, onMergeAdversary, user, route, navigate, featureCountdowns = {}, sessionCountdowns = [], updateCountdown, partySize = 1, partyTier = 1, characters = [], tableBattleMods, setTableBattleMods, fearCount = 0, setFearCount, spotlight = null, onSpotlightChange, conditionsHistory = [], onAddConditionsHistoryEntry, onRemoveConditionsHistoryEntry, tableName = '', gmDisplayName = '', tableStateReady = false, onTableNameChange, onDeleteTable, ensureAdventuresLoaded, ensureCharactersLoaded, clearTable, isPlayer = false, playerEmail, connectedPlayers = [], playerEmails = [], playerNames = {}, inviteLink = null, onGenerateInviteLink, onRevokeInviteLink, onRemovePlayerEmail, onLeaveTable, gmUid, onPlayerAddCharacter, pendingBanners = [], pendingPlayerIntent = null, intentDifficultyUpdate = null, onFeatureRequestSuccess, onFeatureRequestCancel, rangerFocusRequestedBannerIds, onRangerFocusRerollRequestSuccess, onRangerFocusRerollRequestCancel, previewAsPlayerEmail = null, onPreviewAsPlayer, onExitPreview, actionLog = [], setActionLog, mapConfig, maps = [], activeMapId = null, gmMapView = null, onSetActiveMap, onAddMap, onAddMapWithImage, onRemoveMap, onRenameMap, onMapConfigChange, onMapViewSync, lifeSupportSelections = {}, onLifeSupportSelect, onLifeSupportClear, restMovesSelections = {}, onRestMoveSelect, onRestMoveClear, tableFeatureState = {}, sessionPlayAllowed = true, sessionStarted = true, sessionPaused = false, mapPings = [], onDismissMapPing = () => {}, appendMapPing = () => {},
+export function GMTableView({ tableId, activeElements, updateActiveElement: pushTableElementUpdate, removeActiveElement, updateActiveElementsBaseData, data, saveItem, saveImage, addToTable, addElements, sendDoAddToTable, onMergeAdversary, user, route, navigate, featureCountdowns = {}, sessionCountdowns = [], updateCountdown, partySize = 1, partyTier = 1, characters = [], tableBattleMods, nextScenes = [], setTableBattleMods, fearCount = 0, setFearCount, spotlight = null, onSpotlightChange, conditionsHistory = [], onAddConditionsHistoryEntry, onRemoveConditionsHistoryEntry, tableName = '', gmDisplayName = '', tableStateReady = false, onTableNameChange, onDeleteTable, ensureAdventuresLoaded, ensureCharactersLoaded, clearTable, isPlayer = false, playerEmail, connectedPlayers = [], playerEmails = [], playerNames = {}, inviteLink = null, onGenerateInviteLink, onRevokeInviteLink, onRemovePlayerEmail, onLeaveTable, gmUid, onPlayerAddCharacter, pendingBanners = [], pendingPlayerIntent = null, intentDifficultyUpdate = null, onFeatureRequestSuccess, onFeatureRequestCancel, rangerFocusRequestedBannerIds, onRangerFocusRerollRequestSuccess, onRangerFocusRerollRequestCancel, previewAsPlayerEmail = null, onPreviewAsPlayer, onExitPreview, actionLog = [], setActionLog, mapConfig, maps = [], activeMapId = null, gmMapView = null, onSetActiveMap, onAddMap, onAddMapWithImage, onRemoveMap, onRenameMap, onMapConfigChange, onMapViewSync, lifeSupportSelections = {}, onLifeSupportSelect, onLifeSupportClear, restMovesSelections = {}, onRestMoveSelect, onRestMoveClear, tableFeatureState = {}, sessionPlayAllowed = true, sessionStarted = true, sessionPaused = false, mapPings = [], onDismissMapPing = () => {}, appendMapPing = () => {},
   mapScribbles = [],
   mapViews = [], gmActiveViewId = null, onSetActiveView, onAddMapViewOp, onRemoveMapView, onRenameMapView, onSetViewBroadcast, onSetViewLocked, onSetMapShare,
   onSetMapOverlay,
@@ -467,6 +467,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
   onUpdateMapImageObject,
   onRemoveMapImageObject,
   isAdmin = false,
+  libraryCardDimensions = null,
 }) {
   const { hideAiUi } = useAiUiPreference();
   const showConceptAiUi = shouldShowConceptAiUi(conceptAiEnabled, hideAiUi);
@@ -7601,6 +7602,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
         }
         partySize={partySize}
         partyTier={partyTier}
+        quickPicks={modalOpen === 'scenes' ? nextScenes : undefined}
         onSelect={(item) => {
           void (async () => {
             if (modalOpen === 'characters' && isPlayer && onPlayerAddCharacter) {
@@ -7907,6 +7909,8 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
             : undefined
         }
         saveImage={saveImage}
+        libraryCardDimensions={libraryCardDimensions}
+        userUid={user?.uid}
         onSave={async (editedData) => {
           if (editState.mode === 'new') {
             const itemWithId = editedData;

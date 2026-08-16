@@ -971,6 +971,8 @@ export function LibraryView({
           partyTier={partyTier}
           characters={characters}
           onMergeAdversary={onMergeAdversary}
+          libraryCardDimensions={libraryCardDimensions}
+          userUid={userUid}
         />
       )}
 

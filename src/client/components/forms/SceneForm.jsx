@@ -1,10 +1,15 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Plus, Trash2 } from 'lucide-react';
 import { FormRow } from './FormRow.jsx';
 import { MarkdownHelpTooltip } from '../MarkdownHelpTooltip.jsx';
 import { ImageEditor } from './ImageEditor.jsx';
 import { SceneTableEditor } from './SceneTableEditor.jsx';
+import { ItemPickerModal } from '../modals/ItemPickerModal.jsx';
+import { ItemCard } from '../ItemCard.jsx';
 import { resolveItems } from '../../lib/api.js';
 import { computeSceneBudget } from '../../lib/battle-points.js';
+import { normalizeNextScenes } from '../../lib/scene-load-dialog.js';
+import { getDimensionsForTab } from '../../lib/library-card-dimensions.js';
 import { normalizeScenePartySize, normalizeScenePartyTier, normalizeSceneTableData } from '../../lib/scene-table-adapter.js';
 
 /**
@@ -17,7 +22,15 @@ function withSceneBattleFields(scene) {
   const partySize = normalizeScenePartySize(normalized.partySize);
   const partyTier = normalizeScenePartyTier(normalized.partyTier);
   const { tier, bp } = computeSceneBudget(normalized, partySize, partyTier);
-  return { ...scene, ...normalized, partySize, partyTier, tier, bp };
+  return {
+    ...scene,
+    ...normalized,
+    partySize,
+    partyTier,
+    tier,
+    bp,
+    nextScenes: normalizeNextScenes(scene.nextScenes ?? normalized.nextScenes),
+  };
 }
 
 function sceneNeedsTableDefaults(scene) {
@@ -37,7 +50,7 @@ function sceneNeedsTableDefaults(scene) {
  *
  * Scene data is a flat table_state snapshot: `activeElements`, `maps`, `mapViews`,
  * `tableBattleMods`, designed `partySize` (default 4) / `partyTier` (default 1),
- * denormalized `tier` / `bp`.
+ * denormalized `tier` / `bp`, plus authored `nextScenes: [{ id, name }]`.
  */
 export function SceneForm({
   initial,
@@ -47,6 +60,8 @@ export function SceneForm({
   onCancel,
   onImageSaved,
   omitPublicCheckbox = false,
+  libraryCardDimensions = null,
+  userUid,
 }) {
   const isControlled = value !== undefined;
 
@@ -54,8 +69,39 @@ export function SceneForm({
   // Jump straight into the (larger) Scene editor for an already-named scene; brand-new
   // scenes start on Details so there's somewhere to type a name first.
   const [activeTab, setActiveTab] = useState(() => ((isControlled ? value : initial)?.name ? 'scene' : 'details'));
+  const [nextPickerOpen, setNextPickerOpen] = useState(false);
+  const [nextSceneItemsById, setNextSceneItemsById] = useState({});
 
   const fd = isControlled ? (value || {}) : localData;
+  const nextScenes = useMemo(() => normalizeNextScenes(fd.nextScenes), [fd.nextScenes]);
+  const nextSceneKey = nextScenes.map((s) => s.id).join('\0');
+  const { width: nextSceneCardWidth, height: nextSceneCardHeight } = useMemo(
+    () => getDimensionsForTab(libraryCardDimensions, 'scenes', userUid),
+    [libraryCardDimensions, userUid],
+  );
+
+  useEffect(() => {
+    if (!nextScenes.length) {
+      setNextSceneItemsById({});
+      return undefined;
+    }
+    let cancelled = false;
+    resolveItems({ scenes: nextScenes.map((s) => s.id) })
+      .then((resolved) => {
+        if (cancelled) return;
+        const map = {};
+        for (const item of resolved.scenes || []) {
+          if (item?.id) map[item.id] = item;
+        }
+        setNextSceneItemsById(map);
+      })
+      .catch(() => {
+        if (!cancelled) setNextSceneItemsById({});
+      });
+    return () => { cancelled = true; };
+    // nextSceneKey is the stable identity of nextScenes
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nextSceneKey]);
   const latestFdRef = useRef(fd);
   latestFdRef.current = fd;
 
@@ -77,6 +123,7 @@ export function SceneForm({
       _additionalImages: latest._additionalImages,
       is_public: latest.is_public,
       id: latest.id,
+      nextScenes: latest.nextScenes,
     });
   };
 
@@ -165,6 +212,69 @@ export function SceneForm({
               />
               Make Public
             </label>
+          )}
+          <FormRow label="Next Scenes" className="mb-0">
+            <div className="space-y-3">
+              <button
+                type="button"
+                onClick={() => setNextPickerOpen(true)}
+                className="flex items-center gap-1.5 px-3 py-2 text-sm bg-dh-raised hover:bg-dh-hover border border-dh-border hover:border-dh-strong text-dh hover:text-dh rounded transition-colors"
+              >
+                <Plus size={14} />
+                Add Scene…
+              </button>
+              {nextScenes.length > 0 && (
+                <div className="flex flex-wrap gap-2">
+                  {nextScenes.map((row) => {
+                    const item = nextSceneItemsById[row.id] || { id: row.id, name: row.name || row.id };
+                    const name = item.name || row.name || row.id;
+                    return (
+                      <div key={row.id} className="relative shrink-0">
+                        <ItemCard
+                          item={item}
+                          tab="scenes"
+                          cardWidth={nextSceneCardWidth}
+                          cardHeight={nextSceneCardHeight}
+                          onView={() => {}}
+                          showSourceBadge
+                        />
+                        <button
+                          type="button"
+                          onClick={() => updateField(
+                            'nextScenes',
+                            nextScenes.filter((s) => s.id !== row.id),
+                          )}
+                          className="absolute top-1.5 right-1.5 z-10 p-1 rounded bg-dh-raised/90 border border-dh-border text-dh-muted hover:text-red-500 hover:border-red-700"
+                          aria-label={`Remove ${name}`}
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </FormRow>
+          {nextPickerOpen && (
+            <ItemPickerModal
+              collection="scenes"
+              selectionMode="multi"
+              overlayClassName="pt-[9.5rem]"
+              excludeIds={[fd.id, ...nextScenes.map((s) => s.id)].filter(Boolean)}
+              onClose={() => setNextPickerOpen(false)}
+              onSelectMany={(picks) => {
+                const incoming = (picks || []).map((p) => ({
+                  id: p.item?.id,
+                  name: p.item?.name || p.item?.id,
+                }));
+                updateField('nextScenes', normalizeNextScenes([
+                  ...nextScenes,
+                  ...incoming,
+                ]));
+                setNextPickerOpen(false);
+              }}
+            />
           )}
         </div>
 

@@ -94,6 +94,12 @@ describe('normalizeSceneTableData', () => {
     expect(scene.partySize).toBe(6);
     expect(scene.activeElements).toHaveLength(2);
   });
+
+  it('keeps authored nextScenes', () => {
+    const nextScenes = [{ id: 'srd-scene-b', name: 'Aftermath' }];
+    const scene = normalizeSceneTableData({ name: 'Ambush', nextScenes });
+    expect(scene.nextScenes).toEqual(nextScenes);
+  });
 });
 
 describe('applyScenePartySizeChange', () => {
