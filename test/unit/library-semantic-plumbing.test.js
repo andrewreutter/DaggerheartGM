@@ -29,7 +29,6 @@ describe('library semantic plumbing', () => {
       includeMine: false,
       includeSrd: true,
       includePublic: true,
-      includeHod: false,
       search: 'witherwild',
       semantic: 'comes from the trees',
       tiers: [2],

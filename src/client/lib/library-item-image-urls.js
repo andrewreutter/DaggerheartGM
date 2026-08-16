@@ -1,6 +1,6 @@
 /**
  * Primary art URL for library chrome (modal thumb, card thumb).
- * Prefer `imageUrl`; some payloads only set `image` (relative FCG paths).
+ * Prefer `imageUrl`; fall back to `image` when that is already an absolute URL.
  */
 function primaryImageUrl(item) {
   const direct = item.imageUrl;
@@ -10,9 +10,6 @@ function primaryImageUrl(item) {
   const s = String(raw).trim();
   if (!s) return '';
   if (/^https?:\/\//i.test(s)) return s;
-  if (item.id && String(item.id).startsWith('fcg-')) {
-    return `https://freshcutgrass.app${s.startsWith('/') ? s : `/${s}`}`;
-  }
   return s;
 }
 

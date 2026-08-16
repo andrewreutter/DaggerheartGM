@@ -36,8 +36,8 @@ import { useCollectionSearch } from '../lib/useCollectionSearch.js';
 import { buildLibraryAllApiOpts } from '../lib/library-all-api-params.js';
 import { useLibraryAllSearch } from '../lib/useLibraryAllSearch.js';
 import { useCharacterSrdData } from '../lib/useCharacterSrdData.js';
-import { isOwnItem, needsHodEnrich } from '../lib/constants.js';
-import { enrichItems, enrichSingleItem, loadLibraryAllCounts, conceptAiEnabled } from '../lib/api.js';
+import { isOwnItem } from '../lib/constants.js';
+import { loadLibraryAllCounts, conceptAiEnabled } from '../lib/api.js';
 import { useAiUiPreference } from '../lib/ai-ui-preference-context.jsx';
 import { shouldShowConceptAiUi } from '../lib/ai-ui-visibility.js';
 import { generateId } from '../lib/helpers.js';
@@ -155,7 +155,6 @@ const DEFAULT_ASSISTANT_SCOPE = {
   includeMine: true,
   includePublic: true,
   includeSrd: true,
-  includeHod: false,
 };
 
 const noopRequireAuth = () => {};
@@ -454,43 +453,6 @@ export function LibraryView({
     }
   }, [search.items, activeTab, isPaginatedTab, onItemsChange]);
 
-  // Lazy-load tier (and full detail) for HoD adversaries/environments that came back
-  // from the list search with tier=null. Fires background Foundry detail fetches,
-  // patches the displayed items in place, and warms the mirror cache.
-  const enrichAttemptedRef = useRef(new Set());
-  useEffect(() => {
-    if (!isPaginatedTab) return;
-    const needsEnrich = search.items.filter(i =>
-      i._source === 'hod' && (i.tier == null || (i.features || []).length === 0)
-    );
-    const keyed = needsEnrich.filter(i => {
-      const k = `${i._collection || activeTab}:${i.id}`;
-      if (enrichAttemptedRef.current.has(k)) return false;
-      enrichAttemptedRef.current.add(k);
-      return true;
-    });
-    if (keyed.length === 0) return;
-    const byCol = {};
-    for (const i of keyed) {
-      const col = i._collection || activeTab;
-      if (!byCol[col]) byCol[col] = [];
-      byCol[col].push(i);
-    }
-    Promise.all(
-      Object.entries(byCol).map(([col, list]) =>
-        enrichItems(col, list).then(enriched => ({ col, enriched }))
-      )
-    ).then(results => {
-      const patchMap = {};
-      for (const { col, enriched } of results) {
-        for (const [id, row] of Object.entries(enriched || {})) {
-          patchMap[`${col}:${id}`] = row;
-        }
-      }
-      if (Object.keys(patchMap).length > 0) search.patchItems(patchMap);
-    }).catch(() => {});
-  }, [search.items, activeTab, isPaginatedTab]);
-
   // For paginated tabs, items come from the hook; for non-paginated, from app data.
   const items = isPaginatedTab ? search.items : (data[activeTab] || []);
 
@@ -596,14 +558,7 @@ export function LibraryView({
   const openModal = async (item) => {
     const col = item._collection || activeTab;
     navigate(buildLibraryModalPath(activeTab, col, item.id || 'new', currentLibraryRouteOpts));
-    if (needsHodEnrich(item)) {
-      setModalState({ item, isNew: false, enriching: true });
-      const enriched = await enrichSingleItem(col, item);
-      search.patchItems(activeTab === 'all' ? { [`${col}:${enriched.id}`]: enriched } : { [enriched.id]: enriched });
-      setModalState({ item: enriched, isNew: false, enriching: false });
-    } else {
-      setModalState({ item, isNew: !item.id });
-    }
+    setModalState({ item, isNew: !item.id });
   };
 
   const openNew = useCallback(() => {
@@ -975,7 +930,6 @@ export function LibraryView({
           collection={modalCollection}
           data={data}
           editable={(modalState.isNew || modalItemIsOwn) && canEditInModal}
-          enriching={!!modalState.enriching}
           onSave={handleSave}
           onSaveElement={activeTab === 'scenes' && modalItemIsOwn ? handleSaveElement : null}
           saveImage={saveImage}

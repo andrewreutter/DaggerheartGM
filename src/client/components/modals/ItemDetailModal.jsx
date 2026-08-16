@@ -95,7 +95,6 @@ export const ItemDetailModal = forwardRef(function ItemDetailModal({
   collection,
   data,
   editable,
-  enriching = false,
   onSave,
   onSaveElement,
   saveImage,
@@ -485,7 +484,6 @@ export const ItemDetailModal = forwardRef(function ItemDetailModal({
           partyTier={partyTier}
           characters={characters}
           srdData={characterSrdData}
-          enriching={enriching}
           adversaryScaledMeta={hasScaledToggle ? { fromTier: baseDisplayItem._scaledFromTier, showScaled } : null}
           onAdversaryScaledToggle={() => setShowScaled(s => !s)}
           onSaveElement={onSaveElement}

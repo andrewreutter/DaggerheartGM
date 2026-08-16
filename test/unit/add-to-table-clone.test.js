@@ -12,7 +12,6 @@ describe('shouldCloneOnAddToTable', () => {
   it('still clone-on-play for non-own adversaries and environments', () => {
     expect(shouldCloneOnAddToTable('adversaries', { id: 'srd-adv-bear', _source: 'srd' })).toBe(true);
     expect(shouldCloneOnAddToTable('environments', { id: 'srd-env-chaos-realm', _source: 'srd' })).toBe(true);
-    expect(shouldCloneOnAddToTable('adversaries', { id: 'hod-1', _source: 'hod' })).toBe(true);
     expect(shouldCloneOnAddToTable('environments', { id: 'pub', _source: 'public' })).toBe(true);
   });
 

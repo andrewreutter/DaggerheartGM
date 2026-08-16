@@ -138,7 +138,6 @@ describe('Library All scenes branch', () => {
   const baseOpts = {
     includeMine: true,
     includePublic: false,
-    includeHod: false,
     search: '',
     sort: 'name',
     offset: 0,

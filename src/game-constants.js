@@ -70,9 +70,3 @@ export const RELEASED_ABILITY_TIER_CEILING = 0;
  * Engine mutations and Game Table banner math use this key; feature modules own the scope bag.
  */
 export const PENDING_EVASION_BONUS_STATE_KEY = 'pendingEvasionBonus';
-
-/**
- * Synthetic `items.user_id` for Fresh Cut Grass catalog content (no Firebase Auth).
- * Rows are `is_public: true` and appear in the Library like any other public item.
- */
-export const FCG_PUBLIC_USER_ID = '__FCG_PUBLIC__';

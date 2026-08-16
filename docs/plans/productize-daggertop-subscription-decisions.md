@@ -92,7 +92,7 @@ P1 blocks ship. P2 should land in the same effort window. P3 is a follow-up.
   - Files: `server.js`, `src/ai-usage-log.js`
   - Verify: unit test
 
-- [ ] **T9 (P1)** — Reconciliation cron (Stripe Checkout Sessions vs. local DB records) reusing the `node-cron` pattern from `src/external-sync.js`; change `min_machines_running` from `0` to `1` in `fly.toml`. No subscription status to reconcile — this is a safety-net sweep for missed/failed webhooks; expiry is a plain timestamp comparison, no batch job needed to flip a status flag.
+- [ ] **T9 (P1)** — Reconciliation cron (Stripe Checkout Sessions vs. local DB records) reusing the `node-cron` pattern from `server.js`; change `min_machines_running` from `0` to `1` in `fly.toml`. No subscription status to reconcile — this is a safety-net sweep for missed/failed webhooks; expiry is a plain timestamp comparison, no batch job needed to flip a status flag.
   - Files: `server.js`, `fly.toml`
   - Verify: chaos test — kill mid-webhook, verify self-heal within one cron cycle
 

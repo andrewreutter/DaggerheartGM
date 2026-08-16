@@ -23,7 +23,6 @@ describe('buildLibraryAllApiOpts', () => {
     expect(o.includeMine).toBe(true);
     expect(o.includeSrd).toBe(true);
     expect(o.includePublic).toBe(true);
-    expect(o.includeHod).toBe(true);
     expect(o.search).toBe('foo');
     expect(o.sort).toBe('name');
   });
@@ -46,7 +45,6 @@ describe('buildLibraryAllApiOpts', () => {
     expect(o.includeMine).toBe(true);
     expect(o.includeSrd).toBe(true);
     expect(o.includePublic).toBe(false);
-    expect(o.includeHod).toBe(false);
     expect(o.tiers).toEqual([2]);
   });
 
@@ -68,7 +66,6 @@ describe('buildLibraryAllSearchParams', () => {
       includeMine: true,
       includeSrd: true,
       includePublic: false,
-      includeHod: false,
       search: 'test',
       tiers: [1, 2],
       levels: [3],

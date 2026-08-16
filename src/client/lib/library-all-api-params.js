@@ -25,7 +25,6 @@ export function buildLibraryAllApiOpts(filters) {
     includeMine: isAll || includes.includes('own'),
     includeSrd: isAll || includes.includes('srd'),
     includePublic: isAll || includes.includes('public'),
-    includeHod: isAll || includes.includes('hod'),
     search: search || '',
     semantic: semantic || '',
     tiers,
@@ -45,7 +44,6 @@ export function buildLibraryAllSearchParams({
   includeMine = true,
   includeSrd = false,
   includePublic = false,
-  includeHod = false,
   search = '',
   semantic = '',
   tiers = [],
@@ -65,7 +63,6 @@ export function buildLibraryAllSearchParams({
   if (!includeMine) params.set('includeMine', '0');
   if (includeSrd) params.set('includeSrd', '1');
   if (includePublic) params.set('includePublic', '1');
-  if (includeHod) params.set('includeHod', '1');
   if (search) params.set('search', search);
   if (semantic) params.set('semantic', semantic);
   if (Array.isArray(tiers) && tiers.length > 0) {

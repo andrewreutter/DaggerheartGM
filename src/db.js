@@ -7,7 +7,7 @@ import {
   shouldIncludeLibraryAllBranch,
 } from './library-all-branch-opts.js';
 import { countFeatureCatalog, filterFeatureCatalog } from './v2-feature-catalog.js';
-import { FCG_PUBLIC_USER_ID } from './game-constants.js';
+import { scrapedCatalogPublicExcludeSql } from './scraped-catalog-exclude.js';
 import { normalizePersistedCharacterElement } from './client/lib/normalize-persisted-character-element.js';
 import { attachDerivedMapConfig } from './client/lib/map-table-state.js';
 import { mergeUserPreferencesData, normalizeUserPreferences } from './user-preferences.js';
@@ -23,8 +23,6 @@ const MIGRATIONS_DIR = join(__dirname, '..', 'migrations');
 /** Stores canonical copies of external (SRD played/cloned, etc.) items for local-first search and popularity tracking. */
 export const MIRROR_USER_ID = '__MIRROR__';
 const DIRECT_SRD_COLLECTIONS = new Set(['campaign_frames', 'rules']);
-
-export { FCG_PUBLIC_USER_ID };
 
 let pool;
 
@@ -93,6 +91,7 @@ export async function getPublicItems(appId, excludeUserId, collection) {
        COALESCE((SELECT COUNT(*) FROM item_popularity ip WHERE ip.app_id = i.app_id AND ip.collection = i.collection AND ip.item_id = i.id AND ip.action = 'play'), 0) AS play_count
      FROM items i
      WHERE app_id = $1 AND user_id != $2 AND collection = $3 AND is_public = true
+       AND ${scrapedCatalogPublicExcludeSql()}
      ORDER BY created_at ASC`,
     [appId, excludeUserId, collection]
   );
@@ -171,7 +170,7 @@ function buildCommunitySQL(baseParamCount, {
   let idx = baseParamCount + 1;
 
   if (includePublic && excludeUserId != null) {
-    sourceClauses.push(`(is_public = true AND user_id != $${idx} AND user_id != '${MIRROR_USER_ID}')`);
+    sourceClauses.push(`(is_public = true AND user_id != $${idx} AND user_id != '${MIRROR_USER_ID}' AND ${scrapedCatalogPublicExcludeSql()})`);
     extraParams.push(excludeUserId);
     idx++;
   }
@@ -661,14 +660,13 @@ const SORT_OPTIONS = {
 };
 
 /**
- * Unified paginated query combining items (own + public) and external_item_cache (srd, hod).
+ * Unified paginated query combining items (own + public) and external_item_cache (srd).
  * Single OFFSET/LIMIT, no source ordering.
  *
  * @param {object} opts
  * @param {boolean} opts.includeMine
  * @param {boolean} opts.includePublic
  * @param {boolean} opts.includeSrd
- * @param {boolean} opts.includeHod
  * @param {string} opts.search
  * @param {number|null} opts.tierMax
  * @param {boolean} [opts.tierMaxExclusive] When true with tierMax, filter to tiers strictly below tierMax (adversary upscaled-only).
@@ -686,7 +684,6 @@ export async function getUnifiedItems(appId, userId, collection, {
   includeMine = true,
   includePublic = false,
   includeSrd = false,
-  includeHod = false,
   search = '',
   tierMax = null,
   tierMaxExclusive = false,
@@ -758,7 +755,7 @@ export async function getUnifiedItems(appId, userId, collection, {
       p++;
     }
     if (includePublic) {
-      srcClauses.push(`(i.is_public = true AND i.user_id != $${p} AND i.user_id != '${MIRROR_USER_ID}')`);
+      srcClauses.push(`(i.is_public = true AND i.user_id != $${p} AND i.user_id != '${MIRROR_USER_ID}' AND ${scrapedCatalogPublicExcludeSql('i')})`);
       params.push(userId);
       p++;
     }
@@ -781,7 +778,6 @@ export async function getUnifiedItems(appId, userId, collection, {
 
   const extSources = [];
   if (includeSrd) extSources.push('srd');
-  if (includeHod) extSources.push('hod');
 
   if (extSources.length > 0) {
     parts.push(`(
@@ -952,7 +948,7 @@ async function fetchFeaturesLibraryAllBranch(opts, countOnly) {
 
 /**
  * Own + public `scenes` rows for Library "All", plus `external_item_cache` when
- * `includeSrd` / `includeHod` is on (SRD starter scenes are cache-backed, not in the parser).
+ * `includeSrd` is on (SRD starter scenes are cache-backed, not in the parser).
  * Scenes are not in `SRD_COLLECTION_NAMES`, so this is the only Library All scenes branch.
  * @param {boolean} countOnly - pass through to getUnifiedItems (no row fetch when true)
  */
@@ -961,7 +957,6 @@ async function fetchScenesLibraryAllBranch(appId, userId, opts, countOnly) {
     includeMine = true,
     includePublic = false,
     includeSrd = false,
-    includeHod = false,
     search = '',
     tiers = [],
     levels = [],
@@ -986,7 +981,6 @@ async function fetchScenesLibraryAllBranch(appId, userId, opts, countOnly) {
     includeMine,
     includePublic,
     includeSrd,
-    includeHod,
     search,
     tierMax,
     tierMaxExclusive,
@@ -1006,7 +1000,6 @@ async function runLibraryAllBranches(appId, userId, opts, countOnly) {
     includeMine = true,
     includePublic = false,
     includeSrd = false,
-    includeHod = false,
     search = '',
     tiers = [],
     levels = [],
@@ -1044,7 +1037,6 @@ async function runLibraryAllBranches(appId, userId, opts, countOnly) {
         includeMine,
         includePublic,
         includeSrd,
-        includeHod,
         search,
         tierMax,
         tierMaxExclusive,

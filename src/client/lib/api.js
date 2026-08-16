@@ -178,13 +178,12 @@ export const postEncounterDropImport = async (file, kind) => {
  * Load a paginated page of items for a single collection.
  * Returns { items, totalCount, dbCount }
  */
-export const loadCollection = async (collection, { includeMine = true, includeSrd = false, includePublic = false, includeHod = false, search = '', semantic = '', tier = null, tiers = [], type = null, types = [], extraTypes = [], includeScaledUp = false, sort = 'popularity', offset = 0, limit = 20, id = null } = {}) => {
+export const loadCollection = async (collection, { includeMine = true, includeSrd = false, includePublic = false, search = '', semantic = '', tier = null, tiers = [], type = null, types = [], extraTypes = [], includeScaledUp = false, sort = 'popularity', offset = 0, limit = 20, id = null } = {}) => {
   const token = await getAuthToken();
   const params = new URLSearchParams({ offset: String(offset), limit: String(limit) });
   if (!includeMine) params.set('includeMine', '0');
   if (includeSrd) params.set('includeSrd', '1');
   if (includePublic) params.set('includePublic', '1');
-  if (includeHod) params.set('includeHod', '1');
   if (search) params.set('search', search);
   if (semantic) params.set('semantic', semantic);
   if (collection === 'features' && id) params.set('id', id);
@@ -269,7 +268,6 @@ export const loadCollectionStream = async (collection, opts, { onBatch, onEnrich
   if (!opts.includeMine) params.set('includeMine', '0');
   if (opts.includeSrd) params.set('includeSrd', '1');
   if (opts.includePublic) params.set('includePublic', '1');
-  if (opts.includeHod) params.set('includeHod', '1');
   if (opts.search) params.set('search', opts.search);
   if (Array.isArray(opts.tiers) && opts.tiers.length > 0) {
     opts.tiers.forEach(t => params.append('tier', String(t)));
@@ -357,39 +355,6 @@ export const resolveItems = async (idMap, { adopt = false } = {}) => {
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
-};
-
-/**
- * Fetch full HoD Foundry detail for items with missing tier data, warming the mirror cache.
- * Fire-and-forget friendly — returns {} on any failure.
- * @param {string} collection - 'adversaries' | 'environments'
- * @param {object[]} items - list items with _source='hod' and _hodPostId set
- * @returns {Record<string, object>} map of id -> enriched item data
- */
-export const enrichItems = async (collection, items) => {
-  const token = await getAuthToken();
-  if (!token) return {};
-  const stubs = items.map(i => ({ id: i.id, _source: i._source, _hodPostId: i._hodPostId, _hodLink: i._hodLink }));
-  try {
-    const res = await fetch(`/api/data/${collection}/enrich`, {
-      method: 'POST',
-      headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
-      body: JSON.stringify({ items: stubs }),
-    });
-    if (!res.ok) return {};
-    const data = await res.json();
-    return data.enriched || {};
-  } catch {
-    return {};
-  }
-};
-
-/**
- * Enrich a single HoD item, returning the full detail or the original item on failure.
- */
-export const enrichSingleItem = async (collection, item) => {
-  const enriched = await enrichItems(collection, [item]);
-  return enriched[item.id] || item;
 };
 
 /**

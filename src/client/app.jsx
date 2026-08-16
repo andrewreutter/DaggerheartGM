@@ -1878,7 +1878,6 @@ function App() {
       includeMine: true,
       includePublic: true,
       includeSrd: true,
-      includeHod: false,
     },
     browseState: route.view === 'library'
       ? {

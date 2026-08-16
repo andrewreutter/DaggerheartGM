@@ -4,7 +4,7 @@ import {
   resolveV2FeatureSourcePath,
   resolveV2LibraryItemSourcePath,
 } from '../../features-v2/resolve-feature-source-path.js';
-import { SOURCE_BADGE, isOwnItem, needsHodEnrich } from '../lib/constants.js';
+import { SOURCE_BADGE, isOwnItem } from '../lib/constants.js';
 import { showLibraryTierShield, showLibraryLevelBadge } from '../lib/library-tier-subtitle.js';
 import { ItemActionButtons } from './ItemActionButtons.jsx';
 import { TierShieldBadge } from './TierShieldBadge.jsx';
@@ -51,7 +51,6 @@ export function ItemCard({
   const isOwn = isOwnItem(item);
   const badge = showSourceBadge ? (SOURCE_BADGE[item._source] ?? SOURCE_BADGE.own) : null;
   const popularity = item.popularity ?? ((item.clone_count || 0) + (item.play_count || 0));
-  const isEnriching = needsHodEnrich(item);
 
   const tierByName = showLibraryTierShield(tab, item);
   const levelByName = showLibraryLevelBadge(tab, item);
@@ -228,7 +227,6 @@ export function ItemCard({
     cardWidth,
     cardHeight,
     showPreview,
-    isEnriching,
     partySize,
     partyTier,
   ]);
@@ -419,7 +417,6 @@ export function ItemCard({
                 partyTier={partyTier}
                 characters={characters}
                 srdData={srdData}
-                enriching={isEnriching}
                 cardKey={`library-card-${item.id ?? 'new'}`}
               />
               )}

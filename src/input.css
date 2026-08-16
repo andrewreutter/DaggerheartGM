@@ -41,12 +41,6 @@
   --dh-badge-public-bg: 30 58 138;
   --dh-badge-public-text: 191 219 254;
   --dh-badge-public-border: 37 99 235;
-  --dh-badge-hod-bg: 136 19 55;
-  --dh-badge-hod-text: 254 205 211;
-  --dh-badge-hod-border: 225 29 72;
-  --dh-badge-fcg-bg: 20 83 45;
-  --dh-badge-fcg-text: 187 247 208;
-  --dh-badge-fcg-border: 22 163 74;
   --dh-tier-shield-fill: 30 41 59;
   --dh-tier-shield-stroke: 100 116 139;
   --dh-tier-shield-text: 226 232 240;
@@ -142,16 +136,6 @@
   background: rgb(var(--dh-badge-public-bg) / 0.92);
   color: rgb(var(--dh-badge-public-text) / 1);
   border-color: rgb(var(--dh-badge-public-border) / 1);
-}
-.dh-badge-hod {
-  background: rgb(var(--dh-badge-hod-bg) / 0.92);
-  color: rgb(var(--dh-badge-hod-text) / 1);
-  border-color: rgb(var(--dh-badge-hod-border) / 1);
-}
-.dh-badge-fcg {
-  background: rgb(var(--dh-badge-fcg-bg) / 0.92);
-  color: rgb(var(--dh-badge-fcg-text) / 1);
-  border-color: rgb(var(--dh-badge-fcg-border) / 1);
 }
 
 /* Character sheet: trait + roll state (semantic sky / green / violet / amber tints) */

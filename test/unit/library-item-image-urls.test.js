@@ -14,13 +14,13 @@ describe('getLibraryItemImageUrls', () => {
     ).toEqual(['https://example.com/a.webp', 'https://example.com/b.webp']);
   });
 
-  it('uses Fresh Cut Grass CDN for relative image when id is fcg-* and imageUrl is missing', () => {
+  it('falls back to image when it is already an absolute URL and imageUrl is missing', () => {
     expect(
       getLibraryItemImageUrls({
-        id: 'fcg-123',
+        id: 'adv-1',
         name: 'Test',
-        image: '/images/adversaries/Bear.webp',
+        image: 'https://example.com/images/adversaries/Bear.webp',
       }),
-    ).toEqual(['https://freshcutgrass.app/images/adversaries/Bear.webp']);
+    ).toEqual(['https://example.com/images/adversaries/Bear.webp']);
   });
 });

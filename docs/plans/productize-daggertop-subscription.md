@@ -303,7 +303,7 @@ This document is a strategy/scoping plan, not yet a concrete engineering spec wi
 
 **Section 7 (Performance):** N/A at CEO level for the same reason as Section 5 — deferred to Eng phase, which evaluates the actual query/webhook load implications concretely.
 
-**Section 8 (Observability & Debuggability):** **Finding:** no error-tracking/alerting tool exists anywhere in the codebase (only `console.error`); a billing product needs to know when webhooks fail silently. **Auto-decided (P2, boil lakes):** a full observability stack is outside 1-day blast radius → **deferred to TODOS.md**; a lightweight interim (structured logging for webhook events + a cron-based reconciliation job, reusing the existing `node-cron` pattern already in `src/external-sync.js`) is proposed as a same-scope substitute in the Eng phase. **[AMENDMENT, 2026-07-13, direct user feedback]:** this gap is broader than webhooks — it also covers in-session gameplay bug capture, which the user separately flagged as poor. Confirmed by direct code read (Section 7 above): `POST /api/debug-log` is dev-only and `ErrorBoundary.jsx` only `console.error`s; neither reaches an operator once this is a hosted paid product. A lightweight, GM-only, non-interrupting "Report a problem" capture mechanism (recent action-log + client state snapshot, no typed reproduction required) is now in scope as part of the same interim-observability substitute, consistent with the hard "never interrupt a live session" constraint from Design Phase 2 — see new task **T13**.
+**Section 8 (Observability & Debuggability):** **Finding:** no error-tracking/alerting tool exists anywhere in the codebase (only `console.error`); a billing product needs to know when webhooks fail silently. **Auto-decided (P2, boil lakes):** a full observability stack is outside 1-day blast radius → **deferred to TODOS.md**; a lightweight interim (structured logging for webhook events + a cron-based reconciliation job, reusing the existing `node-cron` pattern already in `server.js`) is proposed as a same-scope substitute in the Eng phase. **[AMENDMENT, 2026-07-13, direct user feedback]:** this gap is broader than webhooks — it also covers in-session gameplay bug capture, which the user separately flagged as poor. Confirmed by direct code read (Section 7 above): `POST /api/debug-log` is dev-only and `ErrorBoundary.jsx` only `console.error`s; neither reaches an operator once this is a hosted paid product. A lightweight, GM-only, non-interrupting "Report a problem" capture mechanism (recent action-log + client state snapshot, no typed reproduction required) is now in scope as part of the same interim-observability substitute, consistent with the hard "never interrupt a live session" constraint from Design Phase 2 — see new task **T13**.
 
 **Section 9 (Deployment & Rollout):** **Finding:** the single-machine, scale-to-zero Fly.io deployment (`min_machines_running = 0`) creates a cold-start risk specifically for webhook delivery timeouts (a slow cold start after idle risks Stripe treating a delayed response as a failed delivery and retrying, which requires idempotent processing — not yet designed). **Auto-decided:** carried into Eng phase Section on Test Review / Failure Modes below as a P1 finding requiring idempotent webhook handling.
 
@@ -727,7 +727,7 @@ N/A for existing code — no billing code has been written yet. **Forward-lookin
     - Per-user AI usage recording (6 call sites)
 
   NEW BACKGROUND JOBS / ASYNC WORK:
-    - Reconciliation cron (Stripe subscription status vs. local DB, safety net for missed webhooks — reuses existing node-cron pattern from src/external-sync.js)
+    - Reconciliation cron (Stripe subscription status vs. local DB, safety net for missed webhooks — reuses existing node-cron pattern from server.js)
 
   NEW INTEGRATIONS / EXTERNAL CALLS:
     - Stripe Checkout, Stripe Customer Portal, Stripe webhooks
@@ -797,7 +797,7 @@ None of M1-M6 exist today, in any form. Automating them requires a test *shape* 
 ## What Already Exists (Eng phase)
 
 - `item_popularity`'s `ON CONFLICT DO NOTHING` pattern — direct template for the webhook event-id dedup table.
-- `node-cron` + the existing 3am/4am job pattern in `src/external-sync.js` — direct template for the reconciliation cron.
+- `node-cron` + the existing job pattern in `server.js` — direct template for the reconciliation cron.
 - The `req.uid`-based ownership-check pattern used throughout `server.js` — direct template for entitlement-check authorization (avoids IDOR by construction if followed consistently).
 - `user_preferences` (migration 024) — closest existing precedent for a small, user-keyed settings/status table, informing the shape of the new `billing_customers` table.
 
@@ -1254,7 +1254,7 @@ Synthesized from every finding above. Each task derives from a specific finding 
   - Surfaced by: CEO Section 3, Eng hidden-complexity finding
   - Files: `server.js`, `src/ai-usage-log.js`
   - Verify: unit test per Test Plan item 10
-- [ ] **T9 (P1, human: ~2h / CC: ~20min)** — infra — Reconciliation cron (Stripe Checkout Session records vs. local DB), reusing the `node-cron` pattern from `src/external-sync.js`; change `min_machines_running` to `1`. **[ROUND 5 FINAL, 2026-07-14]** Under the now-locked Proposal 5 there is no Stripe *subscription* status to reconcile for core table access — no subscription object exists anywhere in this product (R4.6). This cron's job is: (a) a safety-net sweep for missed/failed Campaign-Pass-purchase or AI-credit-purchase webhooks (comparing recent Stripe Checkout Sessions to local `table_campaign_passes`/credit records), and (b) nothing further to actively "expire" — a passed `paid_through_at` timestamp is simply no longer live at check time, with no batch job needed to flip a status flag. The `min_machines_running: 1` recommendation is unchanged — it mitigates webhook cold-start risk regardless of which purchase shape triggers the webhook.
+- [ ] **T9 (P1, human: ~2h / CC: ~20min)** — infra — Reconciliation cron (Stripe Checkout Session records vs. local DB), reusing the `node-cron` pattern from `server.js`; change `min_machines_running` to `1`. **[ROUND 5 FINAL, 2026-07-14]** Under the now-locked Proposal 5 there is no Stripe *subscription* status to reconcile for core table access — no subscription object exists anywhere in this product (R4.6). This cron's job is: (a) a safety-net sweep for missed/failed Campaign-Pass-purchase or AI-credit-purchase webhooks (comparing recent Stripe Checkout Sessions to local `table_campaign_passes`/credit records), and (b) nothing further to actively "expire" — a passed `paid_through_at` timestamp is simply no longer live at check time, with no batch job needed to flip a status flag. The `min_machines_running: 1` recommendation is unchanged — it mitigates webhook cold-start risk regardless of which purchase shape triggers the webhook.
   - Surfaced by: Eng Section 4, Architecture SPOF finding; FINAL scope locked by Round 4/5 R4.6/R4.7
   - Files: `server.js`, `fly.toml`
   - Verify: chaos test per Test Plan (kill mid-webhook, verify self-heal within one cron cycle)

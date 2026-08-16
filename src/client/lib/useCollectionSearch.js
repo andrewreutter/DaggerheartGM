@@ -152,7 +152,6 @@ export function useCollectionSearch(collection, {
       includeMine: isAll || includes.includes('own'),
       includeSrd: isAll || includes.includes('srd'),
       includePublic: isAll || includes.includes('public'),
-      includeHod: isAll || includes.includes('hod'),
       search: search || '',
       semantic: semantic || '',
       tier: singleTier,

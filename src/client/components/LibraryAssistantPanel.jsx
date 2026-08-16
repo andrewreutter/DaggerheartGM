@@ -15,7 +15,6 @@ const DEFAULT_SCOPE = {
   includeMine: true,
   includePublic: true,
   includeSrd: true,
-  includeHod: false,
 };
 
 const DEFAULT_PROMPTS = [

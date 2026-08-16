@@ -717,7 +717,6 @@ export function LibraryItemDisplayContent({
   partyTier = 1,
   characters = [],
   srdData = null,
-  enriching = false,
   adversaryScaledMeta = null,
   onAdversaryScaledToggle,
   onSaveElement,
@@ -734,14 +733,7 @@ export function LibraryItemDisplayContent({
 
   return (
     <>
-      {enriching ? (
-        <div className="flex items-center gap-2 mb-3 px-3 py-2 rounded-lg bg-rose-950/40 border border-rose-800/50">
-          <div className="w-3 h-3 rounded-full border-2 border-rose-400 border-t-transparent animate-spin" />
-          <span className="text-sm text-rose-300">Loading full details…</span>
-        </div>
-      ) : null}
-
-      {libraryCard && !enriching ? <LibraryItemCardLeadImage item={item} /> : null}
+      {libraryCard ? <LibraryItemCardLeadImage item={item} /> : null}
 
       {collection === 'adversaries' && (
         <AdversaryCardContent

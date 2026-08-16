@@ -7,9 +7,6 @@
   "scripts": {
     "prestart": "node --env-file=.env scripts/kill-port.mjs && npm run build",
     "start": "node --env-file=.env server.js",
-    "crawl": "node --env-file=.env scripts/crawl.js",
-    "crawl:fcg": "node --env-file=.env scripts/crawl.js fcg",
-    "crawl:hod": "node --env-file=.env scripts/crawl.js hod",
     "refresh:daggerstack": "node scripts/refresh-daggerstack-uuids.js",
     "generate:beastforms": "node scripts/generate-beastform-srd-data.mjs",
     "generate:srd-scenes": "node --env-file=.env scripts/generate-srd-starter-scenes.mjs",
@@ -40,7 +37,8 @@
     "chunk:srd": "node scripts/chunk-srd-readme.mjs",
     "migrate:map-images": "node --env-file=.env scripts/migrate-map-images-to-storage.mjs",
     "reconcile:characters": "node --env-file=.env scripts/reconcile-character-ownership.mjs",
-    "migrate:item-images": "node --env-file=.env scripts/migrate-item-images-to-storage.mjs"
+    "migrate:item-images": "node --env-file=.env scripts/migrate-item-images-to-storage.mjs",
+    "migrate:scraped-catalogs": "node --env-file=.env scripts/migrate-scraped-catalogs.mjs"
   },
   "dependencies": {
     "@3d-dice/dice-box-threejs": "^0.0.12",

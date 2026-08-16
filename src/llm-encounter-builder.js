@@ -97,19 +97,14 @@ function compactEnvPick(e) {
 }
 
 /**
- * When `includePublic` is false, exclude Fresh Cut Grass (`fcg-*`) and other users'
- * public listings from the LLM catalog (defensive; also avoids `!!"false"` mishandling upstream).
+ * When `includePublic` is false, exclude other users' public listings from the
+ * LLM catalog (defensive; also avoids `!!"false"` mishandling upstream).
  * @param {object[]} items
  * @param {boolean} includePublic
  */
 export function filterEncounterCatalogBySource(items, includePublic) {
   if (includePublic) return items;
-  return items.filter((x) => {
-    const id = String(x?.id ?? '');
-    if (id.startsWith('fcg-')) return false;
-    if (x?._source === 'public') return false;
-    return true;
-  });
+  return items.filter((x) => x?._source !== 'public');
 }
 
 async function loadContext() {

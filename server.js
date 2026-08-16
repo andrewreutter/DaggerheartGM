@@ -12,13 +12,11 @@ import cron from 'node-cron';
 import { runMigrations, getPool, getItems, getPublicItems, upsertItem, deleteItem, countItems, getItemsPaginated, countCommunityItems, getCommunityItemsPaginated, getItemsByIds, getItem, recordClone, recordPlay, upsertMirror, findAutoClone, getUnifiedItems, getUnifiedLibraryAll, getUnifiedLibraryAllBranchCounts, getExternalCacheByIds, getTableStatesByPlayerEmail, getTableStateById, listTableStates, summarizeTablePlayerRoster, appendDiceRoll, ackDiceRoll, getRecentDiceRolls, setBannerStatus, getPendingBanners, getDiceRollById, updateDiceRollData, resolveCharacterElements as resolveCharacterElementsDb, stripCharacterElementsForDb, getResolvedTableState, setTableStateNotifyHook, getUserPreferences, upsertUserPreferences, queryAiUsageAggregates, stampFreeTrialStart, checkTableIsLive, extendTableCampaignPass, recordCampaignPassPurchase, markStripeEventProcessed, recordCharacterTablePlacement, removeCharacterTablePlacementsForTable, createTableInviteLink, revokeTableInviteLink, getActiveTableInviteLink, redeemTableInviteLink, deleteTableInviteLinksForTable, countUserAiCallsThisMonth, getBugReportsPaginated, countBugReports, setBugReportStatus, updateBugReportNotes, BUG_REPORT_STATUSES, getCharacterById, upsertCharacterForTable, deleteCharacterForTable, stampCharacterTableId } from './src/db.js';
 import { isStripeConfigured, getStripe, constructWebhookEvent, CAMPAIGN_PASS_PRICE_CENTS, getCampaignPassPriceId } from './src/stripe.js';
 import { srdRouter, warmCache, getItem as getSrdItem } from './src/srd/index.js';
-import { fetchHoDFoundryDetail } from './src/hod-search.js';
 import { loadSrdIntoDb } from './src/srd-loader.js';
 import { COLLECTION_NAMES as SRD_COLLECTION_NAMES } from './src/srd/parser.js';
 import { redactTableStateForPlayerAudience } from './src/client/lib/session-countdowns.js';
 import { filterFeatureCatalog, getFeatureCatalogById } from './src/v2-feature-catalog.js';
 import { unifiedListConfig } from './src/unified-list-config.js';
-import { runFullSync, runSyncSource, isSyncInProgress } from './src/external-sync.js';
 import multer from 'multer';
 import { parseStatBlock, mergeResults, detectCollection } from './src/text-parse.js';
 import {
@@ -1387,7 +1385,6 @@ function parseLibraryAllQuery(req) {
   const includeMine = !!req.uid && req.query.includeMine !== '0';
   const includePublic = req.query.includePublic === '1';
   const includeSrd = req.query.includeSrd === '1';
-  const includeHod = req.query.includeHod === '1';
   const search = req.query.search || '';
   const sort = req.query.sort || 'popularity';
   const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
@@ -1411,7 +1408,6 @@ function parseLibraryAllQuery(req) {
     includeMine,
     includePublic,
     includeSrd,
-    includeHod,
     search,
     semantic,
     sort,
@@ -1445,7 +1441,6 @@ app.get('/api/data/library-all-counts', optionalAuth, async (req, res) => {
       includeMine: q.includeMine,
       includePublic: q.includePublic,
       includeSrd: q.includeSrd,
-      includeHod: q.includeHod,
       search: q.search,
       tiers: q.tiers,
       levels: q.levels,
@@ -1478,7 +1473,6 @@ app.get('/api/data/library-all', optionalAuth, async (req, res) => {
       includeMine: q.includeMine,
       includePublic: q.includePublic,
       includeSrd: q.includeSrd,
-      includeHod: q.includeHod,
       search: q.search,
       sort: q.sort,
       offset: q.semantic ? 0 : q.offset,
@@ -1630,7 +1624,6 @@ app.get('/api/data/:collection', optionalAuth, async (req, res) => {
         includeMine,
         includePublic,
         includeSrd: req.query.includeSrd === '1',
-        includeHod: req.query.includeHod === '1',
         search,
         tierMax,
         tierMaxExclusive,
@@ -1757,15 +1750,7 @@ app.post('/api/data/resolve', requireAuth, async (req, res) => {
         extras = cacheItems;
         const stillMissing = missing.filter(id => !cacheIds.has(id));
         for (const id of stillMissing) {
-          if (id.startsWith('hod-')) {
-            try {
-              const postId = id.replace(/^hod-/, '');
-              const item = await fetchHoDFoundryDetail(postId, `https://heartofdaggers.com/?p=${postId}`, col);
-              extras.push(item);
-            } catch (err) {
-              console.warn(`[hod] Could not resolve ${id}:`, err.message);
-            }
-          } else if (id.startsWith('srd-')) {
+          if (id.startsWith('srd-')) {
             const item = await getSrdItem(col, id);
             if (item) extras.push({ ...item, _source: 'srd' });
           }
@@ -1814,7 +1799,6 @@ app.post('/api/data/:collection/clone', requireAuth, async (req, res) => {
   }
 
   const sourceId = source.id;
-  // SRD/HoD items are external (cache / fetch); migrated FCG catalog rows are public `items` with id `fcg-*`.
   const isExternal = source._source && !['own', 'public'].includes(source._source);
 
   try {
@@ -1829,24 +1813,10 @@ app.post('/api/data/:collection/clone', requireAuth, async (req, res) => {
       }
       if (dbSource) effectiveSource = dbSource;
     }
-    if (isExternal && sourceId && String(sourceId).startsWith('fcg-')) {
-      const rows = await getItemsByIds(APP_ID, collection, [sourceId]);
-      if (rows.length) effectiveSource = rows[0];
-    }
     if (source._source === 'srd' && sourceId) {
       const cachedRows = await getExternalCacheByIds(APP_ID, collection, [sourceId]);
       if (cachedRows.length > 0) {
         effectiveSource = cachedRows[0];
-      }
-    }
-    if (source._source === 'hod' && source._hodPostId) {
-      try {
-        const detailUrl = source._hodLink || `https://heartofdaggers.com/?p=${source._hodPostId}`;
-        const full = await fetchHoDFoundryDetail(source._hodPostId, detailUrl, collection);
-        // Preserve the link metadata from the list-search item
-        effectiveSource = { ...full, _hodLink: source._hodLink || detailUrl };
-      } catch (err) {
-        console.warn(`[hod] Could not fetch full detail for ${sourceId}, using summary data:`, err.message);
       }
     }
 
@@ -1895,21 +1865,6 @@ app.post('/api/data/:collection/play', requireAuth, async (req, res) => {
     console.error(`POST /api/data/${collection}/play error:`, err);
     res.status(500).json({ error: 'Failed to record play' });
   }
-});
-
-app.post('/api/data/:collection/enrich', requireAuth, async (req, res) => {
-  const { collection } = req.params;
-  if (collection !== 'adversaries' && collection !== 'environments') {
-    return res.status(400).json({ error: 'Unknown collection for enrich' });
-  }
-  const { items } = req.body;
-  const hodItems = (Array.isArray(items) ? items : []).filter(i => i._source === 'hod' && i._hodPostId && (i.features || []).length === 0);
-  const enriched = {};
-  if (hodItems.length > 0) {
-    const cacheItems = await getExternalCacheByIds(APP_ID, collection, hodItems.map(i => i.id));
-    for (const c of cacheItems) enriched[c.id] = c;
-  }
-  res.json({ enriched });
 });
 
 // --- Generic image/text import (OCR + regex parse, no LLM) ---
@@ -4987,22 +4942,6 @@ async function startServer() {
     await loadSrdIntoDb(APP_ID);
     await subscriptionManager.init(APP_ID);
     setTableStateNotifyHook((tableId) => subscriptionManager.notifyChange('table_state', tableId));
-    cron.schedule('0 3 * * *', async () => {
-      if (isSyncInProgress()) return;
-      try {
-        await runFullSync(APP_ID);
-      } catch (err) {
-        console.error('[cron] Sync failed:', err.message);
-      }
-    });
-    cron.schedule('0 3 * * 0', async () => {
-      if (isSyncInProgress()) return;
-      try {
-        await runSyncSource(APP_ID, 'hod', null, { fullRefresh: true });
-      } catch (err) {
-        console.error('[cron] HoD full refresh failed:', err.message);
-      }
-    });
     cron.schedule('0 4 * * *', async () => {
       try {
         await refreshDaggerstackUuidMap();

@@ -260,7 +260,6 @@ async function loadAssistantCollectionItems(appId, userId, collection, scope = {
     includeMine: scope.includeMine !== false,
     includePublic: scope.includePublic !== false,
     includeSrd: scope.includeSrd !== false,
-    includeHod: !!scope.includeHod,
     search: '',
     tierMax: null,
     tiers: [],

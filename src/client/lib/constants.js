@@ -4,7 +4,6 @@ export {
   TIERS,
   ROLE_BP_COST,
   ROLE_DESCRIPTIONS,
-  FCG_PUBLIC_USER_ID,
   DEFAULT_CHARACTER_STARTING_HOPE,
 } from '../../game-constants.js';
 export const FEATURE_TYPES = ['action', 'reaction', 'passive'];
@@ -17,14 +16,7 @@ export const SOURCE_BADGE = {
   own:    { label: 'Mine',   className: 'dh-badge dh-badge-mine' },
   srd:    { label: 'SRD',    className: 'dh-badge dh-badge-srd' },
   public: { label: 'Public', className: 'dh-badge dh-badge-public' },
-  hod:    { label: 'HoD',    className: 'dh-badge dh-badge-hod' },
   v2:     { label: 'V2',     className: 'dh-badge dh-badge-srd' },
 };
 
-export const SOURCE_ORDER = { own: 0, srd: 1, v2: 1, public: 2, hod: 3 };
-
-export const needsHodEnrich = (item) =>
-  item?._source === 'hod' && (
-    (item.features || []).length === 0 ||
-    (item.attack && typeof item.attack.damage !== 'string')
-  );
+export const SOURCE_ORDER = { own: 0, srd: 1, v2: 1, public: 2 };

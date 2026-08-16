@@ -8,7 +8,7 @@
  */
 export function slugTail(id) {
   const s = String(id || '').trim().toLowerCase();
-  return s.replace(/^srd-adv-|^srd-env-|^fcg-|^hod-/, '').replace(/-/g, ' ').trim();
+  return s.replace(/^srd-adv-|^srd-env-/, '').replace(/-/g, ' ').trim();
 }
 
 /**
