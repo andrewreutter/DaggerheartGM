@@ -12,20 +12,31 @@ import { SessionCountdownEditorModal } from './modals/SessionCountdownEditorModa
  * @param {(row: object) => void} props.onEdit
  * @param {string} props.className
  */
-function SessionCountdownCard({ row, isGm, patch, onEdit, className }) {
+function SessionCountdownCard({ row, isGm, patch, onEdit, className, trackerOverlay }) {
   const title = [row.label?.trim() ? row.label : 'Countdown', row.sourceRef ? 'Linked to feature' : '']
     .filter(Boolean)
     .join(' — ');
   const gmOnly = row.visibility === 'gm';
+  const hoverProps = trackerOverlay
+    ? trackerOverlay.triggerProps((e) => ({
+      kind: 'countdown',
+      row,
+      top: e.currentTarget.getBoundingClientRect().top,
+      bottom: e.currentTarget.getBoundingClientRect().bottom,
+    }))
+    : {};
 
   return (
-    <div className={className}>
+    <div data-testid="encounter-countdown-card" className={className} {...hoverProps}>
       <div className="space-y-1.5">
         <div className="flex min-w-0 items-start gap-1.5">
           {isGm ? (
             <button
               type="button"
-              onClick={() => patch(row.id, { visibility: gmOnly ? 'players' : 'gm' })}
+              onClick={(e) => {
+                e.stopPropagation();
+                patch(row.id, { visibility: gmOnly ? 'players' : 'gm' });
+              }}
               className="mt-0.5 shrink-0 rounded p-0.5 text-dh-muted hover:bg-dh-hover/60 hover:text-dh"
               title={gmOnly ? 'GM only — click to show players' : 'Visible to players — click for GM only'}
               aria-label={gmOnly ? 'Show to players' : 'GM only'}
@@ -48,7 +59,10 @@ function SessionCountdownCard({ row, isGm, patch, onEdit, className }) {
               <>
                 <button
                   type="button"
-                  onClick={() => patch(row.id, { current: Math.max(0, (row.current ?? 0) - 1) })}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    patch(row.id, { current: Math.max(0, (row.current ?? 0) - 1) });
+                  }}
                   className="flex h-6 w-6 shrink-0 items-center justify-center rounded bg-dh-hover text-[10px] font-bold text-dh hover:bg-red-900/50"
                   aria-label="Decrease countdown"
                 >
@@ -57,7 +71,10 @@ function SessionCountdownCard({ row, isGm, patch, onEdit, className }) {
                 <span className="min-w-[2rem] text-center text-sm font-bold tabular-nums text-dh-hope">{row.current ?? 0}</span>
                 <button
                   type="button"
-                  onClick={() => patch(row.id, { current: (row.current ?? 0) + 1 })}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    patch(row.id, { current: (row.current ?? 0) + 1 });
+                  }}
                   className="flex h-6 w-6 shrink-0 items-center justify-center rounded bg-dh-hover text-[10px] font-bold text-dh hover:bg-emerald-900/40"
                   aria-label="Increase countdown"
                 >
@@ -73,7 +90,10 @@ function SessionCountdownCard({ row, isGm, patch, onEdit, className }) {
             <button
               type="button"
               title="Edit countdown"
-              onClick={() => onEdit(row)}
+              onClick={(e) => {
+                e.stopPropagation();
+                onEdit(row);
+              }}
               className="shrink-0 rounded p-1 text-dh-muted hover:text-dh hover:bg-dh-hover"
               aria-label="Edit countdown"
             >
@@ -93,6 +113,7 @@ function SessionCountdownCard({ row, isGm, patch, onEdit, className }) {
  * @param {(op: object) => void} [props.onTableOp] — GM-only; posts session countdown ops
  * @param {'panel' | 'section'} [props.variant] — `panel`: collapsible card (default). `section`: subtitle + card rows for Encounter column.
  * @param {string} [props.sectionTitle] — uppercase-friendly label when `variant="section"`
+ * @param {object} [props.trackerOverlay] — shared Encounter hover overlay (left-of-aside detail panel)
  */
 export function SessionCountdownsPanel({
   sessionCountdowns = [],
@@ -100,6 +121,7 @@ export function SessionCountdownsPanel({
   onTableOp,
   variant = 'panel',
   sectionTitle = 'Countdowns',
+  trackerOverlay,
 }) {
   const [open, setOpen] = useState(true);
   const [editorRow, setEditorRow] = useState(null);
@@ -169,6 +191,7 @@ export function SessionCountdownsPanel({
                 isGm={isGm}
                 patch={patch}
                 onEdit={setEditorRow}
+                trackerOverlay={trackerOverlay}
                 className="rounded-lg border border-dh-strong bg-dh-surface px-2.5 py-2"
               />
             ))}
@@ -215,6 +238,7 @@ export function SessionCountdownsPanel({
                 isGm={isGm}
                 patch={patch}
                 onEdit={setEditorRow}
+                trackerOverlay={trackerOverlay}
                 className="rounded border border-dh-border bg-dh-raised/40 px-2 py-1.5"
               />
             ))}

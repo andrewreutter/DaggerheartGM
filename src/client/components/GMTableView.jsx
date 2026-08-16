@@ -7122,6 +7122,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
             <EncounterNoteCard
               key={item.element.instanceId}
               element={item.element}
+              trackerOverlay={trackerOverlay}
               onToggleVisibility={(el) =>
                 updateActiveElement(el.instanceId, {
                   visibility: el.visibility === 'gm' ? 'players' : 'gm',
@@ -7152,6 +7153,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
             sessionCountdowns={sessionCountdowns}
             isGm
             onTableOp={sendOp}
+            trackerOverlay={trackerOverlay}
           />
 
           <div className="border-t border-dh-border" role="separator" />
@@ -7954,6 +7956,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
       adjust={trackerAdjust}
       asideRef={encounterAsideRef}
       grouped={consolidatedElements}
+      sessionCountdowns={sessionCountdowns}
       featureCountdowns={featureCountdowns}
       onEditEnvironment={(el) => handleEditClick([el], el, 'environments')}
       onRemoveEnvironment={(el) => removeActiveElement(el.instanceId)}

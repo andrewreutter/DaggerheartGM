@@ -7,10 +7,6 @@ vi.mock('../../src/client/components/BattleMap.jsx', () => ({
   BattleMap: () => null,
 }));
 
-vi.mock('../../src/client/components/SessionCountdownsPanel.jsx', () => ({
-  SessionCountdownsPanel: () => null,
-}));
-
 vi.mock('../../src/client/components/modals/ItemPickerModal.jsx', () => ({
   ItemPickerModal: () => null,
 }));
@@ -51,6 +47,26 @@ function sceneWithEnvAndBear() {
         hp_max: 4,
         difficulty: 14,
         attack: { name: 'Claw', modifier: 2, range: 'Melee', damage: 'd8+2', trait: 'phy' },
+      },
+      {
+        instanceId: 'note-1',
+        elementType: 'note',
+        id: 'note-1',
+        name: 'Secret door',
+        body: 'Behind the **tapestry**.',
+        visibility: 'gm',
+      },
+    ],
+    sessionCountdowns: [
+      {
+        id: 'cd-1',
+        label: 'Ritual clock',
+        kind: 'progress',
+        start: 8,
+        current: 5,
+        visibility: 'players',
+        autoStandard: false,
+        autoDynamic: true,
       },
     ],
   };
@@ -140,5 +156,63 @@ describe('SceneTableEditor encounter hover overlays', () => {
     expect(overlay.textContent).toContain('Difficulty');
     expect(overlay.textContent).toContain('14');
     expect(overlay.textContent).not.toContain('Edit');
+  });
+
+  it('opens the shared note overlay with title and rendered markdown', async () => {
+    await act(async () => {
+      root.render(
+        createElement(SceneTableEditor, {
+          value: sceneWithEnvAndBear(),
+          onChange: vi.fn(),
+        }),
+      );
+    });
+
+    const card = container.querySelector('[data-testid="encounter-note-card"]');
+    expect(card).toBeTruthy();
+    expect(document.querySelector('[data-testid="encounter-tracker-overlay"]')).toBeNull();
+
+    await act(async () => {
+      hover(card);
+    });
+
+    const overlay = document.querySelector('[data-testid="encounter-tracker-overlay"]');
+    expect(overlay).toBeTruthy();
+    expect(overlay.textContent).toContain('Secret door');
+    expect(overlay.textContent).toContain('GM only');
+    expect(overlay.textContent).toContain('tapestry');
+    expect(overlay.textContent).not.toContain('**tapestry**');
+    expect(overlay.querySelector('strong, b')).toBeTruthy();
+  });
+
+  it('opens the shared countdown overlay with properties and the DC chart', async () => {
+    await act(async () => {
+      root.render(
+        createElement(SceneTableEditor, {
+          value: sceneWithEnvAndBear(),
+          onChange: vi.fn(),
+        }),
+      );
+    });
+
+    const card = container.querySelector('[data-testid="encounter-countdown-card"]');
+    expect(card).toBeTruthy();
+
+    await act(async () => {
+      hover(card);
+    });
+
+    const overlay = document.querySelector('[data-testid="encounter-tracker-overlay"]');
+    expect(overlay).toBeTruthy();
+    expect(overlay.textContent).toContain('Ritual clock');
+    expect(overlay.textContent).toContain('Progress');
+    expect(overlay.textContent).toContain('Visible to players');
+    expect(overlay.textContent).toContain('5 / 8');
+    expect(overlay.textContent).toContain('Auto (dynamic DC)');
+    expect(overlay.textContent).toContain('Dynamic DC chart');
+    expect(overlay.textContent).toContain('Critical');
+    expect(overlay.textContent).toContain('Success · Hope higher');
+    expect(overlay.textContent).toContain('Prog −');
+    expect(overlay.textContent).toContain('Cons −');
   });
 });

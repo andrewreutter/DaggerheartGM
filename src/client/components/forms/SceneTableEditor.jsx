@@ -287,6 +287,7 @@ export function SceneTableEditor({
             <EncounterNoteCard
               key={item.element.instanceId}
               element={item.element}
+              trackerOverlay={trackerOverlay}
               onToggleVisibility={(el) => applyOp({
                 op: 'update-element',
                 instanceId: el.instanceId,
@@ -304,6 +305,7 @@ export function SceneTableEditor({
             sessionCountdowns={sceneData.sessionCountdowns}
             isGm
             onTableOp={applyOp}
+            trackerOverlay={trackerOverlay}
           />
 
           <div className="border-t border-dh-border" role="separator" />
@@ -396,6 +398,7 @@ export function SceneTableEditor({
         asideRef={encounterAsideRef}
         zIndexClass="z-[90]"
         grouped={grouped}
+        sessionCountdowns={sceneData.sessionCountdowns}
         featureCountdowns={sceneData.featureCountdowns}
         onRemoveEnvironment={(el) => applyOp({ op: 'remove-element', instanceId: el.instanceId })}
         onRemoveAdversaryGroup={(instances) => {

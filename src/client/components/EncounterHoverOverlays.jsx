@@ -2,6 +2,7 @@ import { useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Edit, Eye, EyeOff, StickyNote, Trash2 } from 'lucide-react';
 import { EnvironmentCardContent, AdversaryCardContent } from './DetailCardContent.jsx';
+import { CountdownRollReferencePanel, COUNTDOWN_KIND_LABELS } from './CountdownRollReference.jsx';
 import { MarkdownText } from '../lib/markdown.js';
 import { useHoverOverlay } from '../lib/useHoverOverlay.js';
 import { useTouchDevice } from '../lib/useTouchDevice.js';
@@ -50,11 +51,7 @@ export function useEncounterHoverOverlays({ isTouch: isTouchProp, resolveItems }
   const isTouch = isTouchProp ?? isTouchHook;
   const trackerOverlay = useHoverOverlay({ hideDelay: 120, isTouch });
   const potAdvOverlay = useHoverOverlay({ hideDelay: 120, isTouch });
-  const trackerKey = trackerOverlay.data
-    ? (trackerOverlay.data.kind === 'environment'
-      ? trackerOverlay.data.element.instanceId
-      : trackerOverlay.data.baseElement.id)
-    : null;
+  const trackerKey = trackerOverlayKey(trackerOverlay.data);
   const trackerAdjust = useViewportClamp(trackerOverlay.overlayRef, trackerOverlay.isOpen, trackerKey);
   const potAdvKey = potAdvOverlay.data?.element?.id ?? null;
   const potAdvAdjust = useViewportClamp(potAdvOverlay.overlayRef, potAdvOverlay.isOpen, potAdvKey);
@@ -81,6 +78,13 @@ export function useEncounterHoverOverlays({ isTouch: isTouchProp, resolveItems }
   };
 }
 
+function trackerOverlayKey(data) {
+  if (!data) return null;
+  if (data.kind === 'environment' || data.kind === 'note') return data.element?.instanceId ?? null;
+  if (data.kind === 'countdown') return data.row?.id ?? null;
+  return data.baseElement?.id ?? null;
+}
+
 function trackerTriggerData(kind, payload) {
   return (e) => ({
     kind,
@@ -92,19 +96,28 @@ function trackerTriggerData(kind, payload) {
 
 export function EncounterNoteCard({
   element,
+  trackerOverlay,
   onToggleVisibility,
   onOpen,
   onRemove,
 }) {
   const noteBodyTrimmed = String(element.body || '').trim();
   const noteTitleOnly = !noteBodyTrimmed && !element.imageUrl;
+  const hoverProps = trackerOverlay
+    ? trackerOverlay.triggerProps(trackerTriggerData('note', { element }))
+    : {};
   return (
     <div
+      data-testid="encounter-note-card"
       className={`flex gap-1 rounded-lg border border-amber-900/50 bg-amber-950/25 px-2 transition-colors hover:border-amber-700/60 hover:bg-amber-950/40 ${noteTitleOnly ? 'py-1.5' : 'py-2'}`}
+      {...hoverProps}
     >
       <button
         type="button"
-        onClick={() => onToggleVisibility?.(element)}
+        onClick={(e) => {
+          e.stopPropagation();
+          onToggleVisibility?.(element);
+        }}
         className="shrink-0 self-start rounded p-0.5 text-dh-muted hover:bg-dh-hover/60 hover:text-dh"
         title={element.visibility === 'gm' ? 'GM only — click to show players' : 'Visible to players — click for GM only'}
         aria-label={element.visibility === 'gm' ? 'Show to players' : 'GM only'}
@@ -114,7 +127,10 @@ export function EncounterNoteCard({
       </button>
       <button
         type="button"
-        onClick={() => onOpen?.(element)}
+        onClick={(e) => {
+          e.stopPropagation();
+          onOpen?.(element);
+        }}
         className="flex min-w-0 flex-1 items-start gap-2 text-left"
       >
         {element.imageUrl ? (
@@ -135,7 +151,10 @@ export function EncounterNoteCard({
       </button>
       <button
         type="button"
-        onClick={() => onRemove?.(element)}
+        onClick={(e) => {
+          e.stopPropagation();
+          onRemove?.(element);
+        }}
         className="shrink-0 self-start text-dh-muted hover:text-red-400 transition-colors p-0.5"
         title="Remove note"
       >
@@ -219,6 +238,7 @@ export function EncounterTrackerOverlay({
   asideRef,
   zIndexClass = 'z-[55]',
   grouped = [],
+  sessionCountdowns = [],
   featureCountdowns,
   onEditEnvironment,
   onRemoveEnvironment,
@@ -244,7 +264,59 @@ export function EncounterTrackerOverlay({
   });
 
   let body;
-  if (overlay.data.kind === 'environment') {
+  if (overlay.data.kind === 'note') {
+    const liveNote = grouped.find(
+      (g) => g.kind === 'note' && g.element.instanceId === overlay.data.element.instanceId,
+    )?.element ?? overlay.data.element;
+    const noteBody = String(liveNote.body || '').trim();
+    body = (
+      <OverlayChrome imageUrl={liveNote.imageUrl} imageAlt={liveNote.name || 'Note'}>
+        <h3 className={`text-xl font-bold text-dh mb-1 ${liveNote.imageUrl ? 'pr-16' : ''}`}>
+          {liveNote.name || 'Note'}
+        </h3>
+        <p className="mb-3 text-[11px] text-dh-muted">
+          {liveNote.visibility === 'gm' ? 'GM only' : 'Visible to players'}
+        </p>
+        {noteBody ? (
+          <MarkdownText text={noteBody} className="dh-md text-sm leading-relaxed text-dh" />
+        ) : (
+          <p className="text-sm italic text-dh-muted">No note text.</p>
+        )}
+      </OverlayChrome>
+    );
+  } else if (overlay.data.kind === 'countdown') {
+    const liveRow = sessionCountdowns.find((r) => r.id === overlay.data.row.id) ?? overlay.data.row;
+    const kindLabel = COUNTDOWN_KIND_LABELS[liveRow.kind] || COUNTDOWN_KIND_LABELS.standard;
+    const autoLabel = liveRow.kind === 'standard'
+      ? (liveRow.autoStandard ? 'Auto (−1) on PC action rolls' : 'Manual')
+      : (liveRow.autoDynamic ? 'Auto (dynamic DC)' : 'Manual');
+    body = (
+      <div className="p-5">
+        <h3 className="text-xl font-bold text-dh mb-3">{liveRow.label?.trim() ? liveRow.label : 'Countdown'}</h3>
+        <dl className="mb-4 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 text-sm">
+          <dt className="text-dh-muted">Kind</dt>
+          <dd className="text-dh">{kindLabel}</dd>
+          <dt className="text-dh-muted">Visibility</dt>
+          <dd className="text-dh">{liveRow.visibility === 'gm' ? 'GM only' : 'Visible to players'}</dd>
+          <dt className="text-dh-muted">Value</dt>
+          <dd className="tabular-nums text-dh">{liveRow.current ?? 0} / {liveRow.start ?? 0}</dd>
+          <dt className="text-dh-muted">Automation</dt>
+          <dd className="text-dh">{autoLabel}</dd>
+          {liveRow.sourceRef ? (
+            <>
+              <dt className="text-dh-muted">Source</dt>
+              <dd className="text-emerald-400/90">Linked to feature</dd>
+            </>
+          ) : null}
+        </dl>
+        <CountdownRollReferencePanel
+          kind={liveRow.kind === 'progress' || liveRow.kind === 'consequence' ? liveRow.kind : 'standard'}
+          autoStandard={!!liveRow.autoStandard}
+          autoDynamic={!!liveRow.autoDynamic}
+        />
+      </div>
+    );
+  } else if (overlay.data.kind === 'environment') {
     const el = overlay.data.element;
     body = (
       <OverlayChrome
