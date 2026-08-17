@@ -1,0 +1,25 @@
+{
+  "id": "srd-map-crossroads",
+  "name": "Crossroads",
+  "artist": "Grim Press",
+  "artistUrl": "https://grimpress.net/",
+  "imageUrl": "https://aepoghtrbawfvgnjzumf.supabase.co/storage/v1/object/public/whiteboard-assets/map-images/9s3M6tgScJgXhKgYOHZVYAStNQi2/8ab2feb5-068a-480d-99ee-1dcdce552894.jpg",
+  "mapImageUrl": "https://aepoghtrbawfvgnjzumf.supabase.co/storage/v1/object/public/whiteboard-assets/map-images/9s3M6tgScJgXhKgYOHZVYAStNQi2/8ab2feb5-068a-480d-99ee-1dcdce552894.jpg",
+  "mapSizeFt": 120,
+  "mapDimension": "width",
+  "mapImageNaturalWidth": 1120,
+  "mapImageNaturalHeight": 1470,
+  "mapAiImagePrompt": null,
+  "overlayPng": null,
+  "mapViews": [
+    {
+      "id": "srd-map-crossroads-main",
+      "name": "Main",
+      "mapViewPanNorm": { "x": 0, "y": 0.5805375632282807 },
+      "mapViewZoomRatio": 0.010358526745877446,
+      "broadcastToPlayers": true,
+      "mapViewVisibleNorm": { "h": 0.7609469597616719, "w": 1, "x": 0, "y": 0.1387792694622711 }
+    }
+  ],
+  "dressingElements": []
+}

@@ -226,6 +226,6 @@ describe('Library All scenes branch', () => {
 describe('GET /api/data/scenes unified path', () => {
   it('includes scenes in UNIFIED_COLLECTIONS so includeSrd uses getUnifiedItems', () => {
     const serverSrc = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../../server.js'), 'utf8');
-    expect(serverSrc).toMatch(/UNIFIED_COLLECTIONS\s*=\s*\[\s*\.\.\.SRD_COLLECTION_NAMES\s*,\s*['"]scenes['"]\s*\]/);
+    expect(serverSrc).toMatch(/UNIFIED_COLLECTIONS\s*=\s*\[\s*\.\.\.SRD_COLLECTION_NAMES\s*,\s*['"]maps['"]\s*,\s*['"]scenes['"]\s*\]/);
   });
 });

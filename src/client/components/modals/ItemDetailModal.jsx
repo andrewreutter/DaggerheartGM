@@ -6,6 +6,7 @@ import { useAutoSaveUndo } from '../../lib/useAutoSaveUndo.js';
 import { AdversaryForm } from '../forms/AdversaryForm.jsx';
 import { EnvironmentForm } from '../forms/EnvironmentForm.jsx';
 import { SceneForm } from '../forms/SceneForm.jsx';
+import { MapForm } from '../forms/MapForm.jsx';
 import { AdventureForm } from '../forms/AdventureForm.jsx';
 import { CharacterForm } from '../forms/CharacterForm.jsx';
 import { GenericSrdLibraryForm } from '../forms/GenericSrdLibraryForm.jsx';
@@ -34,6 +35,7 @@ import { MarkdownText } from '../../lib/markdown.js';
 import { V2SourceInspectButton } from '../V2SourceInspectButton.jsx';
 import { SRD_UNIFIED_COLLECTIONS, LIBRARY_CUSTOM_DETAIL_COLLECTIONS } from '../../lib/library-filter-config.js';
 import { buildDefaultNewSrdLibraryItem } from '../../lib/library-default-new-item.js';
+import { buildEmptyLibraryMap, isLibraryMapPersistable, persistLibraryMap } from '../../lib/map-library.js';
 import { isCharacterComplete } from '../../lib/character-calc.js';
 import { CharacterIdentityTitleRow } from '../CharacterDisplay.jsx';
 import { useUnifiedImport } from '../../lib/unified-import-context.jsx';
@@ -43,6 +45,7 @@ const SRD_UNIFIED_SET = new Set(SRD_UNIFIED_COLLECTIONS);
 const COLLECTION_LABELS = {
   adversaries: 'Adversary',
   environments: 'Environment',
+  maps: 'Map',
   scenes: 'Scene',
   adventures: 'Adventure',
   characters: 'Character',
@@ -193,6 +196,8 @@ export const ItemDetailModal = forwardRef(function ItemDetailModal({
             { name: '', score: 2, id: generateId() },
           ],
         };
+      } else if (collection === 'maps') {
+        defaultsForNew = buildEmptyLibraryMap();
       } else if (SRD_UNIFIED_SET.has(collection)) {
         defaultsForNew = buildDefaultNewSrdLibraryItem(collection);
       }
@@ -239,11 +244,13 @@ export const ItemDetailModal = forwardRef(function ItemDetailModal({
   const { formData, setFormData, undo, redo, canUndo, canRedo, isSaving, savedOnce, debouncePending, showUnsavedDirtyHint, savedFlash } = useAutoSaveUndo({
     initial: initialRef.current,
     onSave: useCallback(async (d) => {
-      if (onSave) await onSave(d);
-    }, [onSave]),
+      if (!onSave) return;
+      await onSave(collection === 'maps' ? persistLibraryMap(d) : d);
+    }, [onSave, collection]),
     debounceMs: 800,
     isNew,
     sessionKey: editorSessionKey,
+    canPersistNew: collection === 'maps' ? isLibraryMapPersistable : undefined,
   });
 
   /** Amber "Unsaved" only after pointer/wheel/typing — not focus-trap autofocus (see onModalEditorUserGesture) */
@@ -278,9 +285,9 @@ export const ItemDetailModal = forwardRef(function ItemDetailModal({
   const addImageUrlToItem = useCallback((url) => {
     const fd = formDataRef.current;
     const additional = Array.isArray(fd._additionalImages) ? fd._additionalImages : [];
-    const willSetPrimary = !fd.imageUrl;
+    const willSetPrimary = !fd.imageUrl && !fd.mapImageUrl;
     setFormData(willSetPrimary
-      ? { ...fd, imageUrl: url }
+      ? { ...fd, imageUrl: url, ...(collection === 'maps' ? { mapImageUrl: url } : {}) }
       : { ...fd, _additionalImages: [...additional, url] });
     // Persist to DB immediately so the library record is updated and character-library-update is broadcast.
     if (item?.id && saveImage) {
@@ -553,6 +560,7 @@ export const ItemDetailModal = forwardRef(function ItemDetailModal({
       <>
         {collection === 'adversaries' && <AdversaryForm {...sharedProps} />}
         {collection === 'environments' && <EnvironmentForm {...sharedProps} />}
+        {collection === 'maps' && <MapForm {...sharedProps} />}
         {collection === 'scenes' && (
           <SceneForm
             {...sharedProps}
@@ -576,7 +584,7 @@ export const ItemDetailModal = forwardRef(function ItemDetailModal({
       </>
     );
 
-    if (collection === 'scenes') {
+    if (collection === 'scenes' || collection === 'maps') {
       return (
         <div className="flex flex-col flex-1 min-w-0 min-h-0 overflow-hidden p-3">
           {genericForm}
@@ -641,7 +649,7 @@ export const ItemDetailModal = forwardRef(function ItemDetailModal({
   };
 
   const maxWidth =
-    collection === 'scenes' && editable ? 'max-w-[110rem]' :
+    (collection === 'scenes' || collection === 'maps') && editable ? 'max-w-[110rem]' :
     showFeatureLibrary ? 'max-w-[110rem]' :
     editable ? 'max-w-[88rem]' :
     collection === 'characters' ? 'max-w-[88rem]' :

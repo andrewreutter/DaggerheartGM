@@ -3094,6 +3094,7 @@ export function BattleMap({
   onPlayerSelectView,
   onSetActiveMap,
   onAddMap,
+  onEditLibraryMap,
   /** GM: `add-map` with image fields — used when pasting/uploading while the active map already has art */
   onAddMapWithImage,
   onRemoveMap,
@@ -7369,6 +7370,7 @@ export function BattleMap({
                 onRenameMapView={onRenameMapView}
                 onMapSizeChange={isPlayer ? undefined : handlePickerMapSizeChange}
                 onAddMap={!isPlayer && onAddMap ? onAddMap : undefined}
+                onEditMap={!isPlayer && onEditLibraryMap ? onEditLibraryMap : undefined}
                 onAddCamera={gmCanCreateCameraView ? () => void handleSplitCamera() : undefined}
                 onOpenChange={(open) => {
                   setMapCameraPickerOpen(open);

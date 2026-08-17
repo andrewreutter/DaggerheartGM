@@ -21,6 +21,8 @@ import { computeSessionCountdownUpdatesFromRoll } from './lib/session-countdowns
 import { resetOnboardingState } from './lib/onboarding-storage.js';
 import { isOwnItem, DEFAULT_CHARACTER_STARTING_HOPE } from './lib/constants.js';
 import { shouldCloneOnAddToTable } from './lib/add-to-table-clone.js';
+import { applyLibraryArtToSceneMaps, buildAddMapOpFromLibraryItem, buildEmptyLibraryMap } from './lib/map-library.js';
+import { planTableMapLibraryImport } from './lib/map-library-import.js';
 import { shouldOfferReplaceOrAdd, buildSceneSnapshotTableOp, sceneHasActiveBattleMods } from './lib/scene-load-dialog.js';
 import { UPDATE_BASE_DATA_RUNTIME_KEYS, applyTableOp } from './lib/table-ops.js';
 import {
@@ -51,6 +53,7 @@ import { LibraryView } from './components/LibraryView.jsx';
 import { LibraryAssistantModal } from './components/LibraryAssistantPanel.jsx';
 import { GMTableView } from './components/GMTableView.jsx';
 import { SceneAdoptDialog } from './components/SceneAdoptDialog.jsx';
+import { EditChoiceDialog } from './components/modals/EditChoiceDialog.jsx';
 import { FeatureAuthoringGuideModal } from './components/FeatureAuthoringGuideModal.jsx';
 import { SessionBlockedBanner } from './components/SessionBlockedBanner.jsx';
 import { ChooseSpotlightBanner } from './components/ChooseSpotlightBanner.jsx';
@@ -159,6 +162,7 @@ function App() {
   const [mapConfig, setMapConfig] = useState(DEFAULT_MAP_CONFIG);
   /** Parallel battle maps + shared active map id (from `table_state`; derived `mapConfig` matches active map). */
   const [maps, setMaps] = useState([]);
+  const [mapReplaceChoice, setMapReplaceChoice] = useState(null);
   const [activeMapId, setActiveMapId] = useState(null);
   /** GM broadcast map framing — `table_state.gmMapView` (per-map zoom/pan normalized). */
   const [gmMapView, setGmMapView] = useState(null);
@@ -889,6 +893,32 @@ function App() {
       }
       setTableStateReady(true);
       tableStateReadyRef.current = true;
+      const isOwner = tableState.ownerUid && userRef.current?.uid === tableState.ownerUid;
+      if (isOwner && Array.isArray(tableState.maps) && tableState.maps.some((m) => m && !m.libraryMapId)) {
+        void (async () => {
+          try {
+            const { items } = await loadCollection('maps', { includeMine: true, includeSrd: false, includePublic: false, limit: 100, sort: 'name' });
+            const byUrl = new Map();
+            for (const it of items || []) {
+              const u = it.mapImageUrl || it.imageUrl;
+              if (u && !byUrl.has(u)) byUrl.set(u, it);
+            }
+            const plan = planTableMapLibraryImport(tableState.maps, {
+              existingLibraryByUrl: byUrl,
+              mapViews: tableState.mapViews,
+              elements: tableState.elements,
+            });
+            for (const row of plan.create) {
+              await apiSaveItem('maps', row);
+            }
+            if (plan.link.length) {
+              await postTableOp({ op: 'link-maps-library', links: plan.link }, route.tableId);
+            }
+          } catch (backfillErr) {
+            console.warn('Map library backfill failed', backfillErr);
+          }
+        })();
+      }
     }).catch(err => {
       console.error('Failed to load table state:', err);
       const status = parseInt(err?.message?.match(/HTTP (\d+)/)?.[1] || '0', 10);
@@ -1358,13 +1388,48 @@ function App() {
       } else {
         newElements.push({ ...tableItem, instanceId: generateId(), elementType: 'environment' });
       }
+    } else if (collectionName === 'maps') {
+      let tableItem = item;
+      if (isOwnItem(item)) {
+        recordPlay('maps', item.id).catch(err => console.warn('recordPlay failed:', err));
+      } else if (shouldCloneOnAddToTable(collectionName, item)) {
+        try {
+          tableItem = await cloneItemToLibrary(collectionName, item, { play: true });
+        } catch (err) {
+          console.warn('Auto-clone failed, using original:', err);
+          tableItem = item;
+        }
+      }
+      const target = resolveTargetTableId(explicitTargetTableId);
+      await postTableOp(buildAddMapOpFromLibraryItem(tableItem), target);
+      return [];
     } else if (collectionName === 'scenes') {
       // Scenes are value-semantic snapshots — place onto the table without
       // cloning into the user's library (own or SRD/public).
       if (isOwnItem(item)) {
         recordPlay('scenes', item.id).catch(err => console.warn('recordPlay failed:', err));
       }
-      const remapped = regenerateSceneIdsForTablePlacement(item);
+      let sceneForPlace = item;
+      const libIds = (item.maps || []).map((m) => m.libraryMapId).filter(Boolean);
+      if (libIds.length) {
+        try {
+          const resolved = await resolveItems({ maps: libIds });
+          const byId = new Map();
+          for (const raw of resolved.maps || []) {
+            if (!raw?.id) continue;
+            let lib = raw;
+            if (shouldCloneOnAddToTable('maps', lib)) {
+              try { lib = await cloneItemToLibrary('maps', lib, { play: false }); } catch { /* keep catalog row */ }
+            }
+            byId.set(raw.id, lib);
+            if (lib.id && lib.id !== raw.id) byId.set(lib.id, lib);
+          }
+          sceneForPlace = applyLibraryArtToSceneMaps(item, byId);
+        } catch (err) {
+          console.warn('Resolve scene library maps failed; using embedded art', err);
+        }
+      }
+      const remapped = regenerateSceneIdsForTablePlacement(sceneForPlace);
       const target = resolveTargetTableId(explicitTargetTableId);
       const snapshotOp = buildSceneSnapshotTableOp({
         mode: opts.replaceScene ? 'replace' : 'add',
@@ -1728,29 +1793,49 @@ function App() {
       if (!uploaded?.url) throw new Error('Map image upload did not return a URL');
       mapImageUrl = uploaded.url;
     }
-    postTableOp(
-      {
-        op: 'add-map',
-        mapImageUrl,
-        mapImageNaturalWidth: img.mapImageNaturalWidth,
-        mapImageNaturalHeight: img.mapImageNaturalHeight,
-        ...(Array.isArray(img.extraCameraVisibleNorms) && img.extraCameraVisibleNorms.length
-          ? { extraCameraVisibleNorms: img.extraCameraVisibleNorms }
-          : {}),
-      },
-      tableId,
-    );
-  }, [tableId]);
+    const stub = {
+      ...buildEmptyLibraryMap(generateId()),
+      mapImageUrl,
+      imageUrl: mapImageUrl,
+      mapImageNaturalWidth: img.mapImageNaturalWidth ?? null,
+      mapImageNaturalHeight: img.mapImageNaturalHeight ?? null,
+    };
+    await apiSaveItem('maps', stub);
+    await postTableOp(buildAddMapOpFromLibraryItem(stub, {
+      extraCameraVisibleNorms: img.extraCameraVisibleNorms,
+    }), tableId);
+    if (tableId) navigate(`/table/${tableId}/maps/${stub.id}`);
+  }, [tableId, navigate]);
 
   /**
    * Replace the current map's image in place (`set-map`).
    * Mirrors sendAddMapWithImage's upload-then-op pattern.
    */
-  const sendReplaceMapWithImage = useCallback(async (file) => {
+  const sendReplaceMapWithImage = useCallback(async (file, { fork = true, libraryMapId = null } = {}) => {
     const uploaded = await postMapImageFile(file);
     if (!uploaded?.url) throw new Error('Map image upload did not return a URL');
     const { width, height } = await loadImageNaturalSizeFromUrl(uploaded.url);
-    sendSetMapConfig({ mapImageUrl: uploaded.url, mapImageNaturalWidth: width, mapImageNaturalHeight: height, mapAiImagePrompt: null });
+    sendSetMapConfig({
+      mapImageUrl: uploaded.url,
+      mapImageNaturalWidth: width,
+      mapImageNaturalHeight: height,
+      mapAiImagePrompt: null,
+      librarySyncImage: fork ? false : true,
+    });
+    if (!fork && libraryMapId) {
+      try {
+        await apiSaveItem('maps', {
+          id: libraryMapId,
+          mapImageUrl: uploaded.url,
+          imageUrl: uploaded.url,
+          mapImageNaturalWidth: width,
+          mapImageNaturalHeight: height,
+          mapAiImagePrompt: null,
+        });
+      } catch (err) {
+        console.warn('Library map image save failed', err);
+      }
+    }
   }, [sendSetMapConfig]);
 
   /** Upload a file and add it as a `mapImage` element on the current active map. */
@@ -1938,7 +2023,14 @@ function App() {
       saveItem={saveItem}
       addToTable={sendAddToTable}
       onAddMapWithImage={route.view === 'table' && !effectiveIsPlayer ? sendAddMapWithImage : undefined}
-      onReplaceMapWithImage={route.view === 'table' && !effectiveIsPlayer ? sendReplaceMapWithImage : undefined}
+      onReplaceMapWithImage={route.view === 'table' && !effectiveIsPlayer ? async (file) => {
+        const active = maps.find((m) => m.id === (activeMapId || maps[0]?.id));
+        if (active?.libraryMapId) {
+          setMapReplaceChoice({ file, libraryMapId: active.libraryMapId, name: active.name });
+          return;
+        }
+        await sendReplaceMapWithImage(file, { fork: true });
+      } : undefined}
       onAddMapImageObject={route.view === 'table' ? sendAddMapImageObject : undefined}
       effectiveIsPlayer={effectiveIsPlayer}
       navigate={navigate}
@@ -1952,6 +2044,24 @@ function App() {
       mapViewportAspect={battleMapViewportAspect}
     >
     <div className="h-[100dvh] bg-dh-surface text-dh font-sans flex flex-col overflow-hidden">
+      {mapReplaceChoice && (
+        <EditChoiceDialog
+          itemName={mapReplaceChoice.name || 'Map'}
+          contextLabel="Table"
+          canEditOriginal
+          onEditCopy={() => {
+            const { file } = mapReplaceChoice;
+            setMapReplaceChoice(null);
+            void sendReplaceMapWithImage(file, { fork: true });
+          }}
+          onEditOriginal={() => {
+            const { file, libraryMapId } = mapReplaceChoice;
+            setMapReplaceChoice(null);
+            void sendReplaceMapWithImage(file, { fork: false, libraryMapId });
+          }}
+          onClose={() => setMapReplaceChoice(null)}
+        />
+      )}
       {typeof document !== 'undefined' && route.view === 'table' && user && sessionPaused && createPortal(
         <SessionBlockedBanner
           isPlayer={effectiveIsPlayer}

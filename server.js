@@ -10,10 +10,11 @@ import { initializeApp, getApps } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import cron from 'node-cron';
 import { runMigrations, getPool, getItems, getPublicItems, upsertItem, deleteItem, countItems, getItemsPaginated, countCommunityItems, getCommunityItemsPaginated, getItemsByIds, getItem, recordClone, recordPlay, upsertMirror, findAutoClone, getUnifiedItems, getUnifiedLibraryAll, getUnifiedLibraryAllBranchCounts, getExternalCacheByIds, upsertExternalCache, getTableStatesByPlayerEmail, getTableStateById, listTableStates, summarizeTablePlayerRoster, appendDiceRoll, ackDiceRoll, getRecentDiceRolls, setBannerStatus, getPendingBanners, getDiceRollById, updateDiceRollData, resolveCharacterElements as resolveCharacterElementsDb, stripCharacterElementsForDb, getResolvedTableState, setTableStateNotifyHook, getUserPreferences, upsertUserPreferences, queryAiUsageAggregates, stampFreeTrialStart, checkTableIsLive, extendTableCampaignPass, recordCampaignPassPurchase, markStripeEventProcessed, recordCharacterTablePlacement, removeCharacterTablePlacementsForTable, createTableInviteLink, revokeTableInviteLink, getActiveTableInviteLink, redeemTableInviteLink, deleteTableInviteLinksForTable, countUserAiCallsThisMonth, getBugReportsPaginated, countBugReports, setBugReportStatus, updateBugReportNotes, BUG_REPORT_STATUSES, getCharacterById, upsertCharacterForTable, deleteCharacterForTable, stampCharacterTableId } from './src/db.js';
-import { isStripeConfigured, getStripe, constructWebhookEvent, CAMPAIGN_PASS_PRICE_CENTS, getCampaignPassPriceId } from './src/stripe.js';
+import { isStripeConfigured, getStripe, constructWebhookEvent, CAMPAIGN_PASS_PRICE_CENTS, getCampaignPassPriceId, buildCampaignPassCheckoutSessionParams } from './src/stripe.js';
 import { srdRouter, warmCache, getItem as getSrdItem } from './src/srd/index.js';
 import { loadSrdIntoDb } from './src/srd-loader.js';
 import { loadDtScenesIntoDb } from './src/dt-scenes-loader.js';
+import { loadDtMapsIntoDb } from './src/dt-maps-loader.js';
 import { COLLECTION_NAMES as SRD_COLLECTION_NAMES } from './src/srd/parser.js';
 import { redactTableStateForPlayerAudience } from './src/client/lib/session-countdowns.js';
 import { filterFeatureCatalog, getFeatureCatalogById } from './src/v2-feature-catalog.js';
@@ -81,7 +82,7 @@ const FEATURES_V2_ROOT = join(__dirname, 'src', 'features-v2');
 const app = express();
 const PORT = process.env.PORT || 3456;
 const APP_ID = process.env.APP_ID || 'daggerheart-gm-tool';
-const COLLECTIONS = [...SRD_COLLECTION_NAMES, 'scenes', 'adventures', 'characters', 'table_state'];
+const COLLECTIONS = [...SRD_COLLECTION_NAMES, 'maps', 'scenes', 'adventures', 'characters', 'table_state'];
 
 /** Parse query param as array: tier=1&tier=2 → ['1','2'], tier=1,2 → ['1','2'] */
 function parseQueryArray(val) {
@@ -1295,6 +1296,8 @@ async function applyOpToTableState(tableId, op, opts = {}) {
       op.op === 'set-active-view' ||
       op.op === 'force-player-map-view' ||
       op.op === 'add-map' ||
+      op.op === 'sync-library-map' ||
+      op.op === 'link-maps-library' ||
       op.op === 'add-map-view' ||
       op.op === 'remove-map' ||
       op.op === 'remove-map-view' ||
@@ -1362,9 +1365,9 @@ app.get('/api/data', requireAuth, async (req, res) => {
 // --- Per-collection paginated route ---
 
 /** SRD-backed unified list + app-only collections */
-const PAGINATED_COLLECTIONS = [...SRD_COLLECTION_NAMES, 'features', 'scenes', 'adventures', 'characters'];
+const PAGINATED_COLLECTIONS = [...SRD_COLLECTION_NAMES, 'features', 'maps', 'scenes', 'adventures', 'characters'];
 /** Parser collections plus scenes (DT starter scenes live in `external_item_cache`, not the SRD parser). */
-const UNIFIED_COLLECTIONS = [...SRD_COLLECTION_NAMES, 'scenes'];
+const UNIFIED_COLLECTIONS = [...SRD_COLLECTION_NAMES, 'maps', 'scenes'];
 
 async function fetchDbCounts(appId, uid, collection, { includeMine = true, includePublic, includeMirrors = true, search, tier, tierMax, tiers = [], typeField, typeValue, typeValues = [] }) {
   const opts = tierMax != null
@@ -1755,11 +1758,11 @@ app.post('/api/data/resolve', requireAuth, async (req, res) => {
       if (!missing.length) return dbItems;
 
       let extras = [];
-      if (['adversaries', 'environments', 'scenes'].includes(col)) {
+      if (['adversaries', 'environments', 'scenes', 'maps'].includes(col)) {
         const cacheItems = await getExternalCacheByIds(APP_ID, col, missing);
         const cacheIds = new Set(cacheItems.map(i => i.id));
         extras = cacheItems;
-        if (col !== 'scenes') {
+        if (col !== 'scenes' && col !== 'maps') {
           const stillMissing = missing.filter(id => !cacheIds.has(id));
           for (const id of stillMissing) {
             if (id.startsWith('srd-')) {
@@ -1776,10 +1779,11 @@ app.post('/api/data/resolve', requireAuth, async (req, res) => {
       return [...dbItems, ...extras];
     };
 
-    const [adversaries, environments, scenes] = await Promise.all([
+    const [adversaries, environments, scenes, maps] = await Promise.all([
       resolveCollection('adversaries', body.adversaries || []),
       resolveCollection('environments', body.environments || []),
       resolveCollection('scenes', body.scenes || []),
+      resolveCollection('maps', body.maps || []),
     ]);
 
     if (adopt) {
@@ -1787,10 +1791,10 @@ app.post('/api/data/resolve', requireAuth, async (req, res) => {
         Promise.all(adversaries.map(item => adoptItem(APP_ID, req.uid, 'adversaries', item))),
         Promise.all(environments.map(item => adoptItem(APP_ID, req.uid, 'environments', item))),
       ]);
-      return res.json({ adversaries: adoptedAdvs, environments: adoptedEnvs, scenes });
+      return res.json({ adversaries: adoptedAdvs, environments: adoptedEnvs, scenes, maps });
     }
 
-    res.json({ adversaries, environments, scenes });
+    res.json({ adversaries, environments, scenes, maps });
   } catch (err) {
     console.error('POST /api/data/resolve error:', err);
     res.status(500).json({ error: 'Failed to resolve items' });
@@ -1799,7 +1803,7 @@ app.post('/api/data/resolve', requireAuth, async (req, res) => {
 
 // --- Clone endpoint (explicit clone + auto-clone-on-play) ---
 
-const CLONE_COLLECTIONS = [...SRD_COLLECTION_NAMES, 'scenes', 'adventures'];
+const CLONE_COLLECTIONS = [...SRD_COLLECTION_NAMES, 'maps', 'scenes', 'adventures'];
 
 app.post('/api/data/:collection/clone', requireAuth, async (req, res) => {
   const { collection } = req.params;
@@ -2697,8 +2701,31 @@ app.put('/api/data/:collection', requireAuth, async (req, res) => {
     if (collection !== 'table_state') {
       dataToSave = await sanitizeItemImageDataUrlsDeep(req.uid, dataToSave);
     }
+    if (collection === 'maps') {
+      const url = dataToSave.mapImageUrl || dataToSave.imageUrl || null;
+      const { maps: _maps, activeElements: _els, mapConfig: _mc, shareWithPlayers: _sw, ...mapRest } = dataToSave;
+      dataToSave = { ...mapRest, imageUrl: url, mapImageUrl: url };
+    }
     await upsertItem(APP_ID, req.uid, collection, id, dataToSave, Boolean(is_public));
     const saved = { id, ...dataToSave, is_public: Boolean(is_public), _source: 'own' };
+
+    if (collection === 'maps') {
+      try {
+        const tables = await listTableStates(APP_ID, req.uid);
+        for (const row of tables) {
+          const maps = row.data?.maps || [];
+          if (!maps.some((m) => m.libraryMapId === id && m.librarySyncImage !== false)) continue;
+          await applyOpToTableState(row.id, {
+            op: 'sync-library-map',
+            libraryMapId: id,
+            libraryItem: saved,
+          }, { ownerUid: req.uid });
+        }
+      } catch (syncErr) {
+        console.warn('sync library map onto tables failed', syncErr);
+      }
+    }
+
     res.json(saved);
 
     // Notify table_state subscribers when the table_state record itself is saved.
@@ -3041,20 +3068,15 @@ app.post('/api/campaign-pass/checkout', requireAuth, async (req, res) => {
 
   try {
     const stripe = getStripe();
-    const session = await stripe.checkout.sessions.create({
-      mode: 'payment',
-      payment_method_types: ['card'],
-      line_items: [{ price: priceId, quantity: 1 }],
-      metadata: {
-        purchaseType: 'campaign_pass',
-        targetTableId: tableId,
-        months: String(months),
-        purchasedByUserId: req.uid,
-        amountCents: String(amountCents),
-      },
-      success_url: successUrl,
-      cancel_url: cancelUrl,
-    });
+    const session = await stripe.checkout.sessions.create(buildCampaignPassCheckoutSessionParams({
+      priceId,
+      tableId,
+      months,
+      purchasedByUserId: req.uid,
+      amountCents,
+      successUrl,
+      cancelUrl,
+    }));
     res.json({ checkoutUrl: session.url });
   } catch (err) {
     console.error('POST /api/campaign-pass/checkout error:', err);
@@ -5053,6 +5075,7 @@ async function startServer() {
     await runMigrations();
     await loadSrdIntoDb(APP_ID);
     await loadDtScenesIntoDb(APP_ID);
+    await loadDtMapsIntoDb(APP_ID);
     await subscriptionManager.init(APP_ID);
     setTableStateNotifyHook((tableId) => subscriptionManager.notifyChange('table_state', tableId));
     cron.schedule('0 4 * * *', async () => {

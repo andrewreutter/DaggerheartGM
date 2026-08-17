@@ -4,6 +4,7 @@
 
 import { computeSceneBudget } from './battle-points.js';
 import { normalizeMinPartySize } from './party-scaled-adversaries.js';
+import { normalizeNextScenes } from './scene-load-dialog.js';
 import { normalizeScenePartySize } from './scene-table-adapter.js';
 
 /**
@@ -142,6 +143,7 @@ function collectElementEntries(item, elementType, fallback) {
 
 /**
  * Non-empty groups of scene item rows, first-seen order, duplicates collapsed.
+ * Includes authored Next Scenes after Notes.
  * @param {object|null|undefined} item
  * @returns {Array<{ key: string, label: string, entries: Array<{ name: string, count: number, tier: number|string|null, kind: string|null }> }>}
  */
@@ -151,5 +153,10 @@ export function collectSceneLibraryCardGroups(item) {
     { key: 'environments', label: 'Environments', entries: collectElementEntries(item, 'environment', 'Environment') },
     { key: 'adversaries', label: 'Adversaries', entries: collectElementEntries(item, 'adversary', 'Adversary') },
     { key: 'notes', label: 'Notes', entries: collectElementEntries(item, 'note', 'Note') },
+    {
+      key: 'nextScenes',
+      label: 'Next Scenes',
+      entries: collectEntries(normalizeNextScenes(item?.nextScenes), (s) => s.name, 'Scene'),
+    },
   ].filter((group) => group.entries.length > 0);
 }

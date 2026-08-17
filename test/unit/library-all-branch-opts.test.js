@@ -79,6 +79,7 @@ describe('shouldIncludeLibraryAllBranch', () => {
     expect(shouldIncludeLibraryAllBranch('adversaries', base)).toBe(true);
     expect(shouldIncludeLibraryAllBranch('features', base)).toBe(true);
     expect(shouldIncludeLibraryAllBranch('scenes', base)).toBe(true);
+    expect(shouldIncludeLibraryAllBranch('maps', base)).toBe(true);
   });
 
   it('with tier only, includes tier-ranked collections and excludes others', () => {
@@ -87,6 +88,7 @@ describe('shouldIncludeLibraryAllBranch', () => {
     expect(shouldIncludeLibraryAllBranch('scenes', o)).toBe(true);
     expect(shouldIncludeLibraryAllBranch('classes', o)).toBe(false);
     expect(shouldIncludeLibraryAllBranch('features', o)).toBe(false);
+    expect(shouldIncludeLibraryAllBranch('maps', o)).toBe(false);
   });
 
   it('with advRole only, includes adversaries only', () => {

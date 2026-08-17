@@ -18,6 +18,7 @@ import { describe, it, expect, beforeAll, vi } from 'vitest';
 
 // We import the stripe module directly for offline test helpers.
 import Stripe from 'stripe';
+import { STRIPE_API_VERSION } from '../../src/stripe.js';
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -50,7 +51,7 @@ function buildCheckoutSessionPayload(metadata = {}) {
  * Uses `stripe.webhooks.generateTestHeaderString` — fully offline.
  */
 function buildStripeSignatureHeader(payloadStr, secret = TEST_WEBHOOK_SECRET) {
-  const stripe = new Stripe('sk_test_dummy', { apiVersion: '2024-06-20' });
+  const stripe = new Stripe('sk_test_dummy', { apiVersion: STRIPE_API_VERSION });
   return stripe.webhooks.generateTestHeaderString({
     payload: payloadStr,
     secret,
@@ -236,11 +237,49 @@ describe('isStripeConfigured (src/stripe.js)', () => {
 
 // ── CAMPAIGN_PASS_PRICE_CENTS tests ───────────────────────────────────────────
 
+describe('STRIPE_API_VERSION (src/stripe.js)', () => {
+  it('is 2025-03-31.basil or later so Managed Payments Checkout is accepted', async () => {
+    const { STRIPE_API_VERSION } = await import('../../src/stripe.js');
+    // Dated Stripe versions compare lexicographically on the YYYY-MM-DD prefix.
+    expect(STRIPE_API_VERSION >= '2025-03-31').toBe(true);
+    expect(STRIPE_API_VERSION).toBe('2025-03-31.basil');
+  });
+});
+
 describe('Campaign Pass pricing (src/stripe.js)', () => {
   it('has correct prices for all three tiers', async () => {
     const { CAMPAIGN_PASS_PRICE_CENTS } = await import('../../src/stripe.js');
     expect(CAMPAIGN_PASS_PRICE_CENTS[3]).toBe(2000);   // $20.00
     expect(CAMPAIGN_PASS_PRICE_CENTS[6]).toBe(3500);   // $35.00
     expect(CAMPAIGN_PASS_PRICE_CENTS[12]).toBe(6000);  // $60.00
+  });
+});
+
+describe('buildCampaignPassCheckoutSessionParams (src/stripe.js)', () => {
+  it('omits payment_method_types so Managed Payments Checkout accepts the session', async () => {
+    const { buildCampaignPassCheckoutSessionParams } = await import('../../src/stripe.js');
+    const params = buildCampaignPassCheckoutSessionParams({
+      priceId: 'price_test_12mo',
+      tableId: 'table-abc',
+      months: 12,
+      purchasedByUserId: 'user-xyz',
+      amountCents: 6000,
+      successUrl: 'https://example.com/success',
+      cancelUrl: 'https://example.com/cancel',
+    });
+
+    expect(params).not.toHaveProperty('payment_method_types');
+    expect(params).not.toHaveProperty('managed_payments');
+    expect(params.mode).toBe('payment');
+    expect(params.line_items).toEqual([{ price: 'price_test_12mo', quantity: 1 }]);
+    expect(params.metadata).toEqual({
+      purchaseType: 'campaign_pass',
+      targetTableId: 'table-abc',
+      months: '12',
+      purchasedByUserId: 'user-xyz',
+      amountCents: '6000',
+    });
+    expect(params.success_url).toBe('https://example.com/success');
+    expect(params.cancel_url).toBe('https://example.com/cancel');
   });
 });

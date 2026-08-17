@@ -1,5 +1,5 @@
 import { useMemo, useEffect, useRef, useState, useCallback } from 'react';
-import { X, AlertTriangle, UserPlus, ChevronDown, ChevronRight, Swords, Trees, Minus, Plus, FolderOpen } from 'lucide-react';
+import { X, AlertTriangle, UserPlus, ChevronDown, ChevronRight, Swords, Trees, Minus, Plus, FolderOpen, Map as MapIcon } from 'lucide-react';
 import { CollectionFilters } from '../CollectionFilters.jsx';
 import { useCollectionSearch } from '../../lib/useCollectionSearch.js';
 import { DaggerstackImport } from '../DaggerstackImport.jsx';
@@ -27,6 +27,7 @@ import { libraryPickerRowMeta } from '../../lib/scene-library-card-contents.js';
 export const ITEM_PICKER_SINGULAR = {
   adversaries: 'Adversary',
   environments: 'Environment',
+  maps: 'Map',
   scenes: 'Scene',
   adventures: 'Adventure',
   characters: 'Character',
@@ -35,6 +36,7 @@ export const ITEM_PICKER_SINGULAR = {
 export const ITEM_PICKER_PLURAL = {
   adversaries: 'Adversaries',
   environments: 'Environments',
+  maps: 'Maps',
   scenes: 'Scenes',
   adventures: 'Adventures',
   characters: 'Characters',
@@ -94,7 +96,7 @@ export function ItemPickerModal({
 }) {
   const { hideAiUi } = useAiUiPreference();
   const showConceptAiUi = shouldShowConceptAiUi(conceptAiEnabled, hideAiUi);
-  const isPaginated = collection === 'adversaries' || collection === 'environments' || collection === 'scenes';
+  const isPaginated = collection === 'adversaries' || collection === 'environments' || collection === 'scenes' || collection === 'maps';
   const showNonPaginatedLoading = !isPaginated && isLoading;
   const singular = ITEM_PICKER_SINGULAR[collection] || collection;
   const plural = ITEM_PICKER_PLURAL[collection] || collection;
@@ -369,6 +371,24 @@ export function ItemPickerModal({
             >
               <Swords size={18} />
               Create new adversary
+            </button>
+          </div>
+        )}
+
+        {collection === 'maps' && onCreateNew && (
+          <div className="px-5 py-3 border-b border-dh-border shrink-0">
+            <button
+              type="button"
+              tabIndex={0}
+              onClick={() => {
+                onCreateNew();
+                onClose();
+              }}
+              className="w-full rounded-lg border-2 border-sky-600 bg-sky-800 hover:bg-sky-700 text-white font-semibold py-3 px-4 flex items-center justify-center gap-2 transition-colors"
+              data-testid="item-picker-create-map"
+            >
+              <MapIcon size={18} />
+              Create new map
             </button>
           </div>
         )}

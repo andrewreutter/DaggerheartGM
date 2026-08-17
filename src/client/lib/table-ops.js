@@ -20,6 +20,7 @@ import { DEFAULT_MAP_SIZE_FT } from './map-dimensions-ft.js';
 import { playerCanAccessMapViewSelection } from './map-view-player-sync.js';
 import { normalizeMapArtistFields } from './map-artist.js';
 import { normalizeNextScenes } from './scene-load-dialog.js';
+import { syncLibraryMapOntoTableMaps } from './map-library.js';
 
 /** Keep legacy `gmMapView` + `activeMapId` aligned with `gmActiveViewId` for snapshots. */
 function syncGmMapViewFromActiveView(state) {
@@ -458,6 +459,20 @@ export function applyTableOp(op, state) {
         if (op.mapImageNaturalHeight !== undefined) merged.mapImageNaturalHeight = op.mapImageNaturalHeight;
         if (op.mapAiImagePrompt !== undefined) merged.mapAiImagePrompt = op.mapAiImagePrompt;
         if (op.shareWithPlayers !== undefined) merged.shareWithPlayers = !!op.shareWithPlayers;
+        if (op.libraryMapId !== undefined) merged.libraryMapId = op.libraryMapId;
+        if (op.librarySyncImage !== undefined) merged.librarySyncImage = !!op.librarySyncImage;
+        if (op.artist !== undefined || op.artistUrl !== undefined) {
+          const credit = normalizeMapArtistFields(
+            op.artist !== undefined ? op.artist : m.artist,
+            op.artistUrl !== undefined ? op.artistUrl : m.artistUrl,
+          );
+          merged.artist = credit.artist;
+          merged.artistUrl = credit.artistUrl;
+        }
+        if (op.overlayPng !== undefined) {
+          if (op.overlayPng == null) delete merged.overlayPng;
+          else merged.overlayPng = op.overlayPng;
+        }
         return merged;
       });
       let mapViews = base.mapViews.map(v => ({ ...v }));
@@ -786,11 +801,13 @@ export function applyTableOp(op, state) {
     }
     case 'add-map': {
       const base = normalizeMapState(state);
-      const id = newMapId();
+      const requestedId = typeof op.mapId === 'string' && op.mapId.trim() ? op.mapId.trim() : null;
+      const id = requestedId && !base.maps.some((m) => m.id === requestedId) ? requestedId : newMapId();
       const name =
         op.name && String(op.name).trim()
           ? String(op.name).trim()
           : `Map ${base.maps.length + 1}`;
+      const credit = normalizeMapArtistFields(op.artist, op.artistUrl);
       const newMap = {
         id,
         name,
@@ -800,58 +817,111 @@ export function applyTableOp(op, state) {
         mapImageNaturalWidth: op.mapImageNaturalWidth ?? null,
         mapImageNaturalHeight: op.mapImageNaturalHeight ?? null,
         mapAiImagePrompt: op.mapAiImagePrompt ?? null,
-        shareWithPlayers: true,
+        shareWithPlayers: op.shareWithPlayers !== undefined ? !!op.shareWithPlayers : true,
+        artist: credit.artist,
+        artistUrl: credit.artistUrl,
+        libraryMapId: op.libraryMapId ?? null,
+        librarySyncImage: op.librarySyncImage !== false,
       };
-      const newView = {
-        id: newViewId(),
-        mapId: id,
-        name: 'Main',
-        mapViewZoomRatio: null,
-        mapViewPanNorm: null,
-        mapViewVisibleNorm: null,
-        broadcastToPlayers: false,
-      };
-      const maps = [...base.maps, newMap];
-      let mapViews = [...base.mapViews, newView];
-      const extras = op.extraCameraVisibleNorms;
-      if (Array.isArray(extras) && extras.length > 0) {
-        for (let i = 0; i < extras.length; i++) {
-          const vn = extras[i];
-          if (!vn || typeof vn !== 'object') continue;
-          const nx = Number(vn.x);
-          const ny = Number(vn.y);
-          const nw = Number(vn.w);
-          const nh = Number(vn.h);
-          if (![nx, ny, nw, nh].every(Number.isFinite)) continue;
-          mapViews = [
-            ...mapViews,
-            {
-              id: newViewId(),
-              mapId: id,
-              name: `Camera ${i + 2}`,
-              mapViewZoomRatio: null,
-              mapViewPanNorm: null,
-              mapViewVisibleNorm: {
-                x: Math.max(0, Math.min(1, nx)),
-                y: Math.max(0, Math.min(1, ny)),
-                w: Math.max(0, Math.min(1, nw)),
-                h: Math.max(0, Math.min(1, nh)),
+      if (op.overlayPng != null) newMap.overlayPng = op.overlayPng;
+      const libraryViews = Array.isArray(op.mapViews) ? op.mapViews.filter(Boolean) : [];
+      let mapViews = [...base.mapViews];
+      let firstViewId;
+      if (libraryViews.length) {
+        const remapped = libraryViews.map((v) => ({
+          ...v,
+          id: v.id || newViewId(),
+          mapId: id,
+        }));
+        mapViews = [...mapViews, ...remapped];
+        firstViewId = remapped[0].id;
+      } else {
+        const newView = {
+          id: newViewId(),
+          mapId: id,
+          name: 'Main',
+          mapViewZoomRatio: null,
+          mapViewPanNorm: null,
+          mapViewVisibleNorm: null,
+          broadcastToPlayers: false,
+        };
+        mapViews = [...mapViews, newView];
+        firstViewId = newView.id;
+        const extras = op.extraCameraVisibleNorms;
+        if (Array.isArray(extras) && extras.length > 0) {
+          for (let i = 0; i < extras.length; i++) {
+            const vn = extras[i];
+            if (!vn || typeof vn !== 'object') continue;
+            const nx = Number(vn.x);
+            const ny = Number(vn.y);
+            const nw = Number(vn.w);
+            const nh = Number(vn.h);
+            if (![nx, ny, nw, nh].every(Number.isFinite)) continue;
+            mapViews = [
+              ...mapViews,
+              {
+                id: newViewId(),
+                mapId: id,
+                name: `Camera ${i + 2}`,
+                mapViewZoomRatio: null,
+                mapViewPanNorm: null,
+                mapViewVisibleNorm: {
+                  x: Math.max(0, Math.min(1, nx)),
+                  y: Math.max(0, Math.min(1, ny)),
+                  w: Math.max(0, Math.min(1, nw)),
+                  h: Math.max(0, Math.min(1, nh)),
+                },
+                broadcastToPlayers: false,
               },
-              broadcastToPlayers: false,
-            },
-          ];
+            ];
+          }
         }
       }
-      const nextState = { ...base, maps, mapViews, activeMapId: id, gmActiveViewId: newView.id };
+      const maps = [...base.maps, newMap];
+      let nextEls = activeElements;
+      if (Array.isArray(op.dressingElements) && op.dressingElements.length) {
+        nextEls = [
+          ...activeElements,
+          ...op.dressingElements.map((el) => ({ ...el, mapId: el.mapId ?? id })),
+        ];
+      }
+      const nextState = { ...base, maps, mapViews, activeMapId: id, gmActiveViewId: firstViewId };
       syncGmMapViewFromActiveView(nextState);
       return {
         maps,
         mapViews,
         activeMapId: id,
-        gmActiveViewId: newView.id,
+        gmActiveViewId: firstViewId,
         gmMapView: nextState.gmMapView,
         mapConfig: deriveMapConfigFromState(nextState),
+        ...(nextEls !== activeElements ? { activeElements: nextEls } : {}),
       };
+    }
+    case 'sync-library-map': {
+      const base = normalizeMapState(state);
+      const libId = op.libraryMapId;
+      const libraryItem = op.libraryItem;
+      if (!libId || !libraryItem) return {};
+      const { maps, changed } = syncLibraryMapOntoTableMaps(base.maps, { ...libraryItem, id: libId });
+      if (!changed) return {};
+      const nextState = { ...base, maps };
+      syncGmMapViewFromActiveView(nextState);
+      return { maps, mapConfig: deriveMapConfigFromState(nextState) };
+    }
+    case 'link-maps-library': {
+      const base = normalizeMapState(state);
+      const links = Array.isArray(op.links) ? op.links : [];
+      const byId = new Map(links.map((l) => [l.mapId, l.libraryMapId]));
+      let changed = false;
+      const maps = base.maps.map((m) => {
+        const libId = byId.get(m.id);
+        if (!libId || m.libraryMapId === libId) return m;
+        changed = true;
+        return { ...m, libraryMapId: libId, librarySyncImage: m.librarySyncImage !== false };
+      });
+      if (!changed) return {};
+      const nextState = { ...base, maps };
+      return { maps, mapConfig: deriveMapConfigFromState(nextState) };
     }
     case 'remove-map': {
       const base = normalizeMapState(state);

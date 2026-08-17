@@ -11,8 +11,14 @@ import { computeSceneBudget } from '../../lib/battle-points.js';
 import { normalizeNextScenes } from '../../lib/scene-load-dialog.js';
 import { getDimensionsForTab } from '../../lib/library-card-dimensions.js';
 import { normalizeScenePartySize, normalizeScenePartyTier, normalizeSceneTableData } from '../../lib/scene-table-adapter.js';
+import { collectPrivateReferencedMaps } from '../../lib/map-scene-public.js';
+import { saveItem } from '../../lib/api.js';
 
 /**
+ * Scene library row: flat table_state-shaped snapshot. Each `maps[]` entry has a
+ * scene-local `id` plus `libraryMapId` (current library art on Load Scene).
+ * Make Public is blocked until every referenced Map is public.
+ *
  * Stamp denormalized `tier` / `bp` so Library cards can read them without recomputing.
  * Uses the scene's designed `partySize` / `partyTier`, not the live table's PCs.
  * @param {object} scene
@@ -71,6 +77,8 @@ export function SceneForm({
   const [activeTab, setActiveTab] = useState(() => ((isControlled ? value : initial)?.name ? 'scene' : 'details'));
   const [nextPickerOpen, setNextPickerOpen] = useState(false);
   const [nextSceneItemsById, setNextSceneItemsById] = useState({});
+  const [mapsById, setMapsById] = useState({});
+  const [publicGateError, setPublicGateError] = useState(null);
 
   const fd = isControlled ? (value || {}) : localData;
   const nextScenes = useMemo(() => normalizeNextScenes(fd.nextScenes), [fd.nextScenes]);
@@ -102,6 +110,29 @@ export function SceneForm({
     // nextSceneKey is the stable identity of nextScenes
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nextSceneKey]);
+
+  const mapLibKey = (Array.isArray(fd.maps) ? fd.maps : []).map((m) => m.libraryMapId).filter(Boolean).join('\0');
+  useEffect(() => {
+    const ids = mapLibKey ? mapLibKey.split('\0') : [];
+    if (!ids.length) {
+      setMapsById({});
+      return undefined;
+    }
+    let cancelled = false;
+    resolveItems({ maps: ids })
+      .then((resolved) => {
+        if (cancelled) return;
+        const map = {};
+        for (const item of resolved.maps || []) {
+          if (item?.id) map[item.id] = item;
+        }
+        setMapsById(map);
+      })
+      .catch(() => {
+        if (!cancelled) setMapsById({});
+      });
+    return () => { cancelled = true; };
+  }, [mapLibKey]);
   const latestFdRef = useRef(fd);
   latestFdRef.current = fd;
 
@@ -140,6 +171,14 @@ export function SceneForm({
   }, []);
 
   const updateField = (field, val) => {
+    if (field === 'is_public' && val) {
+      const priv = collectPrivateReferencedMaps(latestFdRef.current, mapsById);
+      if (priv.length) {
+        setPublicGateError(priv);
+        return;
+      }
+    }
+    setPublicGateError(null);
     emit({ ...latestFdRef.current, [field]: val });
   };
 
@@ -203,15 +242,43 @@ export function SceneForm({
             />
           </FormRow>
           {!omitPublicCheckbox && (
-            <label className="flex items-center gap-2 cursor-pointer select-none text-sm text-dh-muted">
-              <input
-                type="checkbox"
-                checked={!!fd.is_public}
-                onChange={(e) => updateField('is_public', e.target.checked)}
-                className="accent-blue-500"
-              />
-              Make Public
-            </label>
+            <div className="mb-4 space-y-2">
+              <label className="flex items-center gap-2 cursor-pointer select-none text-sm text-dh-muted">
+                <input
+                  type="checkbox"
+                  checked={!!fd.is_public}
+                  onChange={(e) => updateField('is_public', e.target.checked)}
+                  className="accent-blue-500"
+                  data-testid="scene-form-public"
+                />
+                Make Public
+              </label>
+              {publicGateError?.length > 0 && (
+                <div className="text-xs text-amber-300 border border-amber-800/60 rounded p-2 space-y-2" data-testid="scene-public-map-gate">
+                  <p>Publish is blocked until these maps are public:</p>
+                  <ul className="list-disc pl-4">
+                    {publicGateError.map((m) => (
+                      <li key={m.id}>{m.name}</li>
+                    ))}
+                  </ul>
+                  <button
+                    type="button"
+                    className="px-2 py-1 rounded bg-sky-800 text-white"
+                    onClick={async () => {
+                      for (const m of publicGateError) {
+                        const lib = mapsById[m.id] || { id: m.id, name: m.name };
+                        await saveItem('maps', { ...lib, is_public: true });
+                        setMapsById((prev) => ({ ...prev, [m.id]: { ...lib, is_public: true } }));
+                      }
+                      setPublicGateError(null);
+                      emit({ ...latestFdRef.current, is_public: true });
+                    }}
+                  >
+                    Make these maps public too
+                  </button>
+                </div>
+              )}
+            </div>
           )}
           <FormRow label="Next Scenes" className="mb-0">
             <div className="space-y-3">

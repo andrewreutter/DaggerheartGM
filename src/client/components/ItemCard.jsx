@@ -59,6 +59,8 @@ export function ItemCard({
   /** Scene cards with a map: fill the preview without CSS zoom so the map can use leftover height after lists truncate. */
   const sceneMapFillPreview =
     showPreview && tab === 'scenes' && Boolean(item?.maps?.[0]?.mapImageUrl);
+  const libraryMapFillPreview =
+    showPreview && tab === 'maps' && Boolean(item?.mapImageUrl || item?.imageUrl);
   const v2LibrarySourcePath = useMemo(() => {
     if (tab === 'features' && item?._resolveV2) {
       return resolveV2FeatureSourcePath({ ...item._resolveV2, name: item.name });
@@ -383,7 +385,20 @@ export function ItemCard({
           preferred size, grows into leftover height, and shrinks only after lists below are truncated.
         */}
         {showPreview ? (
-        sceneMapFillPreview ? (
+        libraryMapFillPreview ? (
+        <div
+          ref={previewClipRef}
+          className="relative flex-1 min-h-0 overflow-hidden rounded border border-dh-border/80 bg-dh-canvas/50 pointer-events-none"
+        >
+          <div ref={previewContentRef} className="h-full min-h-0 min-w-0">
+            <img
+              src={item.mapImageUrl || item.imageUrl}
+              alt=""
+              className="h-full w-full object-cover"
+            />
+          </div>
+        </div>
+        ) : sceneMapFillPreview ? (
         <div
           ref={previewClipRef}
           className="relative flex-1 min-h-0 overflow-hidden rounded border border-dh-border/80 bg-dh-canvas/50 pointer-events-none"

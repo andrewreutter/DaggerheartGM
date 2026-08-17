@@ -1,6 +1,6 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Camera, Map as MapIcon } from 'lucide-react';
+import { Camera, Map as MapIcon, Pencil } from 'lucide-react';
 import { normalizeMapArtistFields, normalizeMapName, resolveMapArtistCredit } from '../lib/map-artist.js';
 import {
   DEFAULT_MAP_SIZE_FT,
@@ -38,6 +38,7 @@ function HeaderTitle({ Icon, label, fontSizePx, onAdd }) {
           onClick={onAdd}
           className="shrink-0 rounded border px-1.5 py-0.5 font-semibold leading-none text-violet-300/90 border-violet-500/35 bg-violet-950/25 hover:bg-violet-900/35"
           style={{ fontSize: fontSizePx }}
+          data-testid={label === 'Maps' ? 'map-camera-picker-add-map' : 'map-camera-picker-add-camera'}
         >
           + Add
         </button>
@@ -294,6 +295,7 @@ export const MapCameraPicker = forwardRef(function MapCameraPicker(
     onRenameMapView,
     onMapSizeChange,
     onAddMap,
+    onEditMap,
     onAddCamera,
     onOpenChange,
   },
@@ -544,6 +546,17 @@ export const MapCameraPicker = forwardRef(function MapCameraPicker(
                           onSizeChange={(patch) => onMapSizeChange?.(row.map, patch)}
                           onFocusChange={onFocusChange}
                         />
+                        {canEdit && typeof onEditMap === 'function' && row.map?.libraryMapId && (
+                          <button
+                            type="button"
+                            title="Edit map"
+                            aria-label="Edit map"
+                            className="shrink-0 p-1 rounded text-dh-muted hover:text-dh hover:bg-dh-hover"
+                            onClick={() => onEditMap(row.map)}
+                          >
+                            <Pencil size={12} />
+                          </button>
+                        )}
                       </div>
                       <div className="flex min-w-0 flex-1 items-start justify-end gap-1.5">
                         {cameras.map((cam, camIdx) => (

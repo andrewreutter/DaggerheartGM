@@ -16,7 +16,7 @@ function truncateForChip(s, max = 48) {
 /** Human-readable source selection for chip labels (matches single-select Include strip). */
 export function formatIncludesForChipLabel(includes, collection) {
   const mode = getLibraryIncludeMode(includes);
-  const catalogLabel = collection === 'scenes' ? 'DT' : 'SRD';
+  const catalogLabel = collection === 'scenes' || collection === 'maps' ? 'DT' : 'SRD';
   if (mode === 'all') return 'All';
   if (mode === 'mine_srd') return `Mine + ${catalogLabel}`;
   if (mode === 'own') return 'Mine';
@@ -67,7 +67,7 @@ export function getActiveLibraryFilterChipSpecs(filters, collection) {
       key: 'resetIncludes',
       label: `Source: ${src}`,
       kind: 'resetIncludes',
-      title: collection === 'scenes' ? 'Reset sources to Mine + DT' : 'Reset sources to Mine + SRD',
+      title: collection === 'scenes' || collection === 'maps' ? 'Reset sources to Mine + DT' : 'Reset sources to Mine + SRD',
     });
   }
 

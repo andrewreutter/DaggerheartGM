@@ -407,6 +407,9 @@ test('T10: Support this table modal opens and shows table info', async ({ page }
   // Should have the pass length picker buttons — check unique strings per option.
   await expect(page.getByRole('button', { name: '$20 3 months' })).toBeVisible();
   await expect(page.getByRole('button', { name: '$60 12 months' })).toBeVisible();
+  // Default selected duration is 12 months / $60.
+  await expect(page.getByRole('button', { name: '$60 12 months' })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByRole('button', { name: /Purchase 12 months — \$60/ })).toBeVisible();
 });
 
 test('T18: full keyboard-only pass through the Support-this-table flow', async ({ page }) => {

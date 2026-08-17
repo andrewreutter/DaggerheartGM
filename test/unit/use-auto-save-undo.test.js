@@ -4,8 +4,8 @@ import { act, createElement, useEffect } from 'react';
 import { createRoot } from 'react-dom/client';
 import { useAutoSaveUndo } from '../../src/client/lib/useAutoSaveUndo.js';
 
-function Harness({ sessionKey, initial, onSave, isNew, onExpose }) {
-  const r = useAutoSaveUndo({ initial, onSave, sessionKey, isNew: !!isNew });
+function Harness({ sessionKey, initial, onSave, isNew, canPersistNew, onExpose }) {
+  const r = useAutoSaveUndo({ initial, onSave, sessionKey, isNew: !!isNew, canPersistNew });
   useEffect(() => {
     onExpose(r);
   });
@@ -140,5 +140,37 @@ describe('useAutoSaveUndo', () => {
       );
     });
     expect(exposed.savedOnce).toBe(true);
+  });
+
+  it('persists a new item when canPersistNew returns true even without a name', async () => {
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    const onSave = vi.fn(async () => {});
+    let exposed;
+
+    await act(async () => {
+      root.render(
+        createElement(Harness, {
+          sessionKey: 'map-new',
+          initial: { id: 'm1', name: '' },
+          onSave,
+          isNew: true,
+          canPersistNew: (data) => !!data.mapImageUrl,
+          onExpose: (x) => {
+            exposed = x;
+          },
+        }),
+      );
+    });
+
+    await act(async () => {
+      exposed.setFormData({ id: 'm1', name: '', mapImageUrl: 'https://cdn.example/map.png' });
+    });
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 900));
+    });
+    expect(onSave).toHaveBeenCalledTimes(1);
+    expect(onSave.mock.calls[0][0].mapImageUrl).toBe('https://cdn.example/map.png');
   });
 });

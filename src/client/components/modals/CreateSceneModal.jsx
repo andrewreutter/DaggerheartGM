@@ -4,6 +4,8 @@ import { generateId } from '../../lib/helpers.js';
 import { computeBattlePoints } from '../../lib/battle-points.js';
 import { formatPartyScaleNameSuffix } from '../../lib/party-scaled-adversaries.js';
 import { normalizeScenePartySize, normalizeScenePartyTier } from '../../lib/scene-table-adapter.js';
+import { planTableMapLibraryImport } from '../../lib/map-library-import.js';
+import { saveItem } from '../../lib/api.js';
 
 const CAPTURE_ELEMENT_TYPES = new Set(['adversary', 'environment', 'note']);
 const MAP_DRESSING_TYPES = new Set(['mapImage', 'drawShape']);
@@ -150,6 +152,21 @@ export function CreateSceneModal({
           if ('viewId' in clone) clone.viewId = null;
         }
         elementsOut.push(clone);
+      }
+      const needImport = mapsOut.filter((m) => !m.libraryMapId);
+      if (needImport.length) {
+        const plan = planTableMapLibraryImport(needImport, {
+          mapViews: mapViewsOut,
+          elements: elementsOut,
+        });
+        const idByTableMap = new Map(plan.link.map((l) => [l.mapId, l.libraryMapId]));
+        for (const row of plan.create) {
+          await saveItem('maps', row);
+        }
+        for (const m of mapsOut) {
+          const libId = idByTableMap.get(m.id);
+          if (libId) m.libraryMapId = libId;
+        }
       }
       const countdownsOut = structuredClone(
         (sessionCountdowns || []).filter((c) => selectedCountdownIds.has(c.id)),

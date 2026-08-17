@@ -12,7 +12,8 @@
       "mapAiImagePrompt": null,
       "shareWithPlayers": true,
       "mapImageNaturalWidth": 2800,
-      "mapImageNaturalHeight": 2800
+      "mapImageNaturalHeight": 2800,
+      "libraryMapId": "srd-map-raging-river"
     }
   ],
   "name": "Cross the Raging River",

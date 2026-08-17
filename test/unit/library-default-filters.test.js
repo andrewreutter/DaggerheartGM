@@ -27,8 +27,9 @@ describe('normalizePersistedIncludes', () => {
 });
 
 describe('catalogCacheSourceForCollection', () => {
-  it('returns dt for scenes and srd otherwise', () => {
+  it('returns dt for scenes and maps, srd otherwise', () => {
     expect(catalogCacheSourceForCollection('scenes')).toBe('dt');
+    expect(catalogCacheSourceForCollection('maps')).toBe('dt');
     expect(catalogCacheSourceForCollection('adversaries')).toBe('srd');
     expect(catalogCacheSourceForCollection('library')).toBe('srd');
   });
@@ -42,8 +43,9 @@ describe('librarySourceModeOptionsForCollection', () => {
     ]);
   });
 
-  it('remaps Mine+SRD and SRD labels to DT for scenes', () => {
+  it('remaps Mine+SRD and SRD labels to DT for scenes and maps', () => {
     const opts = librarySourceModeOptionsForCollection('scenes');
+    expect(librarySourceModeOptionsForCollection('maps')).toEqual(opts);
     expect(opts.map((o) => ({ mode: o.mode, label: o.label }))).toEqual([
       { mode: 'all', label: 'All' },
       { mode: 'mine_srd', label: 'Mine+DT' },

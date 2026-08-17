@@ -32,6 +32,7 @@ import { getCollection } from '../src/srd/parser.js';
 import { upsertExternalCache, getExternalCacheByIds, getPool } from '../src/db.js';
 import { uploadBufferToMapStorage } from '../src/server/map-storage.js';
 import { loadDtScenesIntoDb } from '../src/dt-scenes-loader.js';
+import { loadDtMapsIntoDb } from '../src/dt-maps-loader.js';
 import {
   buildSrdStarterScene,
   buildScenePlaceholderSvg,
@@ -63,6 +64,7 @@ async function seedAuthoredScenes() {
 
   console.log('[srd-scenes] Default mode: seeding two hand-authored DT scenes.');
   const result = await loadDtScenesIntoDb(APP_ID, { force: FORCE });
+  await loadDtMapsIntoDb(APP_ID, { force: FORCE });
   if (result.skipped) {
     console.log('[srd-scenes] Cache already matches data/dt-scenes/ (use --force to overwrite).');
     return;

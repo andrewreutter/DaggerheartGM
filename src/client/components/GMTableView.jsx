@@ -24,6 +24,7 @@ import {
 } from '../lib/party-scaled-adversaries.js';
 import { CharacterSheetEmphasisCard } from './CharacterStatBlockGraphic.jsx';
 import { EditChoiceDialog } from './modals/EditChoiceDialog.jsx';
+import { buildEmptyLibraryMap, shouldDiscardNewLibraryMap } from '../lib/map-library.js';
 import { ItemDetailModal } from './modals/ItemDetailModal.jsx';
 import { ItemPickerModal } from './modals/ItemPickerModal.jsx';
 import { EncounterNoteEditorModal } from './modals/EncounterNoteEditorModal.jsx';
@@ -76,6 +77,7 @@ import {
   postFinalizeIntentDifficulty,
   syncDaggerstackCharacter,
   resolveItems,
+  deleteItem,
   conceptAiEnabled,
   imageGenEnabled,
   postEncounterAiBuild,
@@ -677,7 +679,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
   const gmHoverHideTimer = useRef(null);
   const lastHoveredElementRef = useRef(null);
   const [lightboxUrl, setLightboxUrl] = useState(null);
-  const [modalOpen, setModalOpen] = useState(null); // null | 'adversaries' | 'environments' | 'scenes'
+  const [modalOpen, setModalOpen] = useState(null); // null | 'adversaries' | 'environments' | 'scenes' | 'maps'
   const [characterPanelAiConcept, setCharacterPanelAiConcept] = useState('');
   const [encounterAiConcept, setEncounterAiConcept] = useState('');
   /** null = use adjusted budget from BP card math */
@@ -3202,6 +3204,43 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     [addToTable, gameTableBasePath, navigate],
   );
 
+  const openNewMapEditor = useCallback(
+    async () => {
+      const stub = buildEmptyLibraryMap(generateId());
+      try {
+        await saveItem('maps', stub);
+      } catch (err) {
+        console.warn('Create map stub failed', err);
+        return;
+      }
+      await addToTable(stub, 'maps');
+      navigate(`${gameTableBasePath}/maps/${stub.id}`, { replace: true });
+      setEditState({
+        step: 'form',
+        item: stub,
+        collection: 'maps',
+        mode: 'new',
+        instances: [],
+        baseElement: { id: stub.id, name: stub.name, libraryMapId: stub.id },
+      });
+    },
+    [addToTable, gameTableBasePath, navigate, saveItem],
+  );
+
+  const openEditMapChoice = useCallback((tableMap) => {
+    if (!tableMap) return;
+    const libId = tableMap.libraryMapId;
+    if (!libId) return;
+    navigate(`${gameTableBasePath}/maps/${libId}`);
+    setEditState({
+      step: 'choice',
+      collection: 'maps',
+      item: { id: libId, name: tableMap.name, mapImageUrl: tableMap.mapImageUrl },
+      baseElement: { id: libId, name: tableMap.name, libraryMapId: libId, mapId: tableMap.id },
+      instances: [],
+    });
+  }, [gameTableBasePath, navigate]);
+
   const openNewEnvironmentEditor = useCallback(
     async (opts = {}) => {
       const { pendingAiConcept, tier = 1, type = 'exploration' } = opts;
@@ -3252,6 +3291,34 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
       editState?.collection === modalCollection &&
       (editState?.baseElement?.id === modalItemId || editState?.item?.id === modalItemId)
     ) {
+      return;
+    }
+    if (modalCollection === 'maps') {
+      if (
+        editState?.collection === 'maps' &&
+        (editState?.baseElement?.id === modalItemId || editState?.item?.id === modalItemId)
+      ) {
+        return;
+      }
+      void (async () => {
+        let item = editState?.item;
+        if (!item || item.id !== modalItemId) {
+          try {
+            const resolved = await resolveItems({ maps: [modalItemId] });
+            item = resolved.maps?.[0] || { id: modalItemId, name: '' };
+          } catch {
+            item = { id: modalItemId, name: '' };
+          }
+        }
+        setEditState({
+          step: 'form',
+          item,
+          collection: 'maps',
+          mode: editState?.mode === 'new' ? 'new' : 'original',
+          instances: [],
+          baseElement: { id: modalItemId, name: item.name, libraryMapId: modalItemId },
+        });
+      })();
       return;
     }
     const elType = COLLECTION_TO_ELEMENT_TYPE[modalCollection];
@@ -3321,6 +3388,21 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
       editState?.baseElement?.instanceId
     ) {
       removeActiveElement(editState.baseElement.instanceId);
+    }
+    if (
+      editState?.mode === 'new' &&
+      editState?.collection === 'maps' &&
+      shouldDiscardNewLibraryMap({
+        name: editState.item?.name,
+        imageUrl: editState.item?.imageUrl,
+        mapImageUrl: editState.item?.mapImageUrl,
+        savedOnce: characterTableDetailModalRef.current?.savedOnce === true,
+      })
+    ) {
+      const libId = editState.item?.id || editState.baseElement?.id;
+      const tableMap = (maps || []).find((m) => m.libraryMapId === libId);
+      if (tableMap && onRemoveMap) onRemoveMap(tableMap.id);
+      if (libId) deleteItem('maps', libId).catch(() => {});
     }
     setEditState(null);
     navigate(gameTableBasePath, { replace: true });
@@ -3429,11 +3511,27 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
   };
 
   const handleChoiceEditCopy = () => {
+    if (editState?.collection === 'maps') {
+      setEditState(null);
+      navigate(gameTableBasePath, { replace: true });
+      return;
+    }
     const { instances, baseElement, collection } = editState;
     setEditState({ step: 'form', item: getItemData(baseElement), collection, mode: 'copy', instances, baseElement });
   };
 
   const handleChoiceEditOriginal = () => {
+    if (editState?.collection === 'maps') {
+      void (async () => {
+        let item = editState.item;
+        try {
+          const resolved = await resolveItems({ maps: [editState.baseElement.id] });
+          if (resolved.maps?.[0]) item = resolved.maps[0];
+        } catch { /* keep stub */ }
+        setEditState({ ...editState, step: 'form', item, mode: 'original' });
+      })();
+      return;
+    }
     const { baseElement, collection } = editState;
     const libraryItem = data[collection]?.find(i => i.id === baseElement.id) || getItemData(baseElement);
     setEditState({ ...editState, step: 'form', item: libraryItem, mode: 'original' });
@@ -6909,7 +7007,8 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
             onMapFreeExplore={onMapFreeExplore}
             onForcePlayersToMapView={onForcePlayersToMapView}
             onSetActiveMap={onSetActiveMap}
-            onAddMap={onAddMap}
+            onAddMap={!isPlayer ? () => setModalOpen('maps') : undefined}
+            onEditLibraryMap={!isPlayer ? openEditMapChoice : undefined}
             onAddMapWithImage={onAddMapWithImage}
             onRemoveMap={onRemoveMap}
             onRenameMap={onRenameMap}
@@ -7599,7 +7698,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
         showDaggerstackImport={false}
         onClose={() => setModalOpen(null)}
         selectionMode={
-          modalOpen === 'scenes' || modalOpen === 'environments' || modalOpen === 'adversaries'
+          modalOpen === 'scenes' || modalOpen === 'environments' || modalOpen === 'adversaries' || modalOpen === 'maps'
             ? 'multi'
             : 'immediate'
         }
@@ -7661,6 +7760,9 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
         } : modalOpen === 'environments' ? () => {
           setModalOpen(null);
           void openNewEnvironmentEditor({});
+        } : modalOpen === 'maps' ? () => {
+          setModalOpen(null);
+          void openNewMapEditor();
         } : undefined}
         onCharacterAiConceptSubmit={modalOpen === 'characters' ? (concept) => {
           setModalOpen(null);
@@ -7886,7 +7988,8 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
         itemName={editState.baseElement.name}
         contextLabel="Table"
         canEditOriginal={
-          isOwnItem(editState.baseElement)
+          editState.collection === 'maps'
+          || isOwnItem(editState.baseElement)
           || canEditLibraryCatalogItem(editState.baseElement, { isAdmin, collection: editState.collection })
         }
         onEditCopy={handleChoiceEditCopy}

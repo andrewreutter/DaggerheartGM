@@ -17,6 +17,7 @@ const UNDO_GROUP_MS = 600;
  * @param {function} options.onSave         - Called with current formData after debounce
  * @param {number} [options.debounceMs=800] - Auto-save debounce delay in ms
  * @param {boolean} [options.isNew=false]   - Skip auto-save until item has a name
+ * @param {(data: object) => boolean} [options.canPersistNew] - When `isNew`, persist if this returns true (default: named)
  *
  * @returns {{
  *   formData: object,
@@ -37,7 +38,7 @@ const UNDO_GROUP_MS = 600;
  * combine this with user-interaction gating — programmatic `onChange` can still run after that.
  * @param {string|number|null} [options.sessionKey] — when it changes, the session restarts (e.g. item id).
  */
-export function useAutoSaveUndo({ initial, onSave, debounceMs = 800, isNew = false, sessionKey = null }) {
+export function useAutoSaveUndo({ initial, onSave, debounceMs = 800, isNew = false, sessionKey = null, canPersistNew }) {
   const [formData, setFormDataRaw] = useState(() => initial || {});
   const [undoStack, setUndoStack] = useState([]);
   const [redoStack, setRedoStack] = useState([]);
@@ -58,7 +59,8 @@ export function useAutoSaveUndo({ initial, onSave, debounceMs = 800, isNew = fal
   const pendingSaveDataRef = useRef(null);
 
   const executeSave = useCallback(async (data) => {
-    if (isNew && !data.name?.trim()) return;
+    const persistable = typeof canPersistNew === 'function' ? canPersistNew(data) : !!data.name?.trim();
+    if (isNew && !persistable) return;
     if (saveInProgressRef.current) {
       pendingSaveDataRef.current = data;
       return;
@@ -77,7 +79,7 @@ export function useAutoSaveUndo({ initial, onSave, debounceMs = 800, isNew = fal
       pendingSaveDataRef.current = null;
       if (pending) executeSave(pending);
     }
-  }, [isNew]);
+  }, [isNew, canPersistNew]);
 
   const scheduleSave = useCallback((data) => {
     setDebouncePending(true);

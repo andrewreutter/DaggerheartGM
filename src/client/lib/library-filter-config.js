@@ -68,6 +68,7 @@ export function formatFeatScopeLabel(val) {
  */
 export const LIBRARY_USER_EDITABLE_COLLECTIONS = new Set([
   ...SRD_UNIFIED_COLLECTIONS.filter(c => !LIBRARY_READONLY_SRD_COLLECTIONS.has(c)),
+  'maps',
   'scenes',
   'adventures',
 ]);
@@ -163,6 +164,7 @@ export const LIBRARY_FILTER_CONFIG = {
   },
   /** User + public + official DT starter scenes; denormalized `tier` on the row. */
   scenes: { typeLabel: '', typeOptions: null, rankMode: 'tier', defaultSort: 'popularity' },
+  maps: { typeLabel: '', typeOptions: null, rankMode: 'none', defaultSort: 'name' },
 };
 
 export function getLibraryFilterConfig(collection) {
@@ -170,7 +172,7 @@ export function getLibraryFilterConfig(collection) {
 }
 
 /** Collections with custom detail panes in ItemDetailModal (not generic JSON) */
-export const LIBRARY_CUSTOM_DETAIL_COLLECTIONS = new Set(['adversaries', 'environments', 'scenes', 'adventures']);
+export const LIBRARY_CUSTOM_DETAIL_COLLECTIONS = new Set(['adversaries', 'environments', 'maps', 'scenes', 'adventures']);
 
 /** SRD unified tabs that use the generic structured read-only detail view */
 export const LIBRARY_GENERIC_DETAIL_COLLECTIONS = SRD_UNIFIED_COLLECTIONS.filter(

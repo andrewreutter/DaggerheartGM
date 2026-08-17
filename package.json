@@ -36,6 +36,7 @@
     "seed:v2-browser-chars": "node --env-file=.env scripts/seed-v2-browser-test-characters.mjs",
     "chunk:srd": "node scripts/chunk-srd-readme.mjs",
     "migrate:map-images": "node --env-file=.env scripts/migrate-map-images-to-storage.mjs",
+    "migrate:table-maps-library": "node --env-file=.env scripts/migrate-table-maps-to-library.mjs",
     "reconcile:characters": "node --env-file=.env scripts/reconcile-character-ownership.mjs",
     "migrate:item-images": "node --env-file=.env scripts/migrate-item-images-to-storage.mjs",
     "migrate:scraped-catalogs": "node --env-file=.env scripts/migrate-scraped-catalogs.mjs"

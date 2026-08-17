@@ -144,4 +144,19 @@ describe('regenerateSceneIdsForTablePlacement', () => {
     expect(out.maps[1].mapImageUrl).toBe('https://cdn.example/cave.png');
     expect(out.maps[0].mapImageUrl).toBe(sceneData.maps[0].mapImageUrl);
   });
+
+  it('preserves libraryMapId while remapping the scene-local map id', () => {
+    const sceneData = {
+      maps: [
+        { id: 'map-old-1', name: 'Forest', libraryMapId: 'srd-map-crossroads', mapImageUrl: 'https://cdn.example/forest.png' },
+      ],
+      mapViews: [{ id: 'view-old-1', name: 'Wide', mapId: 'map-old-1' }],
+      activeElements: [],
+      sessionCountdowns: [],
+    };
+    const out = regenerateSceneIdsForTablePlacement(sceneData);
+    expect(out.maps[0].id).not.toBe('map-old-1');
+    expect(out.maps[0].libraryMapId).toBe('srd-map-crossroads');
+    expect(out.mapViews[0].mapId).toBe(out.maps[0].id);
+  });
 });

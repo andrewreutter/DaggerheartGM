@@ -9,7 +9,7 @@ import { buildLibraryBrowsePath, buildLibraryModalPath } from '../lib/library-mo
 import { LIBRARY_NON_CLONEABLE_COLLECTIONS } from '../lib/library-filter-config.js';
 import { isOwnItem } from '../lib/constants.js';
 
-const TABLE_ADDABLE_COLLECTIONS = new Set(['adversaries', 'environments', 'scenes', 'adventures', 'characters']);
+const TABLE_ADDABLE_COLLECTIONS = new Set(['adversaries', 'environments', 'maps', 'scenes', 'adventures', 'characters']);
 const DEFAULT_SCOPE = {
   collection: 'all',
   includeMine: true,

@@ -3,7 +3,7 @@
  * Prefer `imageUrl`; fall back to `image` when that is already an absolute URL.
  */
 function primaryImageUrl(item) {
-  const direct = item.imageUrl;
+  const direct = item.imageUrl || item.mapImageUrl;
   if (direct != null && String(direct).trim()) return String(direct).trim();
   const raw = item.image;
   if (raw == null || raw === '') return '';

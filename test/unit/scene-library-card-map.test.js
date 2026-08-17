@@ -12,12 +12,15 @@ describe('scene library card map preview', () => {
       'utf8'
     );
     expect(src).toMatch(/export function SceneLibraryCard/);
-    expect(src).toMatch(/object-contain/);
-    expect(src).not.toMatch(/object-cover/);
+    const sceneCard = src.slice(src.indexOf('export function SceneLibraryCard'));
+    const sceneCardBody = sceneCard.slice(0, sceneCard.indexOf('export function LibraryItemDisplayContent'));
+    expect(sceneCardBody).toMatch(/object-contain/);
+    expect(sceneCardBody).not.toMatch(/object-cover/);
     expect(src).toMatch(/fill\s*=\s*false/);
     expect(src).toMatch(/<section key=\{key\}/);
     expect(src).toMatch(/LIB_SECTION_HEADER_BORDER/);
     expect(src).toMatch(/entries\.map\(\(\{ name, count, tier, kind \}\)/);
+    expect(src).toMatch(/nextScenes: Play/);
     expect(src).toMatch(/formatSceneLibraryRowTitle\(name, count\)/);
     expect(src).toMatch(/Tier \{tier\}/);
     expect(src).not.toMatch(/titles\.join\(', '/);

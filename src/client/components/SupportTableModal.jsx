@@ -10,6 +10,9 @@ const PASS_PRICES = { 3: 20, 6: 35, 12: 60 };
 /** Human-readable month labels. */
 const PASS_LABELS = { 3: '3 months', 6: '6 months', 12: '12 months' };
 
+/** Default selected pass length — 12 months / $60. */
+const DEFAULT_PASS_MONTHS = 12;
+
 /**
  * Format an ISO-8601 date string as "Oct 14, 2026".
  * @param {string | null} iso
@@ -111,7 +114,7 @@ function BillingStatusPill({ billing, loading }) {
 export function SupportTableModal({ open, onClose, tableId, tableName, gmDisplayName, isAdmin = false }) {
   const titleId = useId();
 
-  const [selectedMonths, setSelectedMonths] = useState(6);
+  const [selectedMonths, setSelectedMonths] = useState(DEFAULT_PASS_MONTHS);
   const [billing, setBilling] = useState(null);
   const [billingLoading, setBillingLoading] = useState(false);
   const [checkoutLoading, setCheckoutLoading] = useState(false);

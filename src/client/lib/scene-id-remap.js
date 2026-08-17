@@ -10,7 +10,8 @@ function remapRef(id, lookup) {
  * Deep-clone a scene snapshot and assign fresh map / view / element ids for
  * placing that scene onto a live table. Cross-references (`mapId`, `viewId`,
  * `parentInstanceId`, `minionGroupId`, countdown `sourceRef.elementInstanceId`) are rewritten
- * through the same old→new lookups. `mapImageUrl` strings are copied as-is.
+ * through the same old→new lookups. `mapImageUrl` strings and `libraryMapId`
+ * (library origin — not remapped) are copied as-is.
  *
  * Capture ("Create Scene") keeps original ids; remap only at add-time.
  *

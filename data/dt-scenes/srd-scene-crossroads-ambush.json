@@ -12,7 +12,8 @@
       "mapAiImagePrompt": null,
       "shareWithPlayers": false,
       "mapImageNaturalWidth": 1120,
-      "mapImageNaturalHeight": 1470
+      "mapImageNaturalHeight": 1470,
+      "libraryMapId": "srd-map-crossroads"
     }
   ],
   "name": "Crossroads Ambush",

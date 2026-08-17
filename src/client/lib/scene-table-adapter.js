@@ -181,7 +181,7 @@ function activeMapIdFromState(s) {
   );
 }
 
-async function hostDataUrlIfNeeded(value, baseName = 'scene-image') {
+export async function hostDataUrlIfNeeded(value, baseName = 'scene-image') {
   if (typeof value !== 'string' || !value.startsWith('data:')) return value;
   try {
     const { postMapImageFile } = await import('./api.js');

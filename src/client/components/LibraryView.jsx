@@ -4,6 +4,7 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 import {
   ShieldAlert,
   Map as MapIcon,
+  MapPinned,
   Play,
   BookOpen,
   Plus,
@@ -90,6 +91,7 @@ const LOAD_DEBOUNCE_MS = 180;
 const SINGULAR_NAMES = {
   adversaries: 'Adversary',
   environments: 'Environment',
+  maps: 'Map',
   scenes: 'Scene',
   adventures: 'Adventure',
   characters: 'Character',
@@ -111,24 +113,25 @@ const SINGULAR_NAMES = {
 
 /** Full tab list (sidebar order; hidden ids omitted from `LIBRARY_NAV_TABS`). */
 const TABS = [
-  { id: 'characters', label: 'Characters', Icon: User },
+  { id: 'scenes', label: 'Scenes', Icon: Play },
+  { id: 'maps', label: 'Maps', Icon: MapPinned },
+  { id: 'environments', label: 'Environments', Icon: MapIcon },
+  { id: 'adversaries', label: 'Adversaries', Icon: ShieldAlert },
+  { id: 'campaign_frames', label: 'Campaign Frames', Icon: BookOpen },
   { id: 'classes', label: 'Classes', Icon: GraduationCap },
   { id: 'subclasses', label: 'Subclasses', Icon: Layers },
   { id: 'ancestries', label: 'Ancestries', Icon: Dna },
   { id: 'communities', label: 'Communities', Icon: Users },
   { id: 'weapons', label: 'Weapons', Icon: Sword },
   { id: 'armor', label: 'Armor', Icon: Shield },
-  { id: 'adversaries', label: 'Adversaries', Icon: ShieldAlert },
-  { id: 'environments', label: 'Environments', Icon: MapIcon },
+  { id: 'items', label: 'Items', Icon: Package },
+  { id: 'consumables', label: 'Consumables', Icon: FlaskConical },
   { id: 'abilities', label: 'Abilities', Icon: Sparkles },
   { id: 'beastforms', label: 'Beastforms', Icon: PawPrint },
-  { id: 'campaign_frames', label: 'Campaign Frames', Icon: BookOpen },
-  { id: 'consumables', label: 'Consumables', Icon: FlaskConical },
   { id: 'domains', label: 'Domains', Icon: Library },
-  { id: 'items', label: 'Items', Icon: Package },
   { id: 'rules', label: 'Rules', Icon: ScrollText },
   { id: 'features', label: 'Features', Icon: Puzzle },
-  { id: 'scenes', label: 'Scenes', Icon: Play },
+  { id: 'characters', label: 'Characters', Icon: User },
   { id: 'adventures', label: 'Adventures', Icon: BookOpen },
 ];
 
@@ -139,6 +142,14 @@ const LIBRARY_NAV_SIDEBAR = [
   { id: 'all', label: 'All', Icon: LayoutGrid },
   ...LIBRARY_NAV_TABS,
 ];
+/** Hairline after these sidebar ids (All + last item of each group). */
+const LIBRARY_NAV_DIVIDER_AFTER = new Set([
+  'all',
+  'campaign_frames',
+  'communities',
+  'consumables',
+  'beastforms',
+]);
 
 /** Sidebar order — every id is in `LIBRARY_USER_EDITABLE_COLLECTIONS`. */
 const NEW_ITEM_COLLECTION_ORDER = TABS.map(t => t.id).filter(id => LIBRARY_USER_EDITABLE_COLLECTIONS.has(id));
@@ -148,10 +159,10 @@ const TAB_LABEL_BY_ID = Object.fromEntries(TABS.map(t => [t.id, t.label]));
 const NEW_ITEM_MENU_SELECTOR = '[data-library-new-item-menu]';
 
 /** Paginated library tabs: SRD unified collections plus scenes (official DT catalog + Mine/Public). */
-const PAGINATED_LIBRARY_TABS = new Set([...SRD_UNIFIED_COLLECTIONS, 'scenes']);
+const PAGINATED_LIBRARY_TABS = new Set([...SRD_UNIFIED_COLLECTIONS, 'maps', 'scenes']);
 
 /** Game Table can only add these library types */
-const TABLE_ADDABLE_COLLECTIONS = new Set(['adversaries', 'environments', 'scenes', 'adventures', 'characters']);
+const TABLE_ADDABLE_COLLECTIONS = new Set(['adversaries', 'environments', 'maps', 'scenes', 'adventures', 'characters']);
 const DEFAULT_ASSISTANT_SCOPE = {
   collection: 'all',
   includeMine: true,
@@ -989,9 +1000,6 @@ export function LibraryView({
           <div className="flex-1 min-h-0 overflow-y-auto">
             {(assistantAvailable ? LIBRARY_NAV_SIDEBAR : LIBRARY_NAV_SIDEBAR.filter(t => t.id !== 'assistant')).map(tab => (
               <Fragment key={tab.id}>
-                {tab.id === 'features' && (
-                  <div className="border-t border-dh-border mx-3 my-1" aria-hidden />
-                )}
                 <button
                   type="button"
                   onClick={() => navigate(`/library/${tab.id}`)}
@@ -1007,7 +1015,7 @@ export function LibraryView({
                     </span>
                   )}
                 </button>
-                {tab.id === 'all' && (
+                {LIBRARY_NAV_DIVIDER_AFTER.has(tab.id) && (
                   <div className="border-t border-dh-border mx-3 my-1" aria-hidden />
                 )}
               </Fragment>

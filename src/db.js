@@ -805,7 +805,7 @@ export async function getUnifiedItems(appId, userId, collection, {
   }
 
   const extSources = [];
-  if (includeSrd) extSources.push(collection === 'scenes' ? 'dt' : 'srd');
+  if (includeSrd) extSources.push(collection === 'scenes' || collection === 'maps' ? 'dt' : 'srd');
 
   if (extSources.length > 0) {
     parts.push(`(
@@ -1023,6 +1023,33 @@ async function fetchScenesLibraryAllBranch(appId, userId, opts, countOnly) {
   return { collection: 'scenes', items: result.items, totalCount: result.totalCount };
 }
 
+/**
+ * Own + public `maps` rows for Library "All", plus DT catalog when `includeSrd`.
+ * Maps are not tier-ranked; `shouldIncludeLibraryAllBranch` already drops this
+ * branch when a structural filter is active.
+ */
+async function fetchMapsLibraryAllBranch(appId, userId, opts, countOnly) {
+  const {
+    includeMine = true,
+    includePublic = false,
+    includeSrd = false,
+    search = '',
+  } = opts;
+
+  const result = await getUnifiedItems(appId, userId, 'maps', {
+    includeMine,
+    includePublic,
+    includeSrd,
+    search,
+    sort: 'name',
+    offset: 0,
+    limit: countOnly ? 0 : LIBRARY_ALL_FETCH_LIMIT,
+    countOnly,
+  });
+
+  return { collection: 'maps', items: result.items, totalCount: result.totalCount };
+}
+
 async function runLibraryAllBranches(appId, userId, opts, countOnly) {
   const {
     includeMine = true,
@@ -1093,7 +1120,10 @@ async function runLibraryAllBranches(appId, userId, opts, countOnly) {
   const scenesBranch = shouldIncludeLibraryAllBranch('scenes', opts)
     ? await fetchScenesLibraryAllBranch(appId, userId, opts, countOnly)
     : { collection: 'scenes', items: [], totalCount: 0 };
-  return [...srdBranches, featBranch, scenesBranch];
+  const mapsBranch = shouldIncludeLibraryAllBranch('maps', opts)
+    ? await fetchMapsLibraryAllBranch(appId, userId, opts, countOnly)
+    : { collection: 'maps', items: [], totalCount: 0 };
+  return [...srdBranches, featBranch, scenesBranch, mapsBranch];
 }
 
 /**

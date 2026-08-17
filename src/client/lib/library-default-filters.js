@@ -53,15 +53,15 @@ export function includesFromIncludeMode(mode) {
 
 /** Official catalog cache `source` for a library collection (`includeSrd` still gates the query). */
 export function catalogCacheSourceForCollection(collection) {
-  return collection === 'scenes' ? 'dt' : 'srd';
+  return collection === 'scenes' || collection === 'maps' ? 'dt' : 'srd';
 }
 
 /**
- * Include-strip options. Persist/API modes stay `mine_srd` / `srd`; Scenes remaps the visible labels to DT.
+ * Include-strip options. Persist/API modes stay `mine_srd` / `srd`; Scenes and Maps remap the visible labels to DT.
  * @param {string} [collection]
  */
 export function librarySourceModeOptionsForCollection(collection) {
-  if (collection !== 'scenes') return LIBRARY_SOURCE_MODE_OPTIONS;
+  if (collection !== 'scenes' && collection !== 'maps') return LIBRARY_SOURCE_MODE_OPTIONS;
   return Object.freeze([
     { mode: 'all', label: 'All' },
     { mode: 'mine_srd', label: 'Mine+DT' },

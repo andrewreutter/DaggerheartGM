@@ -15,7 +15,7 @@ import { isOwnItem } from './constants.js';
  */
 export function shouldCloneOnAddToTable(collectionName, item) {
   if (collectionName === 'scenes') return false;
-  if (collectionName === 'adversaries' || collectionName === 'environments') {
+  if (collectionName === 'adversaries' || collectionName === 'environments' || collectionName === 'maps') {
     return !isOwnItem(item);
   }
   return false;

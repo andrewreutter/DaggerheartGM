@@ -10,10 +10,12 @@ describe('shouldCloneOnAddToTable', () => {
     expect(shouldCloneOnAddToTable('scenes', { id: 'legacy-own' })).toBe(false);
   });
 
-  it('still clone-on-play for non-own adversaries and environments', () => {
+  it('still clone-on-play for non-own adversaries, environments, and maps', () => {
     expect(shouldCloneOnAddToTable('adversaries', { id: 'srd-adv-bear', _source: 'srd' })).toBe(true);
     expect(shouldCloneOnAddToTable('environments', { id: 'srd-env-chaos-realm', _source: 'srd' })).toBe(true);
     expect(shouldCloneOnAddToTable('environments', { id: 'pub', _source: 'public' })).toBe(true);
+    expect(shouldCloneOnAddToTable('maps', { id: 'srd-map-crossroads', _source: 'dt' })).toBe(true);
+    expect(shouldCloneOnAddToTable('maps', { id: 'mine', _source: 'own' })).toBe(false);
   });
 
   it('does not clone own adversaries or environments', () => {

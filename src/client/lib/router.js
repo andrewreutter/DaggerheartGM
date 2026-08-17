@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import { SRD_UNIFIED_COLLECTIONS } from './library-filter-config.js';
 
-const VALID_TABS = new Set(['assistant', 'all', ...SRD_UNIFIED_COLLECTIONS, 'scenes', 'adventures']);
-const VALID_COLLECTIONS = new Set([...SRD_UNIFIED_COLLECTIONS, 'scenes', 'adventures']);
+const VALID_TABS = new Set(['assistant', 'all', ...SRD_UNIFIED_COLLECTIONS, 'maps', 'scenes', 'adventures']);
+const VALID_COLLECTIONS = new Set([...SRD_UNIFIED_COLLECTIONS, 'maps', 'scenes', 'adventures']);
 /** Table deep-link modals only — includes encounter notes (not a library tab) and characters (table-only, no library tab). */
 const TABLE_MODAL_COLLECTIONS = new Set([...VALID_COLLECTIONS, 'notes', 'characters']);
 

@@ -33,7 +33,7 @@ describe('libraryPickerRowMeta', () => {
 });
 
 describe('collectSceneLibraryCardGroups', () => {
-  it('lists map, environment, adversary, and note rows with picker meta', () => {
+  it('lists map, environment, adversary, note, and next-scene rows with picker meta', () => {
     const groups = collectSceneLibraryCardGroups({
       maps: [{ id: 'm1', name: 'Forest Clearing' }, { id: 'm2', name: 'Cave' }],
       activeElements: [
@@ -42,6 +42,7 @@ describe('collectSceneLibraryCardGroups', () => {
         { elementType: 'adversary', name: 'Dire Wolf', tier: 1, role: 'standard' },
         { elementType: 'note', name: 'Secret door' },
       ],
+      nextScenes: [{ id: 'srd-scene-cross-the-raging-river', name: 'Cross the Raging River' }],
     });
     expect(groups).toEqual([
       {
@@ -70,7 +71,29 @@ describe('collectSceneLibraryCardGroups', () => {
         label: 'Notes',
         entries: [{ name: 'Secret door', count: 1, tier: null, kind: null }],
       },
+      {
+        key: 'nextScenes',
+        label: 'Next Scenes',
+        entries: [{ name: 'Cross the Raging River', count: 1, tier: null, kind: null }],
+      },
     ]);
+  });
+
+  it('lists Next Scenes from authored { id, name } rows and skips empty lists', () => {
+    expect(collectSceneLibraryCardGroups({
+      nextScenes: [
+        { id: 'srd-scene-b', name: 'Aftermath' },
+        { id: 'srd-scene-c', name: 'Aftermath' },
+        { id: 'srd-scene-b', name: 'Dup' },
+      ],
+    })).toEqual([
+      {
+        key: 'nextScenes',
+        label: 'Next Scenes',
+        entries: [{ name: 'Aftermath', count: 2, tier: null, kind: null }],
+      },
+    ]);
+    expect(collectSceneLibraryCardGroups({ nextScenes: [] })).toEqual([]);
   });
 
   it('collapses duplicate titles and keeps the first row meta', () => {

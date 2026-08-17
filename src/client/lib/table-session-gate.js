@@ -134,6 +134,8 @@ export function gateTableOpForPrepMode(state, op) {
     case 'set-active-view':
     case 'force-player-map-view':
     case 'add-map':
+    case 'sync-library-map':
+    case 'link-maps-library':
     case 'add-map-view':
     case 'remove-map':
     case 'remove-map-view':

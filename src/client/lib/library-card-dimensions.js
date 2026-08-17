@@ -25,6 +25,7 @@ export const DEFAULT_LIBRARY_CARD_DIMENSIONS = Object.freeze({
   features: Object.freeze({ width: 221, height: 137 }),
   items: Object.freeze({ width: 221, height: 120 }),
   rules: Object.freeze({ width: 526, height: 161 }),
+  maps: Object.freeze({ width: 259, height: 270 }),
   scenes: Object.freeze({ width: 221, height: 315 }),
   subclasses: Object.freeze({ width: 392, height: 179 }),
   weapons: Object.freeze({ width: 392, height: 226 }),

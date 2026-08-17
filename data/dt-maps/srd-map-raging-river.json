@@ -1,0 +1,30 @@
+{
+  "id": "srd-map-raging-river",
+  "name": "Raging River",
+  "artist": "Grim Press",
+  "artistUrl": "https://grimpress.net/",
+  "imageUrl": "https://aepoghtrbawfvgnjzumf.supabase.co/storage/v1/object/public/whiteboard-assets/map-images/9s3M6tgScJgXhKgYOHZVYAStNQi2/07bf6e64-2a28-4793-b84b-d7db39757270.jpg",
+  "mapImageUrl": "https://aepoghtrbawfvgnjzumf.supabase.co/storage/v1/object/public/whiteboard-assets/map-images/9s3M6tgScJgXhKgYOHZVYAStNQi2/07bf6e64-2a28-4793-b84b-d7db39757270.jpg",
+  "mapSizeFt": 200,
+  "mapDimension": "width",
+  "mapImageNaturalWidth": 2800,
+  "mapImageNaturalHeight": 2800,
+  "mapAiImagePrompt": null,
+  "overlayPng": null,
+  "mapViews": [
+    {
+      "id": "srd-map-raging-river-main",
+      "name": "Main",
+      "mapViewPanNorm": { "x": 0.3157340217759148, "y": 0.5318594319067804 },
+      "mapViewZoomRatio": 0.021052698073956752,
+      "broadcastToPlayers": false,
+      "mapViewVisibleNorm": {
+        "h": 0.5463250957455782,
+        "w": 0.9028936883150531,
+        "x": 0.030659766328113774,
+        "y": 0.2412912768471198
+      }
+    }
+  ],
+  "dressingElements": []
+}

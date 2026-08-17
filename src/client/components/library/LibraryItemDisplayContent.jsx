@@ -1,5 +1,5 @@
 import { useCallback, useLayoutEffect, useRef, useState, useMemo } from 'react';
-import { Map, StickyNote, Swords, Trees } from 'lucide-react';
+import { Map, Play, StickyNote, Swords, Trees } from 'lucide-react';
 import { AdversaryCardContent, EnvironmentCardContent } from '../DetailCardContent.jsx';
 import { CharacterDetailPane, TRAIT_LABELS } from '../CharacterDisplay.jsx';
 import { LibraryItemImageThumb } from './LibraryItemImageThumb.jsx';
@@ -593,6 +593,7 @@ const SCENE_LIBRARY_GROUP_ICONS = {
   environments: Trees,
   adversaries: Swords,
   notes: StickyNote,
+  nextScenes: Play,
 };
 
 /** Fill-mode map: preferred size from image aspect (`basis-auto` + grow). Shrinks only after below-content is gone. */
@@ -603,7 +604,7 @@ const SCENE_CARD_FILL_BELOW =
   'min-h-0 shrink-[999] basis-auto overflow-hidden flex flex-col gap-1.5';
 
 /**
- * Lightweight scene summary: first-map thumbnail, denormalized tier, BP-for-PCs badge, and item titles.
+ * Lightweight scene summary: first-map thumbnail, denormalized tier, BP-for-PCs badge, item titles, and Next Scenes.
  * @param {{ item: object, compact?: boolean, fill?: boolean }} props
  *   `fill` — library grid card: map keeps its aspect preferred size and grows into leftover
  *   height; content below truncates first, and the map shrinks only after that is gone.
@@ -770,6 +771,24 @@ export function LibraryItemDisplayContent({
       )}
       {collection === 'environments' && (
         <EnvironmentCardContent element={item} hoveredFeature={null} cardKey={cardKey} suppressTierBadge />
+      )}
+      {collection === 'maps' && (
+        <div className="space-y-2">
+          {(item.mapImageUrl || item.imageUrl) && (
+            <img
+              src={item.mapImageUrl || item.imageUrl}
+              alt=""
+              className="w-full rounded border border-dh-border object-cover max-h-64"
+            />
+          )}
+          {item.artist && (
+            <p className="text-xs text-dh-muted">
+              {item.artistUrl
+                ? <a href={item.artistUrl} target="_blank" rel="noopener noreferrer" className="underline">{item.artist}</a>
+                : item.artist}
+            </p>
+          )}
+        </div>
       )}
       {collection === 'scenes' && (
         <>

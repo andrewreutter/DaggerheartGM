@@ -15,6 +15,12 @@
 
 import Stripe from 'stripe';
 
+/**
+ * Stripe-Version for every request. Managed Payments (account default) requires
+ * `2025-03-31.basil` or later — `2024-06-20` is rejected at Checkout Session create.
+ */
+export const STRIPE_API_VERSION = '2025-03-31.basil';
+
 /** Returns true when Stripe is configured. Use to guard all Stripe-dependent routes (return 503 when false). */
 export function isStripeConfigured() {
   return !!process.env.STRIPE_SECRET_KEY;
@@ -26,7 +32,7 @@ export function getStripe() {
     throw new Error('Stripe is not configured (STRIPE_SECRET_KEY missing)');
   }
   return new Stripe(process.env.STRIPE_SECRET_KEY, {
-    apiVersion: '2024-06-20',
+    apiVersion: STRIPE_API_VERSION,
   });
 }
 
@@ -41,6 +47,38 @@ export const CAMPAIGN_PASS_PRICE_CENTS = Object.freeze({
 export function getCampaignPassPriceId(months) {
   const envKey = `STRIPE_PRICE_CAMPAIGN_PASS_${months}MO`;
   return process.env[envKey] || null;
+}
+
+/**
+ * Params for `stripe.checkout.sessions.create` for a Campaign Pass.
+ *
+ * Omits `payment_method_types` — Stripe Managed Payments (account default)
+ * rejects that parameter and chooses methods itself. Do not pass
+ * `managed_payments[enabled]=false` to work around this; keep Managed Payments on.
+ * `mode` stays `'payment'` (one-time, never a subscription).
+ */
+export function buildCampaignPassCheckoutSessionParams({
+  priceId,
+  tableId,
+  months,
+  purchasedByUserId,
+  amountCents,
+  successUrl,
+  cancelUrl,
+}) {
+  return {
+    mode: 'payment',
+    line_items: [{ price: priceId, quantity: 1 }],
+    metadata: {
+      purchaseType: 'campaign_pass',
+      targetTableId: tableId,
+      months: String(months),
+      purchasedByUserId,
+      amountCents: String(amountCents),
+    },
+    success_url: successUrl,
+    cancel_url: cancelUrl,
+  };
 }
 
 /**
