@@ -5,8 +5,6 @@ import {
   shouldPreferCachedPlayerRemoteView,
   freeMapExploreTargetsUnsharedMap,
   playerCanAccessMapViewSelection,
-  countPlayerMapStripTiles,
-  shouldShowPlayerMapViewStrip,
 } from '../../src/client/lib/map-view-player-sync.js';
 
 describe('map-view-player-sync', () => {
@@ -72,38 +70,5 @@ describe('map-view-player-sync', () => {
         { freeMapExploreMapId: 'a' },
       ),
     ).toBe(false);
-  });
-
-  it('countPlayerMapStripTiles counts full-map tile plus views per batch', () => {
-    const batches = [
-      {
-        map: { id: 'm1', shareWithPlayers: true },
-        gmViews: [{ id: 'v1' }, { id: 'v2' }],
-      },
-      {
-        map: { id: 'm2', shareWithPlayers: false },
-        gmViews: [{ id: 'v3' }],
-      },
-    ];
-    expect(countPlayerMapStripTiles(batches)).toBe(1 + 2 + 0 + 1);
-  });
-
-  it('shouldShowPlayerMapViewStrip is false when at most one selectable tile', () => {
-    expect(shouldShowPlayerMapViewStrip([])).toBe(false);
-    expect(
-      shouldShowPlayerMapViewStrip([
-        { map: { shareWithPlayers: true }, gmViews: [] },
-      ]),
-    ).toBe(false);
-    expect(
-      shouldShowPlayerMapViewStrip([
-        { map: { shareWithPlayers: false }, gmViews: [{ id: 'v1' }] },
-      ]),
-    ).toBe(false);
-    expect(
-      shouldShowPlayerMapViewStrip([
-        { map: { shareWithPlayers: true }, gmViews: [{ id: 'v1' }] },
-      ]),
-    ).toBe(true);
   });
 });

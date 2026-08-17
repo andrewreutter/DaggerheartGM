@@ -222,11 +222,12 @@ export function buildSceneTableAdapterProps(setSceneData, opts = {}) {
 
     onMapConfigChange: (newConfig, resetTokenPositions = false) => {
       const patch = { ...(newConfig || {}) };
+      const resolveMapId = (prev) => patch.mapId ?? activeMapIdFromState(normalizeSceneTableData(prev));
       if (typeof patch.mapImageUrl === 'string' && patch.mapImageUrl.startsWith('data:')) {
         void (async () => {
           patch.mapImageUrl = await hostDataUrlIfNeeded(patch.mapImageUrl, 'map-image');
           setSceneData((prev) => {
-            const mid = activeMapIdFromState(normalizeSceneTableData(prev));
+            const mid = resolveMapId(prev);
             return applySceneTableOp(prev, {
               op: 'set-map',
               ...patch,
@@ -238,7 +239,7 @@ export function buildSceneTableAdapterProps(setSceneData, opts = {}) {
         return;
       }
       setSceneData((prev) => {
-        const mid = activeMapIdFromState(normalizeSceneTableData(prev));
+        const mid = resolveMapId(prev);
         return applySceneTableOp(prev, {
           op: 'set-map',
           ...patch,

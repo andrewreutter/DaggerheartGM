@@ -4,7 +4,7 @@ import { Image, Map, RefreshCw, Import, X, Loader2, ImagePlus } from 'lucide-rea
 
 /**
  * Popover menu for image paste/drop actions. Shown when the user pastes/drops an image on
- * the game table, clicks the toolbar "Map Image…" button, or has an editable item modal open.
+ * the game table, clicks the draw-toolbar image button, or has an editable item modal open.
  *
  * Each callback prop, when null, hides that option from the menu.
  *

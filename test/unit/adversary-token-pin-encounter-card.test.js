@@ -28,6 +28,7 @@ describe('GM adversary token pin uses Encounter card + attack/feature actions', 
     expect(src).toContain('EncounterAdversaryInstanceCard');
     expect(src).toContain('AdversaryCardAttackAndFeatures');
     expect(src).toContain('renderAdversaryEncounterCard={!isPlayer ? renderAdversaryEncounterCard : undefined}');
+    expect(src).toContain('gmMovesOverlay={!isPlayer ? gmMovesOverlay : undefined}');
     const pinFn = src.slice(src.indexOf('function renderAdversaryEncounterCard'));
     const pinBody = pinFn.slice(0, pinFn.indexOf('function renderAdversaryTargetAid'));
     expect(pinBody).toContain('EncounterAdversaryDifficultyRow');
@@ -35,5 +36,18 @@ describe('GM adversary token pin uses Encounter card + attack/feature actions', 
     expect(pinBody).toContain('AdversaryCardAttackAndFeatures');
     expect(pinBody).toContain('handleCardRoll');
     expect(pinBody).not.toContain('EncounterAdversaryMarkedSummary');
+  });
+
+  it('tray adversaries hover-open a left-of-tray overlay instead of click-to-pin', () => {
+    const src = readFileSync(join(dir, '../../src/client/components/BattleMap.jsx'), 'utf8');
+    expect(src).toContain('shouldPinTokenOnClick');
+    expect(src).toContain('trayAdversaryOverlay');
+    expect(src).toContain('data-testid="tray-adversary-overlay"');
+    expect(src).toContain('overlayLeftOfEdgeStyle');
+    expect(src).toContain('hoverOverlay={trayAdversaryOverlay}');
+    expect(src).toContain('data-testid="gm-spotlight-token"');
+    expect(src).toContain('gmMovesOverlay.triggerProps');
+    expect(src).toContain("source: 'gm-token'");
+    expect(src).toContain('edgeLeft');
   });
 });

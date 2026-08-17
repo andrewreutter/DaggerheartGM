@@ -1,5 +1,5 @@
 /**
- * Selection highlighting for map/view strip tiles (BattleMap).
+ * Selection highlighting for map/camera picker tiles (BattleMap).
  * Full-map tile and a named view tile must never both read as "active" at once.
  */
 

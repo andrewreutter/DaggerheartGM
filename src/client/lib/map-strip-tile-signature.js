@@ -6,7 +6,7 @@ import { effectiveTokenMapId } from './map-table-state.js';
  *
  * Used as a cheap stand-in for `activeElements` in a `React.memo` comparator: `activeElements`
  * gets a new array/object identity on every `table_state` SSE snapshot even when nothing relevant
- * to a given map strip tile changed (e.g. an adversary token drag on a *different* map, or a
+ * to a given picker tile changed (e.g. an adversary token drag on a *different* map, or a
  * countdown/note edit), so comparing this string avoids re-rendering — and re-scanning
  * `activeElements` again inside `getThumbViewportTokenProxies` — for every tile on every tick.
  *

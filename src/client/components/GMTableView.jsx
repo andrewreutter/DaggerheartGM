@@ -167,6 +167,7 @@ import {
   livingAdversaryCardKeys,
   pickTallestGmSection,
 } from '../lib/gm-moves-layout.js';
+import { gmMovesOverlayStyle } from '../lib/encounter-overlay-position.js';
 import {
   DEFAULT_GM_MOVES,
   FEAR_FAILURE_START,
@@ -639,7 +640,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     getClickToggleKey: (d) => d?.element?.instanceId,
     suppressOutsideDismissRef: suppressCharacterOverlayOutsideDismissRef,
   });
-  const gmMovesOverlay    = useHoverOverlay({ hideDelay: 150, isTouch, mode: 'click', getClickToggleKey: () => 'gm-moves' });
+  const gmMovesOverlay    = useHoverOverlay({ hideDelay: 150, isTouch });
   const gmMovesPortalTooltip = usePortalHoverTooltip();
   const [gmMovesOffCameraOpen, setGmMovesOffCameraOpen] = useState(false);
   const activeElementsRef = useRef(activeElements);
@@ -6177,18 +6178,16 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
         </div>
       </div>
 
-      {/* GM Moves — click to toggle; Escape / outside click close */}
+      {/* GM Moves — hover (Encounter trigger or GM token); Escape closes */}
       {gmMovesOverlay.isOpen && (
       <div
         ref={gmMovesOverlay.overlayRef}
         className="fixed z-[55] flex gap-2"
-        style={{
-          right: 'calc(14rem)',
-          paddingRight: '8px',
-          top: 90,
-          width: 'min(96vw, calc(14rem + 28rem + 28rem + 2rem))',
-          maxHeight: 'calc(100dvh - 98px)',
-        }}
+        style={gmMovesOverlayStyle({
+          source: gmMovesOverlay.data?.source,
+          edgeLeft: gmMovesOverlay.data?.edgeLeft,
+        })}
+        {...gmMovesOverlay.overlayHandlers}
       >
         <div
           className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-dh-strong bg-dh-surface shadow-2xl"
@@ -6954,6 +6953,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
             showSpotlight
             spotlight={spotlight}
             onSpotlightChange={onSpotlightChange}
+            gmMovesOverlay={!isPlayer ? gmMovesOverlay : undefined}
           />
         </div>
         </div>
@@ -7075,7 +7075,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
           <div
             data-testid="gm-moves-trigger"
             className={`rounded-lg border px-2.5 py-2 flex items-center gap-2 transition-colors cursor-pointer ${gmMovesOverlay.isOpen ? 'border-dh-hope/60 bg-dh-inset' : 'border-dh-strong bg-dh-surface hover:border-dh-hope/40'}`}
-            {...gmMovesOverlay.triggerProps(true)}
+            {...gmMovesOverlay.triggerProps({ source: 'encounter' })}
           >
             <Zap size={14} className="text-dh-hope shrink-0" />
             <span className="text-xs font-semibold text-dh uppercase tracking-wider flex-1">GM Moves</span>

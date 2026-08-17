@@ -73,6 +73,21 @@ export function sortMapObjectsForStack(objects, { selectedId } = {}) {
 }
 
 /**
+ * Escape on the battle map: drop map-object selection and the token pin (same
+ * as clicking empty map). GM also leaves the current draw tool (`hand`).
+ *
+ * @param {{ isPlayer?: boolean }} [opts]
+ * @returns {{ selectedMapObjectId: null, pinnedToken: null, resetDrawToolToHand: boolean }}
+ */
+export function battleMapEscapeResult({ isPlayer } = {}) {
+  return {
+    selectedMapObjectId: null,
+    pinnedToken: null,
+    resetDrawToolToHand: !isPlayer,
+  };
+}
+
+/**
  * Unfilled rect/oval and brush strokes should not steal clicks in empty space
  * inside their bounding box — only the ink/stroke is a hit target (until the
  * object is selected, when the whole box is used for drag).

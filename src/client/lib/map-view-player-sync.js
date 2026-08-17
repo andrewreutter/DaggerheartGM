@@ -43,7 +43,7 @@ export function shouldPreferCachedPlayerRemoteView({
 }
 
 /**
- * Whether a player may use a GM "forced" map selection (same rules as strip tiles).
+ * Whether a player may use a GM "forced" map selection (same rules as picker tiles).
  * Named views: only the view's broadcast flag matters (parent map share is irrelevant).
  * Free-map tile: map must be shared with players (`shareWithPlayers`).
  * @param {{ maps: Array<{ id: string, shareWithPlayers?: boolean }>, mapViews: Array<{ id: string, mapId: string, broadcastToPlayers?: boolean }> }} tableLike
@@ -74,26 +74,3 @@ export function freeMapExploreTargetsUnsharedMap(freeExploreMapId, playerFreeMap
   return !!(map && map.shareWithPlayers === false);
 }
 
-/**
- * Selectable tiles on the player map strip: optional free-map tile per batch, GM views.
- *
- * @param {Array<{ map: { shareWithPlayers?: boolean }, gmViews: unknown[] }>} playerViewBatches
- */
-export function countPlayerMapStripTiles(playerViewBatches) {
-  let n = 0;
-  for (const { map: m, gmViews } of playerViewBatches) {
-    if (m.shareWithPlayers !== false) n += 1;
-    n += gmViews.length;
-  }
-  return n;
-}
-
-/**
- * Player map/camera strip: show only when there is more than one selectable tile.
- * A single tile (map-only, or one camera only, etc.) needs no switcher UI.
- *
- * @param {Array<{ map: { shareWithPlayers?: boolean }, gmViews: unknown[] }>} playerViewBatches
- */
-export function shouldShowPlayerMapViewStrip(playerViewBatches) {
-  return countPlayerMapStripTiles(playerViewBatches) >= 2;
-}

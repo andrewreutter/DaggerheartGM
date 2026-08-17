@@ -1598,9 +1598,15 @@ function App() {
   };
 
   const sendSetMapConfig = (newConfig, resetTokenPositions = false) => {
-    const merged = { ...mapConfig, ...newConfig };
+    const { mapId: patchMapId, ...fields } = newConfig || {};
     const mid =
-      mapViews.find(v => v.id === gmActiveViewId)?.mapId ?? activeMapId ?? maps[0]?.id ?? DEFAULT_LEGACY_MAP_ID;
+      patchMapId
+      ?? mapViews.find(v => v.id === gmActiveViewId)?.mapId
+      ?? activeMapId
+      ?? maps[0]?.id
+      ?? DEFAULT_LEGACY_MAP_ID;
+    const source = maps.find((m) => m.id === mid);
+    const merged = { ...(source || mapConfig), ...fields };
     postTableOp({ op: 'set-map', ...merged, resetTokenPositions, mapId: mid }, tableId);
   };
 

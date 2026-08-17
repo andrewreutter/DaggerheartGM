@@ -8,6 +8,7 @@ import {
   mapObjectAreaFt,
   mapObjectStackZIndex,
   mapObjectUsesStrokeHitTest,
+  battleMapEscapeResult,
   scaleBrushStroke,
   sortMapObjectsForStack,
   TOKEN_LAYER_Z_INDEX_MIN,
@@ -176,6 +177,19 @@ describe('mapObjectStackZIndex', () => {
     expect(mapObjectStackZIndex(100, { selected: true })).toBeLessThan(TOKEN_LAYER_Z_INDEX_MIN);
     expect(mapObjectStackZIndex(0, { selected: true })).toBeLessThan(TOKEN_LAYER_Z_INDEX_MIN);
     expect(TOKEN_LAYER_Z_INDEX_MIN).toBe(30);
+  });
+});
+
+describe('battleMapEscapeResult', () => {
+  it('clears map-object selection and the token pin', () => {
+    const next = battleMapEscapeResult({ isPlayer: false });
+    expect(next.selectedMapObjectId).toBeNull();
+    expect(next.pinnedToken).toBeNull();
+  });
+
+  it('resets the draw tool to hand for the GM, not for a player', () => {
+    expect(battleMapEscapeResult({ isPlayer: false }).resetDrawToolToHand).toBe(true);
+    expect(battleMapEscapeResult({ isPlayer: true }).resetDrawToolToHand).toBe(false);
   });
 });
 

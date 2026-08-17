@@ -25,27 +25,38 @@ import {
   shouldApplyRemotePlayerMapView,
   freeMapExploreTargetsUnsharedMap,
   shouldPreferCachedPlayerRemoteView,
-  shouldShowPlayerMapViewStrip,
 } from '../lib/map-view-player-sync.js';
 import {
   gmMapStripFullMapTileActive,
   playerMapStripFullMapTileActive,
 } from '../lib/map-view-strip-active.js';
 import {
-  Upload,
+  MAP_CAMERA_PICKER_HOVER_PREVIEW_CLEAR_MS,
+  MAP_CAMERA_PICKER_HOVER_PREVIEW_MS,
+  isSameMapCameraHoverTarget,
+  mapCameraPickerTriggerInsetRem,
+  mapCameraPickerTriggerLeftPx,
+  mapCameraTileActiveDuringHover,
+  orderCamerasCurrentLast,
+  orderMapGroupsCurrentFirst,
+  resolveMapCameraHoverPreview,
+  resolveMapCameraPickerTrigger,
+} from '../lib/map-camera-picker.js';
+import { MapCameraPicker, MapCameraViewTitle } from './MapCameraPicker.jsx';
+import {
   X,
   Map as MapIcon,
   ArrowLeftToLine,
   ArrowRightToLine,
   ChevronsLeft,
   ChevronsRight,
-  Pencil,
   Settings,
   Eraser,
   Eye,
   EyeOff,
   Trash2,
   CircleX,
+  Ban,
   Focus,
   Users,
   Swords,
@@ -56,7 +67,6 @@ import {
   Square,
   Circle,
   Pipette,
-  Sparkles,
   Image as ImageIcon,
   Maximize2,
   Lock,
@@ -84,11 +94,7 @@ import { normalizeConditionsToList } from '../lib/conditions-utils.js';
 import { conditionMarks } from '../lib/condition-symbols.js';
 import { layoutTokenDotRing } from '../lib/token-dot-ring.js';
 import { AnchoredFloatingPanel } from './AnchoredFloatingPanel.jsx';
-import { getAuthToken, postMapPing, postMapScribble, postBannerAck, CLIENT_ID, imageGenEnabled } from '../lib/api.js';
-import { useAiUiPreference } from '../lib/ai-ui-preference-context.jsx';
-import { shouldShowImageGenAiUi } from '../lib/ai-ui-visibility.js';
-import { MapAiImageDialog } from './MapAiImageDialog.jsx';
-import { MapDetailsDialog } from './modals/MapDetailsDialog.jsx';
+import { getAuthToken, postMapPing, postMapScribble, postBannerAck, CLIENT_ID } from '../lib/api.js';
 import { MapArtistCredit } from './MapArtistCredit.jsx';
 import Fireworks from 'fireworks-js';
 import { effectiveTokenMapId, DEFAULT_LEGACY_MAP_ID, mapConfigHasImage } from '../lib/map-table-state.js';
@@ -96,7 +102,15 @@ import { buildCharacterTrayTokenEntries, buildBoardTrayTokenEntries } from '../l
 import {
   trayProxyShouldSnapBullseye,
   bullseyeFtForPlacedTokenHover,
+  shouldPinTokenOnClick,
 } from '../lib/tray-proxy-hover.js';
+import { useHoverOverlay } from '../lib/useHoverOverlay.js';
+import { useTouchDevice } from '../lib/useTouchDevice.js';
+import { useViewportClamp } from './EncounterHoverOverlays.jsx';
+import {
+  overlayLeftOfEdgeStyle,
+  TRAY_OVERLAY_WIDTH_REM,
+} from '../lib/encounter-overlay-position.js';
 import { getMapDimensionsFt as getMapDimensions, MAP_SIZE_FT_MIN, MAP_SIZE_FT_MAX, DEFAULT_MAP_SIZE_FT } from '../lib/map-dimensions-ft.js';
 import { getPlayerTotMEmptyMapHint } from '../lib/battle-map-totm-hint.js';
 import { isAdversaryDefeated } from '../lib/helpers.js';
@@ -157,6 +171,7 @@ import {
   canHideAnyAdversaries,
 } from '../lib/adversary-player-visibility.js';
 import {
+  battleMapEscapeResult,
   canModifyMapObject,
   computeCornerAnchor,
   computeCornerResize,
@@ -339,7 +354,7 @@ function pointInRect(clientX, clientY, el) {
   return isInsideRect(clientX, clientY, el.getBoundingClientRect());
 }
 
-/** Fixed thumb size for strip previews (matches w-[4.75rem] × aspect 4:3). */
+/** Fixed thumb size for picker tiles (matches w-[4.75rem] × aspect 4:3). */
 const THUMB_STRIP_W_PX = 76;
 const THUMB_STRIP_H_PX = (THUMB_STRIP_W_PX * 3) / 4;
 
@@ -414,7 +429,7 @@ function computeThumbViewRender(mapRow, viewState, viewportW, viewportH) {
 const MAX_THUMB_TOKEN_PROXIES = 8;
 
 /**
- * Characters + adversaries whose token footprint intersects the strip thumbnail viewport (same math as the thumb preview).
+ * Characters + adversaries whose token footprint intersects the picker thumbnail viewport (same math as the thumb preview).
  */
 function getThumbViewportTokenProxies(mapRow, viewState, activeElements, stripMapId, adversaryPartyScaleCount = null) {
   if (!mapConfigHasImage({ mapImageUrl: mapRow?.mapImageUrl }) || stripMapId == null) return [];
@@ -613,7 +628,7 @@ function MapViewThumbInterior({ mapRow, viewState, mapOverlayPng, cameraOverlayP
   );
 }
 
-/** Thumbnail tile for the maps + saved views strip (map switch or apply saved zoom/pan). */
+/** Thumbnail tile for the on-map camera picker (map switch or apply saved zoom/pan). */
 const mapViewStripTilePropsAreEqual = (prev, next) => {
   if (
     prev.mapRow !== next.mapRow ||
@@ -628,13 +643,14 @@ const mapViewStripTilePropsAreEqual = (prev, next) => {
     prev.variant !== next.variant ||
     prev.actions !== next.actions ||
     prev.interactive !== next.interactive ||
-    prev.showMapBadge !== next.showMapBadge ||
-    prev.showCameraBadge !== next.showCameraBadge ||
     prev.hideCaption !== next.hideCaption ||
+    prev.caption !== next.caption ||
     prev.captionAbove !== next.captionAbove ||
     prev.tooltipTitle !== next.tooltipTitle ||
     prev.stripMapId !== next.stripMapId ||
-    prev.adversaryPartyScaleCount !== next.adversaryPartyScaleCount
+    prev.adversaryPartyScaleCount !== next.adversaryPartyScaleCount ||
+    prev.hoverPreviewKey !== next.hoverPreviewKey ||
+    prev.onHoverPreviewKey !== next.onHoverPreviewKey
   ) {
     return false;
   }
@@ -649,8 +665,8 @@ const mapViewStripTilePropsAreEqual = (prev, next) => {
 };
 
 /**
- * Memoized so the (up to ~6, 2 maps x 2 views) map/view strip tiles don't all re-render and
- * re-scan `activeElements` on every SSE tick when nothing relevant to a given tile changed.
+ * Memoized so picker tiles don't all re-render and re-scan `activeElements` on every SSE tick
+ * when nothing relevant to a given tile changed.
  */
 const MapViewStripTile = memo(function MapViewStripTileRaw({
   mapRow,
@@ -668,12 +684,10 @@ const MapViewStripTile = memo(function MapViewStripTileRaw({
   variant = 'map',
   actions,
   interactive = true,
-  /** Full-map strip tiles: small map icon (bottom-right, same corner as camera on view tiles). */
-  showMapBadge = false,
-  /** Named views: small camera icon (bottom-right). */
-  showCameraBadge = false,
   /** Hide the caption (rare; most tiles show `label`). */
   hideCaption = false,
+  /** Optional node replacing the default label caption (e.g. an inline editor). */
+  caption = null,
   /** When true, label is above the thumbnail (view/camera tiles); map tiles keep label below. */
   captionAbove = false,
   /** Optional `title` on the thumb control (defaults to `label`). */
@@ -682,6 +696,9 @@ const MapViewStripTile = memo(function MapViewStripTileRaw({
   activeElements,
   stripMapId,
   adversaryPartyScaleCount = null,
+  /** `map:{id}` / `view:{id}` — hover peeks that camera on the table (debounced in BattleMap). */
+  hoverPreviewKey,
+  onHoverPreviewKey,
 }) {
   const titleAttr = tooltipTitle !== undefined ? tooltipTitle : label;
   const thumbTokenProxies = useMemo(
@@ -698,6 +715,10 @@ const MapViewStripTile = memo(function MapViewStripTileRaw({
         : interactive
           ? 'border-dh-strong bg-dh-canvas/25 hover:bg-dh-hover/70'
           : 'border-dh-border/50 bg-dh-canvas/25 cursor-default'
+  }${
+    broadcastHighlight
+      ? ' shadow-[0_0_10px_2px_rgba(56,189,250,0.55),0_0_22px_8px_rgba(56,189,250,0.28),0_0_40px_16px_rgba(56,189,250,0.12)]'
+      : ''
   }`;
 
   const thumbInner = (
@@ -709,20 +730,12 @@ const MapViewStripTile = memo(function MapViewStripTileRaw({
         cameraOverlayPng={cameraOverlayPng}
       />
       <ThumbViewportTokenProxies tokens={thumbTokenProxies} />
-      {showMapBadge ? (
-        <div className="absolute bottom-0.5 right-0.5 z-[5] rounded border border-dh-border/80 bg-dh-raised/95 p-0.5 shadow-sm">
-          <MapIcon size={10} className="text-white/90" aria-hidden />
-        </div>
-      ) : null}
-      {showCameraBadge ? (
-        <div className="absolute bottom-0.5 right-0.5 z-[5] rounded border border-dh-border/80 bg-dh-raised/95 p-0.5 shadow-sm">
-          <Camera size={10} className="text-white/90" aria-hidden />
-        </div>
-      ) : null}
     </div>
   );
 
-  const captionSpan = !hideCaption ? (
+  const captionSpan = hideCaption
+    ? null
+    : caption || (
     <span
       className={`block truncate text-center text-[10px] leading-tight ${
         isActive ? 'font-medium text-dh' : broadcastHighlight ? 'font-medium text-sky-400' : 'text-dh-muted'
@@ -731,30 +744,50 @@ const MapViewStripTile = memo(function MapViewStripTileRaw({
     >
       {label}
     </span>
-  ) : null;
+  );
 
   return (
-    <div className="flex w-[4.75rem] shrink-0 flex-col gap-0.5">
+    <div
+      className="flex w-[4.75rem] shrink-0 flex-col gap-0.5"
+      onMouseEnter={
+        hoverPreviewKey && onHoverPreviewKey ? () => onHoverPreviewKey(hoverPreviewKey) : undefined
+      }
+      onMouseLeave={
+        hoverPreviewKey && onHoverPreviewKey ? () => onHoverPreviewKey(null) : undefined
+      }
+    >
       {captionAbove && captionSpan ? (
         <div className="min-h-[1rem] flex items-end justify-center px-0.5">{captionSpan}</div>
       ) : null}
-      {interactive ? (
-        <button
-          type="button"
-          role={variant === 'map' ? 'tab' : undefined}
-          aria-selected={variant === 'map' ? isActive : undefined}
-          onClick={onClick}
-          onDoubleClick={onDoubleClick}
-          className={thumbClass}
-          title={titleAttr}
-        >
-          {thumbInner}
-        </button>
-      ) : (
-        <div className={thumbClass} title={titleAttr}>
-          {thumbInner}
-        </div>
-      )}
+      <div className="relative">
+        {broadcastHighlight ? (
+          <div
+            aria-hidden
+            className="pointer-events-none absolute -inset-3 z-0 rounded-2xl"
+            style={{
+              background:
+                'radial-gradient(ellipse at center, rgba(56,189,250,0.5) 0%, rgba(56,189,250,0.22) 42%, rgba(56,189,250,0.06) 62%, transparent 74%)',
+            }}
+          />
+        ) : null}
+        {interactive ? (
+          <button
+            type="button"
+            role={variant === 'map' ? 'tab' : undefined}
+            aria-selected={variant === 'map' ? isActive : undefined}
+            onClick={onClick}
+            onDoubleClick={onDoubleClick}
+            className={`${thumbClass} relative z-[1]`}
+            title={titleAttr}
+          >
+            {thumbInner}
+          </button>
+        ) : (
+          <div className={`${thumbClass} relative z-[1]`} title={titleAttr}>
+            {thumbInner}
+          </div>
+        )}
+      </div>
       {!captionAbove && (!hideCaption || actions) ? (
         <div className="flex min-w-0 flex-col gap-0.5">
           {!hideCaption ? captionSpan : null}
@@ -861,49 +894,26 @@ function TokenDotRing({ sizeW, sizeH, groups }) {
   );
 }
 
-// ─── MapConfigToolbar ────────────────────────────────────────────────────────
+// ─── TableNameInset ──────────────────────────────────────────────────────────
 
-function MapConfigToolbar({
-  mapConfig,
-  onMapConfigChange,
-  isUploading,
-  onFileSelect,
-  /** When provided, the upload label opens the quick-pick menu instead of a raw file picker. */
-  onOpenQuickPick,
+/** Gear + table title hanging from the top-center of the map viewport. */
+function TableNameInset({
   tableName = '',
   tableStateReady = false,
   onTableNameChange,
   onDeleteTable,
-  onMapAiGenerationPreviewChange,
-  showImageGenAiUi = false,
-  aiMapOpen,
-  setAiMapOpen,
 }) {
-  const {
-    mapDimension = 'width',
-    mapSizeFt = DEFAULT_MAP_SIZE_FT,
-    mapImageUrl,
-    mapImageNaturalWidth,
-    mapImageNaturalHeight,
-    mapAiImagePrompt,
-  } = mapConfig ?? {};
-  const [sizeInput, setSizeInput] = useState(String(mapSizeFt));
-  const fileInputRef = useRef(null);
   const isNewTable = tableName === '' || tableName === 'New Table';
   const [isEditingName, setIsEditingName] = useState(false);
   const [nameInput, setNameInput] = useState(tableName || 'New Table');
   const nameInputRef = useRef(null);
 
-  // Sync external changes (e.g. from SSE)
-  useEffect(() => { setSizeInput(String(mapSizeFt)); }, [mapSizeFt]);
   useEffect(() => { setNameInput(tableName || 'New Table'); }, [tableName]);
 
-  // Only open name editor when table state has loaded and name is empty or default
   useEffect(() => {
     if (tableStateReady) setIsEditingName(isNewTable);
   }, [tableStateReady, isNewTable]);
 
-  // Focus name input whenever the editor opens (gear click or new-table auto-edit)
   useEffect(() => {
     if (!isEditingName) return;
     const el = nameInputRef.current;
@@ -922,27 +932,9 @@ function MapConfigToolbar({
     setIsEditingName(false);
   };
 
-  const commitSize = () => {
-    const v = Math.max(MAP_SIZE_FT_MIN, Math.min(MAP_SIZE_FT_MAX, parseInt(sizeInput, 10) || DEFAULT_MAP_SIZE_FT));
-    setSizeInput(String(v));
-    if (v !== mapSizeFt) {
-      const { mapWidthFt: oldW } = getMapDimensions(mapConfig);
-      const newConfig = { ...mapConfig, mapSizeFt: v };
-      const { mapWidthFt: newW } = getMapDimensions(newConfig);
-      const scale = oldW > 0 ? newW / oldW : 1;
-      onMapConfigChange({ mapSizeFt: v }, false, scale);
-    }
-  };
-
-  const wxh = (() => {
-    const { mapWidthFt, mapHeightFt } = getMapDimensions(mapConfig);
-    return `${Math.round(mapWidthFt)}' × ${Math.round(mapHeightFt)}'`;
-  })();
-
   return (
-    <div className="flex items-center gap-2 px-3 py-1.5 bg-dh-surface border-b border-dh-border text-xs shrink-0 flex-wrap">
-      {/* Table name + Delete table button — left */}
-      <div className="flex items-center gap-2">
+    <div className="pointer-events-none absolute top-0 left-1/2 z-20 -translate-x-1/2">
+      <div className="pointer-events-auto flex items-center gap-1.5 rounded-b-lg border border-t-0 border-dh-border bg-dh-surface/95 px-2 py-1 shadow-md text-xs">
         {onTableNameChange ? (
           isEditingName ? (
             <>
@@ -953,7 +945,7 @@ function MapConfigToolbar({
                   nameInputRef.current?.focus();
                   nameInputRef.current?.select();
                 }}
-                className="flex items-center gap-1 py-1 pl-1 pr-0 rounded hover:bg-dh-hover/80 text-dh-muted hover:text-dh transition-colors"
+                className="flex items-center gap-1 py-0.5 pl-0.5 pr-0 rounded hover:bg-dh-hover/80 text-dh-muted hover:text-dh transition-colors"
                 title="Table settings"
                 aria-label="Table settings"
               >
@@ -966,7 +958,7 @@ function MapConfigToolbar({
                 onChange={e => setNameInput(e.target.value)}
                 onBlur={commitName}
                 onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); commitName(); } }}
-                className="min-w-[120px] max-w-[240px] px-2 py-1 rounded bg-dh-raised border border-dh-strong text-dh font-semibold text-sm focus:outline-none focus:border-sky-500"
+                className="min-w-[120px] max-w-[240px] px-2 py-0.5 rounded bg-dh-raised border border-dh-strong text-dh font-semibold text-sm focus:outline-none focus:border-sky-500"
                 placeholder="Table name"
               />
             </>
@@ -974,7 +966,7 @@ function MapConfigToolbar({
             <button
               type="button"
               onClick={() => setIsEditingName(true)}
-              className="flex items-center gap-1 px-1.5 py-1 rounded hover:bg-dh-hover/80 text-dh font-semibold text-sm transition-colors"
+              className="flex items-center gap-1 px-1 py-0.5 rounded hover:bg-dh-hover/80 text-dh font-semibold text-sm transition-colors"
               title="Table settings"
               aria-label="Table settings"
             >
@@ -983,136 +975,20 @@ function MapConfigToolbar({
             </button>
           )
         ) : (
-          <span className="px-2 py-1 text-dh font-semibold text-sm truncate max-w-[200px]">{tableName || 'Untitled'}</span>
+          <span className="px-1 py-0.5 text-dh font-semibold text-sm truncate max-w-[200px]">{tableName || 'Untitled'}</span>
         )}
         {onDeleteTable && isEditingName && (
           <button
             type="button"
             onMouseDown={e => e.preventDefault()}
             onClick={onDeleteTable}
-            className="flex items-center gap-1.5 px-2 py-1 rounded text-dh-muted hover:text-red-400 hover:bg-dh-raised/80 transition-colors"
+            className="flex items-center gap-1.5 px-2 py-0.5 rounded text-dh-muted hover:text-red-400 hover:bg-dh-raised/80 transition-colors"
             title="Delete table"
           >
             <Trash2 size={12} />
             <span>Delete table</span>
           </button>
         )}
-      </div>
-
-      {/* Everything else — right */}
-      <div className="flex items-center gap-2 ml-auto">
-        <div className="w-px h-4 bg-dh-hover" />
-
-        {!isUploading ? (
-          <span className="text-[10px] text-dh-muted/45 select-none whitespace-nowrap">Paste, drop, or</span>
-        ) : null}
-
-        {onOpenQuickPick ? (
-          <button
-            type="button"
-            onClick={() => onOpenQuickPick()}
-            disabled={isUploading}
-            className={`flex items-center gap-1.5 px-2 py-1 rounded cursor-pointer transition-colors border ${
-              isUploading
-                ? 'bg-dh-hover text-dh-muted cursor-not-allowed border-transparent'
-                : 'text-violet-300/90 border-violet-500/35 bg-violet-950/25 hover:bg-violet-900/35'
-            }`}
-            title="Upload map image or place image on map"
-            data-prep-target="build"
-          >
-            <Upload size={12} />
-            {isUploading ? 'Uploading…' : mapImageUrl ? 'Map Image…' : 'Upload Map Image…'}
-          </button>
-        ) : (
-          <label
-            className={`flex items-center gap-1.5 px-2 py-1 rounded cursor-pointer transition-colors border ${
-              isUploading
-                ? 'bg-dh-hover text-dh-muted cursor-not-allowed border-transparent'
-                : 'text-violet-300/90 border-violet-500/35 bg-violet-950/25 hover:bg-violet-900/35'
-            }`}
-            title="Upload or replace map image"
-            data-prep-target="build"
-          >
-            <Upload size={12} />
-            {isUploading ? 'Uploading…' : mapImageUrl ? 'Replace Map' : 'Upload Map Image'}
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/*"
-              className="hidden"
-              disabled={isUploading}
-              onChange={e => { const f = e.target.files?.[0]; if (f) { onFileSelect(f); e.target.value = ''; } }}
-            />
-          </label>
-        )}
-
-        {showImageGenAiUi ? (
-          <>
-            <button
-              type="button"
-              onClick={() => setAiMapOpen(true)}
-              className="flex items-center gap-1.5 px-2 py-1 rounded border border-purple-800/50 hover:border-purple-600 text-purple-300 hover:text-purple-100 bg-purple-950/30 hover:bg-purple-900/40 transition-colors"
-              title="Generate map image with AI (x.ai)"
-            >
-              <Sparkles size={12} />
-              Generate with AI
-            </button>
-            <MapAiImageDialog
-              open={aiMapOpen}
-              onClose={() => setAiMapOpen(false)}
-              mapSizeFt={mapSizeFt}
-              mapDimension={mapDimension}
-              mapImageNaturalWidth={mapImageNaturalWidth}
-              mapImageNaturalHeight={mapImageNaturalHeight}
-              mapImageUrl={mapImageUrl}
-              savedMapAiImagePrompt={mapAiImagePrompt}
-              onMapConfigChange={onMapConfigChange}
-              onGenerationPreviewChange={onMapAiGenerationPreviewChange}
-            />
-          </>
-        ) : null}
-
-        {mapImageUrl && (
-          <button
-            className="flex items-center gap-1 px-2 py-1 rounded bg-dh-hover hover:bg-red-900 text-dh-muted hover:text-red-300 transition-colors"
-            title="Remove map image"
-            onClick={() =>
-              onMapConfigChange(
-                { mapImageUrl: null, mapImageNaturalWidth: null, mapImageNaturalHeight: null, mapAiImagePrompt: null },
-                true,
-              )
-            }
-          >
-            <Trash2 size={11} /> Remove
-          </button>
-        )}
-
-        <div className="w-px h-4 bg-dh-hover" />
-
-        <span className="text-dh-muted">Size:</span>
-        <div className="flex items-center gap-1">
-          <button
-            className={`px-1.5 py-0.5 rounded text-xs transition-colors ${mapDimension === 'width' ? 'bg-sky-700 text-white' : 'bg-dh-hover text-dh-muted hover:text-white'}`}
-            onClick={() => onMapConfigChange({ mapDimension: 'width' })}
-          >W</button>
-          <button
-            className={`px-1.5 py-0.5 rounded text-xs transition-colors ${mapDimension === 'height' ? 'bg-sky-700 text-white' : 'bg-dh-hover text-dh-muted hover:text-white'}`}
-            onClick={() => onMapConfigChange({ mapDimension: 'height' })}
-          >H</button>
-        </div>
-        <input
-          type="number"
-          min={MAP_SIZE_FT_MIN}
-          max={MAP_SIZE_FT_MAX}
-          value={sizeInput}
-          onChange={e => setSizeInput(e.target.value)}
-          onBlur={commitSize}
-          onKeyDown={e => { if (e.key === 'Enter') { e.target.blur(); } }}
-          className="w-14 px-1.5 py-0.5 rounded bg-dh-hover border border-dh-strong text-dh text-xs text-right focus:outline-none focus:border-sky-500"
-        />
-        <span className="text-dh-muted">ft</span>
-
-        <span className="text-dh-muted italic">{wxh}</span>
       </div>
     </div>
   );
@@ -1810,6 +1686,8 @@ function TokenDetailPanel({
   onClose,
   anchorX,
   anchorY,
+  /** When set, portal left-of-tray instead of click-anchored (`useHoverOverlay` dock). */
+  dock = null,
   onOpenImageLightbox,
   tableId,
   /** Adversary pin: Encounter-panel-style marked stats + party target aid (replaces HP/Stress checkbox tracks). */
@@ -1846,6 +1724,29 @@ function TokenDetailPanel({
   };
 
   const [openCompanionConditions, setOpenCompanionConditions] = useState(false);
+
+  const wrapPanel = (node) => {
+    if (dock) {
+      if (typeof document === 'undefined') return null;
+      return createPortal(
+        <div
+          ref={dock.overlayRef}
+          data-testid="tray-adversary-overlay"
+          className="fixed z-[55]"
+          style={dock.style}
+          {...(dock.overlayHandlers || {})}
+        >
+          {node}
+        </div>,
+        document.body,
+      );
+    }
+    return (
+      <AnchoredFloatingPanel anchorX={anchorX} anchorY={anchorY} onEscape={onClose}>
+        {node}
+      </AnchoredFloatingPanel>
+    );
+  };
 
   if (isBoard) {
     const companion = parentCharacterEl?.companion;
@@ -1920,8 +1821,7 @@ function TokenDetailPanel({
         }
       : null;
 
-    return (
-      <AnchoredFloatingPanel anchorX={anchorX} anchorY={anchorY} onEscape={onClose}>
+    return wrapPanel(
       <div
         className="bg-dh-raised border border-dh-strong rounded-lg shadow-2xl min-w-[200px] max-w-[260px] overflow-hidden"
         onPointerDown={e => e.stopPropagation()}
@@ -2067,7 +1967,6 @@ function TokenDetailPanel({
           </div>
         )}
       </div>
-      </AnchoredFloatingPanel>
     );
   }
 
@@ -2077,8 +1976,7 @@ function TokenDetailPanel({
   const playerEncounterAdvPin = isAdv && !gmEncounterAdvPin && adversaryTargetAid != null;
   const encounterStyleAdvPin = gmEncounterAdvPin || playerEncounterAdvPin;
 
-  return (
-    <AnchoredFloatingPanel anchorX={anchorX} anchorY={anchorY} onEscape={onClose}>
+  return wrapPanel(
     <div
       className={`bg-dh-raised border border-dh-strong rounded-lg shadow-2xl p-3 min-w-[180px] ${
         gmEncounterAdvPin
@@ -2211,7 +2109,6 @@ function TokenDetailPanel({
         </>
       )}
     </div>
-    </AnchoredFloatingPanel>
   );
 }
 
@@ -2299,9 +2196,13 @@ function SpotlightBeam({ side, active, dimGlow, count, clickable, onClick, label
   );
 }
 
-function GmSpotlightToken({ tokenSizePx }) {
+function GmSpotlightToken({ tokenSizePx, hoverTriggerProps = null }) {
   return (
-    <div className="flex flex-col items-center leading-none pointer-events-none">
+    <div
+      data-testid="gm-spotlight-token"
+      className="flex flex-col items-center leading-none"
+      {...(hoverTriggerProps || {})}
+    >
       <div
         className="relative rounded-full flex items-center justify-center border-2 border-black bg-slate-700"
         style={{ width: tokenSizePx, height: tokenSizePx, minWidth: tokenSizePx, minHeight: tokenSizePx }}
@@ -2337,6 +2238,7 @@ function TrayColumn({
   onAssignCharacterSpotlight,
   highestCatchUpKeySet = null,
   onToggleAdversaryVisibility,
+  hoverOverlay = null,
 }) {
   if (tokens.length === 0) return null;
 
@@ -2362,8 +2264,15 @@ function TrayColumn({
         const showTrayName = side === 'left'
           ? (element.elementType === 'character' || element.elementType === 'boardToken')
           : element.elementType === 'adversary' && tokens[i + 1]?.element?.id !== element.id;
+        const hoverProps = hoverOverlay && element.elementType === 'adversary'
+          ? hoverOverlay.triggerProps((e) => ({
+              instanceId: element.instanceId,
+              top: e.currentTarget.getBoundingClientRect().top,
+              bottom: e.currentTarget.getBoundingClientRect().bottom,
+            }))
+          : {};
         return (
-          <div key={element.instanceId} className="flex flex-col items-center max-w-full">
+          <div key={element.instanceId} className="flex flex-col items-center max-w-full" {...hoverProps}>
             <div className="relative flex items-center justify-center">
               <TrayToken
                 element={element}
@@ -2494,179 +2403,52 @@ const ZOOM_FIT_CONTROL_ITEMS = [
     kind: 'actors',
     ariaLabel: 'Zoom to Actors',
     tooltip: 'Fit everyone on the map at the closest zoom',
-    labeledText: 'Actors',
     Icon: Focus,
-    labeledClassName: 'text-violet-200/95 border-violet-500/35 bg-violet-950/25 hover:bg-violet-900/35',
     iconClassName: 'text-dh-muted hover:text-dh',
   },
   {
     kind: 'party',
     ariaLabel: 'Zoom to Party',
     tooltip: 'Fit the party on the map at the closest zoom',
-    labeledText: 'Party',
     Icon: Users,
-    labeledClassName: 'text-sky-200/95 border-sky-500/35 bg-sky-950/25 hover:bg-sky-900/35',
     iconClassName: 'text-sky-400 hover:text-sky-300',
   },
   {
     kind: 'adversaries',
     ariaLabel: 'Zoom to Adversaries',
     tooltip: 'Fit adversaries on the map at the closest zoom',
-    labeledText: 'Adversaries',
     Icon: Swords,
-    labeledClassName: 'text-amber-200/95 border-amber-500/35 bg-amber-950/25 hover:bg-amber-900/35',
     iconClassName: 'text-amber-400 hover:text-amber-300',
   },
 ];
 
-/** Width for the ZOOM TO column (icon + label in a row). */
-const MAP_STRIP_ZOOM_COL_WIDTH_PX = 112;
-
-/** Underlined group label spanning the button column beneath (Zoom to / Maps & Cameras / Scene). */
-function MapStripGroupLabel({ children }) {
-  return (
-    <div className="mb-0.5 w-full border-b border-dh-muted/55 pb-0.5 text-center text-[9px] font-semibold uppercase tracking-wide text-dh-muted leading-none whitespace-nowrap">
-      {children}
-    </div>
-  );
-}
-
-/**
- * Compact map-strip button: icon left, label right.
- * `grow` — fill leftover height in a stretched pair column.
- * `width` — fixed px, `'fit'` for content-sized (SCENE), or `'fill'` to stretch to the parent column.
- */
-function MapStripActionButton({
-  onClick,
-  disabled = false,
-  ariaLabel,
-  ariaPressed,
-  className,
-  iconSize,
-  Icon,
-  label,
-  /** Optional stacked lines (icon left, multi-line text right). Takes precedence over `label`. */
-  labelLines = null,
-  tooltip,
-  tooltipPlacement = 'bottom',
-  grow = false,
-  width = MAP_STRIP_ZOOM_COL_WIDTH_PX,
-  /** Prep checklist hover target: `build` | `invite` | `play` */
-  dataPrepTarget = null,
-}) {
-  const fit = width === 'fit';
-  const fill = width === 'fill';
-  const stacked = Array.isArray(labelLines) && labelLines.length > 0;
-  return (
-    <Tooltip
-      label={tooltip}
-      placement={tooltipPlacement}
-      className={
-        grow
-          ? 'relative flex min-h-0 min-w-0 flex-1 flex-col'
-          : 'relative block w-full min-w-0'
-      }
-    >
-      <button
-        type="button"
-        onClick={onClick}
-        disabled={disabled}
-        aria-label={ariaLabel}
-        aria-pressed={ariaPressed}
-        data-prep-target={dataPrepTarget || undefined}
-        className={`w-full min-w-0 flex flex-row items-center gap-1.5 rounded px-1.5 py-0.5 text-[10px] leading-tight border disabled:opacity-40 disabled:pointer-events-none box-border ${
-          grow ? 'flex-1' : ''
-        } ${className}`}
-        style={fit || fill ? undefined : { width, maxWidth: width }}
-      >
-        <Icon size={iconSize} strokeWidth={1.25} className="shrink-0" aria-hidden />
-        <span
-          className={`min-w-0 text-left font-medium leading-tight ${
-            fit ? 'whitespace-nowrap' : stacked ? 'flex-1' : 'flex-1 truncate'
-          }`}
-        >
-          {stacked
-            ? labelLines.map((line, i) => (
-                <span key={`${i}-${line}`} className="block">
-                  {line}
-                </span>
-              ))
-            : label}
-        </span>
-      </button>
-    </Tooltip>
-  );
-}
-
-/**
- * Zoom-to-fit trio (Actors / Party / Adversaries).
- * Labeled variant: vertical stack with icon-left / text-right under an optional group label.
- * Icon variant: compact horizontal icon-only row (floating map overlay).
- */
+/** Zoom-to-fit trio (Actors / Party / Adversaries) for the map-draw toolbar. */
 function ZoomToFitControls({
-  variant = 'labeled',
   iconSize,
   onZoomToFit,
   hasPlacedByKind,
   extraDisabled = false,
-  tooltipPlacement = 'left',
-  groupLabel = null,
 }) {
-  if (variant === 'icon') {
-    return (
-      <div className="flex flex-row items-stretch gap-1">
-        {ZOOM_FIT_CONTROL_ITEMS.map((item) => {
-          const disabled = extraDisabled || !hasPlacedByKind[item.kind];
-          return (
-            <Tooltip key={item.kind} label={item.tooltip}>
-              <button
-                type="button"
-                aria-label={item.ariaLabel}
-                onClick={() => onZoomToFit(item.kind)}
-                disabled={disabled}
-                className={`pointer-events-auto shrink-0 p-1.5 rounded border border-dh-strong bg-dh-raised/90 shadow-md hover:bg-dh-hover disabled:opacity-40 disabled:pointer-events-none ${item.iconClassName}`}
-              >
-                <item.Icon size={iconSize} />
-              </button>
-            </Tooltip>
-          );
-        })}
-      </div>
-    );
-  }
-
-  const buttons = (
-    <div className="flex h-full min-h-0 flex-col items-stretch gap-0.5">
-      {ZOOM_FIT_CONTROL_ITEMS.map((item) => (
-        <MapStripActionButton
-          key={item.kind}
-          onClick={() => onZoomToFit(item.kind)}
-          disabled={extraDisabled || !hasPlacedByKind[item.kind]}
-          ariaLabel={item.ariaLabel}
-          className={item.labeledClassName}
-          iconSize={iconSize}
-          Icon={item.Icon}
-          label={item.labeledText}
-          tooltip={item.tooltip}
-          tooltipPlacement={tooltipPlacement}
-          width={MAP_STRIP_ZOOM_COL_WIDTH_PX}
-        />
-      ))}
+  return (
+    <div className="flex flex-row items-stretch gap-1">
+      {ZOOM_FIT_CONTROL_ITEMS.map((item) => {
+        const disabled = extraDisabled || !hasPlacedByKind[item.kind];
+        return (
+          <Tooltip key={item.kind} label={item.tooltip}>
+            <button
+              type="button"
+              aria-label={item.ariaLabel}
+              onClick={() => onZoomToFit(item.kind)}
+              disabled={disabled}
+              className={`inline-flex items-center justify-center rounded border border-dh-strong bg-dh-raised/70 p-1.5 disabled:opacity-40 disabled:pointer-events-none ${item.iconClassName}`}
+            >
+              <item.Icon size={iconSize} />
+            </button>
+          </Tooltip>
+        );
+      })}
     </div>
   );
-
-  if (groupLabel) {
-    return (
-      <div
-        className="flex h-full min-h-0 flex-col items-stretch self-stretch"
-        style={{ width: MAP_STRIP_ZOOM_COL_WIDTH_PX }}
-      >
-        <MapStripGroupLabel>{groupLabel}</MapStripGroupLabel>
-        {buttons}
-      </div>
-    );
-  }
-  return buttons;
 }
 
 // ─── Shared map-object primitives (MapImageObject + DrawShapeObject) ────────
@@ -3298,7 +3080,7 @@ export function BattleMap({
   gmActiveViewId = null,
   /** GM: enter map-only framing (no named view); persists as `set-map-free-explore` + `set-map-view` with `viewId: null`. */
   onMapFreeExplore,
-  /** GM: double-click map/view strip tile to align invited players on that view (server op + SSE). */
+  /** GM: double-click a picker tile to align invited players on that view (server op + SSE). */
   onForcePlayersToMapView,
   playerFreeMapExplore = false,
   playerFreeExploreMapId = null,
@@ -3367,9 +3149,17 @@ export function BattleMap({
   showSpotlight = false,
   spotlight = null,
   onSpotlightChange,
+  /** Game Table GM: hover overlay hook for the GM token → GM Moves panel. */
+  gmMovesOverlay = null,
 }) {
-  const { hideAiUi } = useAiUiPreference();
-  const showImageGenAiUi = shouldShowImageGenAiUi(imageGenEnabled, hideAiUi);
+  const isTouch = useTouchDevice();
+  const trayAdversaryOverlay = useHoverOverlay({ hideDelay: 150, isTouch });
+  const trayOverlayKey = trayAdversaryOverlay.data?.instanceId ?? null;
+  const trayOverlayAdjust = useViewportClamp(
+    trayAdversaryOverlay.overlayRef,
+    trayAdversaryOverlay.isOpen,
+    trayOverlayKey,
+  );
   const scrollWrapperRef = useRef(null);
   const scrollContainerRef = useRef(null);
   /** GM right-drag map pan: { pointerId, startX, startY, startPanLeft, startPanTop } */
@@ -3434,6 +3224,14 @@ export function BattleMap({
   const [highlightRightTray, setHighlightRightTray] = useState(false);
   const [rightPanDragging, setRightPanDragging] = useState(false);
   const [pinnedToken, setPinnedToken] = useState(null); // { element, anchorX, anchorY }
+
+  useEffect(() => {
+    if (trayAdversaryOverlay.isOpen) gmMovesOverlay?.close();
+  }, [trayAdversaryOverlay.isOpen, gmMovesOverlay?.close]);
+
+  useEffect(() => {
+    if (gmMovesOverlay?.isOpen) trayAdversaryOverlay.close();
+  }, [gmMovesOverlay?.isOpen, trayAdversaryOverlay.close]);
   const [bullseyeFt, setBullseyeFt] = useState(null); // { x, y, altitude?, excludeInstanceId? } in feet, null when off-map
   /**
    * `pointermove` fires far more often than the display can paint (especially with high-poll-rate
@@ -3482,16 +3280,18 @@ export function BattleMap({
   // Second bullseye that follows the dragged token during drag (only when frozen bullseye is set)
   const [followBullseyeFt, setFollowBullseyeFt] = useState(null);
   /** AI map editor: show selected generation on the table map before Save (data URL or hosted URL). */
-  const [mapAiGenPreviewUrl, setMapAiGenPreviewUrl] = useState(null);
-  /** Shared with MapConfigToolbar "Generate with AI" and Theatre of the Mind overlay. */
-  const [aiMapOpen, setAiMapOpen] = useState(false);
-  /** GM: pencil on a map strip tile → name / artist / artist URL dialog. */
-  const [mapDetailsEdit, setMapDetailsEdit] = useState(null);
+  const [mapAiGenPreviewUrl] = useState(null);
+  const zoomBankRef = useRef(null);
+  const zoomTitleRef = useRef(null);
+  const [pickerAlignLeftPx, setPickerAlignLeftPx] = useState(null);
   const mapAiGenPreviewUrlRef = useRef(null);
   mapAiGenPreviewUrlRef.current = mapAiGenPreviewUrl;
   const gmCameraLockedRef = useRef(false);
-  /** Zoom to + Maps & Cameras column pair. */
-  const mapStripZoomCamerasRef = useRef(null);
+  const mapCameraPickerRef = useRef(null);
+  const [mapCameraPickerOpen, setMapCameraPickerOpen] = useState(false);
+  const [hoverPreviewTarget, setHoverPreviewTarget] = useState(null);
+  const hoverPreviewTimerRef = useRef(null);
+  const hoverPreviewActiveRef = useRef(false);
 
   // Track scroll area size for pxPerFt and display zoom bounds
   useLayoutEffect(() => {
@@ -3592,6 +3392,40 @@ export function BattleMap({
     [maps, activeMapIdResolved],
   );
 
+  const hoverPreviewResolved = useMemo(() => {
+    if (mapAiGenPreviewUrl) return null;
+    return resolveMapCameraHoverPreview({
+      target: hoverPreviewTarget,
+      maps,
+      mapViews,
+      gmMapView,
+      currentMapId: activeMapIdResolved,
+      currentViewId: activeViewIdResolved,
+    });
+  }, [
+    mapAiGenPreviewUrl,
+    hoverPreviewTarget,
+    maps,
+    mapViews,
+    gmMapView,
+    activeMapIdResolved,
+    activeViewIdResolved,
+  ]);
+  hoverPreviewActiveRef.current = !!hoverPreviewResolved;
+
+  const displayMapIdResolved = hoverPreviewResolved?.mapId ?? activeMapIdResolved;
+  const displayViewIdResolved = hoverPreviewResolved
+    ? hoverPreviewResolved.viewId
+    : activeViewIdResolved;
+  const displayMapRow = useMemo(
+    () =>
+      (hoverPreviewResolved
+        ? maps.find((m) => m.id === hoverPreviewResolved.mapId)
+        : null) ?? activeMapRow,
+    [hoverPreviewResolved, maps, activeMapRow],
+  );
+  const displayMapConfig = hoverPreviewResolved?.mapConfig ?? mapConfig;
+
   const sortedMapViews = useMemo(() => {
     const order = new Map(maps.map((m, i) => [m.id, i]));
     return [...mapViews].sort((a, b) => {
@@ -3602,7 +3436,7 @@ export function BattleMap({
     });
   }, [mapViews, maps]);
 
-  /** GM strip: one group per map that has views — full-map tile + view tiles. */
+  /** GM picker: one group per map that has views — full-map tile + view tiles. */
   const gmMapViewGroups = useMemo(() => {
     const byMap = new Map();
     for (const v of sortedMapViews) {
@@ -3623,8 +3457,8 @@ export function BattleMap({
   }, [sortedMapViews, maps]);
 
   const visibleMapPings = useMemo(
-    () => (mapPings || []).filter(p => effectiveTokenMapId(p.mapId) === activeMapIdResolved),
-    [mapPings, activeMapIdResolved],
+    () => (mapPings || []).filter(p => effectiveTokenMapId(p.mapId) === displayMapIdResolved),
+    [mapPings, displayMapIdResolved],
   );
 
   useEffect(() => {
@@ -3646,6 +3480,57 @@ export function BattleMap({
       }),
     [containerWidth, containerHeight, renderedWidthPx, renderedHeightPx, tokenSizePx],
   );
+
+  const { mapWidthFt: displayMapWidthFt, mapHeightFt: displayMapHeightFt } = useMemo(
+    () => getMapDimensions(displayMapConfig),
+    [displayMapConfig],
+  );
+  const displayPxPerFt = useMemo(
+    () => Math.max(containerWidth / displayMapWidthFt, MIN_PX_PER_FT),
+    [containerWidth, displayMapWidthFt],
+  );
+  const displayRenderedWidthPx = Math.round(displayMapWidthFt * displayPxPerFt);
+  const displayRenderedHeightPx = Math.round(displayMapHeightFt * displayPxPerFt);
+  const displayTokenSizePx = Math.max(33, Math.round(5 * displayPxPerFt));
+  const { minZoom: displayMinZoom, maxZoom: displayMaxZoom } = useMemo(
+    () =>
+      computeMapZoomBounds({
+        containerW: containerWidth,
+        containerH: containerHeight,
+        renderedWidthPx: displayRenderedWidthPx,
+        renderedHeightPx: displayRenderedHeightPx,
+        tokenSizePx: displayTokenSizePx,
+      }),
+    [containerWidth, containerHeight, displayRenderedWidthPx, displayRenderedHeightPx, displayTokenSizePx],
+  );
+
+  const hoverPreviewView = useMemo(() => {
+    if (!hoverPreviewResolved) return null;
+    if (containerWidth <= 0 || containerHeight <= 0) return null;
+    if (hoverPreviewResolved.fitToView) {
+      return { mapZoom: displayMinZoom, scrollLeft: 0, scrollTop: 0, letterboxClipPx: null };
+    }
+    const d = decodeMapViewState(hoverPreviewResolved.mapConfig, {
+      minZoom: displayMinZoom,
+      maxZoom: displayMaxZoom,
+      renderedWidthPx: displayRenderedWidthPx,
+      renderedHeightPx: displayRenderedHeightPx,
+      viewportW: containerWidth,
+      viewportH: containerHeight,
+    });
+    if (!d) {
+      return { mapZoom: displayMinZoom, scrollLeft: 0, scrollTop: 0, letterboxClipPx: null };
+    }
+    return d;
+  }, [
+    hoverPreviewResolved,
+    containerWidth,
+    containerHeight,
+    displayMinZoom,
+    displayMaxZoom,
+    displayRenderedWidthPx,
+    displayRenderedHeightPx,
+  ]);
 
   const minZoomRef = useRef(minZoom);
   const maxZoomRef = useRef(maxZoom);
@@ -3949,6 +3834,7 @@ export function BattleMap({
 
   const schedulePersistView = useCallback(() => {
     if (!onMapViewSyncRef.current) return;
+    if (hoverPreviewActiveRef.current) return;
     if (mapViewPersistTimerRef.current) clearTimeout(mapViewPersistTimerRef.current);
     mapViewPersistTimerRef.current = setTimeout(() => {
       mapViewPersistTimerRef.current = null;
@@ -3987,6 +3873,7 @@ export function BattleMap({
 
   const schedulePersistPlayerFreeMap = useCallback(() => {
     if (!isPlayer || !tableId || !playerFreeExploreMapId) return;
+    if (hoverPreviewActiveRef.current) return;
     if (playerFreeMapPersistTimerRef.current) clearTimeout(playerFreeMapPersistTimerRef.current);
     playerFreeMapPersistTimerRef.current = setTimeout(() => {
       playerFreeMapPersistTimerRef.current = null;
@@ -4291,6 +4178,7 @@ export function BattleMap({
   useEffect(() => () => {
     if (mapViewPersistTimerRef.current) clearTimeout(mapViewPersistTimerRef.current);
     if (playerFreeMapPersistTimerRef.current) clearTimeout(playerFreeMapPersistTimerRef.current);
+    if (hoverPreviewTimerRef.current) clearTimeout(hoverPreviewTimerRef.current);
   }, []);
 
   useLayoutEffect(() => {
@@ -4320,7 +4208,7 @@ export function BattleMap({
   const maxPanTop = Math.max(0, renderedHeightPx * mapZoom - containerHeight);
   const canPanMap = maxPanLeft > 0 || maxPanTop > 0;
 
-  /** Live normalized view for the active map — strip thumbnails match the main viewport before SSE catches up. */
+  /** Live normalized view for the active map — picker thumbnails match the main viewport before SSE catches up. */
   const liveStripView = useMemo(() => {
     if (isPlayer) return null;
     if (!containerWidth || !containerHeight) return null;
@@ -4364,7 +4252,7 @@ export function BattleMap({
     [isPlayer, gmActiveViewId, liveStripView, maps],
   );
 
-  /** Player strip: one scroll batch per map — include shared maps (free-map tile) even when no broadcast views. */
+  /** Player picker: one batch per map — include shared maps (free-map tile) even when no broadcast views. */
   const playerViewBatches = useMemo(() => {
     const out = [];
     for (const m of maps) {
@@ -4376,18 +4264,81 @@ export function BattleMap({
     return out;
   }, [maps, playerStripViews]);
 
-  const showPlayerMapViewStrip = useMemo(
-    () => shouldShowPlayerMapViewStrip(playerViewBatches),
-    [playerViewBatches],
+  const pickerGroups = useMemo(() => {
+    if (isPlayer) {
+      return playerViewBatches.map(({ map, gmViews }) => ({ map, views: gmViews }));
+    }
+    return maps.map((m) => ({
+      map: m,
+      views: gmMapViewGroups.find((g) => g.map.id === m.id)?.views ?? [],
+    }));
+  }, [isPlayer, playerViewBatches, maps, gmMapViewGroups]);
+
+  const orderedPickerGroups = useMemo(
+    () => orderMapGroupsCurrentFirst(pickerGroups, activeMapIdResolved),
+    [pickerGroups, activeMapIdResolved],
   );
 
-  const showMapCornerZoomControls =
-    canControlMapView &&
-    !(
-      (!isPlayer && maps.length > 0 && onSetActiveView && onMapFreeExplore) ||
-      (isPlayer && tableId && showPlayerMapViewStrip)
-    );
-  const showMapArtistCredit = !!activeMapRow?.artist?.trim();
+  const pickerTrigger = useMemo(
+    () =>
+      resolveMapCameraPickerTrigger({
+        isPlayer,
+        gmActiveViewId,
+        playerFreeMapExplore,
+        playerSelectedViewId,
+        activeMapId: activeMapIdResolved,
+        groups: pickerGroups,
+      }),
+    [
+      isPlayer,
+      gmActiveViewId,
+      playerFreeMapExplore,
+      playerSelectedViewId,
+      activeMapIdResolved,
+      pickerGroups,
+    ],
+  );
+
+  const showMapCameraPicker = isPlayer
+    ? !!(tableId && playerViewBatches.length > 0)
+    : maps.length > 0 && !!onSetActiveView && !!onMapFreeExplore;
+
+  const showPlayerPlaceImageButton = isPlayer && !!onAddMapImageObject;
+  const showMapArtistCredit = !!displayMapRow?.artist?.trim();
+  const showMapDrawToolbar = mapConfigHasImage(mapConfig) && (
+    (!isPlayer && !!(onSetMapOverlay || onSetMapViewOverlay)) || isPlayer
+  );
+  const zoomBankIsCamera = hoverPreviewResolved
+    ? !!hoverPreviewResolved.viewId
+    : isPlayer
+      ? !playerFreeMapExplore && !!playerSelectedViewId
+      : !!gmActiveViewId;
+  const zoomBankLabel = zoomBankIsCamera ? 'Camera Zoom' : 'Map Zoom';
+
+  useLayoutEffect(() => {
+    const title = zoomTitleRef.current;
+    const viewport = scrollWrapperRef.current;
+    if (!showMapDrawToolbar || !title || !viewport) {
+      setPickerAlignLeftPx(null);
+      return undefined;
+    }
+    const update = () => {
+      setPickerAlignLeftPx(mapCameraPickerTriggerLeftPx(
+        title.getBoundingClientRect(),
+        viewport.getBoundingClientRect(),
+      ));
+    };
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(title);
+    ro.observe(viewport);
+    if (zoomBankRef.current) ro.observe(zoomBankRef.current);
+    window.addEventListener('resize', update);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener('resize', update);
+    };
+  }, [showMapDrawToolbar, zoomBankLabel, gmCameraLocked]);
 
   useEffect(() => {
     if (!isPlayer) return;
@@ -4507,6 +4458,7 @@ export function BattleMap({
     const onWheel = (e) => {
       if (mapAiGenPreviewUrlRef.current) return;
       if (gmCameraLockedRef.current) return;
+      if (hoverPreviewActiveRef.current) return;
       const vw = el.clientWidth;
       const vh = el.clientHeight;
       if (vw <= 0 || vh <= 0) return;
@@ -4582,28 +4534,28 @@ export function BattleMap({
   /** Layer filter shared by `mapImage` and `drawShape`: Map-layer objects (`viewId == null`) always
    *  show; a view-scoped object only shows while that specific view is the active layer. */
   const onMapObjectLayer = useCallback(
-    (el) => el.viewId == null || el.viewId === activeViewIdResolved,
-    [activeViewIdResolved],
+    (el) => el.viewId == null || el.viewId === displayViewIdResolved,
+    [displayViewIdResolved],
   );
   const mapImages = useMemo(
     () =>
       activeElements.filter(
         (el) =>
           el.elementType === 'mapImage' &&
-          effectiveTokenMapId(el.mapId) === activeMapIdResolved &&
+          effectiveTokenMapId(el.mapId) === displayMapIdResolved &&
           onMapObjectLayer(el),
       ),
-    [activeElements, activeMapIdResolved, onMapObjectLayer],
+    [activeElements, displayMapIdResolved, onMapObjectLayer],
   );
   const mapDrawShapes = useMemo(
     () =>
       activeElements.filter(
         (el) =>
           el.elementType === 'drawShape' &&
-          effectiveTokenMapId(el.mapId) === activeMapIdResolved &&
+          effectiveTokenMapId(el.mapId) === displayMapIdResolved &&
           onMapObjectLayer(el),
       ),
-    [activeElements, activeMapIdResolved, onMapObjectLayer],
+    [activeElements, displayMapIdResolved, onMapObjectLayer],
   );
   /** Layer control options for the current map — passed to both object types' Layer pill. */
   const mapViewsForCurrentMap = useMemo(
@@ -4708,14 +4660,14 @@ export function BattleMap({
   // Map tokens (placed on active map)
   const charMapTokens = useMemo(() =>
     characters
-      .filter(el => el.tokenX != null && effectiveTokenMapId(el.mapId) === activeMapIdResolved)
+      .filter(el => el.tokenX != null && effectiveTokenMapId(el.mapId) === displayMapIdResolved)
       .map(el => ({ element: el, instanceNum: null, isMyCharacter: isMyCharacter(el) })),
-    [characters, isMyCharacter, activeMapIdResolved]);
+    [characters, isMyCharacter, displayMapIdResolved]);
 
   const boardMapTokens = useMemo(
     () =>
       boardTokens
-        .filter((el) => el.tokenX != null && effectiveTokenMapId(el.mapId) === activeMapIdResolved)
+        .filter((el) => el.tokenX != null && effectiveTokenMapId(el.mapId) === displayMapIdResolved)
         .map((el) => ({
           element: withResolvedCompanionStress(
             withResolvedTokenImage(el, parentByInstanceId),
@@ -4724,14 +4676,14 @@ export function BattleMap({
           instanceNum: null,
           isMyCharacter: isMyCharacter(parentByInstanceId.get(el.parentInstanceId) || {}),
         })),
-    [boardTokens, isMyCharacter, parentByInstanceId, activeMapIdResolved],
+    [boardTokens, isMyCharacter, parentByInstanceId, displayMapIdResolved],
   );
 
   const advMapTokens = useMemo(() =>
     adversaries
-      .filter(el => el.tokenX != null && effectiveTokenMapId(el.mapId) === activeMapIdResolved)
+      .filter(el => el.tokenX != null && effectiveTokenMapId(el.mapId) === displayMapIdResolved)
       .map(el => ({ element: el, instanceNum: instanceNumbers[el.instanceId], isMyCharacter: false })),
-    [adversaries, instanceNumbers, activeMapIdResolved]);
+    [adversaries, instanceNumbers, displayMapIdResolved]);
 
   // All placed tokens for snap detection and range band computation
   const allMapTokens = useMemo(
@@ -4934,20 +4886,56 @@ export function BattleMap({
     return { x: mapX / pxPerFt, y: mapY / pxPerFt };
   }, [pxPerFt]);
 
+  const scheduleMapCameraHoverPreview = useCallback((target) => {
+    if (isTouch) return;
+    if (hoverPreviewTimerRef.current) {
+      clearTimeout(hoverPreviewTimerRef.current);
+      hoverPreviewTimerRef.current = null;
+    }
+    const delay = target ? MAP_CAMERA_PICKER_HOVER_PREVIEW_MS : MAP_CAMERA_PICKER_HOVER_PREVIEW_CLEAR_MS;
+    hoverPreviewTimerRef.current = setTimeout(() => {
+      hoverPreviewTimerRef.current = null;
+      setHoverPreviewTarget((prev) => (isSameMapCameraHoverTarget(prev, target) ? prev : target));
+    }, delay);
+  }, [isTouch]);
+
+  const onHoverPreviewKey = useCallback((key) => {
+    if (!key) {
+      scheduleMapCameraHoverPreview(null);
+      return;
+    }
+    const sep = key.indexOf(':');
+    const kind = sep >= 0 ? key.slice(0, sep) : '';
+    const id = sep >= 0 ? key.slice(sep + 1) : '';
+    if (kind === 'view' && id) scheduleMapCameraHoverPreview({ kind: 'view', viewId: id });
+    else if (kind === 'map' && id) scheduleMapCameraHoverPreview({ kind: 'map', mapId: id });
+    else scheduleMapCameraHoverPreview(null);
+  }, [scheduleMapCameraHoverPreview]);
+
+  const clearMapCameraHoverPreview = useCallback(() => {
+    if (hoverPreviewTimerRef.current) {
+      clearTimeout(hoverPreviewTimerRef.current);
+      hoverPreviewTimerRef.current = null;
+    }
+    setHoverPreviewTarget(null);
+  }, []);
+
   const handleGmSetActiveView = useCallback(
     (viewId) => {
+      clearMapCameraHoverPreview();
       setMapLetterboxClipPx(null);
       onSetActiveView?.(viewId);
     },
-    [onSetActiveView],
+    [clearMapCameraHoverPreview, onSetActiveView],
   );
 
   const handleGmMapFreeExplore = useCallback(
     (mapId) => {
+      clearMapCameraHoverPreview();
       setMapLetterboxClipPx(null);
       onMapFreeExplore?.(mapId);
     },
-    [onMapFreeExplore],
+    [clearMapCameraHoverPreview, onMapFreeExplore],
   );
 
   const handleGmSetActiveMap = useCallback(
@@ -5125,11 +5113,17 @@ export function BattleMap({
   }, [mapScribbles, mapWidthFt, mapHeightFt, activeMapIdResolved, scheduleScribblePaint]);
 
   const mapOverlayPngSrc = useMemo(
-    () => getRowOverlayPng(maps.find((m) => m.id === activeMapIdResolved)),
-    [maps, activeMapIdResolved],
+    () => getRowOverlayPng(maps.find((m) => m.id === displayMapIdResolved)),
+    [maps, displayMapIdResolved],
   );
 
   const cameraOverlayPngSrc = useMemo(() => {
+    if (hoverPreviewResolved) {
+      if (hoverPreviewResolved.viewId) {
+        return getRowOverlayPng(mapViews.find((v) => v.id === hoverPreviewResolved.viewId));
+      }
+      return null;
+    }
     if (isPlayer) {
       if (playerFreeMapExplore) return null;
       return getRowOverlayPng(mapViews.find((v) => v.id === playerSelectedViewId));
@@ -5138,7 +5132,7 @@ export function BattleMap({
       return getRowOverlayPng(mapViews.find((v) => v.id === gmActiveViewId));
     }
     return null;
-  }, [isPlayer, gmActiveViewId, playerFreeMapExplore, playerSelectedViewId, mapViews]);
+  }, [hoverPreviewResolved, isPlayer, gmActiveViewId, playerFreeMapExplore, playerSelectedViewId, mapViews]);
 
   const editableDrawSourceUrl = useMemo(() => {
     if (!drawEditContext) return null;
@@ -5246,16 +5240,25 @@ export function BattleMap({
   }, [isPlayer, drawTool, mapWidthFt, mapHeightFt, editableDrawSourceUrl]);
 
   useEffect(() => {
-    if (isPlayer) return;
     const onKey = (e) => {
-      if (e.key === 'Escape') {
+      if (e.key !== 'Escape') return;
+      if (mapCameraPickerOpen) {
+        mapCameraPickerRef.current?.close();
+        return;
+      }
+      const next = battleMapEscapeResult({ isPlayer });
+      setSelectedMapObjectId(next.selectedMapObjectId);
+      setPinnedToken(next.pinnedToken);
+      trayAdversaryOverlay.close();
+      gmMovesOverlay?.close();
+      if (next.resetDrawToolToHand) {
         drawEraserPendingRef.current = null;
         setDrawTool('hand');
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [isPlayer]);
+  }, [isPlayer, mapCameraPickerOpen, trayAdversaryOverlay.close, gmMovesOverlay?.close]);
 
   useEffect(() => {
     if (!brushPreviewControlsActive) return;
@@ -5950,6 +5953,7 @@ export function BattleMap({
       if (!mapPinchActiveRef.current || pointers.size < 2) return;
       if (mapAiGenPreviewUrlRef.current) return;
       if (gmCameraLockedRef.current) return;
+      if (hoverPreviewActiveRef.current) return;
 
       const vw = el.clientWidth;
       const vh = el.clientHeight;
@@ -6349,6 +6353,8 @@ export function BattleMap({
     const dy = e.clientY - ds.startY;
     if (!ds.isDragging && (dx * dx + dy * dy) >= DRAG_THRESHOLD_PX * DRAG_THRESHOLD_PX) {
       ds.isDragging = true;
+      trayAdversaryOverlay.close();
+      gmMovesOverlay?.close();
       // Freeze bullseye at the dragged token's origin center
       const el = ds.element;
       if (el.tokenX != null) {
@@ -6401,7 +6407,7 @@ export function BattleMap({
         setFollowBullseyeFt(ft);
       }
     }
-  }, [isPlayer, clientToFt, mapWidthFt, mapHeightFt, parentByInstanceId]);
+  }, [isPlayer, clientToFt, mapWidthFt, mapHeightFt, parentByInstanceId, trayAdversaryOverlay.close, gmMovesOverlay?.close]);
 
   const handlePointerUp = useCallback((e) => {
     const ds = dragRef.current;
@@ -6428,11 +6434,28 @@ export function BattleMap({
           centerMapOnPlacedActor(ds.element);
         }
       }
-      // Click: toggle pin
-      setPinnedToken(prev => {
-        if (prev?.element.instanceId === ds.element.instanceId) return null;
-        return { element: ds.element, anchorX: e.clientX, anchorY: e.clientY };
-      });
+      // Click: toggle pin (tray adversaries use hover overlays instead)
+      if (ds.fromTray && ds.element.elementType === 'adversary') {
+        if (isTouch) {
+          if (trayAdversaryOverlay.data?.instanceId === ds.element.instanceId) {
+            trayAdversaryOverlay.close();
+          } else {
+            trayAdversaryOverlay.show({
+              instanceId: ds.element.instanceId,
+              top: e.clientY - 20,
+              bottom: e.clientY + 20,
+            });
+          }
+        }
+        return;
+      }
+      if (shouldPinTokenOnClick({ fromTray: ds.fromTray, elementType: ds.element.elementType })) {
+        trayAdversaryOverlay.close();
+        setPinnedToken(prev => {
+          if (prev?.element.instanceId === ds.element.instanceId) return null;
+          return { element: ds.element, anchorX: e.clientX, anchorY: e.clientY };
+        });
+      }
       return;
     }
 
@@ -6506,7 +6529,7 @@ export function BattleMap({
         });
       }
     }
-  }, [isPlayer, pxPerFt, mapWidthFt, mapHeightFt, updateActiveElement, pinnedToken, activeElements, onTokenDragEnd, canControlMapView, centerMapOnPlacedActor, activeMapIdResolved, navigateShelfToCharacterMap, parentByInstanceId]);
+  }, [isPlayer, isTouch, pxPerFt, mapWidthFt, mapHeightFt, updateActiveElement, pinnedToken, activeElements, onTokenDragEnd, canControlMapView, centerMapOnPlacedActor, activeMapIdResolved, navigateShelfToCharacterMap, parentByInstanceId, trayAdversaryOverlay]);
 
   /** Keep the stable proxy callbacks (declared earlier) pointed at the latest handler closures. */
   handlersRef.current = {
@@ -6558,6 +6581,7 @@ export function BattleMap({
       if (!canControlMapView) return;
       if (mapAiGenPreviewUrlRef.current) return;
       if (gmCameraLocked) return;
+      if (hoverPreviewActiveRef.current) return;
       if (!canPanMap) return;
       if (e.button !== 2) return;
       e.preventDefault();
@@ -6642,13 +6666,14 @@ export function BattleMap({
   // ─── onMapConfigChange wrapper (handles scale for size changes) ──────────
 
   const handleMapConfigChange = useCallback((patch, resetTokenPositions = false, scale = null) => {
+    const targetMapId = patch?.mapId ?? activeMapIdResolved;
     if (scale != null && scale !== 1) {
-      // Rescale placed tokens on the active map proportionally
+      // Rescale placed tokens on the resized map proportionally
       const scaledElements = activeElements
         .filter(
           (el) =>
             el.tokenX != null &&
-            effectiveTokenMapId(el.mapId) === activeMapIdResolved &&
+            effectiveTokenMapId(el.mapId) === targetMapId &&
             (el.elementType === 'character' ||
               el.elementType === 'adversary' ||
               el.elementType === 'boardToken'),
@@ -6658,6 +6683,15 @@ export function BattleMap({
     }
     onMapConfigChange(patch, resetTokenPositions);
   }, [activeElements, updateActiveElement, onMapConfigChange, activeMapIdResolved]);
+
+  const handlePickerMapSizeChange = useCallback((map, patch) => {
+    if (!map?.id || !patch) return;
+    const next = { ...map, ...patch };
+    const oldW = getMapDimensions(map).mapWidthFt;
+    const newW = getMapDimensions(next).mapWidthFt;
+    const scale = oldW > 0 ? newW / oldW : 1;
+    handleMapConfigChange({ mapId: map.id, ...patch }, false, scale);
+  }, [handleMapConfigChange]);
 
   const spotlightCatchUpKeySet = useMemo(() => {
     if (!showSpotlight) return null;
@@ -6687,8 +6721,19 @@ export function BattleMap({
     onToggleDiceVisibility ||
     (typeof onCancelAllBanners === 'function' && pendingBannerCount > 0);
 
-  const hasMapArt = mapConfigHasImage(mapConfig);
-  const displayMapImageUrl = mapAiGenPreviewUrl ?? mapConfig?.mapImageUrl ?? null;
+  const hasMapArt = mapConfigHasImage(displayMapConfig);
+  const displayMapImageUrl = mapAiGenPreviewUrl ?? displayMapConfig?.mapImageUrl ?? null;
+  const hoverPreviewActive = !!hoverPreviewResolved && !mapAiPreviewActive;
+  const layerRenderedWidthPx = hoverPreviewActive ? displayRenderedWidthPx : renderedWidthPx;
+  const layerRenderedHeightPx = hoverPreviewActive ? displayRenderedHeightPx : renderedHeightPx;
+  const layerPxPerFt = hoverPreviewActive ? displayPxPerFt : pxPerFt;
+  const layerTokenSizePx = hoverPreviewActive ? displayTokenSizePx : tokenSizePx;
+  const layerViewZoom = hoverPreviewActive && hoverPreviewView ? hoverPreviewView.mapZoom : viewZoom;
+  const layerViewPanLeft = hoverPreviewActive && hoverPreviewView ? hoverPreviewView.scrollLeft : viewPanLeft;
+  const layerViewPanTop = hoverPreviewActive && hoverPreviewView ? hoverPreviewView.scrollTop : viewPanTop;
+  const layerLetterboxClipPx = hoverPreviewActive
+    ? (hoverPreviewView?.letterboxClipPx ?? null)
+    : mapLetterboxClipPx;
   const playerEmptyMapHint =
     isPlayer &&
     getPlayerTotMEmptyMapHint({
@@ -6696,369 +6741,253 @@ export function BattleMap({
       mapConfigHasImage: hasMapArt,
     });
 
+  const scheduleMapCameraPickerDismiss = () => {
+    window.setTimeout(() => mapCameraPickerRef.current?.close(), 350);
+  };
+
+  const pickerMapTileViewState = (map) => (
+    !isPlayer && gmActiveViewId === null && map.id === activeMapIdResolved && liveStripView
+      ? liveStripView
+      : null
+  );
+
+  const renderPickerMapActions = (map) => {
+    if (isPlayer) return null;
+    if (!onSetMapShare && !(onRemoveMap && maps.length > 1)) return null;
+    return (
+      <div className="flex items-center justify-center gap-0.5">
+        {onSetMapShare ? (
+          <Tooltip
+            label={
+              map.shareWithPlayers !== false
+                ? 'Players see the map tile and can pan/zoom freely (not locked to the GM)'
+                : 'Players only see broadcast views (no map tile or free pan/zoom)'
+            }
+          >
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onSetMapShare(map.id, map.shareWithPlayers === false);
+              }}
+              className={`rounded p-0.5 ${
+                map.shareWithPlayers !== false ? 'text-sky-400' : 'text-dh-muted hover:text-dh'
+              }`}
+              aria-label={
+                map.shareWithPlayers !== false
+                  ? 'Player map tile and free pan/zoom on'
+                  : 'Player map tile and free pan/zoom off'
+              }
+            >
+              <Radio size={11} aria-hidden />
+            </button>
+          </Tooltip>
+        ) : null}
+        {onRemoveMap && maps.length > 1 ? (
+          <Tooltip label="Remove map">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                if (!window.confirm('Remove this map? Tokens on it return to the tray.')) return;
+                onRemoveMap(map.id);
+              }}
+              className="rounded p-0.5 text-dh-muted hover:bg-red-900/35 hover:text-red-200"
+              aria-label="Remove map"
+            >
+              <Trash2 size={11} aria-hidden />
+            </button>
+          </Tooltip>
+        ) : null}
+      </div>
+    );
+  };
+
+  const renderPickerViewActions = (view, nOnMap) => {
+    if (isPlayer) return null;
+    if (!onSetViewBroadcast && !(onRemoveMapView && nOnMap > 1)) return null;
+    return (
+      <div className="flex items-center justify-center gap-0.5">
+        {onSetViewBroadcast ? (
+          <Tooltip label={view.broadcastToPlayers ? 'Broadcasting to players' : 'Not broadcast'}>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onSetViewBroadcast(view.id, !view.broadcastToPlayers);
+              }}
+              className={`rounded p-0.5 ${view.broadcastToPlayers ? 'text-sky-400' : 'text-dh-muted hover:text-dh'}`}
+              aria-label={view.broadcastToPlayers ? 'Stop broadcast' : 'Broadcast to players'}
+            >
+              <Radio size={11} aria-hidden />
+            </button>
+          </Tooltip>
+        ) : null}
+        {onRemoveMapView && nOnMap > 1 ? (
+          <Tooltip label="Delete view">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                if (!window.confirm('Delete this view?')) return;
+                onRemoveMapView(view.id);
+              }}
+              className="rounded p-0.5 text-dh-muted hover:bg-red-900/35 hover:text-red-200"
+              aria-label="Delete view"
+            >
+              <Trash2 size={11} aria-hidden />
+            </button>
+          </Tooltip>
+        ) : null}
+      </div>
+    );
+  };
+
+  const renderPickerMapTile = (map, { hideCaption = false, interactive = true, dismissOnSelect = false } = {}) => {
+    const showPlayerMapTile = !isPlayer || map.shareWithPlayers !== false;
+    if (!showPlayerMapTile) return null;
+    return (
+      <MapViewStripTile
+        variant="map"
+        hideCaption={hideCaption}
+        mapRow={map}
+        mapOverlayPng={getRowOverlayPng(map)}
+        viewState={pickerMapTileViewState(map)}
+        activeElements={activeElements}
+        adversaryPartyScaleCount={adversaryPartyScaleCount}
+        stripMapId={map.id}
+        label={map.name || 'Map'}
+        tooltipTitle={
+          onForcePlayersToMapView && map.shareWithPlayers !== false
+            ? `${map.name || 'Map'}: double-click to bring players`
+            : isPlayer
+              ? `${map.name || 'Map'} — Pan and zoom freely (not a saved view)`
+              : undefined
+        }
+        isActive={mapCameraTileActiveDuringHover(hoverPreviewTarget, {
+          kind: 'map',
+          id: map.id,
+          fallback: isPlayer
+            ? playerMapStripFullMapTileActive({
+                playerFreeMapExplore,
+                playerFreeExploreMapId,
+                mapId: map.id,
+              })
+            : gmMapStripFullMapTileActive({
+                gmActiveViewId,
+                mapId: map.id,
+                activeMapIdResolved,
+              }),
+        })}
+        hoverPreviewKey={interactive ? `map:${map.id}` : undefined}
+        onHoverPreviewKey={interactive ? onHoverPreviewKey : undefined}
+        broadcastHighlight={!isPlayer && map.shareWithPlayers !== false}
+        interactive={interactive}
+        onClick={
+          interactive
+            ? () => {
+                if (isPlayer) {
+                  clearMapCameraHoverPreview();
+                  onPlayerEnterMapFreeExplore?.(map.id);
+                } else handleGmMapFreeExplore(map.id);
+                if (dismissOnSelect) scheduleMapCameraPickerDismiss();
+              }
+            : undefined
+        }
+        onDoubleClick={
+          interactive && onForcePlayersToMapView && map.shareWithPlayers !== false
+            ? (e) => {
+                e.preventDefault();
+                onForcePlayersToMapView({ freeMapExploreMapId: map.id });
+              }
+            : undefined
+        }
+        actions={interactive ? renderPickerMapActions(map) : null}
+      />
+    );
+  };
+
+  const renderPickerViewTile = (map, view, { hideCaption = false, interactive = true, editableTitle = false, captionAbove, dismissOnSelect = false } = {}) => (
+    <MapViewStripTile
+      variant="map"
+      captionAbove={captionAbove ?? (!hideCaption && !editableTitle)}
+      hideCaption={hideCaption}
+      caption={
+        editableTitle ? (
+          <MapCameraViewTitle
+            value={view.name || 'View'}
+            disabled={isPlayer || typeof onRenameMapView !== 'function'}
+            onCommit={(name) => onRenameMapView?.(view.id, name)}
+          />
+        ) : null
+      }
+      mapRow={map}
+      mapOverlayPng={getRowOverlayPng(map)}
+      cameraOverlayPng={getRowOverlayPng(view)}
+      viewState={viewStateForStripTile(view)}
+      activeElements={activeElements}
+      adversaryPartyScaleCount={adversaryPartyScaleCount}
+      stripMapId={map.id}
+      label={view.name || 'View'}
+      tooltipTitle={
+        onForcePlayersToMapView && view.broadcastToPlayers
+          ? `${view.name || 'View'}: double-click to bring players`
+          : undefined
+      }
+      isActive={mapCameraTileActiveDuringHover(hoverPreviewTarget, {
+        kind: 'view',
+        id: view.id,
+        fallback: isPlayer
+          ? view.id === playerSelectedViewId && !playerFreeMapExplore
+          : view.id === gmActiveViewId,
+      })}
+      hoverPreviewKey={interactive ? `view:${view.id}` : undefined}
+      onHoverPreviewKey={interactive ? onHoverPreviewKey : undefined}
+      broadcastHighlight={!isPlayer && view.broadcastToPlayers}
+      interactive={interactive}
+        onClick={
+          interactive
+            ? () => {
+                if (isPlayer) {
+                  clearMapCameraHoverPreview();
+                  onPlayerSelectView?.(view.id);
+                } else handleGmSetActiveView(view.id);
+                if (dismissOnSelect) scheduleMapCameraPickerDismiss();
+              }
+            : undefined
+        }
+      onDoubleClick={
+        interactive && onForcePlayersToMapView && view.broadcastToPlayers
+          ? (e) => {
+              e.preventDefault();
+              onForcePlayersToMapView({ viewId: view.id });
+            }
+          : undefined
+      }
+      actions={interactive ? renderPickerViewActions(view, (pickerGroups.find((g) => g.map.id === map.id)?.views || []).length) : null}
+    />
+  );
+
+  const pickerTriggerTile = pickerTrigger
+    ? pickerTrigger.kind === 'view'
+      ? renderPickerViewTile(pickerTrigger.map, pickerTrigger.view, { interactive: false, captionAbove: false })
+      : renderPickerMapTile(pickerTrigger.map, { interactive: false })
+    : null;
+
+  const pickerCurrentViewId = pickerTrigger?.kind === 'view' ? pickerTrigger.view?.id : null;
+  const pickerRows = orderedPickerGroups.map(({ map, views }) => ({
+    key: map.id,
+    map,
+    mapTile: renderPickerMapTile(map, { hideCaption: true, dismissOnSelect: true }),
+    cameras: orderCamerasCurrentLast(views, pickerCurrentViewId).map((view) => ({
+      key: view.id,
+      view,
+      tile: renderPickerViewTile(map, view, { hideCaption: true, dismissOnSelect: true }),
+    })),
+  }));
+
   return (
     <div className={`flex flex-col ${className}`}>
-      {/* Toolbar — GM only */}
-      {!isPlayer && (
-        <MapConfigToolbar
-          mapConfig={mapConfig}
-          onMapConfigChange={handleMapConfigChange}
-          isUploading={false}
-          onFileSelect={(f) => unifiedImportEnabled && openImport([f])}
-          onOpenQuickPick={canMapImagePaste ? () => openMapImageQuickPickWithCenter(null) : undefined}
-          tableName={tableName}
-          tableStateReady={tableStateReady}
-          onTableNameChange={onTableNameChange}
-          onDeleteTable={onDeleteTable}
-          onMapAiGenerationPreviewChange={setMapAiGenPreviewUrl}
-          showImageGenAiUi={showImageGenAiUi}
-          aiMapOpen={aiMapOpen}
-          setAiMapOpen={setAiMapOpen}
-        />
-      )}
-      {!isPlayer && maps.length > 0 && onSetActiveView && onMapFreeExplore && (
-        <div className="flex items-start gap-2 px-3 py-1.5 bg-dh-surface border-b border-dh-border text-xs shrink-0 min-w-0">
-          <div ref={mapStripZoomCamerasRef} className="flex shrink-0 items-stretch gap-2 self-start">
-          {canControlMapView ? (
-            <ZoomToFitControls
-              groupLabel="Zoom to"
-              iconSize={Math.max(12, trayTokenSizePx - 8)}
-              onZoomToFit={applyZoomToFit}
-              hasPlacedByKind={hasPlacedByKind}
-              extraDisabled={mapAiPreviewActive}
-              tooltipPlacement="bottom"
-            />
-          ) : null}
-          <div className="flex w-max shrink-0 flex-col items-stretch self-stretch box-border">
-            <MapStripGroupLabel>Maps & Cameras</MapStripGroupLabel>
-            {/* w-0 min-w-full: column width comes from the label; buttons fill it without expanding it */}
-            <div className="flex w-0 min-w-full min-h-0 flex-1 flex-col items-stretch gap-0.5">
-              <MapStripActionButton
-                onClick={() => void handleSplitCamera()}
-                disabled={!gmCanCreateCameraView}
-                ariaLabel="Add Camera"
-                className="text-violet-300/90 border-violet-500/35 bg-violet-950/25 hover:bg-violet-900/35"
-                iconSize={Math.max(12, trayTokenSizePx - 8)}
-                Icon={Camera}
-                labelLines={['Add', 'Camera']}
-                tooltip={
-                  gmCanCreateCameraView
-                    ? 'Add camera at the current zoom and pan'
-                    : 'Cameras'
-                }
-                tooltipPlacement="bottom"
-                grow
-                width="fill"
-              />
-              {onAddMap ? (
-                <MapStripActionButton
-                  onClick={onAddMap}
-                  ariaLabel="Add Map"
-                  className="text-violet-300/90 border-violet-500/35 bg-violet-950/25 hover:bg-violet-900/35"
-                  iconSize={Math.max(12, trayTokenSizePx - 8)}
-                  Icon={MapIcon}
-                  labelLines={['Add', 'Map']}
-                  tooltip="Add map"
-                  tooltipPlacement="bottom"
-                  grow
-                  width="fill"
-                />
-              ) : null}
-            </div>
-          </div>
-          </div>
-          <div
-            className="flex flex-1 min-w-0 items-stretch gap-2 overflow-x-auto pb-0.5 -mb-0.5 self-start"
-            role="tablist"
-            aria-label="Map views"
-          >
-            {gmMapViewGroups.map(({ map, views }, idx) => (
-              <Fragment key={map.id}>
-                {idx > 0 ? (
-                  <div
-                    className="w-px shrink-0 self-stretch min-h-[4.75rem] bg-dh-border/60"
-                    aria-hidden
-                  />
-                ) : null}
-                <div className="flex shrink-0 items-start gap-1 rounded-md border border-dh-border/50 bg-dh-canvas/15 p-1">
-                <MapViewStripTile
-                  variant="map"
-                  showMapBadge
-                  mapRow={map}
-                  mapOverlayPng={getRowOverlayPng(map)}
-                  viewState={
-                    gmActiveViewId === null && map.id === activeMapIdResolved && liveStripView
-                      ? liveStripView
-                      : null
-                  }
-                  activeElements={activeElements}
-                  adversaryPartyScaleCount={adversaryPartyScaleCount}
-                  stripMapId={map.id}
-                  label={map.name || 'Map'}
-                  tooltipTitle={
-                    onForcePlayersToMapView && map.shareWithPlayers !== false
-                      ? `${map.name || 'Map'}: double-click to bring players`
-                      : undefined
-                  }
-                  isActive={gmMapStripFullMapTileActive({
-                    gmActiveViewId,
-                    mapId: map.id,
-                    activeMapIdResolved,
-                  })}
-                  broadcastHighlight={map.shareWithPlayers !== false}
-                  onClick={() => {
-                    if (handleGmMapFreeExplore) handleGmMapFreeExplore(map.id);
-                  }}
-                  onDoubleClick={
-                    onForcePlayersToMapView && map.shareWithPlayers !== false
-                      ? (e) => {
-                          e.preventDefault();
-                          onForcePlayersToMapView({ freeMapExploreMapId: map.id });
-                        }
-                      : undefined
-                  }
-                  actions={
-                    onSetMapShare || onRenameMap || (onRemoveMap && maps.length > 1) ? (
-                      <div className="flex items-center justify-center gap-0.5">
-                        {onSetMapShare ? (
-                          <Tooltip
-                            label={
-                              map.shareWithPlayers !== false
-                                ? 'Players see the map tile and can pan/zoom freely (not locked to the GM)'
-                                : 'Players only see broadcast views (no map tile or free pan/zoom)'
-                            }
-                          >
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                const allowed = map.shareWithPlayers !== false;
-                                onSetMapShare(map.id, !allowed);
-                              }}
-                              className={`rounded p-0.5 ${
-                                map.shareWithPlayers !== false
-                                  ? 'text-sky-400'
-                                  : 'text-dh-muted hover:text-dh'
-                              }`}
-                              aria-label={
-                                map.shareWithPlayers !== false
-                                  ? 'Player map tile and free pan/zoom on'
-                                  : 'Player map tile and free pan/zoom off'
-                              }
-                            >
-                              <Radio size={11} aria-hidden />
-                            </button>
-                          </Tooltip>
-                        ) : null}
-                        {onRenameMap ? (
-                          <Tooltip label="Edit map">
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setMapDetailsEdit({
-                                  id: map.id,
-                                  name: map.name ?? '',
-                                  artist: map.artist ?? '',
-                                  artistUrl: map.artistUrl ?? '',
-                                });
-                              }}
-                              className="rounded p-0.5 text-dh-muted hover:bg-dh-hover/80 hover:text-dh"
-                              aria-label="Edit map"
-                            >
-                              <Pencil size={11} aria-hidden />
-                            </button>
-                          </Tooltip>
-                        ) : null}
-                        {onRemoveMap && maps.length > 1 ? (
-                          <Tooltip label="Remove map">
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                if (!window.confirm('Remove this map? Tokens on it return to the tray.')) return;
-                                onRemoveMap(map.id);
-                              }}
-                              className="rounded p-0.5 text-dh-muted hover:bg-red-900/35 hover:text-red-200"
-                              aria-label="Remove map"
-                            >
-                              <Trash2 size={11} aria-hidden />
-                            </button>
-                          </Tooltip>
-                        ) : null}
-                      </div>
-                    ) : null
-                  }
-                />
-                {views.map((view) => {
-                  const nOnMap = views.length;
-                  const label = view.name || 'View';
-                  return (
-                    <MapViewStripTile
-                      key={view.id}
-                      variant="map"
-                      captionAbove
-                      showCameraBadge
-                      mapRow={map}
-                      mapOverlayPng={getRowOverlayPng(map)}
-                      cameraOverlayPng={getRowOverlayPng(view)}
-                      viewState={viewStateForStripTile(view)}
-                      activeElements={activeElements}
-                      adversaryPartyScaleCount={adversaryPartyScaleCount}
-                      stripMapId={map.id}
-                      label={label}
-                      tooltipTitle={
-                        onForcePlayersToMapView && view.broadcastToPlayers
-                          ? `${label}: double-click to bring players`
-                          : undefined
-                      }
-                      isActive={view.id === gmActiveViewId}
-                      broadcastHighlight={view.broadcastToPlayers}
-                      onClick={() => handleGmSetActiveView(view.id)}
-                      onDoubleClick={
-                        onForcePlayersToMapView && view.broadcastToPlayers
-                          ? (e) => {
-                              e.preventDefault();
-                              onForcePlayersToMapView({ viewId: view.id });
-                            }
-                          : undefined
-                      }
-                      actions={
-                        <div className="flex items-center justify-center gap-0.5">
-                          {onSetViewBroadcast ? (
-                            <Tooltip label={view.broadcastToPlayers ? 'Broadcasting to players' : 'Not broadcast'}>
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  onSetViewBroadcast(view.id, !view.broadcastToPlayers);
-                                }}
-                                className={`rounded p-0.5 ${view.broadcastToPlayers ? 'text-sky-400' : 'text-dh-muted hover:text-dh'}`}
-                                aria-label={view.broadcastToPlayers ? 'Stop broadcast' : 'Broadcast to players'}
-                              >
-                                <Radio size={11} aria-hidden />
-                              </button>
-                            </Tooltip>
-                          ) : null}
-                          {onRenameMapView ? (
-                            <Tooltip label="Rename view">
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  const cur = view.name || 'View';
-                                  const name = window.prompt('View name', cur);
-                                  if (name != null && name.trim()) onRenameMapView(view.id, name.trim());
-                                }}
-                                className="rounded p-0.5 text-dh-muted hover:bg-dh-hover/80 hover:text-dh"
-                                aria-label="Rename view"
-                              >
-                                <Pencil size={11} aria-hidden />
-                              </button>
-                            </Tooltip>
-                          ) : null}
-                          {onRemoveMapView && nOnMap > 1 ? (
-                            <Tooltip label="Delete view">
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  if (!window.confirm('Delete this view?')) return;
-                                  onRemoveMapView(view.id);
-                                }}
-                                className="rounded p-0.5 text-dh-muted hover:bg-red-900/35 hover:text-red-200"
-                                aria-label="Delete view"
-                              >
-                                <Trash2 size={11} aria-hidden />
-                              </button>
-                            </Tooltip>
-                          ) : null}
-                        </div>
-                      }
-                    />
-                  );
-                })}
-                </div>
-              </Fragment>
-            ))}
-          </div>
-        </div>
-      )}
-      {isPlayer && tableId && showPlayerMapViewStrip && (
-          <div className="flex items-start gap-2 px-3 py-1.5 bg-dh-surface border-b border-dh-border text-xs shrink-0 flex-wrap">
-            <div
-              className="flex flex-1 min-w-0 items-stretch gap-2 overflow-x-auto pb-0.5 -mb-0.5"
-              aria-label="GM broadcast views"
-            >
-              {playerViewBatches.map(({ map: m, gmViews }, idx) => (
-                <Fragment key={m.id}>
-                  {idx > 0 ? (
-                    <div
-                      className="w-px shrink-0 self-stretch min-h-[4.75rem] bg-dh-border/60"
-                      aria-hidden
-                    />
-                  ) : null}
-                  <div className="flex shrink-0 items-start gap-1 rounded-md border border-dh-border/50 bg-dh-canvas/15 p-1">
-                    {m.shareWithPlayers !== false ? (
-                    <MapViewStripTile
-                      variant="map"
-                      showMapBadge
-                      mapRow={m}
-                      mapOverlayPng={getRowOverlayPng(m)}
-                      viewState={null}
-                      activeElements={activeElements}
-                      adversaryPartyScaleCount={adversaryPartyScaleCount}
-                      stripMapId={m.id}
-                      label={m.name || 'Map'}
-                      tooltipTitle={`${m.name || 'Map'} — Pan and zoom freely (not a saved view)`}
-                      isActive={playerMapStripFullMapTileActive({
-                        playerFreeMapExplore,
-                        playerFreeExploreMapId,
-                        mapId: m.id,
-                      })}
-                      onClick={() => {
-                        onPlayerEnterMapFreeExplore?.(m.id);
-                      }}
-                    />
-                    ) : null}
-                    {gmViews.map((view) => (
-                      <MapViewStripTile
-                        key={view.id}
-                        variant="map"
-                        captionAbove
-                        showCameraBadge
-                        mapRow={m}
-                        mapOverlayPng={getRowOverlayPng(m)}
-                        cameraOverlayPng={getRowOverlayPng(view)}
-                        viewState={viewStateForStripTile(view)}
-                        activeElements={activeElements}
-                        adversaryPartyScaleCount={adversaryPartyScaleCount}
-                        stripMapId={m.id}
-                        label={view.name || 'View'}
-                        isActive={
-                          view.id === playerSelectedViewId &&
-                          !playerFreeMapExplore
-                        }
-                        onClick={() => {
-                          onPlayerSelectView?.(view.id);
-                        }}
-                      />
-                    ))}
-                  </div>
-                </Fragment>
-              ))}
-            </div>
-            {canControlMapView ? (
-              <ZoomToFitControls
-                groupLabel="Zoom to"
-                iconSize={Math.max(12, trayTokenSizePx - 8)}
-                onZoomToFit={applyZoomToFit}
-                hasPlacedByKind={hasPlacedByKind}
-                extraDisabled={mapAiPreviewActive}
-              />
-            ) : null}
-          </div>
-        )}
       {/* Map area */}
       <div className="flex flex-1 min-h-0 overflow-hidden relative">
         {/* Left tray — character tokens shelf */}
@@ -7155,9 +7084,31 @@ export function BattleMap({
 
         {/* Map column: draw toolbar (optional) + viewport (measured via scrollWrapperRef) */}
         <div className="flex-1 min-w-0 min-h-0 flex flex-col overflow-hidden relative">
-          {mapConfigHasImage(mapConfig) &&
-            ((!isPlayer && (onSetMapOverlay || onSetMapViewOverlay)) || isPlayer) && (
+          {showMapDrawToolbar && (
               <div className="flex flex-wrap items-center gap-2 px-3 py-1.5 border-b border-dh-border bg-dh-canvas/40 text-[11px] shrink-0">
+                {!isPlayer ? (
+                  <Tooltip label="Clear this layer only">
+                    <button
+                      type="button"
+                      onClick={() => void handleDrawClearAll()}
+                      className="inline-flex items-center justify-center rounded border border-dh-strong bg-dh-raised/70 p-1.5 text-dh-muted hover:text-amber-200 hover:border-amber-800/60"
+                      aria-label="Clear layer"
+                    >
+                      <Ban size={15} aria-hidden />
+                    </button>
+                  </Tooltip>
+                ) : (
+                  <Tooltip label="Clear your scribbles on this map">
+                    <button
+                      type="button"
+                      onClick={() => void handleScribbleClear()}
+                      className="inline-flex items-center justify-center rounded border border-dh-strong bg-dh-raised/70 p-1.5 text-dh-muted hover:text-amber-200 hover:border-amber-800/60"
+                      aria-label="Clear scribbles"
+                    >
+                      <Ban size={15} aria-hidden />
+                    </button>
+                  </Tooltip>
+                )}
                 <div className="flex flex-wrap items-center gap-2 min-w-0 flex-1">
                   {!isPlayer ? (
                     <>
@@ -7178,6 +7129,7 @@ export function BattleMap({
                             onClick={() => openMapImageQuickPickWithCenter(null)}
                             className="inline-flex items-center justify-center rounded border border-dh-strong bg-dh-raised/70 p-1.5 text-sky-400 hover:text-sky-300 hover:border-sky-800/60"
                             aria-label="Place image on map"
+                            data-prep-target="build"
                           >
                             <ImageIcon size={15} aria-hidden />
                           </button>
@@ -7353,61 +7305,84 @@ export function BattleMap({
                     <span className="tabular-nums text-dh">{drawBrushRadiusClampedFt.toFixed(1)}′</span>
                   </label>
                 </div>
-                <div className="ml-auto flex shrink-0 items-center gap-2">
-                  {!isPlayer && onSetViewLocked && activeGmMapView ? (
-                    <Tooltip
-                      label={
-                        gmCameraLocked
-                          ? 'Camera locked — click to unlock pan/zoom'
-                          : 'Lock this camera to prevent accidental pan/zoom'
-                      }
-                    >
-                      <button
-                        type="button"
-                        onClick={() => onSetViewLocked(activeGmMapView.id, !gmCameraLocked)}
-                        aria-pressed={gmCameraLocked}
-                        aria-label={gmCameraLocked ? 'Unlock camera' : 'Lock camera'}
-                        className={`inline-flex items-center justify-center rounded border p-1.5 ${
+                <div ref={zoomBankRef} className="ml-auto flex shrink-0 items-center gap-2">
+                  <span ref={zoomTitleRef} className="text-dh-muted font-semibold tracking-wide">{zoomBankLabel}</span>
+                  <div className="flex items-center gap-1">
+                    {!isPlayer && onSetViewLocked && activeGmMapView ? (
+                      <Tooltip
+                        label={
                           gmCameraLocked
-                            ? 'border-amber-500/60 bg-amber-900/40 text-amber-200 hover:bg-amber-800/50'
-                            : 'border-dh-strong bg-dh-raised/70 text-dh-muted hover:text-dh'
-                        }`}
+                            ? 'Camera locked — click to unlock pan/zoom'
+                            : 'Lock this camera to prevent accidental pan/zoom'
+                        }
                       >
-                        {gmCameraLocked ? (
-                          <Lock size={15} aria-hidden />
-                        ) : (
-                          <LockOpen size={15} aria-hidden />
-                        )}
-                      </button>
-                    </Tooltip>
-                  ) : null}
-                  {!isPlayer ? (
-                    <Tooltip label="Clear this layer only">
-                      <button
-                        type="button"
-                        onClick={() => void handleDrawClearAll()}
-                        className="inline-flex items-center justify-center rounded border border-dh-strong bg-dh-raised/70 p-1.5 text-dh-muted hover:text-amber-200 hover:border-amber-800/60"
-                        aria-label="Clear layer"
-                      >
-                        <Trash2 size={15} aria-hidden />
-                      </button>
-                    </Tooltip>
-                  ) : (
-                    <Tooltip label="Clear your scribbles on this map">
-                      <button
-                        type="button"
-                        onClick={() => void handleScribbleClear()}
-                        className="inline-flex items-center justify-center rounded border border-dh-strong bg-dh-raised/70 p-1.5 text-dh-muted hover:text-amber-200 hover:border-amber-800/60"
-                        aria-label="Clear scribbles"
-                      >
-                        <Trash2 size={15} aria-hidden />
-                      </button>
-                    </Tooltip>
-                  )}
+                        <button
+                          type="button"
+                          onClick={() => onSetViewLocked(activeGmMapView.id, !gmCameraLocked)}
+                          aria-pressed={gmCameraLocked}
+                          aria-label={gmCameraLocked ? 'Unlock camera' : 'Lock camera'}
+                          className={`inline-flex items-center justify-center rounded border p-1.5 ${
+                            gmCameraLocked
+                              ? 'border-amber-500/60 bg-amber-900/40 text-amber-200 hover:bg-amber-800/50'
+                              : 'border-dh-strong bg-dh-raised/70 text-dh-muted hover:text-dh'
+                          }`}
+                        >
+                          {gmCameraLocked ? (
+                            <Lock size={15} aria-hidden />
+                          ) : (
+                            <LockOpen size={15} aria-hidden />
+                          )}
+                        </button>
+                      </Tooltip>
+                    ) : null}
+                    <ZoomToFitControls
+                      iconSize={15}
+                      onZoomToFit={applyZoomToFit}
+                      hasPlacedByKind={hasPlacedByKind}
+                      extraDisabled={mapAiPreviewActive || hoverPreviewActive}
+                    />
+                  </div>
                 </div>
               </div>
             )}
           <div ref={scrollWrapperRef} className="flex-1 min-h-0 min-w-0 overflow-hidden relative">
+          {!isPlayer ? (
+            <TableNameInset
+              tableName={tableName}
+              tableStateReady={tableStateReady}
+              onTableNameChange={onTableNameChange}
+              onDeleteTable={onDeleteTable}
+            />
+          ) : null}
+          {showMapCameraPicker && pickerTriggerTile ? (
+            <div
+              className="pointer-events-none absolute top-2 z-20"
+              style={
+                pickerAlignLeftPx != null
+                  ? { left: pickerAlignLeftPx }
+                  : { right: mapCameraPickerTriggerInsetRem() }
+              }
+            >
+              <MapCameraPicker
+                ref={mapCameraPickerRef}
+                show
+                isTouch={isTouch}
+                canEdit={!isPlayer}
+                trigger={pickerTriggerTile}
+                rows={pickerRows}
+                alignTo={pickerTrigger?.kind === 'view' ? 'camera' : 'map'}
+                onRenameMap={onRenameMap}
+                onRenameMapView={onRenameMapView}
+                onMapSizeChange={isPlayer ? undefined : handlePickerMapSizeChange}
+                onAddMap={!isPlayer && onAddMap ? onAddMap : undefined}
+                onAddCamera={gmCanCreateCameraView ? () => void handleSplitCamera() : undefined}
+                onOpenChange={(open) => {
+                  setMapCameraPickerOpen(open);
+                  if (!open) clearMapCameraHoverPreview();
+                }}
+              />
+            </div>
+          ) : null}
           {/* Viewport: pan via translate (no native scrolling) */}
           <div
             ref={scrollContainerRef}
@@ -7416,18 +7391,18 @@ export function BattleMap({
                 ? 'cursor-crosshair'
                 : !isPlayer && (drawTool === 'rect' || drawTool === 'oval')
                   ? 'cursor-crosshair'
-                  : canControlMapView && !mapAiPreviewActive && !gmCameraLocked && (canPanMap || rightPanDragging)
+                  : canControlMapView && !mapAiPreviewActive && !hoverPreviewActive && !gmCameraLocked && (canPanMap || rightPanDragging)
                     ? (rightPanDragging ? 'cursor-grabbing' : 'cursor-grab')
                     : ''
             }`}
             style={
-              mapLetterboxClipPx &&
-              (mapLetterboxClipPx.top > 0 ||
-                mapLetterboxClipPx.right > 0 ||
-                mapLetterboxClipPx.bottom > 0 ||
-                mapLetterboxClipPx.left > 0)
+              layerLetterboxClipPx &&
+              (layerLetterboxClipPx.top > 0 ||
+                layerLetterboxClipPx.right > 0 ||
+                layerLetterboxClipPx.bottom > 0 ||
+                layerLetterboxClipPx.left > 0)
                 ? {
-                    clipPath: `inset(${mapLetterboxClipPx.top}px ${mapLetterboxClipPx.right}px ${mapLetterboxClipPx.bottom}px ${mapLetterboxClipPx.left}px)`,
+                    clipPath: `inset(${layerLetterboxClipPx.top}px ${layerLetterboxClipPx.right}px ${layerLetterboxClipPx.bottom}px ${layerLetterboxClipPx.left}px)`,
                   }
                 : undefined
             }
@@ -7444,17 +7419,17 @@ export function BattleMap({
             <div
               className="relative shrink-0 will-change-transform"
               style={{
-                transform: `translate(${-viewPanLeft}px, ${-viewPanTop}px)`,
-                width: renderedWidthPx * viewZoom,
-                height: renderedHeightPx * viewZoom,
+                transform: `translate(${-layerViewPanLeft}px, ${-layerViewPanTop}px)`,
+                width: layerRenderedWidthPx * layerViewZoom,
+                height: layerRenderedHeightPx * layerViewZoom,
               }}
             >
               <div
                 className="absolute left-0 top-0 origin-top-left"
                 style={{
-                  width: renderedWidthPx,
-                  height: renderedHeightPx,
-                  transform: `scale(${viewZoom})`,
+                  width: layerRenderedWidthPx,
+                  height: layerRenderedHeightPx,
+                  transform: `scale(${layerViewZoom})`,
                 }}
                 onPointerDown={handleMapPingPointerDown}
                 onPointerMove={handleMapPointerMove}
@@ -7563,7 +7538,7 @@ export function BattleMap({
               <div
                 ref={fireworksAnchorRef}
                 className="absolute inset-0 pointer-events-none overflow-hidden"
-                style={{ width: renderedWidthPx, height: renderedHeightPx, zIndex: 7 }}
+                style={{ width: layerRenderedWidthPx, height: layerRenderedHeightPx, zIndex: 7 }}
                 aria-hidden
               />
 
@@ -7572,7 +7547,7 @@ export function BattleMap({
               {primaryBullseyeVisible && (
                 <svg
                   className="absolute inset-0 pointer-events-none"
-                  style={{ width: renderedWidthPx, height: renderedHeightPx, zIndex: 55 }}
+                  style={{ width: layerRenderedWidthPx, height: layerRenderedHeightPx, zIndex: 55 }}
                   overflow="visible"
                 >
                   {/* Draw largest ring first so inner bands paint on top */}
@@ -7629,7 +7604,7 @@ export function BattleMap({
               {followBullseyeFt && (
                 <svg
                   className="absolute inset-0 pointer-events-none"
-                  style={{ width: renderedWidthPx, height: renderedHeightPx, zIndex: 56 }}
+                  style={{ width: layerRenderedWidthPx, height: layerRenderedHeightPx, zIndex: 56 }}
                   overflow="visible"
                 >
                   {[...RANGE_BANDS].reverse().map((band) => {
@@ -7686,8 +7661,8 @@ export function BattleMap({
               {stackedMapObjects.map((el, stackIdx) => {
                 const shared = {
                   element: el,
-                  pxPerFt,
-                  mapZoom,
+                  pxPerFt: layerPxPerFt,
+                  mapZoom: layerViewZoom,
                   isSelected: selectedMapObjectId === el.instanceId,
                   onSelect: () => setSelectedMapObjectId(el.instanceId),
                   onDeselect: () => setSelectedMapObjectId(null),
@@ -7710,7 +7685,7 @@ export function BattleMap({
                 const bandInfo = tokenRangeBands[element.instanceId];
                 const bandIdx = bandInfo?.bandIdx;
                 const rangeBand = (bandIdx != null && bandIdx >= 0) ? RANGE_BANDS[bandIdx] : null;
-                const renderPx = computeTokenRenderPx(tokenSizePx, element);
+                const renderPx = computeTokenRenderPx(layerTokenSizePx, element);
                 const zIndex = element.instanceId === bullseyeFt?.excludeInstanceId ? SNAPPED_TOKEN_Z_INDEX : TOKEN_BASE_Z_INDEX + stackIdx;
                 return (
                   <Fragment key={element.instanceId}>
@@ -7723,7 +7698,7 @@ export function BattleMap({
                       abbrev={tokenAbbrevForElement(element, distinctAdversaryNames)}
                       rangeBand={rangeBand}
                       zIndex={zIndex}
-                      pxPerFt={pxPerFt}
+                      pxPerFt={layerPxPerFt}
                       tokenSizeWpx={renderPx.widthPx}
                       tokenSizeHpx={renderPx.heightPx}
                       allyColorClasses={allyColorsByInstanceId.get(element.instanceId) ?? null}
@@ -7744,7 +7719,7 @@ export function BattleMap({
                 const bandInfo = tokenRangeBands[element.instanceId];
                 const bandIdx = bandInfo?.bandIdx;
                 const rangeBand = bandIdx != null && bandIdx >= 0 ? RANGE_BANDS[bandIdx] : null;
-                const renderPx = computeTokenRenderPx(tokenSizePx, resolveTokenSizeSource(element, parentByInstanceId));
+                const renderPx = computeTokenRenderPx(layerTokenSizePx, resolveTokenSizeSource(element, parentByInstanceId));
                 const zIndex = element.instanceId === bullseyeFt?.excludeInstanceId ? SNAPPED_TOKEN_Z_INDEX : TOKEN_BASE_Z_INDEX + charMapTokens.length + stackIdx;
                 return (
                   <Fragment key={element.instanceId}>
@@ -7757,7 +7732,7 @@ export function BattleMap({
                       abbrev={tokenAbbrevForElement(element, distinctAdversaryNames)}
                       rangeBand={rangeBand}
                       zIndex={zIndex}
-                      pxPerFt={pxPerFt}
+                      pxPerFt={layerPxPerFt}
                       tokenSizeWpx={renderPx.widthPx}
                       tokenSizeHpx={renderPx.heightPx}
                       allyColorClasses={allyColorsByInstanceId.get(element.instanceId) ?? null}
@@ -7778,7 +7753,7 @@ export function BattleMap({
                 const bandInfo = tokenRangeBands[element.instanceId];
                 const bandIdx = bandInfo?.bandIdx;
                 const rangeBand = (bandIdx != null && bandIdx >= 0) ? RANGE_BANDS[bandIdx] : null;
-                const renderPx = computeTokenRenderPx(tokenSizePx, element);
+                const renderPx = computeTokenRenderPx(layerTokenSizePx, element);
                 const zIndex = element.instanceId === bullseyeFt?.excludeInstanceId ? SNAPPED_TOKEN_Z_INDEX : TOKEN_BASE_Z_INDEX + charMapTokens.length + boardMapTokens.length + advIdx;
                 return (
                   <Fragment key={element.instanceId}>
@@ -7792,7 +7767,7 @@ export function BattleMap({
                       abbrev={tokenAbbrevForElement(element, distinctAdversaryNames)}
                       rangeBand={rangeBand}
                       zIndex={zIndex}
-                      pxPerFt={pxPerFt}
+                      pxPerFt={layerPxPerFt}
                       tokenSizeWpx={renderPx.widthPx}
                       tokenSizeHpx={renderPx.heightPx}
                       onPointerDown={stableOnPointerDown}
@@ -7811,7 +7786,7 @@ export function BattleMap({
                   pingId={p.id}
                   xFt={p.xFt}
                   yFt={p.yFt}
-                  pxPerFt={pxPerFt}
+                  pxPerFt={layerPxPerFt}
                   displayName={p.displayName}
                   onDismissMapPing={onDismissMapPing}
                 />
@@ -7843,7 +7818,7 @@ export function BattleMap({
               </div>
             ) : null}
           </div>
-          {mapAiPreviewActive ? (
+          {mapAiPreviewActive || hoverPreviewActive ? (
             <div
               className="absolute inset-0 z-[8] bg-transparent"
               aria-hidden
@@ -7861,9 +7836,9 @@ export function BattleMap({
               </div>
             </div>
           ) : null}
-          {(showMapCornerZoomControls || showMapArtistCredit) && (
+          {(showPlayerPlaceImageButton || showMapArtistCredit) && (
             <div className="pointer-events-none absolute right-2 bottom-2 z-20 flex flex-col items-end gap-1.5">
-              {showMapCornerZoomControls && isPlayer && onAddMapImageObject && (
+              {showPlayerPlaceImageButton && (
                 <Tooltip label="Place an image on the map">
                   <button
                     type="button"
@@ -7875,16 +7850,7 @@ export function BattleMap({
                   </button>
                 </Tooltip>
               )}
-              {showMapCornerZoomControls ? (
-                <ZoomToFitControls
-                  variant="icon"
-                  iconSize={14}
-                  onZoomToFit={applyZoomToFit}
-                  hasPlacedByKind={hasPlacedByKind}
-                  extraDisabled={mapAiPreviewActive}
-                />
-              ) : null}
-              {showMapArtistCredit ? <MapArtistCredit map={activeMapRow} /> : null}
+              {showMapArtistCredit ? <MapArtistCredit map={displayMapRow} /> : null}
             </div>
           )}
           </div>
@@ -7922,7 +7888,17 @@ export function BattleMap({
                     onClick={handleAssignGmSpotlight}
                   />
                 </div>
-                <GmSpotlightToken tokenSizePx={trayTokenSizePx} />
+                <GmSpotlightToken
+                  tokenSizePx={trayTokenSizePx}
+                  hoverTriggerProps={
+                    gmMovesOverlay && !isPlayer
+                      ? gmMovesOverlay.triggerProps((e) => ({
+                          source: 'gm-token',
+                          edgeLeft: e.currentTarget.getBoundingClientRect().left,
+                        }))
+                      : null
+                  }
+                />
               </div>
             )}
             {showRightAdversaryTray && (
@@ -7948,8 +7924,9 @@ export function BattleMap({
                   onPointerUp={stableOnPointerUp}
                   onProxyHoverEnter={stableOnProxyHoverEnter}
                   onProxyHoverLeave={stableOnProxyHoverLeave}
-                  pinnedInstanceId={pinnedToken?.element.instanceId}
+                  pinnedInstanceId={pinnedToken?.element.instanceId ?? trayOverlayKey}
                   onToggleAdversaryVisibility={stableOnToggleAdversaryVisibility}
+                  hoverOverlay={trayAdversaryOverlay}
                 />
               </div>
             )}
@@ -8069,19 +8046,72 @@ export function BattleMap({
         );
       })()}
 
-      {onRenameMap ? (
-        <MapDetailsDialog
-          open={!!mapDetailsEdit}
-          initialName={mapDetailsEdit?.name ?? ''}
-          initialArtist={mapDetailsEdit?.artist ?? ''}
-          initialArtistUrl={mapDetailsEdit?.artistUrl ?? ''}
-          onClose={() => setMapDetailsEdit(null)}
-          onSave={({ name, artist, artistUrl }) => {
-            if (!mapDetailsEdit?.id) return;
-            onRenameMap(mapDetailsEdit.id, name, { artist, artistUrl });
-          }}
-        />
-      ) : null}
+      {trayAdversaryOverlay.isOpen && trayAdversaryOverlay.data?.instanceId && (() => {
+        const elRaw = activeElements.find((e) => e.instanceId === trayAdversaryOverlay.data.instanceId);
+        if (!elRaw || elRaw.elementType !== 'adversary') return null;
+        const el = withResolvedTokenImage(elRaw, parentByInstanceId);
+        const canMoveToken = !isPlayer;
+        const trayLeft = rightTrayRef.current?.getBoundingClientRect().left
+          ?? (typeof window !== 'undefined' ? window.innerWidth - 14 * 16 : 0);
+        const dockStyle = overlayLeftOfEdgeStyle({
+          edgeLeft: trayLeft,
+          viewportWidth: typeof window !== 'undefined' ? window.innerWidth : 0,
+          triggerTop: trayAdversaryOverlay.data.top,
+          triggerBottom: trayAdversaryOverlay.data.bottom,
+          adjust: trayOverlayAdjust,
+          widthRem: TRAY_OVERLAY_WIDTH_REM,
+        });
+        return (
+          <TokenDetailPanel
+            element={el}
+            isPlayer={isPlayer}
+            isMyCharacter={false}
+            updateActiveElement={updateActiveElement}
+            queueManualTrackEdit={queueManualTrackEdit}
+            pendingBanners={pendingBanners}
+            pendingResourceCosts={pendingResourceCosts}
+            lifeSupportSelections={lifeSupportSelections}
+            onRemoveFromMap={canMoveToken ? () => {
+              updateActiveElement(el.instanceId, TRAY_UNPLACE_UPDATES);
+              trayAdversaryOverlay.close();
+            } : undefined}
+            onPlaceOnMap={canMoveToken ? () => {
+              handlePlaceOnMap(el);
+              trayAdversaryOverlay.close();
+            } : undefined}
+            onDeleteFromTable={!isPlayer && onRemoveAdversaryFromTable ? () => {
+              if (window.confirm(`Remove ${el.name || 'Unnamed'} from the table?`)) {
+                onRemoveAdversaryFromTable(el.instanceId);
+                trayAdversaryOverlay.close();
+              }
+            } : undefined}
+            onClose={() => trayAdversaryOverlay.close()}
+            dock={{
+              overlayRef: trayAdversaryOverlay.overlayRef,
+              overlayHandlers: trayAdversaryOverlay.overlayHandlers,
+              style: dockStyle,
+            }}
+            tableId={tableId}
+            onOpenImageLightbox={onOpenImageLightbox}
+            onRoll={onRoll}
+            adversaryEncounterCard={
+              typeof renderAdversaryEncounterCard === 'function'
+                ? renderAdversaryEncounterCard(el)
+                : null
+            }
+            adversaryTargetAid={
+              typeof renderAdversaryTargetAid === 'function'
+                ? renderAdversaryTargetAid(el)
+                : null
+            }
+            adversaryPinInstanceNum={instanceNumbers[el.instanceId]}
+            conditionsHistory={conditionsHistory}
+            extraConditionSuggestions={extraConditionSuggestions}
+            onAddConditionsHistoryEntry={onAddConditionsHistoryEntry}
+            onRemoveConditionsHistoryEntry={onRemoveConditionsHistoryEntry}
+          />
+        );
+      })()}
 
       {typeof document !== 'undefined' && fireworksViewport && fireworksViewport.width > 0 && createPortal(
         <div

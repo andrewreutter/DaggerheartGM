@@ -1,5 +1,5 @@
 /**
- * Map/camera strip token chips: collapse same-type adversaries so the thumb shows
+ * Map/camera picker token chips: collapse same-type adversaries so the thumb shows
  * `LAx2` instead of two `LA` markers. Characters and companion board tokens stay
  * one chip each (same grouping key as Encounter: library `id`).
  */

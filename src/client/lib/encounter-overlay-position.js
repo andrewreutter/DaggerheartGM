@@ -37,13 +37,69 @@ export function encounterTrackerOverlayStyle({
   triggerBottom,
   adjust = 0,
 }) {
+  return overlayLeftOfEdgeStyle({
+    edgeLeft: asideLeft,
+    viewportWidth,
+    triggerTop,
+    triggerBottom,
+    adjust,
+    widthRem: ENCOUNTER_TRACKER_WIDTH_REM,
+  });
+}
+
+/** Token-detail hover overlay sits just left of the adversary tray. */
+export const TRAY_OVERLAY_WIDTH_REM = 24;
+
+/**
+ * CSS `right` / `top` so a fixed overlay sits `gapPx` left of an edge
+ * (Encounter aside, right tray, …) and vertically centers on the trigger.
+ * `paddingRight` is a hover bridge so the pointer can leave the trigger
+ * without the overlay dismissing.
+ */
+export function overlayLeftOfEdgeStyle({
+  edgeLeft,
+  viewportWidth,
+  triggerTop,
+  triggerBottom,
+  adjust = 0,
+  widthRem,
+  gapPx = ENCOUNTER_OVERLAY_GAP_PX,
+}) {
   return {
-    right: encounterOverlayRightPx(asideLeft, viewportWidth),
+    right: encounterOverlayRightPx(edgeLeft, viewportWidth, 0, gapPx),
     top: (triggerTop + triggerBottom) / 2 + adjust,
     transform: 'translateY(-50%)',
-    width: `calc(${ENCOUNTER_TRACKER_WIDTH_REM}rem + ${ENCOUNTER_OVERLAY_GAP_PX}px)`,
+    width: `calc(${widthRem}rem + ${gapPx}px)`,
     maxHeight: 'calc(100dvh - 110px)',
-    paddingRight: `${ENCOUNTER_OVERLAY_GAP_PX}px`,
+    paddingRight: `${gapPx}px`,
+  };
+}
+
+/** Game Table GM Moves panel: same top whether opened from Encounter or the GM token. */
+export const GM_MOVES_PANEL_TOP_PX = 90;
+export const GM_MOVES_ENCOUNTER_RIGHT = 'calc(14rem)';
+export const GM_MOVES_PANEL_GAP_PX = 8;
+
+/**
+ * Horizontal placement for the GM Moves panel.
+ * Encounter trigger: flush left of the aside (`right: 14rem`).
+ * GM token trigger: flush left of the token, same `top`.
+ */
+export function gmMovesOverlayStyle({
+  source,
+  edgeLeft,
+  viewportWidth = typeof window !== 'undefined' ? window.innerWidth : 0,
+  gapPx = GM_MOVES_PANEL_GAP_PX,
+} = {}) {
+  const fromToken = source === 'gm-token' && Number.isFinite(edgeLeft);
+  return {
+    right: fromToken
+      ? encounterOverlayRightPx(edgeLeft, viewportWidth, 0, gapPx)
+      : GM_MOVES_ENCOUNTER_RIGHT,
+    paddingRight: `${gapPx}px`,
+    top: GM_MOVES_PANEL_TOP_PX,
+    width: 'min(96vw, calc(14rem + 28rem + 28rem + 2rem))',
+    maxHeight: 'calc(100dvh - 98px)',
   };
 }
 

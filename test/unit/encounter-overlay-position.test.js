@@ -3,9 +3,15 @@ import {
   ENCOUNTER_ASIDE_WIDTH_REM,
   ENCOUNTER_OVERLAY_GAP_PX,
   ENCOUNTER_TRACKER_WIDTH_REM,
+  TRAY_OVERLAY_WIDTH_REM,
+  GM_MOVES_ENCOUNTER_RIGHT,
+  GM_MOVES_PANEL_GAP_PX,
+  GM_MOVES_PANEL_TOP_PX,
   encounterOverlayRightPx,
   encounterPotAdvOverlayStyle,
   encounterTrackerOverlayStyle,
+  gmMovesOverlayStyle,
+  overlayLeftOfEdgeStyle,
   resolveEncounterAsideLeft,
 } from '../../src/client/lib/encounter-overlay-position.js';
 
@@ -50,5 +56,35 @@ describe('encounter overlay position', () => {
       triggerBottom: 60,
     });
     expect(pot.right).toBe(tracker.right + ENCOUNTER_TRACKER_WIDTH_REM * 16 + ENCOUNTER_OVERLAY_GAP_PX);
+  });
+
+  it('places a tray overlay just left of the tray edge', () => {
+    const style = overlayLeftOfEdgeStyle({
+      edgeLeft: 900,
+      viewportWidth: 1000,
+      triggerTop: 80,
+      triggerBottom: 120,
+      widthRem: TRAY_OVERLAY_WIDTH_REM,
+    });
+    expect(style.right).toBe(1000 - 900 + ENCOUNTER_OVERLAY_GAP_PX);
+    expect(style.top).toBe(100);
+    expect(style.width).toBe(`calc(${TRAY_OVERLAY_WIDTH_REM}rem + ${ENCOUNTER_OVERLAY_GAP_PX}px)`);
+    expect(style.paddingRight).toBe(`${ENCOUNTER_OVERLAY_GAP_PX}px`);
+  });
+
+  it('keeps GM Moves flush left of the Encounter aside by default', () => {
+    const style = gmMovesOverlayStyle({ source: 'encounter', viewportWidth: 1200 });
+    expect(style.right).toBe(GM_MOVES_ENCOUNTER_RIGHT);
+    expect(style.top).toBe(GM_MOVES_PANEL_TOP_PX);
+  });
+
+  it('places GM Moves left of the GM token when opened from the token', () => {
+    const style = gmMovesOverlayStyle({
+      source: 'gm-token',
+      edgeLeft: 880,
+      viewportWidth: 1000,
+    });
+    expect(style.right).toBe(1000 - 880 + GM_MOVES_PANEL_GAP_PX);
+    expect(style.top).toBe(GM_MOVES_PANEL_TOP_PX);
   });
 });
