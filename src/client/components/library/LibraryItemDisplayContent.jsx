@@ -11,7 +11,14 @@ import { coerceLibraryAttack } from '../../lib/library-attack-display.js';
 import { libraryTierBodyLine, showLibraryLevelBadge } from '../../lib/library-tier-subtitle.js';
 import { expandDomainCardEntries } from '../../lib/library-domain-cards.js';
 import { TierShieldBadge } from '../TierShieldBadge.jsx';
-import { collectSceneLibraryCardGroups, formatSceneLibraryBpLabel, formatSceneLibraryRowTitle, sceneMapPreviewAspectRatio } from '../../lib/scene-library-card-contents.js';
+import { collectSceneLibraryCardGroups, formatSceneLibraryBpLabel, formatSceneLibraryRowTitle } from '../../lib/scene-library-card-contents.js';
+import {
+  libraryMapCameraTileKey,
+  libraryMapCameraViews,
+  mapCameraTileImageStyle,
+  shouldShowLibraryMapCameraTiles,
+} from '../../lib/map-library-card-cameras.js';
+import { libraryMapImageUrl } from '../../lib/map-library.js';
 
 const GENERIC_DETAIL_SET = new Set(LIBRARY_GENERIC_DETAIL_COLLECTIONS);
 
@@ -588,6 +595,88 @@ function GenericLibraryRecordBody({ item, collection, srdData }) {
   );
 }
 
+/**
+ * Fill-mode column: container queries so the map can floor at square (`min-h-[100cqi]`).
+ * Map grows into leftover height, shrinks down to square, then content below truncates.
+ */
+const LIBRARY_CARD_FILL_ROOT = '@container flex h-full min-h-0 flex-col';
+const LIBRARY_CARD_FILL_MAP =
+  'relative w-full min-w-0 flex-1 min-h-[100cqi] overflow-hidden';
+const LIBRARY_CARD_FILL_BELOW = 'min-h-0 shrink-[999] basis-auto';
+
+function LibraryMapCameraTile({ imageUrl, view }) {
+  const crop = mapCameraTileImageStyle(view);
+  const label = typeof view?.name === 'string' ? view.name.trim() : '';
+  return (
+    <div className="flex w-12 shrink-0 flex-col gap-0.5" title={label || undefined}>
+      <div className="relative aspect-[4/3] w-full overflow-hidden rounded border border-dh-border/80 bg-dh-canvas/40">
+        {imageUrl ? (
+          <img
+            src={imageUrl}
+            alt=""
+            className={crop ? 'pointer-events-none select-none' : 'h-full w-full object-cover pointer-events-none select-none'}
+            style={crop || undefined}
+          />
+        ) : null}
+      </div>
+      {label ? (
+        <span className="block truncate text-center text-[8px] leading-tight text-dh-muted">{label}</span>
+      ) : null}
+    </div>
+  );
+}
+
+function LibraryMapCameraStrip({ item }) {
+  const imageUrl = libraryMapImageUrl(item);
+  const cameras = libraryMapCameraViews(item);
+  if (!shouldShowLibraryMapCameraTiles(item)) return null;
+  return (
+    <div className={`${LIBRARY_CARD_FILL_BELOW} flex w-full flex-nowrap justify-center gap-1 overflow-x-auto overflow-y-hidden px-0.5`}>
+      {cameras.map((view, index) => (
+        <LibraryMapCameraTile
+          key={libraryMapCameraTileKey(view, index)}
+          imageUrl={imageUrl}
+          view={view}
+        />
+      ))}
+    </div>
+  );
+}
+
+/**
+ * Library Map preview: art fills leftover height (`object-cover`) down to square;
+ * 2+ cameras render as a centered horizontal tile row under the map (each tile crops
+ * to that camera’s viewport). Further shrinking truncates the camera row.
+ */
+export function MapLibraryCard({ item, fill = false }) {
+  const imageUrl = libraryMapImageUrl(item);
+  const cameraStrip = <LibraryMapCameraStrip item={item} />;
+  if (fill) {
+    return (
+      <div className={`${LIBRARY_CARD_FILL_ROOT} gap-1`}>
+        {imageUrl ? (
+          <div className={LIBRARY_CARD_FILL_MAP}>
+            <img src={imageUrl} alt="" className="h-full w-full object-cover" />
+          </div>
+        ) : null}
+        {cameraStrip}
+      </div>
+    );
+  }
+  return (
+    <div className="space-y-2">
+      {imageUrl ? (
+        <img
+          src={imageUrl}
+          alt=""
+          className="w-full rounded border border-dh-border object-cover max-h-64"
+        />
+      ) : null}
+      {cameraStrip}
+    </div>
+  );
+}
+
 const SCENE_LIBRARY_GROUP_ICONS = {
   maps: Map,
   environments: Trees,
@@ -596,23 +685,22 @@ const SCENE_LIBRARY_GROUP_ICONS = {
   nextScenes: Play,
 };
 
-/** Fill-mode map: preferred size from image aspect (`basis-auto` + grow). Shrinks only after below-content is gone. */
+/** Fill-mode map: grow into leftover; floor at square, then lists below truncate. */
 const SCENE_CARD_FILL_MAP_BOX =
-  'min-h-0 grow basis-auto overflow-hidden rounded border border-dh-border/80 bg-dh-canvas/40 flex items-center justify-center';
-/** Fill-mode lists/tier: truncate first (`shrink-[999]` + overflow-hidden) so the map is not squeezed. */
+  `${LIBRARY_CARD_FILL_MAP} rounded border border-dh-border/80 bg-dh-canvas/40`;
+/** Fill-mode lists/tier: truncate after the map has shrunk to square. */
 const SCENE_CARD_FILL_BELOW =
-  'min-h-0 shrink-[999] basis-auto overflow-hidden flex flex-col gap-1.5';
+  `${LIBRARY_CARD_FILL_BELOW} overflow-hidden flex flex-col gap-1.5`;
 
 /**
  * Lightweight scene summary: first-map thumbnail, denormalized tier, BP-for-PCs badge, item titles, and Next Scenes.
  * @param {{ item: object, compact?: boolean, fill?: boolean }} props
- *   `fill` — library grid card: map keeps its aspect preferred size and grows into leftover
- *   height; content below truncates first, and the map shrinks only after that is gone.
+ *   `fill` — library grid card: map grows into leftover height down to square (`object-cover`);
+ *   content below truncates only after the map is square.
  */
 export function SceneLibraryCard({ item, compact = false, fill = false }) {
   const map = item?.maps?.[0];
   const mapImageUrl = map?.mapImageUrl;
-  const mapAspect = sceneMapPreviewAspectRatio(map);
   const groups = collectSceneLibraryCardGroups(item);
   const showTier = item?.tier != null && item.tier !== '';
   const bpLabel = formatSceneLibraryBpLabel(item);
@@ -685,23 +773,16 @@ export function SceneLibraryCard({ item, compact = false, fill = false }) {
     <div
       className={
         fill
-          ? 'h-full min-h-0 flex flex-col gap-1.5 p-1.5 bg-dh-inset border border-dh-border rounded-lg'
+          ? `${LIBRARY_CARD_FILL_ROOT} gap-1.5 p-1.5 bg-dh-inset border border-dh-border rounded-lg`
           : 'mb-3 p-2.5 bg-dh-inset border border-dh-border rounded-lg space-y-2.5'
       }
     >
       {mapImageUrl ? (
-        <div
-          className={mapBoxClass}
-          style={fill && mapAspect ? { aspectRatio: mapAspect } : undefined}
-        >
+        <div className={mapBoxClass}>
           <img
             src={mapImageUrl}
             alt=""
-            className={
-              fill
-                ? 'w-full h-auto max-h-full object-contain'
-                : 'h-full w-full object-contain'
-            }
+            className="h-full w-full object-cover"
           />
         </div>
       ) : null}
@@ -774,13 +855,7 @@ export function LibraryItemDisplayContent({
       )}
       {collection === 'maps' && (
         <div className="space-y-2">
-          {(item.mapImageUrl || item.imageUrl) && (
-            <img
-              src={item.mapImageUrl || item.imageUrl}
-              alt=""
-              className="w-full rounded border border-dh-border object-cover max-h-64"
-            />
-          )}
+          <MapLibraryCard item={item} />
           {item.artist && (
             <p className="text-xs text-dh-muted">
               {item.artistUrl

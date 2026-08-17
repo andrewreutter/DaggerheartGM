@@ -359,18 +359,47 @@ export function floodEraseConnectedComponent(ctx, width, height, sx, sy, alphaTh
 }
 
 /**
+ * Skip reloading the paint canvas from `overlayPng` when the live pixels are
+ * already the committed overlay (local commit, or a later hosted-URL swap).
+ * Always reload when the bitmap size changed or the draw layer identity changed
+ * (`sourceUrl === lastLoadedUrl` covers same-layer no-ops).
+ *
+ * @param {{
+ *   strokeActive?: boolean,
+ *   sizeChanged?: boolean,
+ *   canvasAuthoritative?: boolean,
+ *   sourceUrl?: string | null,
+ *   lastLoadedUrl?: string | null,
+ * }} opts
+ * @returns {boolean}
+ */
+export function shouldSkipDrawOverlayReload(opts = {}) {
+  if (opts.strokeActive) return true;
+  if (opts.sizeChanged) return false;
+  const source = opts.sourceUrl ?? null;
+  const last = opts.lastLoadedUrl ?? null;
+  if (source === last) return true;
+  return !!opts.canvasAuthoritative;
+}
+
+/**
  * @param {string | null | undefined} dataUrl
  * @param {HTMLCanvasElement} canvas
  * @param {{ w: number, h: number }} size
  * @returns {Promise<void>}
  */
 export function loadDrawDataUrlOntoCanvas(dataUrl, canvas, size) {
-  canvas.width = size.w;
-  canvas.height = size.h;
+  const sizeChanged = canvas.width !== size.w || canvas.height !== size.h;
+  if (sizeChanged) {
+    canvas.width = size.w;
+    canvas.height = size.h;
+  }
   const ctx = canvas.getContext('2d');
   if (!ctx) return Promise.resolve();
-  ctx.clearRect(0, 0, size.w, size.h);
-  if (!dataUrl || typeof dataUrl !== 'string') return Promise.resolve();
+  if (!dataUrl || typeof dataUrl !== 'string') {
+    ctx.clearRect(0, 0, size.w, size.h);
+    return Promise.resolve();
+  }
   return new Promise((resolve) => {
     const img = new Image();
     img.crossOrigin = 'anonymous';

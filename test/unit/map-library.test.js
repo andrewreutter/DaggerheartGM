@@ -4,7 +4,10 @@ import {
   applyLibraryMapMetaToTableMap,
   buildAddMapOpFromLibraryItem,
   buildEmptyLibraryMap,
+  editorSliceToLibraryMap,
   isLibraryMapPersistable,
+  libraryMapToEditorSlice,
+  persistLibraryMap,
   shouldDiscardNewLibraryMap,
   syncLibraryMapOntoTableMaps,
 } from '../../src/client/lib/map-library.js';
@@ -137,5 +140,45 @@ describe('applyLibraryArtToSceneMaps', () => {
     expect(next.maps[0].libraryMapId).toBe('cloned');
     expect(next.maps[0].mapImageUrl).toBe('fresh.jpg');
     expect(next.maps[0].name).toBe('Fresh');
+  });
+});
+
+describe('libraryMapToEditorSlice camera round-trip', () => {
+  it('defaults to the first camera when gmActiveViewId is omitted', () => {
+    const slice = libraryMapToEditorSlice({
+      mapViews: [
+        { id: 'cam-a', name: 'A' },
+        { id: 'cam-b', name: 'B' },
+      ],
+    });
+    expect(slice.gmActiveViewId).toBe('cam-a');
+  });
+
+  it('keeps the selected camera (not camera 1) after flatten/expand', () => {
+    const slice = libraryMapToEditorSlice({
+      name: 'Cave',
+      mapImageUrl: 'https://ex/m.jpg',
+      mapViews: [
+        { id: 'cam-a', name: 'A' },
+        { id: 'cam-b', name: 'B' },
+      ],
+      gmActiveViewId: 'cam-b',
+    });
+    expect(slice.gmActiveViewId).toBe('cam-b');
+    const row = persistLibraryMap(editorSliceToLibraryMap(slice, { id: 'lib-1', name: 'Cave' }));
+    expect(row.gmActiveViewId).toBe('cam-b');
+    expect(libraryMapToEditorSlice(row).gmActiveViewId).toBe('cam-b');
+  });
+
+  it('keeps map-layer (null camera) after flatten/expand', () => {
+    const slice = libraryMapToEditorSlice({
+      name: 'Cave',
+      mapImageUrl: 'https://ex/m.jpg',
+      mapViews: [{ id: 'cam-a', name: 'A' }],
+      gmActiveViewId: null,
+    });
+    expect(slice.gmActiveViewId).toBeNull();
+    const row = persistLibraryMap(editorSliceToLibraryMap(slice, { name: 'Cave' }));
+    expect(libraryMapToEditorSlice(row).gmActiveViewId).toBeNull();
   });
 });

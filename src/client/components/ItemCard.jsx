@@ -9,7 +9,7 @@ import { showLibraryTierShield, showLibraryLevelBadge } from '../lib/library-tie
 import { ItemActionButtons } from './ItemActionButtons.jsx';
 import { TierShieldBadge } from './TierShieldBadge.jsx';
 import { LevelBadge } from './LevelBadge.jsx';
-import { LibraryItemDisplayContent, SceneLibraryCard } from './library/LibraryItemDisplayContent.jsx';
+import { LibraryItemDisplayContent, MapLibraryCard, SceneLibraryCard } from './library/LibraryItemDisplayContent.jsx';
 import { LibraryItemImageThumb } from './library/LibraryItemImageThumb.jsx';
 import { getLibraryItemImageUrls } from '../lib/library-item-image-urls.js';
 import {
@@ -381,8 +381,9 @@ export function ItemCard({
         {/*
           Use CSS zoom (not transform:scale) so layout + clipping work inside flex/virtualized rows.
           Transform scaling kept the modal-sized layout box huge and often produced an empty clip region.
-          Scene cards with a map skip zoom and fill the preview so the map keeps its aspect
-          preferred size, grows into leftover height, and shrinks only after lists below are truncated.
+          Scene cards with a map skip zoom and fill the preview so the map grows into leftover
+          height down to square, then lists below truncate. Map cards do the same: art shrinks
+          to square, then the camera-tile row truncates.
         */}
         {showPreview ? (
         libraryMapFillPreview ? (
@@ -391,11 +392,7 @@ export function ItemCard({
           className="relative flex-1 min-h-0 overflow-hidden rounded border border-dh-border/80 bg-dh-canvas/50 pointer-events-none"
         >
           <div ref={previewContentRef} className="h-full min-h-0 min-w-0">
-            <img
-              src={item.mapImageUrl || item.imageUrl}
-              alt=""
-              className="h-full w-full object-cover"
-            />
+            <MapLibraryCard item={item} fill />
           </div>
         </div>
         ) : sceneMapFillPreview ? (

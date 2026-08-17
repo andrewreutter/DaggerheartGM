@@ -275,7 +275,12 @@ export const ItemDetailModal = forwardRef(function ItemDetailModal({
 
   // Register the open editable character/adversary item with the UnifiedImportProvider so that
   // image paste/drop shows "Add to [Name]" in the quick-pick menu.
-  const { registerEditableItem, unregisterEditableItem } = useUnifiedImport();
+  const {
+    registerEditableItem,
+    unregisterEditableItem,
+    registerMapEditorReplace,
+    unregisterMapEditorReplace,
+  } = useUnifiedImport();
 
   // A ref always points to the latest formData so the callback below never goes stale.
   const formDataRef = useRef(formData);
@@ -357,6 +362,29 @@ export const ItemDetailModal = forwardRef(function ItemDetailModal({
     registerEditableItem,
     unregisterEditableItem,
   ]);
+
+  // Stable callback that replaces the primary image for a library Map item (not append).
+  // Called by the provider after it uploads the file and obtains a Storage URL.
+  const replaceMapImageUrl = useCallback((url) => {
+    const fd = formDataRef.current;
+    setFormData({ ...fd, imageUrl: url, mapImageUrl: url });
+    if (item?.id && saveImage) {
+      saveImage(
+        collection,
+        item.id,
+        url,
+        { _additionalImages: Array.isArray(fd._additionalImages) ? fd._additionalImages : [] },
+      ).catch(console.error);
+    }
+  }, [setFormData, item?.id, saveImage, collection]);
+
+  // Register with the UnifiedImportProvider so that paste/drop while a library Map Editor is
+  // open replaces the map's primary image (instead of opening the full import modal).
+  useEffect(() => {
+    if (!editable || collection !== 'maps') return;
+    registerMapEditorReplace(replaceMapImageUrl);
+    return unregisterMapEditorReplace;
+  }, [editable, collection, replaceMapImageUrl, registerMapEditorReplace, unregisterMapEditorReplace]);
 
   // Lock body scroll while the modal is open.
   useEffect(() => {

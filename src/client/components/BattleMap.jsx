@@ -146,6 +146,7 @@ import {
   scribbleCanvasLayoutKey,
   hexToRgba,
   loadDrawDataUrlOntoCanvas,
+  shouldSkipDrawOverlayReload,
   clearDrawCanvas,
   strokeDrawSegment,
   floodEraseConnectedComponent,
@@ -3756,6 +3757,8 @@ export function BattleMap({
   const cameraOverlayImgRef = useRef(null);
   const drawPaintRef = useRef(null);
   const drawSizeRef = useRef({ w: 0, h: 0 });
+  const overlayCanvasAuthoritativeRef = useRef(false);
+  const lastLoadedOverlaySrcRef = useRef(null);
   const drawBrushActiveRef = useRef(false);
   /** Pointer id passed to `setPointerCapture` on draw/scribble canvases — released when a second touch starts a map pinch. */
   const mapDrawCapturePointerIdRef = useRef(null);
@@ -5210,6 +5213,7 @@ export function BattleMap({
   const commitOverlayPng = useCallback(
     async (png) => {
       if (!drawEditContext || isPlayer) return;
+      overlayCanvasAuthoritativeRef.current = png != null;
       try {
         if (drawEditContext.kind === 'map') {
           onSetMapOverlay?.(drawEditContext.mapId, png);
@@ -5223,14 +5227,31 @@ export function BattleMap({
     [drawEditContext, isPlayer, onSetMapOverlay, onSetMapViewOverlay],
   );
 
+  useLayoutEffect(() => {
+    overlayCanvasAuthoritativeRef.current = false;
+  }, [drawEditContext?.kind, drawEditContext?.id, drawEditContext?.mapId]);
+
   useEffect(() => {
     if (isPlayer) return;
     if (drawTool !== 'brush' && drawTool !== 'eraser' && drawTool !== 'rect' && drawTool !== 'oval') return;
     const c = drawPaintRef.current;
     if (!c) return;
     const { w, h } = computeMapDrawCanvasSize(mapWidthFt, mapHeightFt);
+    const sizeChanged = c.width !== w || c.height !== h;
     drawSizeRef.current = { w, h };
-    if (drawBrushActiveRef.current || drawShapeDragRef.current) return;
+    const sourceUrl = editableDrawSourceUrl ?? null;
+    if (shouldSkipDrawOverlayReload({
+      strokeActive: !!(drawBrushActiveRef.current || drawShapeDragRef.current),
+      sizeChanged,
+      canvasAuthoritative: overlayCanvasAuthoritativeRef.current,
+      sourceUrl,
+      lastLoadedUrl: lastLoadedOverlaySrcRef.current,
+    })) {
+      lastLoadedOverlaySrcRef.current = sourceUrl;
+      return;
+    }
+    overlayCanvasAuthoritativeRef.current = false;
+    lastLoadedOverlaySrcRef.current = sourceUrl;
     void loadDrawDataUrlOntoCanvas(editableDrawSourceUrl, c, { w, h });
   }, [isPlayer, drawTool, mapWidthFt, mapHeightFt, editableDrawSourceUrl]);
 

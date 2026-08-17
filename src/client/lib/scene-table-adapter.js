@@ -9,8 +9,9 @@
  * existing pure `applyTableOp` — no network table ops, no new op types.
  *
  * BattleMap is rendered with `tableId` omitted so ping/scribble/banner-ack
- * no-op. Map-art / overlay / placed-image uploads still hit Storage; only the
- * resulting URL is written into the scene via `applyTableOp`.
+ * no-op. Map-art / overlay / placed-image uploads still hit Storage; overlay
+ * `data:` URLs are applied immediately then swapped for the hosted URL so the
+ * paint canvas is not wiped while the upload is in flight.
  *
  * Callbacks are referentially stable (they close over a `setSceneData` wrapper
  * that must itself be stable or ref-backed) so BattleMap's `onMapViewSync`
@@ -194,6 +195,40 @@ export async function hostDataUrlIfNeeded(value, baseName = 'scene-image') {
   }
 }
 
+function overlayPngOnRow(row) {
+  return row?.overlayPng ?? row?.fogPng ?? null;
+}
+
+/**
+ * Write overlay immediately (so the editor canvas is not waiting on Storage),
+ * then replace a `data:` URL with the hosted URL only if that same data URL is
+ * still the current overlay (a newer stroke wins the race).
+ *
+ * @param {(updater: (prev: object) => object) => void} setSceneData
+ * @param {{ kind: 'map' | 'view', id: string, overlayPng: string | null | undefined, hostFn?: typeof hostDataUrlIfNeeded }} args
+ */
+export async function applyOverlayThenHost(setSceneData, args) {
+  const { kind, id, overlayPng, hostFn = hostDataUrlIfNeeded } = args || {};
+  if (!id || typeof setSceneData !== 'function') return;
+  const applyOp = kind === 'view'
+    ? { op: 'set-map-view-overlay', viewId: id, overlayPng: overlayPng ?? null }
+    : { op: 'set-map-overlay', mapId: id, overlayPng: overlayPng ?? null };
+  setSceneData((prev) => applySceneTableOp(prev, applyOp));
+  if (typeof overlayPng !== 'string' || !overlayPng.startsWith('data:')) return;
+  const hosted = await hostFn(overlayPng, kind === 'view' ? 'map-view-overlay' : 'map-overlay');
+  if (!hosted || hosted === overlayPng) return;
+  setSceneData((prev) => {
+    const s = normalizeSceneTableData(prev);
+    const row = kind === 'view'
+      ? s.mapViews.find((v) => v.id === id)
+      : s.maps.find((m) => m.id === id);
+    if (overlayPngOnRow(row) !== overlayPng) return prev;
+    return applySceneTableOp(s, kind === 'view'
+      ? { op: 'set-map-view-overlay', viewId: id, overlayPng: hosted }
+      : { op: 'set-map-overlay', mapId: id, overlayPng: hosted });
+  });
+}
+
 /**
  * Stable BattleMap mutation callbacks. `setSceneData` must be a function
  * `(updater: (prev) => next) => void` that always sees latest scene data
@@ -337,16 +372,10 @@ export function buildSceneTableAdapterProps(setSceneData, opts = {}) {
     },
 
     onSetMapOverlay: (mapId, overlayPng) => {
-      void (async () => {
-        const png = await hostDataUrlIfNeeded(overlayPng, 'map-overlay');
-        applyOp({ op: 'set-map-overlay', mapId, overlayPng: png ?? null });
-      })();
+      void applyOverlayThenHost(setSceneData, { kind: 'map', id: mapId, overlayPng });
     },
     onSetMapViewOverlay: (viewId, overlayPng) => {
-      void (async () => {
-        const png = await hostDataUrlIfNeeded(overlayPng, 'map-view-overlay');
-        applyOp({ op: 'set-map-view-overlay', viewId, overlayPng: png ?? null });
-      })();
+      void applyOverlayThenHost(setSceneData, { kind: 'view', id: viewId, overlayPng });
     },
 
     onViewportCenterChange: (center) => {

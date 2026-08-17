@@ -12,6 +12,7 @@ import {
   normalizeSceneTableData,
   scenePartySizeOptions,
   scenePartyTierOptions,
+  applyOverlayThenHost,
   DEFAULT_SCENE_BATTLE_MODS,
   DEFAULT_SCENE_PARTY_SIZE,
   DEFAULT_SCENE_PARTY_TIER,
@@ -239,5 +240,51 @@ describe('buildSceneElementFromLibraryItem', () => {
     expect(el.elementType).toBe('note');
     expect(el.name).toBe('Clue');
     expect(el.body).toBe('Look behind the altar');
+  });
+});
+
+describe('applyOverlayThenHost', () => {
+  function makeState() {
+    return normalizeSceneTableData({
+      maps: [{ id: 'm1', name: 'Map', overlayPng: null }],
+      mapViews: [{ id: 'v1', mapId: 'm1', name: 'Main', overlayPng: null }],
+      gmActiveViewId: 'v1',
+    });
+  }
+
+  it('applies overlay immediately then swaps the hosted URL when still current', async () => {
+    let state = makeState();
+    const setSceneData = (updater) => { state = updater(state); };
+    const dataUrl = 'data:image/png;base64,aaa';
+    await applyOverlayThenHost(setSceneData, {
+      kind: 'map',
+      id: 'm1',
+      overlayPng: dataUrl,
+      hostFn: async () => 'https://cdn/overlay.png',
+    });
+    expect(state.maps[0].overlayPng).toBe('https://cdn/overlay.png');
+  });
+
+  it('does not clobber a newer overlay when a slower upload finishes late', async () => {
+    let state = makeState();
+    const setSceneData = (updater) => { state = updater(state); };
+    let resolveFirst;
+    const firstHost = new Promise((resolve) => { resolveFirst = resolve; });
+    const first = applyOverlayThenHost(setSceneData, {
+      kind: 'view',
+      id: 'v1',
+      overlayPng: 'data:image/png;base64,aaa',
+      hostFn: () => firstHost,
+    });
+    expect(state.mapViews[0].overlayPng).toBe('data:image/png;base64,aaa');
+    await applyOverlayThenHost(setSceneData, {
+      kind: 'view',
+      id: 'v1',
+      overlayPng: 'data:image/png;base64,bbb',
+      hostFn: async () => 'https://cdn/b.png',
+    });
+    resolveFirst('https://cdn/a.png');
+    await first;
+    expect(state.mapViews[0].overlayPng).toBe('https://cdn/b.png');
   });
 });

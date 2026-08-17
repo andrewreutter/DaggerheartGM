@@ -34,7 +34,6 @@ export function MapTableEditor({ value, onChange }) {
     return {
       ...base,
       className: 'flex-1 min-w-0 min-h-0',
-      tableName: slice.maps?.[0]?.name || 'Map',
       onAddMap: undefined,
       onRemoveMap: undefined,
       onAddMapWithImage: async (img) => {
@@ -52,12 +51,13 @@ export function MapTableEditor({ value, onChange }) {
         }));
       },
     };
-  }, [setSceneData, slice.maps]);
+  }, [setSceneData]);
 
   return (
     <div className="flex flex-1 min-h-0 min-w-0 overflow-hidden">
       <BattleMap
         {...battleMapCallbacks}
+        tableName={slice.maps?.[0]?.name || 'Map'}
         maps={slice.maps}
         mapViews={slice.mapViews}
         gmActiveViewId={slice.gmActiveViewId}

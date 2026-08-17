@@ -23,6 +23,7 @@ import {
   PICKER_COUNT_MAX,
 } from '../../lib/item-picker-selection.js';
 import { libraryPickerRowMeta } from '../../lib/scene-library-card-contents.js';
+import { useUnifiedImport } from '../../lib/unified-import-context.jsx';
 
 export const ITEM_PICKER_SINGULAR = {
   adversaries: 'Adversary',
@@ -105,8 +106,19 @@ export function ItemPickerModal({
   const [selected, setSelected] = useState([]);
   const [hoveredItem, setHoveredItem] = useState(null);
 
-  const [pickerSubMode, setPickerSubMode] = useState('browse');
+  // When this picker is open for maps, register it as the "Add Map dialog" so that
+  // paste/drop fires "New Map" immediately and auto-dismisses the picker.
+  const { registerAddMapDialog, unregisterAddMapDialog } = useUnifiedImport();
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  useEffect(() => {
+    if (collection !== 'maps') return;
+    registerAddMapDialog(() => onCloseRef.current());
+    return unregisterAddMapDialog;
+  }, [collection, registerAddMapDialog, unregisterAddMapDialog]);
+
   const [charAiConcept, setCharAiConcept] = useState('');
+  const [pickerSubMode, setPickerSubMode] = useState('browse');
   const [advAiTier, setAdvAiTier] = useState(1);
   const [advAiRole, setAdvAiRole] = useState('standard');
   const [advAiConcept, setAdvAiConcept] = useState('');
@@ -390,6 +402,9 @@ export function ItemPickerModal({
               <MapIcon size={18} />
               Create new map
             </button>
+            <p className="mt-2 text-xs text-dh-muted text-center">
+              Or paste / drop an image here to create a new map from it.
+            </p>
           </div>
         )}
 

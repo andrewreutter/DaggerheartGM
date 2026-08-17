@@ -77,6 +77,23 @@ export function collectDressingForMap(elements, mapId) {
 }
 
 /**
+ * Last camera (or map-layer `null`) the Map editor was showing. Survives flatten
+ * back to a library row so overlay/draw commits do not snap to camera 1.
+ * @param {object} [item]
+ * @param {object[]} mapViews
+ * @returns {string | null}
+ */
+export function resolveLibraryMapEditorViewId(item, mapViews) {
+  const views = Array.isArray(mapViews) ? mapViews : [];
+  if (item && Object.prototype.hasOwnProperty.call(item, 'gmActiveViewId')) {
+    const id = item.gmActiveViewId;
+    if (id == null) return null;
+    if (views.some((v) => v.id === id)) return id;
+  }
+  return views[0]?.id ?? null;
+}
+
+/**
  * Expand a library map row into a one-map table slice for MapTableEditor.
  * @param {object} [item]
  */
@@ -117,7 +134,7 @@ export function libraryMapToEditorSlice(item) {
     maps: [map],
     mapViews,
     activeMapId: EDITOR_MAP_ID,
-    gmActiveViewId: mapViews[0]?.id ?? null,
+    gmActiveViewId: resolveLibraryMapEditorViewId(item, mapViews),
     gmMapView: null,
     activeElements: dressing,
     sessionCountdowns: [],
@@ -143,6 +160,9 @@ export function editorSliceToLibraryMap(slice, existing = {}) {
     existing.artistUrl !== undefined ? existing.artistUrl : map.artistUrl,
   );
   const name = typeof existing.name === 'string' ? existing.name : (map.name || '');
+  const gmActiveViewId = slice && Object.prototype.hasOwnProperty.call(slice, 'gmActiveViewId')
+    ? (slice.gmActiveViewId ?? null)
+    : (Object.prototype.hasOwnProperty.call(existing, 'gmActiveViewId') ? (existing.gmActiveViewId ?? null) : undefined);
   return {
     id: existing.id,
     name,
@@ -157,6 +177,7 @@ export function editorSliceToLibraryMap(slice, existing = {}) {
     artist: credit.artist,
     artistUrl: credit.artistUrl,
     overlayPng: map.overlayPng ?? existing.overlayPng ?? null,
+    ...(gmActiveViewId !== undefined ? { gmActiveViewId } : {}),
     mapViews: Array.isArray(slice?.mapViews) ? slice.mapViews : (existing.mapViews || []),
     dressingElements: collectDressingForMap(slice?.activeElements, map.id),
   };
@@ -184,6 +205,9 @@ export function persistLibraryMap(formData) {
     artist: credit.artist,
     artistUrl: credit.artistUrl,
     overlayPng: formData.overlayPng ?? null,
+    ...(Object.prototype.hasOwnProperty.call(formData, 'gmActiveViewId')
+      ? { gmActiveViewId: formData.gmActiveViewId ?? null }
+      : {}),
     mapViews: Array.isArray(formData.mapViews) ? formData.mapViews : [],
     dressingElements: Array.isArray(formData.dressingElements) ? formData.dressingElements : [],
   };

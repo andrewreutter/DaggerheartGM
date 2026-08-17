@@ -3,6 +3,7 @@ import { UnifiedImportModal } from '../components/modals/UnifiedImportModal.jsx'
 import { MapImageQuickPickMenu } from '../components/modals/MapImageQuickPickMenu.jsx';
 import { postImageUpload } from './api.js';
 import { buildAddToItemTargets } from './add-to-item-targets.js';
+import { resolveImagePasteActions } from './image-paste-actions.js';
 
 const UnifiedImportContext = createContext(null);
 
@@ -118,7 +119,11 @@ export function UnifiedImportProvider({
   /** Quick-pick menu state (image paste/drop on game table). */
   const [quickPickOpen, setQuickPickOpen] = useState(false);
   const [quickPickFile, setQuickPickFile] = useState(/** @type {File | null} */ (null));
-  const [quickPickOpts, setQuickPickOpts] = useState(/** @type {{ mapId?: string, centerXFt?: number, centerYFt?: number }} */ ({}));
+  /**
+   * Resolved action list for the currently-open quick-pick menu (only set when 2+ actions,
+   * i.e. the menu is actually opened rather than auto-applied).
+   */
+  const [quickPickActions, setQuickPickActions] = useState(/** @type {{ key: string, label?: string, run: (file?: File) => Promise<void> }[]} */ ([]));
 
   /**
    * Currently open editable character/adversary modal, if any.
@@ -145,12 +150,46 @@ export function UnifiedImportProvider({
   }, []);
 
   /**
+   * Registered dismiss callback for an open "Add Map" picker dialog (ItemPickerModal with
+   * collection="maps"). When set, paste/drop triggers "New Map" only and auto-dismisses
+   * the picker when the map is created.
+   */
+  const addMapDialogDismissRef = useRef(/** @type {(() => void) | null} */ (null));
+
+  const registerAddMapDialog = useCallback((dismiss) => {
+    addMapDialogDismissRef.current = dismiss;
+  }, []);
+
+  const unregisterAddMapDialog = useCallback(() => {
+    addMapDialogDismissRef.current = null;
+  }, []);
+
+  /**
+   * Registered callback for an open library Map Editor (editable ItemDetailModal with
+   * collection="maps"). When set, paste/drop triggers "Replace Map" scoped to that editor
+   * rather than the live-table replace. Callback receives a Storage URL string.
+   */
+  const mapEditorReplaceRef = useRef(/** @type {((url: string) => void) | null} */ (null));
+  const [hasMapEditorReplace, setHasMapEditorReplace] = useState(false);
+
+  const registerMapEditorReplace = useCallback((onReplace) => {
+    mapEditorReplaceRef.current = onReplace;
+    setHasMapEditorReplace(true);
+  }, []);
+
+  const unregisterMapEditorReplace = useCallback(() => {
+    mapEditorReplaceRef.current = null;
+    setHasMapEditorReplace(false);
+  }, []);
+
+  /**
    * True when image paste/drop should trigger the quick-pick menu instead of the full import modal.
    * GM on the game table: shows MapImageQuickPickMenu with all map options.
    * Player on the game table with onAddMapImageObject: shows menu with "New Image on Map".
    * Any user with an editable character/adversary modal open: shows "Add image to [Name]".
+   * Any user with a library Map Editor open: shows "Replace Map" in that editor.
    */
-  const canMapImagePaste = (isGameTableGm || (effectiveIsPlayer && !!onAddMapImageObject) || hasEditableItem);
+  const canMapImagePaste = (isGameTableGm || (effectiveIsPlayer && !!onAddMapImageObject) || hasEditableItem || hasMapEditorReplace);
 
   const openImport = useCallback(
     (files, opts) => {
@@ -178,48 +217,16 @@ export function UnifiedImportProvider({
     setAppendPayload(null);
   }, []);
 
-  /** Open the quick-pick menu; `file` is the pre-supplied image (paste/drop) or null (toolbar).
-   *  `opts` carries optional placement hints from the caller (e.g. current viewport center in feet). */
-  const openMapImageQuickPick = useCallback((file, opts = {}) => {
-    setQuickPickFile(file || null);
-    setQuickPickOpts(opts);
-    setQuickPickOpen(true);
-  }, []);
-
   const closeQuickPick = useCallback(() => {
     setQuickPickOpen(false);
     setQuickPickFile(null);
-    setQuickPickOpts({});
+    setQuickPickActions([]);
   }, []);
 
   /** Called when user picks "Import Tools" from the quick-pick menu. */
   const handleQuickPickImportTools = useCallback((file) => {
     if (enabled) openImport(file ? [file] : null);
   }, [enabled, openImport]);
-
-  const value = useMemo(
-    () => ({
-      enabled,
-      openImport,
-      closeImport,
-      importOpen: open,
-      saveItem,
-      addToTable,
-      onAddMapWithImage,
-      navigate,
-      tableId,
-      isGameTableGm,
-      importLibraryData: importLibraryData || { adversaries: [], environments: [] },
-      onImportComplete: onImportComplete || (() => {}),
-      openMapImageQuickPick,
-      canMapImagePaste,
-      registerEditableItem,
-      unregisterEditableItem,
-    }),
-    [enabled, openImport, closeImport, open, saveItem, addToTable, onAddMapWithImage, navigate, tableId, isGameTableGm, importLibraryData, onImportComplete, openMapImageQuickPick, canMapImagePaste, registerEditableItem, unregisterEditableItem],
-  );
-
-  const hasCurrentMap = isGameTableGm && !!onReplaceMapWithImage;
 
   /** Reads a File as a data URL. Used for multiple quick-pick paths. */
   const fileToDataUrl = useCallback((file) => new Promise((resolve, reject) => {
@@ -243,18 +250,127 @@ export function UnifiedImportProvider({
     }
   }, [fileToDataUrl]);
 
+  /** Hidden file input used when a single action is resolved but no file was supplied (toolbar). */
+  const singleActionCallbackRef = useRef(/** @type {((file: File) => Promise<void>) | null} */ (null));
+  const singleActionFileInputRef = useRef(/** @type {HTMLInputElement | null} */ (null));
+
   /**
-   * Menu targets for the currently open editable item, if any: the item's own primary image
-   * plus any `extraTargets` it registered (e.g. a character's companion). Recomputed at render
-   * time from the ref so labels stay current without extra re-renders.
+   * Open the quick-pick menu or auto-apply a single resolved action.
+   * `file` is the pre-supplied image (paste/drop) or null (toolbar).
+   * `opts` carries optional placement hints from the caller (e.g. current viewport center in feet).
    */
-  const addToItemTargets = hasEditableItem
-    ? buildAddToItemTargets(editableItemRef.current).map((t) => ({
-        key: t.key,
-        label: t.label,
-        onAdd: (file) => uploadAndApply(t.onAddImageUrl, file),
-      }))
-    : [];
+  const openMapImageQuickPick = useCallback((file, opts = {}) => {
+    // ── Build resolved callback set for this invocation ───────────────────────
+    const itemTargets = hasEditableItem
+      ? buildAddToItemTargets(editableItemRef.current).map((t) => ({
+          key: t.key,
+          label: t.label,
+          onAdd: (f) => uploadAndApply(t.onAddImageUrl, f),
+        }))
+      : [];
+
+    const hasCurrentMap = isGameTableGm && !!onReplaceMapWithImage;
+
+    const resolvedNewMap = onAddMapWithImage ? async (f) => {
+      const dataUrl = await fileToDataUrl(f);
+      const img = new Image();
+      await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = dataUrl; });
+      await onAddMapWithImage({ mapImageUrl: dataUrl, mapImageNaturalWidth: img.naturalWidth, mapImageNaturalHeight: img.naturalHeight });
+    } : null;
+
+    const resolvedMapEditorReplace = mapEditorReplaceRef.current
+      ? (f) => uploadAndApply(mapEditorReplaceRef.current, f)
+      : null;
+
+    const actions = resolveImagePasteActions({
+      addToItemTargets: itemTargets,
+      addMapDialogDismiss: addMapDialogDismissRef.current,
+      onNewMap: resolvedNewMap,
+      onMapEditorReplace: resolvedMapEditorReplace,
+      onReplaceMap: hasCurrentMap ? onReplaceMapWithImage : null,
+      onNewImageObject: onAddMapImageObject ? (f) => onAddMapImageObject(f, opts) : null,
+      onImportTools: enabled ? (f) => handleQuickPickImportTools(f) : null,
+    });
+
+    if (actions.length === 0) return;
+
+    if (actions.length === 1) {
+      if (file) {
+        // Paste/drop path — run immediately.
+        actions[0].run(file).catch((err) => {
+          console.error('[image paste]', err);
+          alert(`Failed to add image: ${err?.message || err}. It may be too large (10 MB limit) — try a smaller image.`);
+        });
+      } else {
+        // Toolbar path — show a file picker then run.
+        singleActionCallbackRef.current = actions[0].run;
+        singleActionFileInputRef.current?.click();
+      }
+      return;
+    }
+
+    // 2+ actions — open the picker menu with the filtered action set.
+    setQuickPickFile(file || null);
+    setQuickPickActions(actions);
+    setQuickPickOpen(true);
+  }, [
+    hasEditableItem,
+    isGameTableGm,
+    onAddMapWithImage,
+    onReplaceMapWithImage,
+    onAddMapImageObject,
+    enabled,
+    uploadAndApply,
+    fileToDataUrl,
+    handleQuickPickImportTools,
+  ]);
+
+  const value = useMemo(
+    () => ({
+      enabled,
+      openImport,
+      closeImport,
+      importOpen: open,
+      saveItem,
+      addToTable,
+      onAddMapWithImage,
+      navigate,
+      tableId,
+      isGameTableGm,
+      importLibraryData: importLibraryData || { adversaries: [], environments: [] },
+      onImportComplete: onImportComplete || (() => {}),
+      openMapImageQuickPick,
+      canMapImagePaste,
+      registerEditableItem,
+      unregisterEditableItem,
+      registerAddMapDialog,
+      unregisterAddMapDialog,
+      registerMapEditorReplace,
+      unregisterMapEditorReplace,
+    }),
+    [
+      enabled, openImport, closeImport, open, saveItem, addToTable, onAddMapWithImage,
+      navigate, tableId, isGameTableGm, importLibraryData, onImportComplete,
+      openMapImageQuickPick, canMapImagePaste,
+      registerEditableItem, unregisterEditableItem,
+      registerAddMapDialog, unregisterAddMapDialog,
+      registerMapEditorReplace, unregisterMapEditorReplace,
+    ],
+  );
+
+  // Derive named menu props from the resolved action list so MapImageQuickPickMenu
+  // keeps its existing prop contract unchanged.
+  const menuNewMap = quickPickActions.find((a) => a.key === 'new-map');
+  const menuReplaceMap = quickPickActions.find((a) => a.key === 'replace-map');
+  const menuNewImageObject = quickPickActions.find((a) => a.key === 'new-image-object');
+  const menuImportTools = quickPickActions.find((a) => a.key === 'import-tools');
+  const menuItemTargets = quickPickActions
+    .filter((a) => a.key.startsWith('add-to-item-'))
+    .map((a) => ({
+      key: a.key.replace('add-to-item-', ''),
+      label: a.label,
+      onAdd: a.run,
+    }));
 
   return (
     <UnifiedImportContext.Provider value={value}>
@@ -279,22 +395,33 @@ export function UnifiedImportProvider({
           open={quickPickOpen}
           onClose={closeQuickPick}
           seedFile={quickPickFile}
-          onNewMap={onAddMapWithImage ? async (file) => {
-            const dataUrl = await fileToDataUrl(file);
-            const img = new Image();
-            await new Promise((resolve, reject) => {
-              img.onload = resolve;
-              img.onerror = reject;
-              img.src = dataUrl;
-            });
-            await onAddMapWithImage({ mapImageUrl: dataUrl, mapImageNaturalWidth: img.naturalWidth, mapImageNaturalHeight: img.naturalHeight });
-          } : null}
-          onReplaceMap={hasCurrentMap ? onReplaceMapWithImage : null}
-          onNewImageObject={onAddMapImageObject ? (file) => onAddMapImageObject(file, quickPickOpts) : null}
-          onImportTools={enabled ? handleQuickPickImportTools : null}
-          addToItemTargets={addToItemTargets}
+          onNewMap={menuNewMap ? (f) => menuNewMap.run(f) : null}
+          onReplaceMap={menuReplaceMap ? (f) => menuReplaceMap.run(f) : null}
+          onNewImageObject={menuNewImageObject ? (f) => menuNewImageObject.run(f) : null}
+          onImportTools={menuImportTools ? (f) => menuImportTools.run(f) : null}
+          addToItemTargets={menuItemTargets}
         />
       )}
+      {/* Hidden file-input for single-action toolbar-mode (no pre-supplied file). */}
+      <input
+        ref={singleActionFileInputRef}
+        type="file"
+        accept="image/*"
+        className="sr-only"
+        onChange={async (e) => {
+          const f = e.target.files?.[0];
+          e.target.value = '';
+          if (!f || !singleActionCallbackRef.current) return;
+          const cb = singleActionCallbackRef.current;
+          singleActionCallbackRef.current = null;
+          try {
+            await cb(f);
+          } catch (err) {
+            console.error('[image paste single-action]', err);
+            alert(`Failed to add image: ${err?.message || err}. It may be too large (10 MB limit) — try a smaller image.`);
+          }
+        }}
+      />
     </UnifiedImportContext.Provider>
   );
 }
@@ -313,6 +440,10 @@ export function useUnifiedImport() {
       canMapImagePaste: false,
       registerEditableItem: () => {},
       unregisterEditableItem: () => {},
+      registerAddMapDialog: () => {},
+      unregisterAddMapDialog: () => {},
+      registerMapEditorReplace: () => {},
+      unregisterMapEditorReplace: () => {},
     };
   }
   return ctx;

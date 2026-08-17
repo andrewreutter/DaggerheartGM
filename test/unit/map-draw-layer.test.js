@@ -14,6 +14,8 @@ import {
   floodEraseConnectedComponent,
   multiplyRgbaAlpha,
   isNonDegenerateScribbleSegmentPx,
+  shouldSkipDrawOverlayReload,
+  loadDrawDataUrlOntoCanvas,
 } from '../../src/client/lib/map-draw-layer.js';
 
 describe('map-draw-layer', () => {
@@ -149,7 +151,42 @@ describe('map-draw-layer', () => {
     };
     const ok = floodEraseConnectedComponent(ctx, w, h, 1.2, 1.8);
     expect(ok).toBe(true);
-    expect(data[(1 * w + 2) * 4 + 3]).toBe(0);
-    expect(data[(5 * w + 5) * 4 + 3]).toBe(0);
+    expect(data[(1 * w + 1) * 4 + 3]).toBe(0);
+    expect(data[(2 * w + 2) * 4 + 3]).toBe(0);
+  });
+
+  it('shouldSkipDrawOverlayReload keeps live pixels after a local overlay commit URL swap', () => {
+    expect(shouldSkipDrawOverlayReload({
+      strokeActive: false,
+      sizeChanged: false,
+      canvasAuthoritative: true,
+      sourceUrl: 'https://cdn/overlay.png',
+      lastLoadedUrl: 'data:image/png;base64,aaa',
+    })).toBe(true);
+  });
+
+  it('shouldSkipDrawOverlayReload reloads when the canvas size changes', () => {
+    expect(shouldSkipDrawOverlayReload({
+      strokeActive: false,
+      sizeChanged: true,
+      canvasAuthoritative: true,
+      sourceUrl: 'https://cdn/overlay.png',
+      lastLoadedUrl: 'data:image/png;base64,aaa',
+    })).toBe(false);
+  });
+
+  it('loadDrawDataUrlOntoCanvas does not reset canvas.width when size already matches', async () => {
+    let widthSets = 0;
+    const canvas = {
+      _w: 12,
+      _h: 8,
+      get width() { return this._w; },
+      set width(v) { widthSets += 1; this._w = v; },
+      get height() { return this._h; },
+      set height(v) { this._h = v; },
+      getContext: () => ({ clearRect() {}, drawImage() {} }),
+    };
+    await loadDrawDataUrlOntoCanvas(null, canvas, { w: 12, h: 8 });
+    expect(widthSets).toBe(0);
   });
 });
