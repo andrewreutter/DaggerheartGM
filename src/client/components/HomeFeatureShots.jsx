@@ -41,6 +41,17 @@ export const HOME_FEATURE_SHOTS = [
     ],
   },
   {
+    id: 'dice-roller-and-action-log',
+    title: 'Dice Roller and Action Log',
+    image: '/assets/home/dice-roller-and-action-log.png',
+    imageAlt: 'Manual dice builder with a 3D preview tray, Duality and polyhedral steppers, trait chips, a Roll button, and a color-coded action log of Hope, Fear, damage, and session events',
+    bullets: [
+      'Build a roll with Duality and any mix of d4 through d100. The 3D tray shows the dice you are about to throw.',
+      'Add a trait like Agility or Strength, save a favorite, then hit Roll — the same dice tumble on the table.',
+      'The log keeps every roll and action: Hope and Fear in color, damage, stress, and session beats, with times.',
+    ],
+  },
+  {
     id: 'spotlight-management',
     title: 'Spotlight Management',
     image: '/assets/home/spotlight-management.png',
