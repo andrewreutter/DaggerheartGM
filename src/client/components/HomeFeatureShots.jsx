@@ -1,3 +1,6 @@
+import { useEffect, useState } from 'react';
+import { ChevronLeft, ChevronRight } from 'lucide-react';
+
 /**
  * Marketing screenshot series on the unauthenticated home page.
  * Add entries here — every image uses the same width and keeps its own aspect ratio.
@@ -78,25 +81,172 @@ export const HOME_FEATURE_SHOTS = [
 /** Shared image width for every homepage screenshot. Height follows the file’s aspect ratio. */
 const SHOT_IMAGE_CLASS = 'w-full max-w-[36rem] h-auto rounded-lg border border-dh-border shadow-xl';
 
+function HomeFeatureBulletList({ bullets }) {
+  return (
+    <ul className="text-dh-muted text-sm text-left space-y-2 list-none">
+      {bullets.map((line) => (
+        <li key={line} className="flex gap-2">
+          <span className="text-red-500 mt-0.5 shrink-0">•</span>
+          <span>{line}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+export const HOME_FEATURE_CAROUSEL_INTERVAL_MS = 5000;
+
+/** Wrap a carousel index by `delta` steps. Returns 0 when `length` is not a positive finite number. */
+export function wrapHomeFeatureShotIndex(index, length, delta = 1) {
+  if (!Number.isFinite(length) || length <= 0) return 0;
+  const start = Number.isFinite(index) ? Math.trunc(index) : 0;
+  const step = Number.isFinite(delta) ? Math.trunc(delta) : 0;
+  return ((start + step) % length + length) % length;
+}
+
+function HomeFeatureCarousel({ shots }) {
+  const [index, setIndex] = useState(0);
+  const [rotationEpoch, setRotationEpoch] = useState(0);
+  const [reduceMotion, setReduceMotion] = useState(
+    () => typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+  );
+
+  useEffect(() => {
+    const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const syncMotion = () => setReduceMotion(mq.matches);
+    mq.addEventListener('change', syncMotion);
+    return () => mq.removeEventListener('change', syncMotion);
+  }, []);
+
+  useEffect(() => {
+    if (shots.length < 2) return undefined;
+    const id = window.setInterval(() => {
+      if (document.hidden) return;
+      setIndex((i) => wrapHomeFeatureShotIndex(i, shots.length, 1));
+    }, HOME_FEATURE_CAROUSEL_INTERVAL_MS);
+    return () => window.clearInterval(id);
+  }, [shots.length, rotationEpoch]);
+
+  const current = shots[index];
+  if (!current) return null;
+
+  const select = (nextIndex) => {
+    setIndex(wrapHomeFeatureShotIndex(nextIndex, shots.length, 0));
+    setRotationEpoch((n) => n + 1);
+  };
+  const step = (delta) => {
+    setIndex((i) => wrapHomeFeatureShotIndex(i, shots.length, delta));
+    setRotationEpoch((n) => n + 1);
+  };
+
+  const scrollToShot = () => {
+    document.getElementById(`home-shot-${current.id}`)?.scrollIntoView({
+      behavior: reduceMotion ? 'auto' : 'smooth',
+      block: 'start',
+    });
+  };
+
+  const fadeClass = reduceMotion ? '' : 'transition-opacity duration-700';
+
+  return (
+    <section
+      data-testid="home-feature-carousel"
+      aria-roledescription="carousel"
+      aria-label="Feature highlights"
+      className="w-full max-w-3xl mx-auto"
+    >
+      <div className="grid mb-4">
+        {shots.map((shot, i) => (
+          <p
+            key={shot.id}
+            className={`col-start-1 row-start-1 text-2xl font-bold text-dh tracking-wide text-center ${fadeClass} ${i === index ? 'opacity-100' : 'opacity-0'}`}
+            aria-hidden={i !== index}
+          >
+            {shot.title}
+          </p>
+        ))}
+      </div>
+      <div>
+        <div className="relative">
+          <div
+            className="relative aspect-[16/10] w-full overflow-hidden rounded-lg border border-dh-border bg-dh-canvas shadow-xl cursor-pointer"
+            onClick={scrollToShot}
+          >
+            {shots.map((shot, i) => (
+              <img
+                key={shot.id}
+                src={shot.image}
+                alt={i === index ? shot.imageAlt : ''}
+                aria-hidden={i !== index}
+                className={`absolute inset-0 w-full h-full object-contain ${fadeClass} ${i === index ? 'opacity-100' : 'opacity-0'}`}
+              />
+            ))}
+          </div>
+          {shots.length > 1 && (
+            <>
+              <button
+                type="button"
+                onClick={() => step(-1)}
+                className="absolute left-2 top-1/2 -translate-y-1/2 p-1.5 rounded-full bg-black/60 text-white hover:bg-black/80"
+                aria-label="Previous feature"
+              >
+                <ChevronLeft size={20} />
+              </button>
+              <button
+                type="button"
+                onClick={() => step(1)}
+                className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-full bg-black/60 text-white hover:bg-black/80"
+                aria-label="Next feature"
+              >
+                <ChevronRight size={20} />
+              </button>
+            </>
+          )}
+        </div>
+        <div className="grid mt-4 w-full max-w-lg mx-auto">
+          {shots.map((shot, i) => (
+            <div
+              key={shot.id}
+              className={`col-start-1 row-start-1 ${fadeClass} ${i === index ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
+              aria-hidden={i !== index}
+            >
+              <HomeFeatureBulletList bullets={shot.bullets} />
+            </div>
+          ))}
+        </div>
+        {shots.length > 1 && (
+          <div className="flex justify-center gap-2 mt-4">
+            {shots.map((shot, i) => (
+              <button
+                key={shot.id}
+                type="button"
+                aria-current={i === index ? 'true' : undefined}
+                aria-label={`Show ${shot.title}`}
+                onClick={() => select(i)}
+                className={`h-2 rounded-full transition-all ${i === index ? 'w-6 bg-red-500' : 'w-2 bg-dh-muted/50 hover:bg-dh-muted'}`}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
 export function HomeFeatureShots() {
   if (HOME_FEATURE_SHOTS.length === 0) return null;
   return (
     <div className="w-full max-w-5xl mt-16 pt-12 border-t border-dh-border/70">
-      {HOME_FEATURE_SHOTS.map((shot, i) => (
+      <HomeFeatureCarousel shots={HOME_FEATURE_SHOTS} />
+      {HOME_FEATURE_SHOTS.map((shot) => (
         <section
           key={shot.id}
-          className={`flex flex-col items-center gap-6 ${i > 0 ? 'mt-16 pt-16 border-t border-dh-border/40' : ''}`}
+          id={`home-shot-${shot.id}`}
+          className="flex flex-col items-center gap-6 mt-16 pt-16 border-t border-dh-border/40 scroll-mt-20"
         >
           <div className="w-full max-w-lg">
             <h2 className="text-2xl font-bold text-dh tracking-wide mb-3">{shot.title}</h2>
-            <ul className="text-dh-muted text-sm text-left space-y-2 list-none">
-              {shot.bullets.map((line) => (
-                <li key={line} className="flex gap-2">
-                  <span className="text-red-500 mt-0.5 shrink-0">•</span>
-                  <span>{line}</span>
-                </li>
-              ))}
-            </ul>
+            <HomeFeatureBulletList bullets={shot.bullets} />
           </div>
           <img
             src={shot.image}

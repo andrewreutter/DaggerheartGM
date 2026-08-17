@@ -1,10 +1,9 @@
 -- Migration 044: Remove the 17 auto-generated environment scenes from the DT catalog.
 --
 -- These are replaced by two hand-authored scenes (Crossroads Ambush and Cross the
--- Raging River) seeded via `npm run generate:srd-scenes` and stored in
--- `data/dt-scenes/*.json`.  The migration runs automatically on deploy so the old
--- rows are gone before the first request; the seed script still needs to be run
--- manually to populate the new authored scenes.
+-- Raging River) stored in `data/dt-scenes/*.json` and upserted on startup by
+-- `loadDtScenesIntoDb` (also `npm run generate:srd-scenes`).  This migration
+-- runs automatically on deploy so the old rows are gone before the first request.
 
 DELETE FROM external_item_cache
 WHERE collection = 'scenes'

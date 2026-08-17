@@ -13,6 +13,7 @@ import { runMigrations, getPool, getItems, getPublicItems, upsertItem, deleteIte
 import { isStripeConfigured, getStripe, constructWebhookEvent, CAMPAIGN_PASS_PRICE_CENTS, getCampaignPassPriceId } from './src/stripe.js';
 import { srdRouter, warmCache, getItem as getSrdItem } from './src/srd/index.js';
 import { loadSrdIntoDb } from './src/srd-loader.js';
+import { loadDtScenesIntoDb } from './src/dt-scenes-loader.js';
 import { COLLECTION_NAMES as SRD_COLLECTION_NAMES } from './src/srd/parser.js';
 import { redactTableStateForPlayerAudience } from './src/client/lib/session-countdowns.js';
 import { filterFeatureCatalog, getFeatureCatalogById } from './src/v2-feature-catalog.js';
@@ -5051,6 +5052,7 @@ async function startServer() {
   if (process.env.DATABASE_URL) {
     await runMigrations();
     await loadSrdIntoDb(APP_ID);
+    await loadDtScenesIntoDb(APP_ID);
     await subscriptionManager.init(APP_ID);
     setTableStateNotifyHook((tableId) => subscriptionManager.notifyChange('table_state', tableId));
     cron.schedule('0 4 * * *', async () => {

@@ -29,6 +29,8 @@ test('sign-in page renders when not authenticated', async ({ page }) => {
   // form. When Firebase IS configured, the "Sign in" button renders. Either way, the
   // unauthenticated landing page is visible: the "Daggertop" h1 is always present.
   await expect(page.locator('h1', { hasText: 'Daggertop' })).toBeVisible({ timeout: 10000 });
+  await expect(page.getByTestId('home-feature-carousel')).toBeVisible();
+  await expect(page.getByTestId('home-feature-carousel')).toContainText('Character Builder');
   await expect(page.locator('h2', { hasText: 'Spotlight Management' })).toBeVisible();
   await expect(page.locator('h2', { hasText: 'GM Moves' })).toBeVisible();
   await expect(page.locator('h2', { hasText: 'Map and Camera Management' })).toBeVisible();

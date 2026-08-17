@@ -14,6 +14,30 @@ import {
 } from '../lib/firebase-account-linking.js';
 import { getEmailFromAuthError } from '../lib/firebase-auth-messages.js';
 
+const AUTH_FIELD_CLASS = 'w-full rounded-md border border-dh-border bg-dh-canvas px-3 py-2 text-sm text-dh';
+
+/**
+ * Login fields stay inert until a pointer or Tab reaches them so the browser
+ * does not autofocus the email/name field on the homepage.
+ */
+function AuthField({ type, autoComplete, ...props }) {
+  const [unlocked, setUnlocked] = useState(false);
+  const unlock = () => setUnlocked(true);
+  return (
+    <input
+      {...props}
+      type={unlocked ? type : 'text'}
+      autoComplete={unlocked ? autoComplete : 'off'}
+      autoFocus={false}
+      readOnly={!unlocked}
+      onPointerDown={unlock}
+      onKeyDown={(e) => {
+        if (e.key === 'Tab' || e.key === 'Enter') unlock();
+      }}
+    />
+  );
+}
+
 /** @param {{ disabled?: boolean, initialMode?: string }} props */
 export function AuthLanding({ disabled = false, initialMode }) {
   const [mode, setMode] = useState('signin'); // 'signin' | 'signup' | 'forgot'
@@ -152,12 +176,12 @@ export function AuthLanding({ disabled = false, initialMode }) {
         <div className="rounded-lg border border-dh-strong bg-dh-raised/50 p-4 space-y-3">
           <p className="text-sm text-dh">{info || 'Link Google to your existing account.'}</p>
           <label className="block text-xs text-dh-muted uppercase tracking-wide">Password</label>
-          <input
+          <AuthField
             type="password"
             autoComplete="current-password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            className="w-full rounded-md border border-dh-border bg-dh-canvas px-3 py-2 text-sm text-dh"
+            className={AUTH_FIELD_CLASS}
             placeholder="Your account password"
             disabled={busy}
           />
@@ -187,13 +211,13 @@ export function AuthLanding({ disabled = false, initialMode }) {
             <form onSubmit={onForgotPassword} className="space-y-3">
               <p className="text-sm text-dh-muted">We’ll send a password reset link to your email.</p>
               <label className="block text-xs text-dh-muted uppercase tracking-wide">Email</label>
-              <input
+              <AuthField
                 type="email"
                 autoComplete="email"
                 required
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                className="w-full rounded-md border border-dh-border bg-dh-canvas px-3 py-2 text-sm text-dh"
+                className={AUTH_FIELD_CLASS}
                 disabled={busy}
               />
               <div className="flex gap-2">
@@ -218,34 +242,34 @@ export function AuthLanding({ disabled = false, initialMode }) {
               {mode === 'signup' && (
                 <>
                   <label className="block text-xs text-dh-muted uppercase tracking-wide">Display name (optional)</label>
-                  <input
+                  <AuthField
                     type="text"
                     autoComplete="name"
                     value={displayName}
                     onChange={(e) => setDisplayName(e.target.value)}
-                    className="w-full rounded-md border border-dh-border bg-dh-canvas px-3 py-2 text-sm text-dh"
+                    className={AUTH_FIELD_CLASS}
                     disabled={busy}
                   />
                 </>
               )}
               <label className="block text-xs text-dh-muted uppercase tracking-wide">Email</label>
-              <input
+              <AuthField
                 type="email"
                 autoComplete="email"
                 required
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                className="w-full rounded-md border border-dh-border bg-dh-canvas px-3 py-2 text-sm text-dh"
+                className={AUTH_FIELD_CLASS}
                 disabled={busy}
               />
               <label className="block text-xs text-dh-muted uppercase tracking-wide">Password</label>
-              <input
+              <AuthField
                 type="password"
                 autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
                 required
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="w-full rounded-md border border-dh-border bg-dh-canvas px-3 py-2 text-sm text-dh"
+                className={AUTH_FIELD_CLASS}
                 disabled={busy}
               />
               <button
