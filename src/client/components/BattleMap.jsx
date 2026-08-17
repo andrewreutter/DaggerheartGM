@@ -160,7 +160,12 @@ import {
   canModifyMapObject,
   computeCornerAnchor,
   computeCornerResize,
+  MAP_OBJECT_Z_INDEX,
+  mapObjectStackZIndex,
+  mapObjectUsesStrokeHitTest,
   scaleBrushStroke,
+  sortMapObjectsForStack,
+  TOKEN_LAYER_Z_INDEX_MIN,
 } from '../lib/map-object-transform.js';
 
 const MIN_PX_PER_FT = 33 / 5; // 6.6 px/ft — 5' token ≥ 33px touch target
@@ -169,9 +174,9 @@ const DRAG_THRESHOLD_PX = 8;
 const MAP_PING_FIREWORK_LAND_MS = 800;
 const MAP_PING_LABEL_FADE_MS = 5000;
 /** Placed tokens (characters, companions, adversaries) stack starting at this z-index — above the
- * persisted mapImage/drawShape objects (z=22) and the interactive draw/scribble canvases (z<=21),
+ * persisted mapImage/drawShape objects (z=22–29) and the interactive draw/scribble canvases (z<=21),
  * so drawings on the map never render over tokens. */
-const TOKEN_BASE_Z_INDEX = 30;
+const TOKEN_BASE_Z_INDEX = TOKEN_LAYER_Z_INDEX_MIN;
 /** Range-band bullseye ring overlays render at z-index 55 (hover) / 56 (drag-follow). The token
  * currently snapped to the bullseye (bullseyeFt.excludeInstanceId) is elevated above both so it
  * isn't visually obscured by the rings drawn over it — matching how non-snapped tokens whose
@@ -2734,6 +2739,7 @@ function MapImageObject({
   onUpdateMapImageObject,
   onRemoveMapImageObject,
   onOpenImageLightbox,
+  zIndex = MAP_OBJECT_Z_INDEX,
 }) {
   const dragRef = useRef(null);
   const resizeRef = useRef(null);
@@ -2870,8 +2876,8 @@ function MapImageObject({
           cursor: !canModify ? 'default' : isEraserActive ? 'crosshair' : isSelected ? 'grab' : 'pointer',
           touchAction: 'none',
           userSelect: 'none',
-          // z=22 sits above the scribble canvas (z=21) so pointer events reach the image body
-          zIndex: 22,
+          // z=22 band sits above the scribble canvas (z=21); stack order is assigned by area
+          zIndex,
         }}
         onPointerDown={onPointerDownBody}
         onPointerMove={onPointerMoveBody}
@@ -2950,6 +2956,7 @@ function DrawShapeObject({
   layerOptions,
   onUpdateMapImageObject,
   onRemoveMapImageObject,
+  zIndex = MAP_OBJECT_Z_INDEX,
 }) {
   const dragRef = useRef(null);
   const resizeRef = useRef(null);
@@ -3070,6 +3077,20 @@ function DrawShapeObject({
     ? (liveScaleFactor === 1 ? (element.pointsFt || []) : scaleBrushStroke(element.pointsFt, element.radiusFt ?? 1, liveScaleFactor).pointsFt)
     : null;
   const displayRadiusFt = isBrush ? (element.radiusFt ?? 1) * liveScaleFactor : 0;
+  const strokeHit = mapObjectUsesStrokeHitTest(element);
+  const visibleStrokePx = isBrush
+    ? Math.max(1, 2 * displayRadiusFt * pxPerFt)
+    : Math.max(1, 0.15 * pxPerFt);
+  const hitStrokePx = Math.max(8, visibleStrokePx);
+  const brushPathD = isBrush
+    ? (displayPointsFt || []).reduce(
+      (acc, p, i) =>
+        `${acc}${i === 0 ? 'M' : 'L'} ${p.x * pxPerFt + displayWidthPx / 2},${p.y * pxPerFt + displayHeightPx / 2} `,
+      '',
+    )
+    : '';
+  const ovalRx = Math.max(0, displayWidthPx / 2 - visibleStrokePx / 2);
+  const ovalRy = Math.max(0, displayHeightPx / 2 - visibleStrokePx / 2);
 
   return (
     <div
@@ -3082,7 +3103,10 @@ function DrawShapeObject({
         cursor: !canModify ? 'default' : isEraserActive ? 'crosshair' : isSelected ? 'grab' : 'pointer',
         touchAction: 'none',
         userSelect: 'none',
-        zIndex: 22,
+        zIndex,
+        // Unfilled / brush: empty bbox space must not steal clicks from objects underneath.
+        // Selected objects keep a full hit box so drag/resize still work from the interior.
+        pointerEvents: !isSelected && strokeHit ? 'none' : 'auto',
       }}
       onPointerDown={onPointerDownBody}
       onPointerMove={onPointerMoveBody}
@@ -3093,20 +3117,87 @@ function DrawShapeObject({
           width={displayWidthPx}
           height={displayHeightPx}
           className={isSelected ? 'ring-2 ring-sky-400' : ''}
-          style={{ display: 'block', overflow: 'visible' }}
+          style={{ display: 'block', overflow: 'visible', pointerEvents: 'none' }}
         >
+          {!isSelected && (
+            <path
+              d={brushPathD}
+              stroke="transparent"
+              strokeWidth={hitStrokePx}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              fill="none"
+              style={{ pointerEvents: 'stroke' }}
+            />
+          )}
           <path
-            d={(displayPointsFt || []).reduce(
-              (acc, p, i) =>
-                `${acc}${i === 0 ? 'M' : 'L'} ${p.x * pxPerFt + displayWidthPx / 2},${p.y * pxPerFt + displayHeightPx / 2} `,
-              '',
-            )}
+            d={brushPathD}
             stroke={rgba}
-            strokeWidth={Math.max(1, 2 * displayRadiusFt * pxPerFt)}
+            strokeWidth={visibleStrokePx}
             strokeLinecap="round"
             strokeLinejoin="round"
             fill="none"
+            style={{ pointerEvents: 'none' }}
           />
+        </svg>
+      ) : strokeHit ? (
+        <svg
+          width={displayWidthPx}
+          height={displayHeightPx}
+          className={isSelected ? 'ring-2 ring-sky-400' : ''}
+          style={{ display: 'block', overflow: 'visible', pointerEvents: 'none' }}
+        >
+          {element.shapeTool === 'oval' ? (
+            <>
+              {!isSelected && (
+                <ellipse
+                  cx={displayWidthPx / 2}
+                  cy={displayHeightPx / 2}
+                  rx={ovalRx}
+                  ry={ovalRy}
+                  fill="none"
+                  stroke="transparent"
+                  strokeWidth={hitStrokePx}
+                  style={{ pointerEvents: 'stroke' }}
+                />
+              )}
+              <ellipse
+                cx={displayWidthPx / 2}
+                cy={displayHeightPx / 2}
+                rx={ovalRx}
+                ry={ovalRy}
+                fill="none"
+                stroke={rgba}
+                strokeWidth={visibleStrokePx}
+                style={{ pointerEvents: 'none' }}
+              />
+            </>
+          ) : (
+            <>
+              {!isSelected && (
+                <rect
+                  x={visibleStrokePx / 2}
+                  y={visibleStrokePx / 2}
+                  width={Math.max(0, displayWidthPx - visibleStrokePx)}
+                  height={Math.max(0, displayHeightPx - visibleStrokePx)}
+                  fill="none"
+                  stroke="transparent"
+                  strokeWidth={hitStrokePx}
+                  style={{ pointerEvents: 'stroke' }}
+                />
+              )}
+              <rect
+                x={visibleStrokePx / 2}
+                y={visibleStrokePx / 2}
+                width={Math.max(0, displayWidthPx - visibleStrokePx)}
+                height={Math.max(0, displayHeightPx - visibleStrokePx)}
+                fill="none"
+                stroke={rgba}
+                strokeWidth={visibleStrokePx}
+                style={{ pointerEvents: 'none' }}
+              />
+            </>
+          )}
         </svg>
       ) : (
         <div
@@ -3115,8 +3206,7 @@ function DrawShapeObject({
             width: '100%',
             height: '100%',
             borderRadius: element.shapeTool === 'oval' ? '50%' : 0,
-            backgroundColor: element.filled ? rgba : 'transparent',
-            border: element.filled ? undefined : `${Math.max(1, 0.15 * pxPerFt)}px solid ${rgba}`,
+            backgroundColor: rgba,
             boxSizing: 'border-box',
           }}
         />
@@ -4521,6 +4611,11 @@ export function BattleMap({
     [mapViews, activeMapIdResolved],
   );
   const [selectedMapObjectId, setSelectedMapObjectId] = useState(null);
+  /** Largest first (behind), smallest last (on top) so a click on an overlap hits the small object. */
+  const stackedMapObjects = useMemo(
+    () => sortMapObjectsForStack([...mapImages, ...mapDrawShapes], { selectedId: selectedMapObjectId }),
+    [mapImages, mapDrawShapes, selectedMapObjectId],
+  );
   /** Creator-or-GM permission rule shared by `mapImage` and `drawShape` (see map-object-transform.js). */
   const canModifyMapObjectFn = useCallback(
     (el) => canModifyMapObject(el, { isPlayer, userUid: user?.uid }),
@@ -7585,40 +7680,30 @@ export function BattleMap({
                 </svg>
               )}
 
-              {/* Placed mapImage + drawShape objects — above the draw/scribble canvases (z<=21), below tokens (z=30+) */}
-              {mapImages.map((el) => (
-                <MapImageObject
-                  key={el.instanceId}
-                  element={el}
-                  pxPerFt={pxPerFt}
-                  mapZoom={mapZoom}
-                  isSelected={selectedMapObjectId === el.instanceId}
-                  onSelect={() => setSelectedMapObjectId(el.instanceId)}
-                  onDeselect={() => setSelectedMapObjectId(null)}
-                  canModify={canModifyMapObjectFn(el)}
-                  isEraserActive={!isPlayer && drawTool === 'eraser'}
-                  layerOptions={mapViewsForCurrentMap}
-                  onUpdateMapImageObject={onUpdateMapImageObject}
-                  onRemoveMapImageObject={onRemoveMapImageObject}
-                  onOpenImageLightbox={onOpenImageLightbox}
-                />
-              ))}
-              {mapDrawShapes.map((el) => (
-                <DrawShapeObject
-                  key={el.instanceId}
-                  element={el}
-                  pxPerFt={pxPerFt}
-                  mapZoom={mapZoom}
-                  isSelected={selectedMapObjectId === el.instanceId}
-                  onSelect={() => setSelectedMapObjectId(el.instanceId)}
-                  onDeselect={() => setSelectedMapObjectId(null)}
-                  canModify={canModifyMapObjectFn(el)}
-                  isEraserActive={!isPlayer && drawTool === 'eraser'}
-                  layerOptions={mapViewsForCurrentMap}
-                  onUpdateMapImageObject={onUpdateMapImageObject}
-                  onRemoveMapImageObject={onRemoveMapImageObject}
-                />
-              ))}
+              {/* Placed mapImage + drawShape — z=22 band (above scribble ≤21, below tokens ≥30).
+                  Stacked by area: largest first / behind, smallest last / on top, so a click on an
+                  overlap hits the small object. Stay ≤29 so tokens remain above. */}
+              {stackedMapObjects.map((el, stackIdx) => {
+                const shared = {
+                  element: el,
+                  pxPerFt,
+                  mapZoom,
+                  isSelected: selectedMapObjectId === el.instanceId,
+                  onSelect: () => setSelectedMapObjectId(el.instanceId),
+                  onDeselect: () => setSelectedMapObjectId(null),
+                  canModify: canModifyMapObjectFn(el),
+                  isEraserActive: !isPlayer && drawTool === 'eraser',
+                  layerOptions: mapViewsForCurrentMap,
+                  onUpdateMapImageObject,
+                  onRemoveMapImageObject,
+                  zIndex: mapObjectStackZIndex(stackIdx, { selected: selectedMapObjectId === el.instanceId }),
+                };
+                return el.elementType === 'mapImage' ? (
+                  <MapImageObject key={el.instanceId} {...shared} onOpenImageLightbox={onOpenImageLightbox} />
+                ) : (
+                  <DrawShapeObject key={el.instanceId} {...shared} />
+                );
+              })}
 
               {/* Placed character tokens — rising z-index so overlaps pick the topmost; padded hit target for edges */}
               {charMapTokens.map(({ element, isMyCharacter: myChar }, stackIdx) => {

@@ -3,7 +3,14 @@ import {
   canModifyMapObject,
   computeCornerAnchor,
   computeCornerResize,
+  MAP_OBJECT_Z_INDEX,
+  MAP_OBJECT_Z_INDEX_MAX,
+  mapObjectAreaFt,
+  mapObjectStackZIndex,
+  mapObjectUsesStrokeHitTest,
   scaleBrushStroke,
+  sortMapObjectsForStack,
+  TOKEN_LAYER_Z_INDEX_MIN,
 } from '../../src/client/lib/map-object-transform.js';
 
 describe('canModifyMapObject', () => {
@@ -114,6 +121,74 @@ describe('computeCornerResize', () => {
     });
     expect(res.widthFt).toBe(1);
     expect(res.heightFt).toBe(1);
+  });
+});
+
+describe('mapObjectAreaFt', () => {
+  it('uses widthFt × heightFt', () => {
+    expect(mapObjectAreaFt({ widthFt: 10, heightFt: 4 })).toBe(40);
+  });
+
+  it('falls back to the mapImage default size when dimensions are missing', () => {
+    expect(mapObjectAreaFt({ elementType: 'mapImage' })).toBe(20 * 20);
+  });
+
+  it('falls back to the drawShape default size when dimensions are missing', () => {
+    expect(mapObjectAreaFt({ elementType: 'drawShape' })).toBe(4 * 4);
+  });
+});
+
+describe('sortMapObjectsForStack', () => {
+  it('puts the smaller object after the larger one so it paints and receives clicks on top', () => {
+    const large = { instanceId: 'big', widthFt: 40, heightFt: 40, elementType: 'mapImage' };
+    const small = { instanceId: 'small', widthFt: 8, heightFt: 8, elementType: 'drawShape' };
+    expect(sortMapObjectsForStack([small, large]).map((el) => el.instanceId)).toEqual(['big', 'small']);
+  });
+
+  it('lets a small image sit above a large shape that was added later', () => {
+    const largeShape = { instanceId: 'shape', widthFt: 50, heightFt: 30, elementType: 'drawShape' };
+    const smallImage = { instanceId: 'img', widthFt: 6, heightFt: 6, elementType: 'mapImage' };
+    expect(sortMapObjectsForStack([largeShape, smallImage]).map((el) => el.instanceId)).toEqual(['shape', 'img']);
+  });
+
+  it('breaks area ties by instanceId so order is stable', () => {
+    const a = { instanceId: 'b-id', widthFt: 10, heightFt: 10 };
+    const b = { instanceId: 'a-id', widthFt: 10, heightFt: 10 };
+    expect(sortMapObjectsForStack([a, b]).map((el) => el.instanceId)).toEqual(['a-id', 'b-id']);
+  });
+
+  it('keeps the selected object last so its grips stay on top while editing', () => {
+    const large = { instanceId: 'big', widthFt: 40, heightFt: 40 };
+    const small = { instanceId: 'small', widthFt: 8, heightFt: 8 };
+    expect(sortMapObjectsForStack([small, large], { selectedId: 'big' }).map((el) => el.instanceId)).toEqual(['small', 'big']);
+  });
+});
+
+describe('mapObjectStackZIndex', () => {
+  it('keeps unselected objects in the 22–28 band and selected at 29', () => {
+    expect(mapObjectStackZIndex(0)).toBe(MAP_OBJECT_Z_INDEX);
+    expect(mapObjectStackZIndex(3)).toBe(MAP_OBJECT_Z_INDEX + 3);
+    expect(mapObjectStackZIndex(0, { selected: true })).toBe(MAP_OBJECT_Z_INDEX_MAX);
+  });
+
+  it('never reaches the token layer, even with many stacked objects', () => {
+    expect(mapObjectStackZIndex(100)).toBe(MAP_OBJECT_Z_INDEX_MAX - 1);
+    expect(mapObjectStackZIndex(100, { selected: true })).toBeLessThan(TOKEN_LAYER_Z_INDEX_MIN);
+    expect(mapObjectStackZIndex(0, { selected: true })).toBeLessThan(TOKEN_LAYER_Z_INDEX_MIN);
+    expect(TOKEN_LAYER_Z_INDEX_MIN).toBe(30);
+  });
+});
+
+describe('mapObjectUsesStrokeHitTest', () => {
+  it('is false for images and filled shapes (full box is the hit target)', () => {
+    expect(mapObjectUsesStrokeHitTest({ elementType: 'mapImage' })).toBe(false);
+    expect(mapObjectUsesStrokeHitTest({ elementType: 'drawShape', shapeTool: 'rect', filled: true })).toBe(false);
+  });
+
+  it('is true for unfilled rect/oval and brush so empty bbox space does not steal clicks', () => {
+    expect(mapObjectUsesStrokeHitTest({ elementType: 'drawShape', shapeTool: 'rect', filled: false })).toBe(true);
+    expect(mapObjectUsesStrokeHitTest({ elementType: 'drawShape', shapeTool: 'oval' })).toBe(true);
+    expect(mapObjectUsesStrokeHitTest({ elementType: 'drawShape', shapeTool: 'brush' })).toBe(true);
   });
 });
 
