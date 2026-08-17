@@ -70,6 +70,7 @@ export function EncounterAdversaryTypeCard({
   isMinion,
   characterCount = null,
   scalePartySize,
+  removeFromLabel,
   canEdit = true,
   onAddElements,
   onRemoveInstanceIds,
@@ -83,6 +84,7 @@ export function EncounterAdversaryTypeCard({
   const groupCount = groupMinionInstances(instances).length;
   const headerShownCount = isMinion ? groupCount : headerCount;
   const partyForAdd = scalePartySize ?? characterCount ?? 1;
+  const fromLabel = removeFromLabel ?? (characterCount == null ? 'scene' : 'table');
   const instanceReserved = (inst) => (
     characterCount != null && !isAdversaryPresentForParty(inst, characterCount)
   );
@@ -97,7 +99,7 @@ export function EncounterAdversaryTypeCard({
     if (!ids.length) return;
     const remaining = instances.length - ids.length;
     if (remaining <= 0) {
-      if (!window.confirm(`Remove ${displayName || 'this adversary'} from the ${characterCount == null ? 'scene' : 'table'}?`)) {
+      if (!window.confirm(`Remove ${displayName || 'this adversary'} from the ${fromLabel}?`)) {
         return;
       }
     }
@@ -122,7 +124,7 @@ export function EncounterAdversaryTypeCard({
               onSetMinPartySize={onSetMinPartySize}
               onRemoveGroup={(ids) => {
                 if (groupCount <= 1) {
-                  if (!window.confirm(`Remove ${displayName || 'this adversary'} from the ${characterCount == null ? 'scene' : 'table'}?`)) {
+                  if (!window.confirm(`Remove ${displayName || 'this adversary'} from the ${fromLabel}?`)) {
                     return;
                   }
                 }

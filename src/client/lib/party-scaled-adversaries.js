@@ -103,6 +103,7 @@ function cloneAdversaryTemplate(template) {
     vulnerable: _vulnerable,
     focusedBy: _focusedBy,
     difficultyMod: _difficultyMod,
+    minionGroupParkedPlacements: _parked,
     ...rest
   } = template || {};
   return { ...rest };
@@ -207,6 +208,60 @@ function isUnplaced(el) {
   return el?.tokenX == null || el?.tokenY == null;
 }
 
+function placementOf(el) {
+  if (isUnplaced(el)) return null;
+  return {
+    tokenX: el.tokenX,
+    tokenY: el.tokenY,
+    mapId: el.mapId ?? null,
+    altitude: el.altitude ?? 0,
+  };
+}
+
+function clonePlacements(list) {
+  if (!Array.isArray(list) || !list.length) return [];
+  return list.map((p) => ({
+    tokenX: p.tokenX,
+    tokenY: p.tokenY,
+    mapId: p.mapId ?? null,
+    altitude: p.altitude ?? 0,
+  }));
+}
+
+function readGroupStash(instances) {
+  for (const el of instances || []) {
+    const cloned = clonePlacements(el?.minionGroupParkedPlacements);
+    if (cloned.length) return cloned;
+  }
+  return [];
+}
+
+function applyPlacement(el, placement) {
+  if (!el || !placement) return el;
+  el.tokenX = placement.tokenX;
+  el.tokenY = placement.tokenY;
+  el.mapId = placement.mapId ?? null;
+  el.altitude = placement.altitude ?? 0;
+  return el;
+}
+
+function placementsEqual(a, b) {
+  const left = Array.isArray(a) ? a : [];
+  const right = Array.isArray(b) ? b : [];
+  if (left.length !== right.length) return false;
+  for (let i = 0; i < left.length; i += 1) {
+    const x = left[i];
+    const y = right[i];
+    if (
+      x?.tokenX !== y?.tokenX
+      || x?.tokenY !== y?.tokenY
+      || (x?.mapId ?? null) !== (y?.mapId ?? null)
+      || (x?.altitude ?? 0) !== (y?.altitude ?? 0)
+    ) return false;
+  }
+  return true;
+}
+
 /**
  * Prefer tray copies, then the last member in encounter order.
  * @param {object[]} instances
@@ -228,13 +283,23 @@ function pickRemoveInstanceIds(instances, n) {
 /**
  * For each `minionGroupId` group (including hidden), diff stored count vs
  * {@link minionGroupSize}. Legacy ungrouped minions are left alone.
+ *
+ * Tray copies are removed first. A placed token that must come off is deleted,
+ * but its map spot is stashed on remaining members as
+ * `minionGroupParkedPlacements` and written back onto the next grow.
+ *
  * @param {Array<object>|null|undefined} elements
  * @param {number} characterCount
- * @returns {{ add: object[], removeInstanceIds: string[] }}
+ * @returns {{
+ *   add: object[],
+ *   removeInstanceIds: string[],
+ *   stashUpdates: Array<{ instanceId: string, minionGroupParkedPlacements: object[]|null }>,
+ * }}
  */
 export function planMinionGroupReconcile(elements, characterCount) {
   const add = [];
   const removeInstanceIds = [];
+  const stashUpdates = [];
   const target = minionGroupSize(characterCount);
   const grouped = new Map();
   for (const el of elements || []) {
@@ -248,17 +313,63 @@ export function planMinionGroupReconcile(elements, characterCount) {
   }
   for (const [groupId, instances] of grouped) {
     const diff = target - instances.length;
+    const stash = readGroupStash(instances);
+    const removeSet = new Set();
     if (diff > 0) {
-      add.push(...buildMinionGroupElements(instances[0], {
+      const fresh = buildMinionGroupElements(instances[0], {
         groupId,
         minPartySize: instances[0].minPartySize,
         count: diff,
-      }));
+      });
+      for (const el of fresh) {
+        const placement = stash.pop();
+        if (placement) applyPlacement(el, placement);
+      }
+      add.push(...fresh);
     } else if (diff < 0) {
-      removeInstanceIds.push(...pickRemoveInstanceIds(instances, -diff));
+      const toRemove = pickRemoveInstanceIds(instances, -diff);
+      for (const id of toRemove) {
+        removeSet.add(id);
+        const el = instances.find((inst) => inst.instanceId === id);
+        const placement = placementOf(el);
+        if (placement) stash.push(placement);
+        removeInstanceIds.push(id);
+      }
+    }
+    const nextStash = stash.length ? stash : null;
+    for (const el of instances) {
+      if (removeSet.has(el.instanceId)) continue;
+      if (placementsEqual(el.minionGroupParkedPlacements, nextStash)) continue;
+      stashUpdates.push({
+        instanceId: el.instanceId,
+        minionGroupParkedPlacements: nextStash,
+      });
     }
   }
-  return { add, removeInstanceIds };
+  return { add, removeInstanceIds, stashUpdates };
+}
+
+/**
+ * Apply a {@link planMinionGroupReconcile} plan to an element list.
+ * @param {Array<object>|null|undefined} elements
+ * @param {{ add?: object[], removeInstanceIds?: string[], stashUpdates?: Array<{ instanceId: string, minionGroupParkedPlacements: object[]|null }> }} plan
+ * @returns {object[]}
+ */
+export function applyMinionGroupReconcilePlan(elements, plan) {
+  const removeSet = new Set(plan?.removeInstanceIds || []);
+  const stashById = new Map(
+    (plan?.stashUpdates || []).map((row) => [row.instanceId, row.minionGroupParkedPlacements]),
+  );
+  let next = (elements || []).filter((el) => !removeSet.has(el.instanceId)).map((el) => {
+    if (!stashById.has(el.instanceId)) return el;
+    const copy = { ...el };
+    const placements = stashById.get(el.instanceId);
+    if (!placements?.length) delete copy.minionGroupParkedPlacements;
+    else copy.minionGroupParkedPlacements = clonePlacements(placements);
+    return copy;
+  });
+  if (plan?.add?.length) next = [...next, ...plan.add];
+  return next;
 }
 
 /**

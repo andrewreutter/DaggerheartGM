@@ -3,8 +3,12 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { createElement, act } from 'react';
 import { createRoot } from 'react-dom/client';
 
+let lastBattleMapProps = null;
 vi.mock('../../src/client/components/BattleMap.jsx', () => ({
-  BattleMap: () => null,
+  BattleMap: (props) => {
+    lastBattleMapProps = props;
+    return null;
+  },
 }));
 
 vi.mock('../../src/client/components/SessionCountdownsPanel.jsx', () => ({
@@ -54,6 +58,7 @@ describe('SceneTableEditor GM Moves', () => {
         addListener: () => {},
         dispatchEvent: () => {},
       }));
+    lastBattleMapProps = null;
     container = document.createElement('div');
     document.body.appendChild(container);
     root = createRoot(container);
@@ -143,5 +148,47 @@ describe('SceneTableEditor GM Moves', () => {
     expect(onChange).toHaveBeenCalled();
     const next = onChange.mock.calls.at(-1)[0];
     expect(next.partyTier).toBe(3);
+  });
+
+  it('hides reserved N+ adversaries on the map and fades them when party size is below the tag', async () => {
+    await act(async () => {
+      root.render(
+        createElement(SceneTableEditor, {
+          value: {
+            name: 'Ambush',
+            partySize: 4,
+            activeElements: [
+              {
+                instanceId: 'bear-1',
+                elementType: 'adversary',
+                id: 'srd-adv-bear',
+                name: 'Bear',
+                role: 'bruiser',
+                currentHp: 4,
+                hp_max: 4,
+              },
+              {
+                instanceId: 'dire-1',
+                elementType: 'adversary',
+                id: 'srd-adv-dire-bear',
+                name: 'Dire Bear',
+                role: 'bruiser',
+                minPartySize: 6,
+                currentHp: 8,
+                hp_max: 8,
+              },
+            ],
+          },
+          onChange: vi.fn(),
+        }),
+      );
+    });
+
+    expect(lastBattleMapProps?.adversaryPartyScaleCount).toBe(4);
+    const cards = [...container.querySelectorAll('.group\\/adv')];
+    const direCard = cards.find((el) => el.textContent.includes('Dire Bear'));
+    const bearCard = cards.find((el) => el.textContent.includes('Bear') && !el.textContent.includes('Dire Bear'));
+    expect(direCard?.querySelector('.opacity-50')).toBeTruthy();
+    expect(bearCard?.querySelector('.opacity-50')).toBeNull();
   });
 });

@@ -117,6 +117,36 @@ describe('applyScenePartySizeChange', () => {
     expect(shrunk.activeElements.filter((el) => el.minionGroupId === 'g1')).toHaveLength(3);
   });
 
+  it('restores placed minion map spots when party size shrinks then grows', () => {
+    const group = [1, 2, 3, 4, 5, 6].map((i) => ({
+      instanceId: `m${i}`,
+      elementType: 'adversary',
+      name: 'Goblin',
+      role: 'minion',
+      hp_max: 1,
+      currentHp: 1,
+      minionGroupId: 'g1',
+      tokenX: i * 10,
+      tokenY: i * 10,
+      mapId: 'map-a',
+      altitude: 0,
+    }));
+    const shrunk = applyScenePartySizeChange({ partySize: 6, activeElements: group }, 5);
+    expect(shrunk.activeElements).toHaveLength(5);
+    expect(shrunk.activeElements.some((el) => el.instanceId === 'm6')).toBe(false);
+
+    const grown = applyScenePartySizeChange(shrunk, 6);
+    expect(grown.activeElements).toHaveLength(6);
+    const restored = grown.activeElements.find((el) => el.instanceId !== 'm1'
+      && el.instanceId !== 'm2'
+      && el.instanceId !== 'm3'
+      && el.instanceId !== 'm4'
+      && el.instanceId !== 'm5');
+    expect(restored.tokenX).toBe(60);
+    expect(restored.tokenY).toBe(60);
+    expect(restored.mapId).toBe('map-a');
+  });
+
   it('is a no-op when the size is unchanged', () => {
     const scene = { partySize: 4, activeElements: [] };
     const next = applyScenePartySizeChange(scene, 4);

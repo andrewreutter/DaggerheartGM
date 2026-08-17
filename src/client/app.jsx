@@ -26,6 +26,7 @@ import { UPDATE_BASE_DATA_RUNTIME_KEYS, applyTableOp } from './lib/table-ops.js'
 import {
   buildLibraryAdversaryElements,
   characterCountFromElements,
+  applyMinionGroupReconcilePlan,
   planMinionGroupReconcile,
 } from './lib/party-scaled-adversaries.js';
 import { isTablePlayAllowed, isPrepModeElementUpdateBlocked } from './lib/table-session-gate.js';
@@ -1181,17 +1182,20 @@ function App() {
     minionReconcileRef.current.count = characterCount;
     if (characterCount < 1 && !justChanged) return;
     const plan = planMinionGroupReconcile(activeElements, characterCount);
-    if (!plan.add.length && !plan.removeInstanceIds.length) return;
-    const removeSet = new Set(plan.removeInstanceIds);
-    setActiveElements((prev) => {
-      let next = prev;
-      if (plan.add.length) next = [...next, ...plan.add];
-      if (removeSet.size) next = next.filter((el) => !removeSet.has(el.instanceId));
-      return next;
-    });
+    if (!plan.add.length && !plan.removeInstanceIds.length && !plan.stashUpdates.length) return;
+    setActiveElements((prev) => applyMinionGroupReconcilePlan(prev, plan));
     if (plan.add.length) postTableOp({ op: 'add-elements', elements: plan.add }, tid);
     for (const instanceId of plan.removeInstanceIds) {
       postTableOp({ op: 'remove-element', instanceId }, tid);
+    }
+    if (plan.stashUpdates.length) {
+      postTableOp({
+        op: 'update-elements',
+        updates: plan.stashUpdates.map((row) => ({
+          instanceId: row.instanceId,
+          updates: { minionGroupParkedPlacements: row.minionGroupParkedPlacements },
+        })),
+      }, tid);
     }
   }, [activeElements, effectiveIsPlayer, route.view, route.tableId, tableStateReady]);
 

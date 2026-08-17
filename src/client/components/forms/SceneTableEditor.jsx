@@ -180,6 +180,7 @@ export function SceneTableEditor({
         mapConfig={sceneData.mapConfig}
         conditionsHistory={sceneData.conditionsHistory}
         onOpenImageLightbox={setLightboxUrl}
+        adversaryPartyScaleCount={partySize}
         className="flex-1 min-w-0 min-h-0"
       />
 
@@ -379,8 +380,9 @@ export function SceneTableEditor({
                 displayName={el.name || 'Adversary'}
                 instances={instances}
                 isMinion={isMinion}
-                characterCount={null}
+                characterCount={partySize}
                 scalePartySize={partySize}
+                removeFromLabel="scene"
                 onAddElements={(els) => applyOp({ op: 'add-elements', elements: els })}
                 onRemoveInstanceIds={(ids) => ids.forEach((id) => applyOp({ op: 'remove-element', instanceId: id }))}
                 onSetMinPartySize={(ids, n) => {

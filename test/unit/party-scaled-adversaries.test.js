@@ -8,6 +8,7 @@ import {
   buildMinionGroupElements,
   buildAlwaysPresentClone,
   planMinionGroupReconcile,
+  applyMinionGroupReconcilePlan,
   setGroupMinPartySize,
   partitionPresentReserved,
   formatReservedPartyScaleHint,
@@ -130,7 +131,7 @@ describe('planMinionGroupReconcile', () => {
   it('No-op when already matched', () => {
     const gid = 'g-ok';
     const els = [1, 2, 3, 4].map((i) => adv({ instanceId: `m${i}`, role: 'minion', minionGroupId: gid }));
-    expect(planMinionGroupReconcile(els, 4)).toEqual({ add: [], removeInstanceIds: [] });
+    expect(planMinionGroupReconcile(els, 4)).toEqual({ add: [], removeInstanceIds: [], stashUpdates: [] });
   });
 
   it('Legacy minions without minionGroupId are not resized', () => {
@@ -138,7 +139,50 @@ describe('planMinionGroupReconcile', () => {
       adv({ instanceId: 'l1', role: 'minion' }),
       adv({ instanceId: 'l2', role: 'minion' }),
     ];
-    expect(planMinionGroupReconcile(els, 5)).toEqual({ add: [], removeInstanceIds: [] });
+    expect(planMinionGroupReconcile(els, 5)).toEqual({ add: [], removeInstanceIds: [], stashUpdates: [] });
+  });
+
+  it('6 placed → 5 stashes the removed map spot; 5 → 6 restores it', () => {
+    const gid = 'g-placed';
+    const at6 = [1, 2, 3, 4, 5, 6].map((i) => adv({
+      instanceId: `m${i}`,
+      role: 'minion',
+      minionGroupId: gid,
+      tokenX: i * 10,
+      tokenY: i * 20,
+      mapId: 'map-1',
+      altitude: 5,
+    }));
+    const down = planMinionGroupReconcile(at6, 5);
+    expect(down.add).toEqual([]);
+    expect(down.removeInstanceIds).toEqual(['m6']);
+    expect(down.stashUpdates).toHaveLength(5);
+    expect(down.stashUpdates[0].minionGroupParkedPlacements).toEqual([
+      { tokenX: 60, tokenY: 120, mapId: 'map-1', altitude: 5 },
+    ]);
+
+    const at5 = applyMinionGroupReconcilePlan(at6, down);
+    expect(at5).toHaveLength(5);
+    expect(at5.every((el) => el.instanceId !== 'm6')).toBe(true);
+    expect(at5[0].minionGroupParkedPlacements).toEqual([
+      { tokenX: 60, tokenY: 120, mapId: 'map-1', altitude: 5 },
+    ]);
+
+    const up = planMinionGroupReconcile(at5, 6);
+    expect(up.removeInstanceIds).toEqual([]);
+    expect(up.add).toHaveLength(1);
+    expect(up.add[0].tokenX).toBe(60);
+    expect(up.add[0].tokenY).toBe(120);
+    expect(up.add[0].mapId).toBe('map-1');
+    expect(up.add[0].altitude).toBe(5);
+    expect(up.stashUpdates.every((row) => row.minionGroupParkedPlacements == null)).toBe(true);
+
+    const back = applyMinionGroupReconcilePlan(at5, up);
+    expect(back).toHaveLength(6);
+    const restored = back.find((el) => el.instanceId === up.add[0].instanceId);
+    expect(restored.tokenX).toBe(60);
+    expect(restored.tokenY).toBe(120);
+    expect(back.every((el) => el.minionGroupParkedPlacements == null)).toBe(true);
   });
 });
 

@@ -111,6 +111,7 @@ import {
   combinePlanarDistanceWithAltitude,
 } from '../lib/map-range.js';
 import { computeTokenRenderPx } from '../lib/token-size.js';
+import { collectDistinctAdversaryNames, tokenAbbrevForElement } from '../lib/token-abbrev.js';
 import { pickRandomPlaceOnMapSpot, pickRandomPlaceOnMapSpots, getTokenTrayDirection } from '../lib/place-token-on-map.js';
 import {
   ALTITUDE_CONTROL_GAP_PX,
@@ -148,6 +149,7 @@ import {
 } from '../lib/map-image-drop.js';
 import { useUnifiedImport } from '../lib/unified-import-context.jsx';
 import { buildMapStripTileTokenSignature } from '../lib/map-strip-tile-signature.js';
+import { collapseThumbViewportTokenProxies, formatThumbTokenProxyLabel } from '../lib/map-strip-token-proxies.js';
 import { isAdversaryPresentForParty } from '../lib/party-scaled-adversaries.js';
 import {
   isAdversaryVisibleToPlayers,
@@ -212,14 +214,6 @@ const RANGE_BANDS = [
 ];
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
-
-function tokenAbbrev(name) {
-  if (!name) return '?';
-  const words = String(name).trim().split(/\s+/).filter(Boolean);
-  if (words.length === 0) return '?';
-  if (words.length === 1) return words[0].slice(0, 2).toUpperCase();
-  return (words[0][0] + words[1][0]).toUpperCase();
-}
 
 /**
  * Resolve the object that carries `tokenSizeWidth`/`tokenSizeLength`/`tokenSizeLinked` for a
@@ -437,6 +431,14 @@ function getThumbViewportTokenProxies(mapRow, viewState, activeElements, stripMa
   const visR = scrollLeft + vw;
   const visB = scrollTop + vh;
 
+  const thumbDistinctAdversaryNames = collectDistinctAdversaryNames(
+    (activeElements || []).filter((el) => {
+      if (el.elementType !== 'adversary') return false;
+      if (adversaryPartyScaleCount != null && !isAdversaryPresentForParty(el, adversaryPartyScaleCount)) return false;
+      return true;
+    }),
+  );
+
   const out = [];
   for (const el of activeElements || []) {
     if (el.elementType !== 'character' && el.elementType !== 'adversary' && el.elementType !== 'boardToken') {
@@ -461,7 +463,8 @@ function getThumbViewportTokenProxies(mapRow, viewState, activeElements, stripMa
     const defeated = isAdv && isAdversaryDefeated(el);
     out.push({
       key: el.instanceId,
-      abbrev: tokenAbbrev(isBoard ? (el.label || el.name) : el.name),
+      typeId: isAdv ? (el.id || el.instanceId) : undefined,
+      abbrev: tokenAbbrevForElement(el, thumbDistinctAdversaryNames),
       name: isBoard ? (el.label || el.name || '') : el.name || '',
       kind: isBoard ? 'board' : isAdv ? 'adversary' : 'character',
       defeated,
@@ -473,7 +476,7 @@ function getThumbViewportTokenProxies(mapRow, viewState, activeElements, stripMa
     if (a.kind !== b.kind) return rank(a.kind) - rank(b.kind);
     return (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base' });
   });
-  return out;
+  return collapseThumbViewportTokenProxies(out);
 }
 
 /** Legible stacked token chips over the map thumb (not positioned like on-map tokens). */
@@ -489,7 +492,7 @@ function ThumbViewportTokenProxies({ tokens }) {
       {shown.map((t) => (
         <div
           key={t.key}
-          title={t.name || undefined}
+          title={t.count > 1 && t.name ? `${t.name} ×${t.count}` : t.name || undefined}
           className={`flex h-3.5 min-w-3.5 shrink-0 items-center justify-center rounded-full border border-black/70 px-0.5 text-[7px] font-bold leading-none text-white shadow-sm ${
             t.kind === 'character'
               ? 'bg-sky-700'
@@ -500,7 +503,7 @@ function ThumbViewportTokenProxies({ tokens }) {
                   : 'bg-amber-800'
           }`}
         >
-          {t.abbrev}
+          {formatThumbTokenProxyLabel(t)}
         </div>
       ))}
       {rest > 0 ? (
@@ -1182,14 +1185,13 @@ function TokenCircle({
   rangeBand,
   rangeBandGlowScale,
   allyColorClasses = null,
+  abbrev = null,
 }) {
   const isChar = element.elementType === 'character';
   const isAdv = element.elementType === 'adversary';
   const isBoard = element.elementType === 'boardToken';
 
-  const label = tokenAbbrev(
-    isBoard ? (element.label != null ? String(element.label) : element.name) : element.name,
-  );
+  const label = abbrev ?? tokenAbbrevForElement(element);
   const instLabel = isAdv && instanceNum != null ? `#${instanceNum}` : null;
 
   // Build dot groups for border ring indicator. Skipped for dim tray proxies (`isProxy`) — the GM
@@ -1366,6 +1368,7 @@ const placedTokenPropsAreEqual = (prev, next) => {
     prev.isDragging !== next.isDragging ||
     prev.isPinned !== next.isPinned ||
     prev.instanceNum !== next.instanceNum ||
+    prev.abbrev !== next.abbrev ||
     prev.rangeBand !== next.rangeBand ||
     prev.allyColorClasses !== next.allyColorClasses ||
     prev.onPointerDown !== next.onPointerDown ||
@@ -1566,6 +1569,7 @@ const PlacedToken = memo(function PlacedTokenRaw({
   isDragging,
   isPinned,
   instanceNum = null,
+  abbrev = null,
   rangeBand,
   zIndex,
   pxPerFt,
@@ -1603,6 +1607,7 @@ const PlacedToken = memo(function PlacedTokenRaw({
           sizeW={tokenSizeWpx}
           sizeH={tokenSizeHpx}
           instanceNum={instanceNum}
+          abbrev={abbrev}
           isMyCharacter={isMyCharacter}
           isPlayer={isPlayer}
           isDragging={isDragging}
@@ -1647,6 +1652,7 @@ const trayTokenPropsAreEqual = (prev, next) => {
   if (
     prev.tokenSizePx !== next.tokenSizePx ||
     prev.instanceNum !== next.instanceNum ||
+    prev.abbrev !== next.abbrev ||
     prev.isMyCharacter !== next.isMyCharacter ||
     prev.isDragging !== next.isDragging ||
     prev.isPinned !== next.isPinned ||
@@ -1669,6 +1675,7 @@ const trayTokenPropsAreEqual = (prev, next) => {
 const TrayToken = memo(function TrayTokenRaw({
   element,
   instanceNum,
+  abbrev = null,
   isMyCharacter,
   isProxy,
   isOtherMapShelf,
@@ -1701,6 +1708,7 @@ const TrayToken = memo(function TrayTokenRaw({
         sizeW={tokenSizePx}
         sizeH={tokenSizePx}
         instanceNum={instanceNum}
+        abbrev={abbrev}
         isMyCharacter={isMyCharacter}
         isDragging={isDragging}
         isPinned={isPinned}
@@ -2309,6 +2317,7 @@ function TrayColumn({
   isHighlighted,
   trayRef,
   tokenSizePx,
+  distinctAdversaryNames = null,
   dragRef,
   onPointerDown,
   onPointerMove,
@@ -2354,6 +2363,7 @@ function TrayColumn({
               <TrayToken
                 element={element}
                 instanceNum={instanceNum}
+                abbrev={tokenAbbrevForElement(element, distinctAdversaryNames)}
                 isMyCharacter={isMyCharacter}
                 isProxy={isProxy}
                 isOtherMapShelf={isOtherMapShelf}
@@ -4458,6 +4468,10 @@ export function BattleMap({
   const boardTokens = useMemo(
     () => activeElements.filter((el) => el.elementType === 'boardToken'),
     [activeElements],
+  );
+  const distinctAdversaryNames = useMemo(
+    () => collectDistinctAdversaryNames(adversaries),
+    [adversaries],
   );
 
   // Rotating ally colors: assign one blue/green-family palette entry per character + companion,
@@ -6978,6 +6992,7 @@ export function BattleMap({
                 isHighlighted={highlightLeftTray}
                 trayRef={null}
                 tokenSizePx={trayTokenSizePx}
+                distinctAdversaryNames={distinctAdversaryNames}
                 dragRef={dragRef}
                 onPointerDown={stableOnPointerDown}
                 onPointerMove={stableOnPointerMove}
@@ -7620,6 +7635,7 @@ export function BattleMap({
                       isPlayer={isPlayer}
                       isDragging={dragRef.current?.instanceId === element.instanceId && dragRef.current?.isDragging}
                       isPinned={pinnedToken?.element.instanceId === element.instanceId}
+                      abbrev={tokenAbbrevForElement(element, distinctAdversaryNames)}
                       rangeBand={rangeBand}
                       zIndex={zIndex}
                       pxPerFt={pxPerFt}
@@ -7653,6 +7669,7 @@ export function BattleMap({
                       isPlayer={isPlayer}
                       isDragging={dragRef.current?.instanceId === element.instanceId && dragRef.current?.isDragging}
                       isPinned={pinnedToken?.element.instanceId === element.instanceId}
+                      abbrev={tokenAbbrevForElement(element, distinctAdversaryNames)}
                       rangeBand={rangeBand}
                       zIndex={zIndex}
                       pxPerFt={pxPerFt}
@@ -7687,6 +7704,7 @@ export function BattleMap({
                       isDragging={dragRef.current?.instanceId === element.instanceId && dragRef.current?.isDragging}
                       isPinned={pinnedToken?.element.instanceId === element.instanceId}
                       instanceNum={instanceNum}
+                      abbrev={tokenAbbrevForElement(element, distinctAdversaryNames)}
                       rangeBand={rangeBand}
                       zIndex={zIndex}
                       pxPerFt={pxPerFt}
@@ -7838,6 +7856,7 @@ export function BattleMap({
                   isHighlighted={highlightRightTray}
                   trayRef={null}
                   tokenSizePx={trayTokenSizePx}
+                  distinctAdversaryNames={distinctAdversaryNames}
                   dragRef={dragRef}
                   onPointerDown={stableOnPointerDown}
                   onPointerMove={stableOnPointerMove}
@@ -7871,6 +7890,7 @@ export function BattleMap({
               sizeW={Math.round((dragGhost.tokenSizeW ?? tokenSizePx) * viewZoom)}
               sizeH={Math.round((dragGhost.tokenSizeH ?? tokenSizePx) * viewZoom)}
               instanceNum={dragGhost.instanceNum}
+              abbrev={tokenAbbrevForElement(dragGhost.element, distinctAdversaryNames)}
               isMyCharacter={dragGhost.isMyChar}
               isPlayer={isPlayer}
               isGhost

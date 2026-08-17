@@ -174,6 +174,7 @@ export const UPDATE_BASE_DATA_RUNTIME_KEYS = [
   'v2MoveLockSource',
   'minPartySize',
   'minionGroupId',
+  'minionGroupParkedPlacements',
   /** GM-only: `false` hides this adversary from players (default visible). */
   'visibleToPlayers',
 ];

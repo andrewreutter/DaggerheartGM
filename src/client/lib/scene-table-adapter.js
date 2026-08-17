@@ -21,7 +21,7 @@ import { applyTableOp } from './table-ops.js';
 import { attachDerivedMapConfig, deriveMapConfigFromState } from './map-table-state.js';
 import { dataUrlToFile, loadImageNaturalSizeFromUrl } from './map-image-data-url.js';
 import { generateId } from './helpers.js';
-import { PARTY_SCALE_MAX, planMinionGroupReconcile } from './party-scaled-adversaries.js';
+import { PARTY_SCALE_MAX, applyMinionGroupReconcilePlan, planMinionGroupReconcile } from './party-scaled-adversaries.js';
 import { TIERS } from './constants.js';
 
 export const DEFAULT_SCENE_BATTLE_MODS = {
@@ -128,7 +128,8 @@ export function normalizeSceneTableData(sceneData) {
 
 /**
  * Persist a new designed party size and resize minion groups to match
- * (same reconcile the live table runs when the PC count changes).
+ * (same reconcile the live table runs when the PC count changes, including
+ * restoring parked map spots when a group grows back).
  * @param {object} sceneData
  * @param {unknown} nextPartySize
  * @returns {object}
@@ -137,10 +138,8 @@ export function applyScenePartySizeChange(sceneData, nextPartySize) {
   const prev = normalizeSceneTableData(sceneData);
   const partySize = normalizeScenePartySize(nextPartySize);
   if (partySize === prev.partySize) return prev;
-  const { add, removeInstanceIds } = planMinionGroupReconcile(prev.activeElements, partySize);
-  const removeSet = new Set(removeInstanceIds);
-  let activeElements = prev.activeElements.filter((el) => !removeSet.has(el.instanceId));
-  if (add.length) activeElements = [...activeElements, ...add];
+  const plan = planMinionGroupReconcile(prev.activeElements, partySize);
+  const activeElements = applyMinionGroupReconcilePlan(prev.activeElements, plan);
   return { ...prev, partySize, activeElements };
 }
 

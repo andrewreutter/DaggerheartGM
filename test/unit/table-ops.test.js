@@ -595,6 +595,7 @@ describe('applyTableOp', () => {
       id: 'adv-1', instanceId: 'inst-1', elementType: 'adversary',
       name: 'Rat', role: 'minion',
       minPartySize: 5, minionGroupId: 'g-rats',
+      minionGroupParkedPlacements: [{ tokenX: 10, tokenY: 20, mapId: 'map-1', altitude: 0 }],
     });
     const result = applyTableOp({
       op: 'update-base-data',
@@ -603,6 +604,9 @@ describe('applyTableOp', () => {
     }, { activeElements: [el] });
     expect(result.activeElements[0].minPartySize).toBe(5);
     expect(result.activeElements[0].minionGroupId).toBe('g-rats');
+    expect(result.activeElements[0].minionGroupParkedPlacements).toEqual([
+      { tokenX: 10, tokenY: 20, mapId: 'map-1', altitude: 0 },
+    ]);
     expect(result.activeElements[0].name).toBe('Giant Rat');
   });
 
@@ -1496,6 +1500,7 @@ describe('UPDATE_BASE_DATA_RUNTIME_KEYS', () => {
   it('includes party-scale adversary fields', () => {
     expect(UPDATE_BASE_DATA_RUNTIME_KEYS).toContain('minPartySize');
     expect(UPDATE_BASE_DATA_RUNTIME_KEYS).toContain('minionGroupId');
+    expect(UPDATE_BASE_DATA_RUNTIME_KEYS).toContain('minionGroupParkedPlacements');
     expect(UPDATE_BASE_DATA_RUNTIME_KEYS).toContain('visibleToPlayers');
   });
 });
