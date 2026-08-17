@@ -1,7 +1,7 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { Loader2, Shield, Swords, Star } from 'lucide-react';
 import { FormRow } from './FormRow.jsx';
-import { CustomSelect } from './CustomSelect.jsx';
+import { CustomSelect, CompoundSelectRow } from './CustomSelect.jsx';
 import { GuideFeatureCard } from '../features/GuideFeatureCard.jsx';
 import { useCharacterSrdData } from '../../lib/useCharacterSrdData.js';
 import {
@@ -870,70 +870,75 @@ export function CharacterForm({
           }
         >
       {/* ── Name and Identity ── */}
-      <FormRow label="Name">
-        <div className="flex items-start gap-3">
+      <div className="flex items-start gap-3 mb-4">
+        <div className="min-w-0 flex-1 flex flex-col gap-1">
+          <label className="text-sm font-medium text-dh-muted">Name</label>
           <input
             type="text"
             value={displayForm.name || ''}
             onChange={e => set({ name: e.target.value })}
-            className="min-w-0 flex-1 bg-dh-raised border border-dh-border rounded px-2 py-1.5 text-sm text-dh focus:border-sky-500 focus:outline-none"
+            className="w-full bg-dh-raised border border-dh-border rounded px-2 py-1.5 text-sm text-dh focus:border-sky-500 focus:outline-none"
             placeholder="Character name"
           />
-          <div
-            className="shrink-0 flex flex-col items-end gap-0.5 text-right"
-            title={`Level ${level} · Tier ${tier}`}
-          >
-            <span className="text-[10px] font-medium text-dh-muted leading-none">Level</span>
-            <div className="flex items-center gap-1.5">
-              <span className="text-base font-semibold text-dh tabular-nums leading-tight">{level}</span>
-              <span className="text-[10px] font-bold text-sky-400/80 bg-sky-900/50 border border-sky-800/50 rounded px-1.5 py-0.5 leading-none">
-                T{tier}
-              </span>
-            </div>
+        </div>
+        <div
+          className="shrink-0 flex flex-col gap-1"
+          title={`Level ${level} · Tier ${tier}`}
+        >
+          <span className="text-sm font-medium text-dh-muted">Level</span>
+          <div className="flex items-center gap-1.5">
+            <span className="text-base font-semibold text-dh tabular-nums leading-tight">{level}</span>
+            <span className="text-[10px] font-bold text-sky-400/80 bg-sky-900/50 border border-sky-800/50 rounded px-1.5 py-0.5 leading-none">
+              T{tier}
+            </span>
           </div>
         </div>
-      </FormRow>
+      </div>
 
-      <FormRow label="Pronouns">
-        <input
-          type="text"
-          value={displayForm.pronouns || ''}
-          onChange={e => set({ pronouns: e.target.value })}
-          className="w-full bg-dh-raised border border-dh-border rounded px-2 py-1.5 text-sm text-dh focus:border-sky-500 focus:outline-none"
-          placeholder="they/them"
-        />
-      </FormRow>
+      <div className="grid grid-cols-4 gap-3 mb-4 items-stretch">
+        <div className="col-span-3 min-w-0 flex flex-col gap-4">
+          <FormRow label="Pronouns" className="!mb-0">
+            <input
+              type="text"
+              value={displayForm.pronouns || ''}
+              onChange={e => set({ pronouns: e.target.value })}
+              className="w-full bg-dh-raised border border-dh-border rounded px-2 py-1.5 text-sm text-dh focus:border-sky-500 focus:outline-none"
+              placeholder="they/them"
+            />
+          </FormRow>
 
-      <FormRow label="Description">
-        <textarea
-          value={displayForm.description || ''}
-          onChange={e => set({ description: e.target.value })}
-          rows={2}
-          className="w-full bg-dh-raised border border-dh-border rounded px-2 py-1.5 text-sm text-dh focus:border-sky-500 focus:outline-none resize-y"
-          placeholder="A brief description..."
-        />
-      </FormRow>
+          <FormRow label="Description" className="!mb-0 flex-1 min-h-0">
+            <textarea
+              value={displayForm.description || ''}
+              onChange={e => set({ description: e.target.value })}
+              rows={2}
+              className="w-full flex-1 min-h-[4.5rem] bg-dh-raised border border-dh-border rounded px-2 py-1.5 text-sm text-dh focus:border-sky-500 focus:outline-none resize-y"
+              placeholder="A brief description..."
+            />
+          </FormRow>
+        </div>
 
-      <FormRow label="Portrait (optional)">
-        <ImageEditor
-          imageUrl={formData.imageUrl}
-          _additionalImages={formData._additionalImages}
-          onChange={({ imageUrl, _additionalImages }) => set({ imageUrl, _additionalImages })}
-          onImageSaved={onImageSaved}
-          collection="characters"
-          formData={{
-            ...formData,
-            class: srdData?.classesById?.[formData.classId]?.name,
-            subclass: srdData?.subclassesById?.[formData.subclassId]?.name,
-            ancestry: formData.ancestryIds?.[0] ? srdData?.ancestriesById?.[formData.ancestryIds[0]]?.name : undefined,
-            community: srdData?.communitiesById?.[formData.communityId]?.name,
-            armor: srdData?.armorById?.[formData.armorId]?.name,
-            primaryWeapon: srdData?.weaponsById?.[formData.primaryWeaponId]?.name,
-            secondaryWeapon: srdData?.weaponsById?.[formData.secondaryWeaponId]?.name,
-          }}
-          inline
-        />
-      </FormRow>
+        <FormRow label="Portrait" className="col-span-1 !mb-0 min-w-0">
+          <ImageEditor
+            imageUrl={formData.imageUrl}
+            _additionalImages={formData._additionalImages}
+            onChange={({ imageUrl, _additionalImages }) => set({ imageUrl, _additionalImages })}
+            onImageSaved={onImageSaved}
+            collection="characters"
+            formData={{
+              ...formData,
+              class: srdData?.classesById?.[formData.classId]?.name,
+              subclass: srdData?.subclassesById?.[formData.subclassId]?.name,
+              ancestry: formData.ancestryIds?.[0] ? srdData?.ancestriesById?.[formData.ancestryIds[0]]?.name : undefined,
+              community: srdData?.communitiesById?.[formData.communityId]?.name,
+              armor: srdData?.armorById?.[formData.armorId]?.name,
+              primaryWeapon: srdData?.weaponsById?.[formData.primaryWeaponId]?.name,
+              secondaryWeapon: srdData?.weaponsById?.[formData.secondaryWeaponId]?.name,
+            }}
+            square
+          />
+        </FormRow>
+      </div>
 
       <FormRow label="Battle map token size">
         <TokenSizeFields
@@ -946,97 +951,137 @@ export function CharacterForm({
         <button
           type="button"
           onClick={handleRandomizeBigFour}
-          className="w-full py-2 px-4 rounded border text-sm font-medium transition-colors bg-sky-900/60 border-sky-700 text-sky-200 hover:bg-sky-800 hover:border-sky-600"
+          className="w-full mb-4 py-2 px-4 rounded border text-sm font-medium transition-colors bg-sky-900/60 border-sky-700 text-sky-200 hover:bg-sky-800 hover:border-sky-600"
         >
           Randomize Class, Subclass, Ancestry, and Community
         </button>
       )}
 
-      {/* ── Class ── */}
-      <FormRow label="Class">
-        <CustomSelect
-          value={displayForm.classId || null}
-          onChange={newClassId => {
-            const newClass = newClassId ? srdData?.classesById?.[newClassId] : null;
-            const suggestedTraits = newClass ? parseSuggestedTraits(newClass.suggested_traits) : null;
-            const patch = {
-              classId: newClassId,
-              subclassId: null,
-              abilityIds: [null, null],
-              advancements: {},
-              domainLoadoutIds: [],
-              domainSlotAcquiredLevel: [1, 1],
-              advancementChoicesLockedThroughLevel: 1,
-            };
-            if (suggestedTraits) patch.baseTraits = suggestedTraits;
-            set(patch);
-          }}
-          options={classOptions.map(c => c.id)}
-          getOptionKey={id => id}
-          getOptionLabel={id => srdData?.classesById?.[id]?.name || id}
-          getOptionDescription={(id) => {
-            const c = srdData?.classesById?.[id];
-            return composeOptionTooltip(classStatsMarkdown(c), c?.description);
-          }}
-          renderTooltipExtra={renderClassTooltipExtra}
-          tooltipWide
-          placeholder="Select a class..."
-        />
-        {selectedClass && (
+      {/* ── Class / Subclass / Ancestry / Community ── */}
+      <CompoundSelectRow
+        fields={[
+          {
+            key: 'class',
+            label: 'Class',
+            value: displayForm.classId || null,
+            onChange: (newClassId) => {
+              const newClass = newClassId ? srdData?.classesById?.[newClassId] : null;
+              const suggestedTraits = newClass ? parseSuggestedTraits(newClass.suggested_traits) : null;
+              const patch = {
+                classId: newClassId,
+                subclassId: null,
+                abilityIds: [null, null],
+                advancements: {},
+                domainLoadoutIds: [],
+                domainSlotAcquiredLevel: [1, 1],
+                advancementChoicesLockedThroughLevel: 1,
+              };
+              if (suggestedTraits) patch.baseTraits = suggestedTraits;
+              set(patch);
+            },
+            options: classOptions.map(c => c.id),
+            getOptionKey: id => id,
+            getOptionLabel: id => srdData?.classesById?.[id]?.name || id,
+            getOptionDescription: (id) => {
+              const c = srdData?.classesById?.[id];
+              return composeOptionTooltip(classStatsMarkdown(c), c?.description);
+            },
+            renderTooltipExtra: renderClassTooltipExtra,
+            tooltipWide: true,
+            placeholder: 'Select...',
+          },
+          {
+            key: 'subclass',
+            label: 'Subclass',
+            value: displayForm.subclassId || null,
+            onChange: (id) => {
+              const newSub = id ? srdData?.subclassesById?.[id] : null;
+              const patch = { subclassId: id };
+              if (newSub?.name === 'Beastbound' && (displayForm.companion == null)) {
+                patch.companion = {
+                  name: '', species: '', attackName: '', evasion: 10, maxStress: 3, currentStress: 0,
+                  experiences: [{ name: '', score: 2, id: generateId() }, { name: '', score: 2, id: generateId() }],
+                };
+              }
+              set(patch);
+            },
+            options: subclassOptions.map(sc => sc.id),
+            getOptionKey: id => id,
+            getOptionLabel: id => srdData?.subclassesById?.[id]?.name || id,
+            getOptionDescription: (id) => {
+              const sc = srdData?.subclassesById?.[id];
+              return composeOptionTooltip(subclassStatsMarkdown(sc), sc?.description);
+            },
+            renderTooltipExtra: renderSubclassTooltipExtra,
+            tooltipWide: true,
+            placeholder: selectedClass ? 'Select...' : 'Class first',
+            disabled: !selectedClass,
+            disabledReason: 'Select a class first',
+          },
+          {
+            key: 'ancestry',
+            label: 'Ancestry',
+            value: displayForm.ancestryIds?.[0] || null,
+            onChange: id => set({ ancestryIds: id ? [id] : [] }),
+            options: ancestryOptions.map(a => a.id),
+            getOptionKey: id => id,
+            getOptionLabel: id => srdData?.ancestriesById?.[id]?.name || id,
+            getOptionDescription: (id) => {
+              const a = srdData?.ancestriesById?.[id];
+              return composeOptionTooltip(ancestryStatsMarkdown(a), a?.description);
+            },
+            renderTooltipExtra: renderAncestryTooltipExtra,
+            tooltipWide: true,
+            placeholder: 'Select...',
+          },
+          {
+            key: 'community',
+            label: 'Community',
+            value: displayForm.communityId || null,
+            onChange: id => set({ communityId: id }),
+            options: communityOptions.map(c => c.id),
+            getOptionKey: id => id,
+            getOptionLabel: id => srdData?.communitiesById?.[id]?.name || id,
+            getOptionDescription: (id) => {
+              const c = srdData?.communitiesById?.[id];
+              return composeOptionTooltip(communityStatsMarkdown(c), c?.description);
+            },
+            renderTooltipExtra: renderCommunityTooltipExtra,
+            tooltipWide: true,
+            placeholder: 'Select...',
+          },
+        ]}
+        decoration={(selectedClass || selectedSubclass?.spellcast_trait) ? (
           <div className="mt-1 text-[11px] text-dh-muted space-y-0.5">
             <div>
-              Domains: <span className="text-violet-300">{(selectedClass.domains || []).join(', ')}</span>
-              {' · '}
-              Starting HP: <span className="text-red-300">{selectedClass.starting_hp}</span>
-              {' · '}
-              Evasion: <span className="text-cyan-300">{selectedClass.starting_evasion}</span>
-              {selectedClass.hope_feature && (
+              {selectedClass && (
                 <>
+                  Domains: <span className="text-violet-300">{(selectedClass.domains || []).join(', ')}</span>
                   {' · '}
-                  Hope: <span className="text-dh-hope">{selectedClass.hope_feature.name}</span>
+                  Starting HP: <span className="text-red-300">{selectedClass.starting_hp}</span>
+                  {' · '}
+                  Evasion: <span className="text-cyan-300">{selectedClass.starting_evasion}</span>
+                  {selectedClass.hope_feature && (
+                    <>
+                      {' · '}
+                      Hope: <span className="text-dh-hope">{selectedClass.hope_feature.name}</span>
+                    </>
+                  )}
+                </>
+              )}
+              {selectedClass && selectedSubclass?.spellcast_trait && ' · '}
+              {selectedSubclass?.spellcast_trait && (
+                <>
+                  Spellcast: <span className="dh-text-spellcast-header-sub">{selectedSubclass.spellcast_trait}</span>
                 </>
               )}
             </div>
-            {selectedClass.suggested_traits && (
+            {selectedClass?.suggested_traits && (
               <div className="text-sky-400/60">Suggested traits applied — adjust below if desired</div>
             )}
           </div>
-        )}
-      </FormRow>
-
-      {/* ── Subclass ── */}
-      <FormRow label="Subclass">
-        <CustomSelect
-          value={displayForm.subclassId || null}
-          onChange={id => {
-            const newSub = id ? srdData?.subclassesById?.[id] : null;
-            const patch = { subclassId: id };
-            if (newSub?.name === 'Beastbound' && (displayForm.companion == null)) {
-              patch.companion = {
-                name: '', species: '', attackName: '', evasion: 10, maxStress: 3, currentStress: 0,
-                experiences: [{ name: '', score: 2, id: generateId() }, { name: '', score: 2, id: generateId() }],
-              };
-            }
-            set(patch);
-          }}
-          options={subclassOptions.map(sc => sc.id)}
-          getOptionKey={id => id}
-          getOptionLabel={id => srdData?.subclassesById?.[id]?.name || id}
-          getOptionDescription={(id) => {
-            const sc = srdData?.subclassesById?.[id];
-            return composeOptionTooltip(subclassStatsMarkdown(sc), sc?.description);
-          }}
-          renderTooltipExtra={renderSubclassTooltipExtra}
-          tooltipWide
-          placeholder={selectedClass ? 'Select a subclass...' : 'Select a class first'}
-          disabled={!selectedClass}
-        />
-        {selectedSubclass?.spellcast_trait && (
-          <div className="mt-1 text-[11px] text-dh-muted">
-            Spellcast trait: <span className="dh-text-spellcast-header-sub">{selectedSubclass.spellcast_trait}</span>
-          </div>
-        )}
-      </FormRow>
+        ) : null}
+      />
 
       {editorCardsAfterSubclass.map(({ feature, shape }) => (
         <FormRow key={shape.id} label={feature.name}>
@@ -1051,54 +1096,6 @@ export function CharacterForm({
         </FormRow>
       ))}
 
-      {/* ── Ancestry ── */}
-      <FormRow label="Ancestry">
-        <CustomSelect
-          value={displayForm.ancestryIds?.[0] || null}
-          onChange={id => set({ ancestryIds: id ? [id] : [] })}
-          options={ancestryOptions.map(a => a.id)}
-          getOptionKey={id => id}
-          getOptionLabel={id => srdData?.ancestriesById?.[id]?.name || id}
-          getOptionDescription={(id) => {
-            const a = srdData?.ancestriesById?.[id];
-            return composeOptionTooltip(ancestryStatsMarkdown(a), a?.description);
-          }}
-          renderTooltipExtra={renderAncestryTooltipExtra}
-          tooltipWide
-          placeholder="Select an ancestry..."
-        />
-      </FormRow>
-
-      {/* ── Community ── */}
-      <FormRow label="Community">
-        <CustomSelect
-          value={displayForm.communityId || null}
-          onChange={id => set({ communityId: id })}
-          options={communityOptions.map(c => c.id)}
-          getOptionKey={id => id}
-          getOptionLabel={id => srdData?.communitiesById?.[id]?.name || id}
-          getOptionDescription={(id) => {
-            const c = srdData?.communitiesById?.[id];
-            return composeOptionTooltip(communityStatsMarkdown(c), c?.description);
-          }}
-          renderTooltipExtra={renderCommunityTooltipExtra}
-          tooltipWide
-          placeholder="Select a community..."
-        />
-      </FormRow>
-
-      {level === 1 && (
-        <button
-          type="button"
-          onClick={handleFillOutAutomatically}
-          disabled={!displayForm.classId || !displayForm.subclassId || !displayForm.ancestryIds?.[0] || !displayForm.communityId}
-          title={!(displayForm.classId && displayForm.subclassId && displayForm.ancestryIds?.[0] && displayForm.communityId) ? 'Select class, subclass, ancestry, and community to enable' : undefined}
-          className="w-full py-2 px-4 rounded border text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed bg-sky-900/60 border-sky-700 text-sky-200 hover:bg-sky-800 hover:border-sky-600 disabled:hover:bg-sky-900/60 disabled:hover:border-sky-700"
-        >
-          Random remaining selections
-        </button>
-      )}
-
       {/* ── Traits ── */}
       <FormRow label="Traits">
         <div className="grid grid-cols-3 gap-2">
@@ -1112,7 +1109,7 @@ export function CharacterForm({
 
             return (
               <div key={trait} className="flex items-center gap-2">
-                <span className="text-xs text-dh-muted w-20">{TRAIT_LABELS[trait]}</span>
+                <span className="text-sm text-dh w-20 shrink-0">{TRAIT_LABELS[trait]}</span>
                 <CustomSelect
                   value={isAssigned ? currentVal : null}
                   onChange={v => {
@@ -1132,13 +1129,25 @@ export function CharacterForm({
                 />
                 {recoDisplay?.traits?.[trait] != null &&
                   recoDisplay.traits[trait] !== (baseTraits[trait] ?? 0) && (
-                  <span className="text-[10px] text-sky-400">→ {recoDisplay.traits[trait] > 0 ? '+' : ''}{recoDisplay.traits[trait]}</span>
+                  <span className="text-xs text-sky-400">→ {recoDisplay.traits[trait] > 0 ? '+' : ''}{recoDisplay.traits[trait]}</span>
                 )}
               </div>
             );
           })}
         </div>
       </FormRow>
+
+      {level === 1 && (
+        <button
+          type="button"
+          onClick={handleFillOutAutomatically}
+          disabled={!displayForm.classId || !displayForm.subclassId || !displayForm.ancestryIds?.[0] || !displayForm.communityId}
+          title={!(displayForm.classId && displayForm.subclassId && displayForm.ancestryIds?.[0] && displayForm.communityId) ? 'Select class, subclass, ancestry, and community to enable' : undefined}
+          className="w-full mb-4 py-2 px-4 rounded border text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed bg-sky-900/60 border-sky-700 text-sky-200 hover:bg-sky-800 hover:border-sky-600 disabled:hover:bg-sky-900/60 disabled:hover:border-sky-700"
+        >
+          Randomize remaining selections
+        </button>
+      )}
 
       {/* ── Equipment: Armor ── */}
       <FormRow label="Armor">

@@ -5,6 +5,8 @@ import {
   isGmHolder,
   spotlightCatchUpCount,
   SPOTLIGHT_ACTIVE_BEAM_OPACITY,
+  SPOTLIGHT_GM_INACTIVE_BEAM_OPACITY,
+  spotlightBeamOpacity,
   spotlightCharacterTooltip,
   showChooseSpotlightBanner,
   spotlightInactiveBeamOpacity,
@@ -146,6 +148,15 @@ describe('spotlightCatchUpCount / highestCatchUpKeys', () => {
     expect(two).toBeGreaterThan(one);
     expect(two - one).toBeCloseTo(one - zero);
     expect(spotlightInactiveBeamOpacity(99)).toBeLessThan(SPOTLIGHT_ACTIVE_BEAM_OPACITY);
+  });
+
+  it('keeps the GM inactive beam at about 50% so the crown cone stays readable', () => {
+    expect(SPOTLIGHT_GM_INACTIVE_BEAM_OPACITY).toBeCloseTo(0.5);
+    expect(spotlightBeamOpacity(false, { count: 0, minOpacity: SPOTLIGHT_GM_INACTIVE_BEAM_OPACITY }))
+      .toBe(SPOTLIGHT_GM_INACTIVE_BEAM_OPACITY);
+    expect(spotlightBeamOpacity(false, { count: 0 })).toBeLessThan(SPOTLIGHT_GM_INACTIVE_BEAM_OPACITY);
+    expect(spotlightBeamOpacity(true, { count: 0, minOpacity: SPOTLIGHT_GM_INACTIVE_BEAM_OPACITY }))
+      .toBe(SPOTLIGHT_ACTIVE_BEAM_OPACITY);
   });
 });
 

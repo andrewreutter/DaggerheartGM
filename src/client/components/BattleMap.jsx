@@ -82,10 +82,10 @@ import {
   highestCatchUpKeys,
   isGmHolder,
   isSpotlightHolder,
-  SPOTLIGHT_ACTIVE_BEAM_OPACITY,
+  SPOTLIGHT_GM_INACTIVE_BEAM_OPACITY,
+  spotlightBeamOpacity,
   spotlightCatchUpCount,
   spotlightCharacterTooltip,
-  spotlightInactiveBeamOpacity,
 } from '../lib/spotlight.js';
 import { ConditionsEditor } from './ConditionsEditor.jsx';
 import { Tooltip } from './Tooltip.jsx';
@@ -2114,9 +2114,9 @@ function TokenDetailPanel({
 
 // ─── SpotlightBeam ───────────────────────────────────────────────────────────
 
-function SpotlightBeam({ side, active, dimGlow, count, clickable, onClick, label, tooltip }) {
+function SpotlightBeam({ side, active, dimGlow, count, clickable, onClick, label, tooltip, minOpacity = 0 }) {
   const pointingLeft = side === 'right';
-  const opacity = active ? SPOTLIGHT_ACTIVE_BEAM_OPACITY : spotlightInactiveBeamOpacity(count);
+  const opacity = spotlightBeamOpacity(active, { count, minOpacity });
   const glowPx = active ? 14 : Math.min(14, 3 + count * 3);
   const gold = `rgba(253, 224, 71, ${opacity})`;
   const coneStyle = {
@@ -2196,21 +2196,15 @@ function SpotlightBeam({ side, active, dimGlow, count, clickable, onClick, label
   );
 }
 
-function GmSpotlightToken({ tokenSizePx, hoverTriggerProps = null }) {
+function GmSpotlightToken({ tokenSizePx }) {
   return (
     <div
       data-testid="gm-spotlight-token"
-      className="flex flex-col items-center leading-none"
-      {...(hoverTriggerProps || {})}
+      className="rounded-full flex items-center justify-center border-2 border-black bg-slate-700"
+      style={{ width: tokenSizePx, height: tokenSizePx, minWidth: tokenSizePx, minHeight: tokenSizePx }}
+      title="GM"
     >
-      <div
-        className="relative rounded-full flex items-center justify-center border-2 border-black bg-slate-700"
-        style={{ width: tokenSizePx, height: tokenSizePx, minWidth: tokenSizePx, minHeight: tokenSizePx }}
-        title="GM"
-      >
-        <Crown size={Math.max(12, Math.round(tokenSizePx * 0.45))} className="text-slate-200" />
-      </div>
-      <span className="mt-0.5 text-[8px] font-semibold uppercase tracking-wide text-dh-muted">GM</span>
+      <Crown size={Math.max(12, Math.round(tokenSizePx * 0.45))} className="text-slate-200" />
     </div>
   );
 }
@@ -7873,32 +7867,36 @@ export function BattleMap({
               />
             )}
             {showSpotlight && (
-              <div className="relative flex items-center justify-center px-1.5 pt-2 pb-1.5 shrink-0">
+              <div className="px-1.5 pt-2 pb-1.5 shrink-0">
                 <div
-                  className="absolute top-1/2 right-full z-30 -translate-y-1/2"
-                  style={{ marginRight: -SPOTLIGHT_BEAM_OVERLAP_PX }}
+                  className="flex flex-col items-center"
+                  {...(gmMovesOverlay && !isPlayer
+                    ? gmMovesOverlay.triggerProps((e) => ({
+                        source: 'gm-token',
+                        edgeLeft: e.currentTarget.getBoundingClientRect().left,
+                      }))
+                    : {})}
                 >
-                  <SpotlightBeam
-                    side="right"
-                    active={isGmHolder(spotlight)}
-                    dimGlow={false}
-                    count={0}
-                    clickable={!isPlayer && typeof onSpotlightChange === 'function'}
-                    label={isGmHolder(spotlight) ? 'GM holds the spotlight — click to clear' : 'Give spotlight to the GM'}
-                    onClick={handleAssignGmSpotlight}
-                  />
+                  <div className="relative flex items-center justify-center">
+                    <GmSpotlightToken tokenSizePx={trayTokenSizePx} />
+                    <div
+                      className="absolute top-1/2 right-full z-30 -translate-y-1/2"
+                      style={{ marginRight: -SPOTLIGHT_BEAM_OVERLAP_PX }}
+                    >
+                      <SpotlightBeam
+                        side="right"
+                        active={isGmHolder(spotlight)}
+                        dimGlow={false}
+                        count={0}
+                        minOpacity={SPOTLIGHT_GM_INACTIVE_BEAM_OPACITY}
+                        clickable={!isPlayer && typeof onSpotlightChange === 'function'}
+                        label={isGmHolder(spotlight) ? 'GM holds the spotlight — click to clear' : 'Give spotlight to the GM'}
+                        onClick={handleAssignGmSpotlight}
+                      />
+                    </div>
+                  </div>
+                  <span className="mt-0.5 text-[8px] font-semibold uppercase tracking-wide text-dh-muted">GM</span>
                 </div>
-                <GmSpotlightToken
-                  tokenSizePx={trayTokenSizePx}
-                  hoverTriggerProps={
-                    gmMovesOverlay && !isPlayer
-                      ? gmMovesOverlay.triggerProps((e) => ({
-                          source: 'gm-token',
-                          edgeLeft: e.currentTarget.getBoundingClientRect().left,
-                        }))
-                      : null
-                  }
-                />
               </div>
             )}
             {showRightAdversaryTray && (

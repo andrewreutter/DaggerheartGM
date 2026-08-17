@@ -54,6 +54,8 @@ export function spotlightCatchUpCount(spotlight, key) {
 
 /** Inactive-beam opacity: 0 → 0.16, then +0.16 per catch-up, capped well below the active beam. */
 export const SPOTLIGHT_ACTIVE_BEAM_OPACITY = 0.98;
+/** GM crown beam has no catch-up count — keep it readable even when inactive. */
+export const SPOTLIGHT_GM_INACTIVE_BEAM_OPACITY = 0.50;
 const INACTIVE_BEAM_OPACITY_BASE = 0.16;
 const INACTIVE_BEAM_OPACITY_STEP = 0.16;
 const INACTIVE_BEAM_OPACITY_MAX = 0.70;
@@ -61,6 +63,16 @@ const INACTIVE_BEAM_OPACITY_MAX = 0.70;
 export function spotlightInactiveBeamOpacity(count) {
   const n = Math.max(0, Math.floor(Number(count) || 0));
   return Math.min(INACTIVE_BEAM_OPACITY_MAX, INACTIVE_BEAM_OPACITY_BASE + n * INACTIVE_BEAM_OPACITY_STEP);
+}
+
+/**
+ * Beam fill opacity. Character trays scale by catch-up; the GM beam uses
+ * `minOpacity` so it never drops below ~50% when inactive.
+ */
+export function spotlightBeamOpacity(active, { count = 0, minOpacity = 0 } = {}) {
+  if (active) return SPOTLIGHT_ACTIVE_BEAM_OPACITY;
+  const floor = Number.isFinite(minOpacity) ? Math.max(0, minOpacity) : 0;
+  return Math.max(floor, spotlightInactiveBeamOpacity(count));
 }
 
 /**

@@ -11,8 +11,9 @@ const DROPDOWN_GAP = 2;
 /**
  * Custom dropdown for visual consistency with native selects.
  * Shows a button when closed; expands to a list when opened.
- * Dropdown is always portaled to document.body with position:fixed so it is
+ * The option list is portaled to document.body with position:fixed so it is
  * bounded by the viewport (opens downward or upward to avoid being cut off).
+ * Pass `anchorRef` to size and place the overlay from that element instead of the trigger.
  * When getOptionDescription is provided, hovering an option shows a tooltip
  * to the left or right depending on available viewport space.
  *
@@ -27,7 +28,7 @@ const DROPDOWN_GAP = 2;
  * @param {Function} [props.renderValue] - (value) => ReactNode — custom closed-state rendering
  * @param {Function} [props.renderPlaceholder] - () => ReactNode — when value is null/undefined, render instead of the placeholder string (e.g. name + resource icons inside the trigger)
  * @param {string} [props.placeholder] - Shown when value is null/undefined (also used for the clear option in the dropdown and string fallback when renderPlaceholder is absent)
- * @param {boolean} [props.truncateClosedLabel] — when there is no selection, apply single-line ellipsis to the closed label
+ * @param {boolean} [props.truncateClosedLabel] — ellipsis the closed label (placeholder and selected value)
  * @param {boolean} [props.disabled] — Hard lock: no open (preview / no handler). Prefer this over `selectionBlocked`.
  * @param {boolean} [props.selectionBlocked] — Cannot confirm a choice (e.g. unaffordable cost, already used) but the menu may still open so option descriptions / tooltips work.
  * @param {string} [props.disabledReason] — Plain text when `disabled` (e.g. insufficient resources).
@@ -38,9 +39,19 @@ const DROPDOWN_GAP = 2;
  * @param {boolean} [props.fixedDropdown] - Deprecated; dropdown is always viewport-positioned
  * @param {boolean} [props.tooltipWide] - Use a wider hover tooltip (long markdown)
  * @param {function} [props.renderTooltipExtra] - (value) => ReactNode — rendered below markdown; enables pointer-events on tooltip and delayed hide so content can be scrolled
+ * @param {boolean} [props.open] — Controlled open state. Omit for internal toggle state.
+ * @param {function} [props.onOpenChange] — `(nextOpen: boolean) => void` when the menu opens or closes
+ * @param {import('react').RefObject<HTMLElement|null>} [props.anchorRef] — Overlay is positioned from this element (e.g. a compound trigger row) instead of the trigger button
  */
-export function CustomSelect({ value, onChange, options, getOptionLabel, getOptionDescription, getOptionKey, renderOption, renderValue, renderPlaceholder, placeholder, truncateClosedLabel, disabled, selectionBlocked = false, disabledReason, disabledTooltipContent, className = '', triggerClassName = '', dropdownClassName = '', fixedDropdown = false, tooltipWide = false, renderTooltipExtra }) {
-  const [open, setOpen] = useState(false);
+export function CustomSelect({ value, onChange, options, getOptionLabel, getOptionDescription, getOptionKey, renderOption, renderValue, renderPlaceholder, placeholder, truncateClosedLabel, disabled, selectionBlocked = false, disabledReason, disabledTooltipContent, className = '', triggerClassName = '', dropdownClassName = '', fixedDropdown = false, tooltipWide = false, renderTooltipExtra, open: openProp, onOpenChange, anchorRef = null }) {
+  const isOpenControlled = openProp !== undefined;
+  const [internalOpen, setInternalOpen] = useState(false);
+  const open = isOpenControlled ? !!openProp : internalOpen;
+  const setOpen = (next) => {
+    const resolved = typeof next === 'function' ? next(open) : next;
+    if (!isOpenControlled) setInternalOpen(resolved);
+    onOpenChange?.(resolved);
+  };
   const [dropdownPos, setDropdownPos] = useState(null); // { top?, bottom?, left, width, maxHeight } for portaled dropdown
   const ref = useRef(null);
   const dropdownRef = useRef(null);
@@ -49,13 +60,16 @@ export function CustomSelect({ value, onChange, options, getOptionLabel, getOpti
   // Compute position relative to the browser window (viewport), not any scroll container.
   // Portaled to body so fixed positioning is viewport-relative and the dropdown isn't clipped.
   useLayoutEffect(() => {
-    if (!open || !ref.current) {
+    if (!open) {
       setDropdownPos(null);
       return;
     }
-    const btn = ref.current.querySelector('button');
-    if (!btn) return;
-    const rect = btn.getBoundingClientRect();
+    const anchorEl = anchorRef?.current || ref.current?.querySelector('button');
+    if (!anchorEl) {
+      setDropdownPos(null);
+      return;
+    }
+    const rect = anchorEl.getBoundingClientRect();
     const spaceBelow = window.innerHeight - rect.bottom - DROPDOWN_GAP;
     const spaceAbove = rect.top - DROPDOWN_GAP;
     if (spaceBelow >= DROPDOWN_MAX_HEIGHT) {
@@ -73,7 +87,7 @@ export function CustomSelect({ value, onChange, options, getOptionLabel, getOpti
         maxHeight: Math.min(DROPDOWN_MAX_HEIGHT, spaceAbove - 8),
       });
     }
-  }, [open]);
+  }, [open, anchorRef]);
 
   useEffect(() => {
     if (!open) {
@@ -146,10 +160,14 @@ export function CustomSelect({ value, onChange, options, getOptionLabel, getOpti
       <button
         type="button"
         disabled={hardDisabled}
+        aria-expanded={open}
+        aria-haspopup="listbox"
         aria-disabled={!hardDisabled && softBlocked ? true : undefined}
         title={triggerTitle}
         onClick={() => !hardDisabled && setOpen(!open)}
         className={`w-full ${triggerSurface} text-left flex items-center justify-between focus:outline-none focus:border-blue-500 ${
+          open ? 'ring-1 ring-inset ring-blue-500' : ''
+        } ${
           hardDisabled
             ? 'opacity-40 cursor-not-allowed'
             : softBlocked
@@ -158,7 +176,7 @@ export function CustomSelect({ value, onChange, options, getOptionLabel, getOpti
         }`}
       >
         <span
-          className={`flex-1 min-w-0 ${hasValue ? '' : 'text-dh-muted'} ${!hasValue && truncateClosedLabel && typeof renderPlaceholder !== 'function' ? 'truncate' : ''}`}
+          className={`flex-1 min-w-0 ${hasValue ? '' : 'text-dh-muted'} ${truncateClosedLabel && (hasValue || typeof renderPlaceholder !== 'function') ? 'truncate' : ''}`}
           title={
             typeof closedContent === 'string'
               ? closedContent
@@ -252,4 +270,45 @@ export function CustomSelect({ value, onChange, options, getOptionLabel, getOpti
   }
 
   return inner;
+}
+
+/**
+ * Several labeled CustomSelects on one row. Opening any field shows the usual
+ * portaled overlay, sized and placed immediately under the compound trigger row.
+ *
+ * @param {Object} props
+ * @param {Array<{ key: string, label?: string, [selectProp: string]: * }>} props.fields
+ * @param {import('react').ReactNode} [props.decoration] — persistent chrome directly under the trigger row
+ * @param {string} [props.className]
+ */
+export function CompoundSelectRow({ fields, decoration, className = '' }) {
+  const [openKey, setOpenKey] = useState(null);
+  const rowRef = useRef(null);
+
+  return (
+    <div className={`mb-4 ${className}`}>
+      <div ref={rowRef} className="grid grid-cols-4 gap-2">
+        {fields.map((field) => {
+          const { key, label, ...selectProps } = field;
+          return (
+            <div key={key} className="min-w-0 flex flex-col gap-1">
+              {label ? (
+                <label className="text-sm font-medium text-dh-muted truncate" title={label}>{label}</label>
+              ) : null}
+              <CustomSelect
+                {...selectProps}
+                truncateClosedLabel
+                anchorRef={rowRef}
+                open={openKey === key}
+                onOpenChange={(next) => {
+                  setOpenKey((prev) => (next ? key : (prev === key ? null : prev)));
+                }}
+              />
+            </div>
+          );
+        })}
+      </div>
+      {decoration}
+    </div>
+  );
 }

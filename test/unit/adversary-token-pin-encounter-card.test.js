@@ -46,6 +46,8 @@ describe('GM adversary token pin uses Encounter card + attack/feature actions', 
     expect(src).toContain('overlayLeftOfEdgeStyle');
     expect(src).toContain('hoverOverlay={trayAdversaryOverlay}');
     expect(src).toContain('data-testid="gm-spotlight-token"');
+    expect(src).toContain('<GmSpotlightToken tokenSizePx={trayTokenSizePx} />');
+    expect(src).toMatch(/<GmSpotlightToken tokenSizePx=\{trayTokenSizePx\} \/>\s*<div\s+className="absolute top-1\/2 right-full z-30 -translate-y-1\/2"\s+style=\{\{ marginRight: -SPOTLIGHT_BEAM_OVERLAP_PX \}\}/);
     expect(src).toContain('gmMovesOverlay.triggerProps');
     expect(src).toContain("source: 'gm-token'");
     expect(src).toContain('edgeLeft');

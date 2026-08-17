@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Plus, Trash2, Star } from 'lucide-react';
+import { Plus, Trash2, Star, User } from 'lucide-react';
 import { ImageGenerator } from '../ImageGenerator.jsx';
 import { postImageUpload } from '../../lib/api.js';
 import { dataUrlToFile } from '../../lib/map-image-data-url.js';
@@ -16,8 +16,9 @@ import { dataUrlToFile } from '../../lib/map-image-data-url.js';
  *   collection        — 'adversaries' | 'environments' | 'scenes' | 'adventures'
  *   formData          — current form data (for ImageGenerator prompt)
  *   inline            — boolean; compact layout for tight forms
+ *   square            — boolean; fill an aspect-square well (character editor portrait)
  */
-export function ImageEditor({ imageUrl, _additionalImages, onChange, onImageSaved, collection, formData, inline = false }) {
+export function ImageEditor({ imageUrl, _additionalImages, onChange, onImageSaved, collection, formData, inline = false, square = false }) {
   const [addUrl, setAddUrl] = useState('');
   const [showAddInput, setShowAddInput] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -99,6 +100,100 @@ export function ImageEditor({ imageUrl, _additionalImages, onChange, onImageSave
       return url.length > 45 ? url.slice(0, 42) + '…' : url;
     }
   };
+
+  const addUrlRow = showAddInput && (
+    <div className="flex gap-2">
+      <input
+        type="url"
+        placeholder="https://... or paste data URL"
+        value={addUrl}
+        onChange={e => setAddUrl(e.target.value)}
+        onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); handleAddUrl(); } }}
+        className="flex-1 min-w-0 bg-dh-inset border border-dh-border rounded px-2 py-1.5 text-sm text-dh placeholder-dh-muted focus:border-blue-500 focus:outline-none"
+      />
+      <button
+        type="button"
+        onClick={handleAddUrl}
+        disabled={!addUrl?.trim() || uploading}
+        className="px-3 py-1.5 text-sm rounded bg-dh-hover hover:bg-dh-hover disabled:opacity-50 disabled:cursor-not-allowed text-dh"
+      >
+        {uploading ? 'Uploading…' : 'Add'}
+      </button>
+    </div>
+  );
+
+  if (square) {
+    return (
+      <div className="flex flex-col gap-2 min-w-0">
+        <div className="relative aspect-square w-full rounded-lg border border-dh-border bg-dh-inset">
+          <div className="absolute inset-0 overflow-hidden rounded-lg">
+            {imageUrl ? (
+              <img
+                src={imageUrl}
+                alt=""
+                className="w-full h-full object-cover"
+                onError={e => { e.target.onerror = null; e.target.style.display = 'none'; }}
+              />
+            ) : (
+              <div className="w-full h-full flex flex-col items-center justify-center gap-1 text-dh-muted">
+                <User size={28} className="opacity-50" />
+                <span className="text-[10px]">No portrait</span>
+              </div>
+            )}
+          </div>
+          <div className="absolute inset-x-0 bottom-0 z-10 flex items-center gap-1 p-1.5 bg-gradient-to-t from-black/75 via-black/40 to-transparent">
+            <button
+              type="button"
+              onClick={() => setShowAddInput(s => !s)}
+              className="flex items-center gap-1 bg-dh-surface/90 border border-dh-border hover:border-dh-strong text-[10px] rounded px-1.5 py-1 text-dh"
+            >
+              <Plus size={12} /> Add
+            </button>
+            {imageUrl && (
+              <button
+                type="button"
+                onClick={() => handleRemove(imageUrl)}
+                className="ml-auto p-1 rounded bg-dh-surface/90 border border-dh-border text-dh-muted hover:text-red-400"
+                title="Remove portrait"
+              >
+                <Trash2 size={12} />
+              </button>
+            )}
+          </div>
+        </div>
+        <ImageGenerator
+          formData={formData}
+          collection={collection}
+          onImageGenerated={handleImageGenerated}
+        />
+        {addUrlRow}
+        {additional.length > 0 && (
+          <div className="flex flex-wrap gap-1">
+            {additional.map((url, idx) => (
+              <div key={url.slice(0, 80) + idx} className="relative w-8 h-8 rounded overflow-hidden border border-dh-border bg-dh-raised shrink-0">
+                <button
+                  type="button"
+                  onClick={() => handleSetPrimary(url)}
+                  className="block w-full h-full"
+                  title="Set as primary"
+                >
+                  <img src={url} alt="" className="w-full h-full object-cover" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleRemove(url)}
+                  className="absolute top-0 right-0 p-0.5 bg-black/60 text-white hover:text-red-300"
+                  title="Remove"
+                >
+                  <Trash2 size={8} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
 
   const panelClass = inline
     ? 'p-3 border border-dh-border rounded-lg bg-dh-surface/50'
