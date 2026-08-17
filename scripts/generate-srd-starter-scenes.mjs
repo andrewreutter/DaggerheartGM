@@ -1,25 +1,32 @@
 #!/usr/bin/env node
 /**
- * Generate one SRD starter scene per environment (except Ambushed / Ambushers)
- * and upsert into `external_item_cache` (source `dt`, collection `scenes`).
+ * Seed the DT catalog scenes into `external_item_cache`.
  *
- * Required env:
+ * DEFAULT behaviour (`npm run generate:srd-scenes`):
+ *   1. DELETE the 17 auto-generated environment scenes (SHELVED_STARTER_SCENE_IDS) plus
+ *      the historical excluded pair (STARTER_SCENE_EXCLUDED_SCENE_IDS) from external_item_cache.
+ *   2. Upsert the two hand-authored JSON files from `data/dt-scenes/` into
+ *      external_item_cache (source='dt').  Rows with _adminEditedAt are skipped unless
+ *      --force is passed.
+ *   3. UPDATE items SET is_public = false for the two original UUID copies, so they no
+ *      longer appear under "Public" and do not duplicate the DT catalog entries.
+ *
+ * LEGACY behaviour (`npm run generate:srd-scenes -- --from-environments`):
+ *   Generates one scene per SRD environment (except Ambushed / Ambushers), uploading
+ *   SVG placeholder map images to Supabase Storage.  This restores the old 17 scenes
+ *   and is opt-in only.  Requires DATABASE_URL, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY.
+ *
+ * Optional flags:
+ *   --force            Overwrite even rows that have _adminEditedAt.
+ *   --from-environments  Use the old per-environment generator (legacy mode).
+ *
+ * Required env (legacy mode also needs SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY):
  *   DATABASE_URL
- *   SUPABASE_URL
- *   SUPABASE_SERVICE_ROLE_KEY
- *
- * Optional:
- *   APP_ID — defaults to daggerheart-gm-tool (same as server.js / loadSrdIntoDb)
- *
- * Idempotent: scene ids are stable (`srd-scene-{slug}`); re-running replaces rows
- * unless the row has `_adminEditedAt` (pass `--force` to overwrite those).
- * Map image URLs get a new Storage UUID each upload — that's OK.
- *
- * Does not touch loadSrdIntoDb() or SRD_EXTERNAL_CACHE_REVISION.
- *
- * Run: npm run generate:srd-scenes [-- --force]
  */
 
+import { readFileSync, readdirSync } from 'fs';
+import { join, dirname } from 'path';
+import { fileURLToPath } from 'url';
 import { createClient as createSupabaseClient } from '@supabase/supabase-js';
 import { getCollection } from '../src/srd/parser.js';
 import { upsertExternalCache, getExternalCacheByIds, getPool } from '../src/db.js';
@@ -30,20 +37,124 @@ import {
   shouldGenerateStarterScene,
   shouldSkipAdminEditedStarterScene,
   STARTER_SCENE_EXCLUDED_SCENE_IDS,
+  SHELVED_STARTER_SCENE_IDS,
+  AUTHORED_SCENE_UUID_TO_CATALOG_ID,
   STARTER_SCENE_CACHE_SOURCE,
 } from '../src/srd-starter-scenes.js';
 
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const REPO_ROOT = join(__dirname, '..');
+
 const APP_ID = process.env.APP_ID || 'daggerheart-gm-tool';
 const SRD_PUBLIC_OWNER_UID = 'srd-public';
-const REQUIRED_ENV = ['DATABASE_URL', 'SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY'];
 const FORCE = process.argv.includes('--force');
+const FROM_ENVIRONMENTS = process.argv.includes('--from-environments');
 
-function requireEnv() {
-  const missing = REQUIRED_ENV.filter((key) => !process.env[key]);
+function requireEnv(keys) {
+  const missing = keys.filter((key) => !process.env[key]);
   if (missing.length) {
     console.error(`Missing required env: ${missing.join(', ')}`);
     process.exit(1);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Shared: delete shelved + excluded scene ids from the cache
+// ---------------------------------------------------------------------------
+
+async function deleteShelvedAndExcludedScenes() {
+  const ids = [...SHELVED_STARTER_SCENE_IDS, ...STARTER_SCENE_EXCLUDED_SCENE_IDS];
+  if (!ids.length) return;
+  const { rowCount } = await getPool().query(
+    `DELETE FROM external_item_cache
+     WHERE app_id = $1 AND source = ANY($2::text[]) AND collection = 'scenes' AND external_id = ANY($3)`,
+    [APP_ID, [STARTER_SCENE_CACHE_SOURCE, 'srd'], ids],
+  );
+  if (rowCount) {
+    console.log(`[srd-scenes] Removed ${rowCount} shelved/excluded scene(s) from cache.`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// DEFAULT mode: upsert the two hand-authored JSON files
+// ---------------------------------------------------------------------------
+
+async function seedAuthoredScenes() {
+  requireEnv(['DATABASE_URL']);
+
+  console.log('[srd-scenes] Default mode: seeding two hand-authored DT scenes.');
+
+  await deleteShelvedAndExcludedScenes();
+
+  // Load all JSON files from data/dt-scenes/
+  const dtScenesDir = join(REPO_ROOT, 'data', 'dt-scenes');
+  let files;
+  try {
+    files = readdirSync(dtScenesDir).filter((f) => f.endsWith('.json'));
+  } catch {
+    console.error(`[srd-scenes] data/dt-scenes/ directory not found.`);
+    process.exit(1);
+  }
+
+  if (!files.length) {
+    console.warn('[srd-scenes] No JSON files found in data/dt-scenes/. Nothing to upsert.');
+    return;
+  }
+
+  let count = 0;
+  let skippedAdmin = 0;
+  for (const file of files) {
+    const raw = JSON.parse(readFileSync(join(dtScenesDir, file), 'utf8'));
+    const { id, ...sceneData } = raw;
+    if (!id) {
+      console.warn(`  skip  ${file}  (no id field)`);
+      continue;
+    }
+
+    const existingRows = await getExternalCacheByIds(APP_ID, 'scenes', [id]);
+    if (shouldSkipAdminEditedStarterScene(existingRows[0], { force: FORCE })) {
+      console.log(`  skip  ${id}  (admin-edited, use --force to overwrite)`);
+      skippedAdmin += 1;
+      continue;
+    }
+
+    await upsertExternalCache(APP_ID, STARTER_SCENE_CACHE_SOURCE, 'scenes', id, sceneData, '');
+    console.log(`  upsert  ${id}  ${raw.name}`);
+    count += 1;
+  }
+
+  console.log(`[srd-scenes] Upserted ${count} authored scene(s) into external_item_cache.`);
+  if (skippedAdmin) {
+    console.log(`[srd-scenes] Skipped ${skippedAdmin} admin-edited scene(s). Re-run with --force to overwrite.`);
+  }
+
+  // Un-publish the original UUID items rows so they don't appear under "Public"
+  await unpublishOriginalItems();
+}
+
+async function unpublishOriginalItems() {
+  const uuids = Object.keys(AUTHORED_SCENE_UUID_TO_CATALOG_ID);
+  if (!uuids.length) return;
+  const { rowCount } = await getPool().query(
+    `UPDATE items SET is_public = false
+     WHERE app_id = $1 AND collection = 'scenes' AND id = ANY($2) AND is_public = true`,
+    [APP_ID, uuids],
+  );
+  if (rowCount) {
+    console.log(`[srd-scenes] Un-published ${rowCount} original items row(s) (UUID copies will remain Mine-only).`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// LEGACY mode: per-environment generator (opt-in via --from-environments)
+// ---------------------------------------------------------------------------
+
+function buildAdversaryLookup(adversaries) {
+  const byId = {};
+  for (const adv of adversaries || []) {
+    if (adv?.id) byId[adv.id] = adv;
+  }
+  return byId;
 }
 
 async function deleteExcludedStarterScenes() {
@@ -59,16 +170,8 @@ async function deleteExcludedStarterScenes() {
   }
 }
 
-function buildAdversaryLookup(adversaries) {
-  const byId = {};
-  for (const adv of adversaries || []) {
-    if (adv?.id) byId[adv.id] = adv;
-  }
-  return byId;
-}
-
-async function main() {
-  requireEnv();
+async function seedFromEnvironments() {
+  requireEnv(['DATABASE_URL', 'SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY']);
 
   const environments = await getCollection('environments');
   const adversaries = await getCollection('adversaries');
@@ -83,7 +186,7 @@ async function main() {
   const adversaryById = buildAdversaryLookup(adversaries);
 
   console.log(
-    `[srd-scenes] ${environments.length} environment(s), ${adversaries?.length ?? 0} adversary(ies). Uploading placeholders and upserting scenes…`,
+    `[srd-scenes] --from-environments: ${environments.length} environment(s), ${adversaries?.length ?? 0} adversary(ies). Uploading placeholders and upserting scenes…`,
   );
 
   await deleteExcludedStarterScenes();
@@ -129,6 +232,18 @@ async function main() {
   console.log(`[srd-scenes] Upserted ${count} starter scene(s) into external_item_cache.`);
   if (skippedAdmin) {
     console.log(`[srd-scenes] Skipped ${skippedAdmin} admin-edited scene(s). Re-run with --force to overwrite.`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Entry point
+// ---------------------------------------------------------------------------
+
+async function main() {
+  if (FROM_ENVIRONMENTS) {
+    await seedFromEnvironments();
+  } else {
+    await seedAuthoredScenes();
   }
 }
 

@@ -49,6 +49,40 @@ export const STARTER_SCENE_EXCLUDED_SCENE_IDS = Object.freeze([
 ]);
 
 /**
+ * The 17 auto-generated environment scenes that were shelved in favour of the
+ * two hand-authored DT catalog scenes (Crossroads Ambush, Cross the Raging River).
+ * Migration 044 deletes these on deploy; the seed script also removes them.
+ */
+export const SHELVED_STARTER_SCENE_IDS = Object.freeze([
+  'srd-scene-abandoned-grove',
+  'srd-scene-burning-heart-of-the-woods',
+  'srd-scene-bustling-marketplace',
+  'srd-scene-castle-siege',
+  'srd-scene-chaos-realm',
+  'srd-scene-cliffside-ascent',
+  'srd-scene-cult-ritual',
+  'srd-scene-divine-usurpation',
+  'srd-scene-hallowed-temple',
+  'srd-scene-haunted-city',
+  'srd-scene-imperial-court',
+  'srd-scene-local-tavern',
+  'srd-scene-mountain-pass',
+  'srd-scene-necromancer-s-ossuary',
+  'srd-scene-outpost-town',
+  'srd-scene-pitched-battle',
+  'srd-scene-raging-river',
+]);
+
+/**
+ * UUID → stable DT catalog id map for the two authored scenes.
+ * Used by the seed script to un-publish the `items` rows and verify JSON files.
+ */
+export const AUTHORED_SCENE_UUID_TO_CATALOG_ID = Object.freeze({
+  '2cc75a2c-df9f-44c7-8e05-aca4780512a6': 'srd-scene-crossroads-ambush',
+  '9ff65139-7067-4d04-a2e3-c135b1a9f3f7': 'srd-scene-cross-the-raging-river',
+});
+
+/**
  * @param {object|null|undefined} env
  * @returns {boolean}
  */

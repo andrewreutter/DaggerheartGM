@@ -29,12 +29,15 @@ DaggerheartGM/
 ├── .cursor/rules/project.mdc   # Cursor agent context (always applied)
 ├── .cursor/rules/v2-default-stack.mdc # V2-first default stack for new mechanics (always applied)
 ├── data/
-│   └── daggerstack-uuid-map.json # Daggerstack UUID → SRD slug mapping (committed; refreshed nightly)
+│   ├── daggerstack-uuid-map.json # Daggerstack UUID → SRD slug mapping (committed; refreshed nightly)
+│   └── dt-scenes/              # Hand-authored DT catalog scene JSON files (seeded via npm run generate:srd-scenes)
+│       ├── srd-scene-crossroads-ambush.json
+│       └── srd-scene-cross-the-raging-river.json
 ├── scripts/
 │   ├── refresh-daggerstack-uuids.js # Regenerates daggerstack-uuid-map.json (npm run refresh:daggerstack)
 │   ├── migrate-map-images-to-storage.mjs # One-time: move inline data: map images out of table_state rows into Supabase Storage (npm run migrate:map-images -- --apply)
 │   ├── migrate-item-images-to-storage.mjs # One-time: move inline data: item images (characters/adversaries/environments/scenes/adventures) into Supabase Storage (npm run migrate:item-images -- --apply)
-│   ├── generate-srd-starter-scenes.mjs # Manual seed: one DT starter scene per SRD environment (except Ambushed/Ambushers) into external_item_cache source=dt (npm run generate:srd-scenes)
+│   ├── generate-srd-starter-scenes.mjs # Manual seed: upsert two hand-authored DT scenes from data/dt-scenes/ into external_item_cache (npm run generate:srd-scenes); --from-environments for old per-environment generator
 │   ├── migrate-scraped-catalogs.mjs # Dry-run / apply FCG+HoD + public-adversary cleanup (npm run migrate:scraped-catalogs [-- --apply])
 │   ├── orchestrate.js          # Parallel overnight Cloud Agents orchestrator (npm run agents)
 │   ├── dev-agent-queue-worker.mjs # GitHub Issues + Cursor CLI worker (spawned from npm run dev when enabled)
@@ -142,7 +145,7 @@ DaggerheartGM/
 │   ├── user-preferences.js     # Normalize/merge user_preferences JSON (hideAiUi, libraryCardDimensions)
 │   ├── stripe.js               # Stripe client (optional; gated on STRIPE_SECRET_KEY); CAMPAIGN_PASS_PRICE_CENTS; constructWebhookEvent for raw-byte HMAC verify
 │   ├── srd-loader.js           # Loads all SRD collections into external_item_cache at startup (unified Library API)
-│   ├── srd-starter-scenes.js   # Pure helpers for generated DT starter scenes (used by generate:srd-scenes)
+│   ├── srd-starter-scenes.js   # Pure helpers for DT catalog scenes (SHELVED_STARTER_SCENE_IDS, AUTHORED_SCENE_UUID_TO_CATALOG_ID, buildSrdStarterScene for --from-environments)
 │   ├── text-parse.js           # Regex-based stat block parser (selftext + OCR output)
 │   ├── ocr-parse.js            # Multi-engine OCR orchestrator + artwork cropping
 │   ├── ocr-engines/            # Per-engine adapters (common contract: name/isAvailable/recognize/terminate)
@@ -188,7 +191,7 @@ npm run dev    # kills any process on PORT (default 3456), then server + Tailwin
 
 ### SRD Content
 
-SRD content is served from the `daggerheart-srd` git submodule via the `src/srd/` sub-application (public `/api/srd/:collection`). All 13 SRD collections are also **upserted into `external_item_cache`** on startup via `loadSrdIntoDb` so authenticated `GET /api/data/:collection` can merge user items with SRD in one query. In-memory and DB copies stay in sync when the SRD hash changes. Starter scenes (one per SRD environment) are **not** in the parser `COLLECTION_NAMES` and are **not** loaded by `loadSrdIntoDb` — seed them manually with `npm run generate:srd-scenes` (requires `DATABASE_URL`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`). The script upserts `external_item_cache` rows (`source='dt'`, `collection='scenes'`, ids stay `srd-scene-*`) and uploads SVG map placeholders to `whiteboard-assets` at `map-images/srd-public/{uuid}.svg`. With `includeSrd` on (official catalog), `GET /api/data/scenes` and Library All include those cache rows; Scenes Include labels them **DT** and cards show the DT badge. Admin edits stamp `_adminEditedAt` so `loadSrdIntoDb` / re-seed skip those rows unless `--force`.
+SRD content is served from the `daggerheart-srd` git submodule via the `src/srd/` sub-application (public `/api/srd/:collection`). All 13 SRD collections are also **upserted into `external_item_cache`** on startup via `loadSrdIntoDb` so authenticated `GET /api/data/:collection` can merge user items with SRD in one query. In-memory and DB copies stay in sync when the SRD hash changes. DT catalog scenes are **not** in the parser `COLLECTION_NAMES` and are **not** loaded by `loadSrdIntoDb` — seed them manually with `npm run generate:srd-scenes` (requires only `DATABASE_URL`). The default mode reads two hand-authored JSON files from `data/dt-scenes/` (Crossroads Ambush `srd-scene-crossroads-ambush`, Cross the Raging River `srd-scene-cross-the-raging-river`), upserts them into `external_item_cache` (`source='dt'`, `collection='scenes'`), and un-publishes the original UUID items rows. The legacy `--from-environments` mode restores the old 17 auto-generated environment scenes with SVG map uploads (requires `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY`). With `includeSrd` on (official catalog), `GET /api/data/scenes` and Library All include DT cache rows; Scenes Include labels them **DT** and cards show the DT badge. Admin edits stamp `_adminEditedAt` so `loadSrdIntoDb` / re-seed skip those rows unless `--force`.
 
 The `/api/srd` routes are public (no auth). To update SRD content to a newer upstream version:
 
@@ -396,7 +399,8 @@ npm run dev        # development — frees PORT first, then auto-restarts on fil
 npm start          # production — frees PORT, then runs `npm run build` (gitignored `public/app.js` / `public/styles.css`) so the SPA bundle exists, then starts the server
 npm run build      # regenerate V2 feature catalog JSON, then rebuild CSS + JS bundles (also run automatically before `npm start`)
 npm run refresh:daggerstack          # regenerate Daggerstack UUID map (same as nightly 4 AM cron)
-npm run generate:srd-scenes          # seed DT starter scenes into external_item_cache (requires DATABASE_URL + Supabase)
+npm run generate:srd-scenes          # seed two hand-authored DT scenes from data/dt-scenes/ (requires DATABASE_URL only)
+npm run generate:srd-scenes -- --from-environments  # restore old 17 generated environment scenes (requires DATABASE_URL + Supabase)
 ```
 
 ### Overnight V2 Feature Agents

@@ -1,0 +1,1847 @@
+{
+  "bp": 27,
+  "maps": [
+    {
+      "id": "5f55fa5c-2025-4d7c-b6b5-29a7b74cbd41",
+      "name": "Crossroads",
+      "artist": "Grim Press",
+      "artistUrl": "https://grimpress.net/",
+      "mapSizeFt": 120,
+      "mapImageUrl": "https://aepoghtrbawfvgnjzumf.supabase.co/storage/v1/object/public/whiteboard-assets/map-images/9s3M6tgScJgXhKgYOHZVYAStNQi2/8ab2feb5-068a-480d-99ee-1dcdce552894.jpg",
+      "mapDimension": "width",
+      "mapAiImagePrompt": null,
+      "shareWithPlayers": false,
+      "mapImageNaturalWidth": 1120,
+      "mapImageNaturalHeight": 1470
+    }
+  ],
+  "name": "Crossroads Ambush",
+  "tier": 1,
+  "mapViews": [
+    {
+      "id": "5c7ea44d-3873-457a-9594-04c190d06bee",
+      "name": "Main",
+      "mapId": "5f55fa5c-2025-4d7c-b6b5-29a7b74cbd41",
+      "locked": false,
+      "mapViewPanNorm": {
+        "x": 0,
+        "y": 0.5805375632282807
+      },
+      "mapViewZoomRatio": 0.010358526745877446,
+      "broadcastToPlayers": true,
+      "mapViewVisibleNorm": {
+        "h": 0.7609469597616719,
+        "w": 1,
+        "x": 0,
+        "y": 0.1387792694622711
+      }
+    }
+  ],
+  "gmMapView": {
+    "mapId": "5f55fa5c-2025-4d7c-b6b5-29a7b74cbd41",
+    "mapViewPanNorm": {
+      "x": 0,
+      "y": 0.5805375632282807
+    },
+    "mapViewZoomRatio": 0.010358526745877446,
+    "mapViewVisibleNorm": {
+      "h": 0.7609469597616719,
+      "w": 1,
+      "x": 0,
+      "y": 0.1387792694622711
+    }
+  },
+  "mapConfig": {
+    "mapSizeFt": 120,
+    "mapImageUrl": "https://aepoghtrbawfvgnjzumf.supabase.co/storage/v1/object/public/whiteboard-assets/map-images/9s3M6tgScJgXhKgYOHZVYAStNQi2/8ab2feb5-068a-480d-99ee-1dcdce552894.jpg",
+    "mapDimension": "width",
+    "mapViewPanNorm": {
+      "x": 0,
+      "y": 0.5805375632282807
+    },
+    "mapAiImagePrompt": null,
+    "mapViewZoomRatio": 0.010358526745877446,
+    "mapViewVisibleNorm": {
+      "h": 0.7609469597616719,
+      "w": 1,
+      "x": 0,
+      "y": 0.1387792694622711
+    },
+    "mapImageNaturalWidth": 1120,
+    "mapImageNaturalHeight": 1470
+  },
+  "partySize": 8,
+  "partyTier": 1,
+  "nextScenes": [
+    {
+      "id": "srd-scene-cross-the-raging-river",
+      "name": "Cross the Raging River"
+    }
+  ],
+  "activeMapId": "5f55fa5c-2025-4d7c-b6b5-29a7b74cbd41",
+  "description": "",
+  "activeElements": [
+    {
+      "id": "fbfa6421-5d69-4168-b654-495fd7c2af07",
+      "name": "Ambushed",
+      "tier": 1,
+      "type": "event",
+      "_source": "own",
+      "features": [
+        {
+          "id": "srd-env-ambushed-feat-relative-strength",
+          "name": "Relative Strength",
+          "type": "passive",
+          "description": "The Difficulty of this environment equals that of the adversary with the highest Difficulty. _Who cues the ambush? What makes it clear they're in charge?_"
+        },
+        {
+          "id": "srd-env-ambushed-feat-surprise",
+          "name": "Surprise!",
+          "type": "action",
+          "description": "The ambushers reveal themselves to the party, you gain 2 Fear, and the spotlight immediately shifts to one of the ambushing adversaries. _What do the ambushers want from the party? How do their tactics in the ambush reflect that?_"
+        }
+      ],
+      "impulses": "Overwhelm, scatter, surround",
+      "is_public": false,
+      "difficulty": 10,
+      "instanceId": "214348b2-ce68-4e1d-8c81-9da4ca263aa8",
+      "play_count": 0,
+      "popularity": 0,
+      "_clonedFrom": "srd-env-ambushed",
+      "clone_count": 0,
+      "description": "An ambush is set to catch an unsuspecting party off-guard.",
+      "elementType": "environment",
+      "potential_adversaries": []
+    },
+    {
+      "id": "6d2afb77-38f2-4a03-bb34-6ba98e18bcd1",
+      "name": "Ambushers",
+      "tier": 1,
+      "type": "event",
+      "_source": "own",
+      "features": [
+        {
+          "id": "srd-env-ambushers-feat-relative-strength",
+          "name": "Relative Strength",
+          "type": "passive",
+          "description": "The Difficulty of this environment equals that of the adversary with the highest Difficulty. _Which adversary is the least prepared? Which one is the most?_"
+        },
+        {
+          "id": "srd-env-ambushers-feat-where-did-they-come-from",
+          "name": "Where Did They Come From?",
+          "type": "reaction",
+          "description": "When a PC starts the ambush on unsuspecting adversaries, you lose 2 Fear and the first attack roll a PC makes has advantage. _What are the adversaries in the middle of doing when the ambush starts? How does this impact their approach to the fight?_"
+        }
+      ],
+      "impulses": "Escape, group up, protect the most vulnerable",
+      "is_public": false,
+      "difficulty": 10,
+      "instanceId": "dbb23823-4a90-4b88-8877-0df89c014b42",
+      "play_count": 0,
+      "popularity": 0,
+      "_clonedFrom": "srd-env-ambushers",
+      "clone_count": 0,
+      "description": "An ambush is set by the PCs to catch unsuspecting adversaries off-guard.",
+      "elementType": "environment",
+      "potential_adversaries": []
+    },
+    {
+      "id": "5fad6e2f-75e7-46b1-820c-946a128ce30f",
+      "body": "The first thing to do in this Scene is determine whether the PCs are _Ambushed_ or _Ambushers_, then delete the other Environment from the table.\n\nOne way to decide is based on your current Fear. If you are low on Fear, go with _Ambushed_ to regain two. If you need to bleed a little Fear, go with _Ambushers_ to spend two.\n\nAnother option is to conduct a Group Roll for the overland travel, and use _Ambushed_ on failure.\n\nFor _Ambushed_, have the players place their tokens as though crossing the bridge, then reveal most adversaries except those below the bridge or hidden like the _Shadow_.\n\nFor _Ambushers_, reveal the adversaries (except hidden ones), then allow the players to place their tokens.",
+      "name": "Running Crossroads Ambush",
+      "instanceId": "701e2596-d3b3-49bc-98d3-57dec7e53318",
+      "visibility": "gm",
+      "elementType": "note"
+    },
+    {
+      "id": "srd-adv-jagged-knife-lieutenant",
+      "name": "Jagged Knife Lieutenant",
+      "role": "leader",
+      "tier": 1,
+      "mapId": "5f55fa5c-2025-4d7c-b6b5-29a7b74cbd41",
+      "attack": {
+        "name": "Javelin",
+        "range": "Close",
+        "trait": "Phy",
+        "damage": "1d8+3",
+        "modifier": 2
+      },
+      "hp_max": 6,
+      "motive": "Bully, command, profit, reinforce",
+      "tokenX": 38.35114549901011,
+      "tokenY": 67.61709413358167,
+      "_source": "srd",
+      "altitude": 0,
+      "features": [
+        {
+          "id": "srd-adv-jagged-knife-lieutenant-feat-tactician",
+          "name": "Tactician",
+          "type": "action",
+          "description": "When you spotlight the Lieutenant, **mark a Stress** to also spotlight two allies within Close range."
+        },
+        {
+          "id": "srd-adv-jagged-knife-lieutenant-feat-more-where-that-came-from",
+          "name": "More Where That Came From",
+          "type": "action",
+          "description": "Summon three Jagged Knife Lackeys, who appear at Far range."
+        },
+        {
+          "id": "srd-adv-jagged-knife-lieutenant-feat-coup-de-grace",
+          "name": "Coup de Grace",
+          "type": "action",
+          "description": "**Spend a Fear** to make an attack against a _Vulnerable_ target within Close range. On a success, deal **2d6+12** physical damage and the target must mark a Stress."
+        },
+        {
+          "id": "srd-adv-jagged-knife-lieutenant-feat-momentum",
+          "name": "Momentum",
+          "type": "reaction",
+          "description": "When the Lieutenant makes a successful attack against a PC, you gain a Fear."
+        }
+      ],
+      "currentHp": 6,
+      "is_public": false,
+      "conditions": "",
+      "difficulty": 13,
+      "instanceId": "284bf05f-0e0c-4e8f-b068-f318b4953923",
+      "play_count": "0",
+      "popularity": "00",
+      "stress_max": 3,
+      "clone_count": "0",
+      "description": "A seasoned bandit in quality leathers with a strong voice and cunning eyes.",
+      "elementType": "adversary",
+      "experiences": [
+        {
+          "id": "srd-adv-jagged-knife-lieutenant-exp-local-knowledge",
+          "name": "Local Knowledge",
+          "modifier": 2
+        }
+      ],
+      "currentStress": 0,
+      "hp_thresholds": {
+        "major": 7,
+        "severe": 14
+      },
+      "visibleToPlayers": false
+    },
+    {
+      "id": "srd-adv-jagged-knife-kneebreaker",
+      "name": "Jagged Knife Kneebreaker",
+      "role": "bruiser",
+      "tier": 1,
+      "mapId": "5f55fa5c-2025-4d7c-b6b5-29a7b74cbd41",
+      "attack": {
+        "name": "Club",
+        "range": "Melee",
+        "trait": "Phy",
+        "damage": "1d4+6",
+        "modifier": -3
+      },
+      "hp_max": 7,
+      "motive": "Grapple, intimidate, profit, steal",
+      "tokenX": 42.577915094280215,
+      "tokenY": 68.49227630801116,
+      "_source": "srd",
+      "altitude": 0,
+      "features": [
+        {
+          "id": "srd-adv-jagged-knife-kneebreaker-feat-i-ve-got-em",
+          "name": "I've Got 'Em",
+          "type": "passive",
+          "description": "Creatures _Restrained_ by the Kneebreaker take double damage from attacks by other adversaries."
+        },
+        {
+          "id": "srd-adv-jagged-knife-kneebreaker-feat-hold-them-down",
+          "name": "Hold Them Down",
+          "type": "action",
+          "description": "Make an attack against a target within Melee range. On a success, the target takes no damage but is _Restrained_ and _Vulnerable_. The target can break free, clearing both conditions, with a successful Strength Roll or is freed automatically if the Kneebreaker takes Major or greater damage."
+        }
+      ],
+      "currentHp": 7,
+      "is_public": false,
+      "conditions": "",
+      "difficulty": 12,
+      "instanceId": "38f3da55-c15a-40ed-ad70-d17c6462c920",
+      "play_count": "0",
+      "popularity": "00",
+      "stress_max": 4,
+      "clone_count": "0",
+      "description": "An imposing brawler carrying a large club.",
+      "elementType": "adversary",
+      "experiences": [
+        {
+          "id": "srd-adv-jagged-knife-kneebreaker-exp-thief",
+          "name": "Thief",
+          "modifier": 2
+        },
+        {
+          "id": "srd-adv-jagged-knife-kneebreaker-exp-unveiled-threats",
+          "name": "Unveiled Threats",
+          "modifier": 3
+        }
+      ],
+      "minPartySize": 4,
+      "currentStress": 0,
+      "hp_thresholds": {
+        "major": 7,
+        "severe": 14
+      },
+      "visibleToPlayers": false
+    },
+    {
+      "id": "srd-adv-jagged-knife-bandit",
+      "name": "Jagged Knife Bandit",
+      "role": "standard",
+      "tier": 1,
+      "mapId": "5f55fa5c-2025-4d7c-b6b5-29a7b74cbd41",
+      "attack": {
+        "name": "Daggers",
+        "range": "Melee",
+        "trait": "Phy",
+        "damage": "1d8+1",
+        "modifier": 1
+      },
+      "hp_max": 5,
+      "motive": "Escape, profit, steal, throw smoke",
+      "tokenX": 69.71611408955559,
+      "tokenY": 81.39480987413576,
+      "_source": "srd",
+      "altitude": 0,
+      "features": [
+        {
+          "id": "srd-adv-jagged-knife-bandit-feat-climber",
+          "name": "Climber",
+          "type": "passive",
+          "description": "The Bandit climbs just as easily as they run."
+        },
+        {
+          "id": "srd-adv-jagged-knife-bandit-feat-from-above",
+          "name": "From Above",
+          "type": "passive",
+          "description": "When the Bandit succeeds on a standard attack from above a target, they deal **1d10+1** physical damage instead of their standard damage."
+        }
+      ],
+      "currentHp": 5,
+      "is_public": false,
+      "conditions": "",
+      "difficulty": 12,
+      "instanceId": "734beb09-eec2-4534-a92a-35c113f29a53",
+      "play_count": "0",
+      "popularity": "00",
+      "stress_max": 3,
+      "clone_count": "0",
+      "description": "A cunning criminal in a cloak bearing one of the gang's iconic knives.",
+      "elementType": "adversary",
+      "experiences": [
+        {
+          "id": "srd-adv-jagged-knife-bandit-exp-thief",
+          "name": "Thief",
+          "modifier": 2
+        }
+      ],
+      "currentStress": 0,
+      "hp_thresholds": {
+        "major": 8,
+        "severe": 14
+      },
+      "visibleToPlayers": false
+    },
+    {
+      "id": "srd-adv-jagged-knife-hexer",
+      "name": "Jagged Knife Hexer",
+      "role": "support",
+      "tier": 1,
+      "mapId": "5f55fa5c-2025-4d7c-b6b5-29a7b74cbd41",
+      "attack": {
+        "name": "Staff",
+        "range": "Far",
+        "trait": "Mag",
+        "damage": "1d6+2",
+        "modifier": 2
+      },
+      "hp_max": 4,
+      "motive": "Command, hex, profit",
+      "tokenX": 13.782854677603675,
+      "tokenY": 74.94024995959823,
+      "_source": "srd",
+      "altitude": 0,
+      "features": [
+        {
+          "id": "srd-adv-jagged-knife-hexer-feat-curse",
+          "name": "Curse",
+          "type": "action",
+          "description": "Choose a target within Far range and temporarily _Curse_ them. While the target is _Cursed_, you can **mark a Stress** when that target rolls with Hope to make the roll be with Fear instead."
+        },
+        {
+          "id": "srd-adv-jagged-knife-hexer-feat-chaotic-flux",
+          "name": "Chaotic Flux",
+          "type": "action",
+          "description": "Make an attack against up to three targets within Very Close range. **Mark a Stress** to deal **2d6+3** magic damage to targets the Hexer succeeded against."
+        }
+      ],
+      "currentHp": 4,
+      "is_public": false,
+      "conditions": "",
+      "difficulty": 13,
+      "instanceId": "91a33761-3ca7-4890-a57e-68b4def93371",
+      "play_count": "0",
+      "popularity": "00",
+      "stress_max": 4,
+      "clone_count": "0",
+      "description": "A staff-wielding bandit in a cloak adorned with magical paraphernalia, using curses to vex their foes.",
+      "elementType": "adversary",
+      "experiences": [
+        {
+          "id": "srd-adv-jagged-knife-hexer-exp-magical-knowledge",
+          "name": "Magical Knowledge",
+          "modifier": 2
+        }
+      ],
+      "currentStress": 0,
+      "hp_thresholds": {
+        "major": 5,
+        "severe": 9
+      },
+      "visibleToPlayers": false
+    },
+    {
+      "id": "srd-adv-jagged-knife-shadow",
+      "name": "Jagged Knife Shadow",
+      "role": "skulk",
+      "tier": 1,
+      "mapId": "5f55fa5c-2025-4d7c-b6b5-29a7b74cbd41",
+      "attack": {
+        "name": "Daggers",
+        "range": "Melee",
+        "trait": "Phy",
+        "damage": "1d4+4",
+        "modifier": 1
+      },
+      "hp_max": 3,
+      "motive": "Ambush, conceal, divide, profit",
+      "tokenX": 36.84783751512578,
+      "tokenY": 76.84716808695859,
+      "_source": "srd",
+      "altitude": 0,
+      "features": [
+        {
+          "id": "srd-adv-jagged-knife-shadow-feat-backstab",
+          "name": "Backstab",
+          "type": "passive",
+          "description": "When the Shadow succeeds on a standard attack that has advantage, they deal **1d6+6** physical damage instead of their standard damage."
+        },
+        {
+          "id": "srd-adv-jagged-knife-shadow-feat-cloaked",
+          "name": "Cloaked",
+          "type": "action",
+          "description": "Become _Hidden_ until after the Shadow's next attack. Attacks made while _Hidden_ from this feature have advantage."
+        }
+      ],
+      "currentHp": 3,
+      "is_public": false,
+      "conditions": "",
+      "difficulty": 12,
+      "instanceId": "5e5e9e03-2fe1-4686-8c6c-fee478f6d2c0",
+      "play_count": "0",
+      "popularity": "00",
+      "stress_max": 3,
+      "clone_count": "0",
+      "description": "A nimble scoundrel bearing a wicked knife and utilizing shadow magic to isolate targets.",
+      "elementType": "adversary",
+      "experiences": [
+        {
+          "id": "srd-adv-jagged-knife-shadow-exp-intrusion",
+          "name": "Intrusion",
+          "modifier": 3
+        }
+      ],
+      "minPartySize": 2,
+      "currentStress": 0,
+      "hp_thresholds": {
+        "major": 4,
+        "severe": 8
+      },
+      "visibleToPlayers": false
+    },
+    {
+      "id": "srd-adv-jagged-knife-sniper",
+      "name": "Jagged Knife Sniper",
+      "role": "ranged",
+      "tier": 1,
+      "mapId": "5f55fa5c-2025-4d7c-b6b5-29a7b74cbd41",
+      "attack": {
+        "name": "Shortbow",
+        "range": "Far",
+        "trait": "Phy",
+        "damage": "1d10+2",
+        "modifier": -1
+      },
+      "hp_max": 3,
+      "motive": "Ambush, hide, profit, reposition",
+      "tokenX": 14.900759889550509,
+      "tokenY": 80.48682026891338,
+      "_source": "srd",
+      "altitude": 0,
+      "features": [
+        {
+          "id": "srd-adv-jagged-knife-sniper-feat-unseen-strike",
+          "name": "Unseen Strike",
+          "type": "passive",
+          "description": "If the Sniper is _Hidden_ when they make a successful standard attack against a target, they deal **1d10+4** physical damage instead of their standard damage."
+        }
+      ],
+      "currentHp": 3,
+      "is_public": false,
+      "conditions": "",
+      "difficulty": 13,
+      "instanceId": "993ead7f-0c21-4745-8626-2dc780f97acc",
+      "play_count": "0",
+      "popularity": "00",
+      "stress_max": 2,
+      "clone_count": "0",
+      "description": "A lanky bandit striking from cover with a shortbow.",
+      "elementType": "adversary",
+      "experiences": [
+        {
+          "id": "srd-adv-jagged-knife-sniper-exp-stealth",
+          "name": "Stealth",
+          "modifier": 2
+        }
+      ],
+      "minPartySize": 3,
+      "currentStress": 0,
+      "hp_thresholds": {
+        "major": 4,
+        "severe": 7
+      },
+      "visibleToPlayers": false
+    },
+    {
+      "id": "srd-adv-jagged-knife-lackey",
+      "name": "Jagged Knife Lackey",
+      "role": "minion",
+      "tier": 1,
+      "mapId": "5f55fa5c-2025-4d7c-b6b5-29a7b74cbd41",
+      "attack": {
+        "name": "Daggers",
+        "range": "Melee",
+        "trait": "Phy",
+        "damage": "2",
+        "modifier": -2
+      },
+      "hp_max": 1,
+      "motive": "Escape, profit, throw smoke",
+      "tokenX": 95.80042337697196,
+      "tokenY": 80.74508092989633,
+      "_source": "srd",
+      "altitude": 0,
+      "features": [
+        {
+          "id": "srd-adv-jagged-knife-lackey-feat-minion-3",
+          "name": "Minion (3)",
+          "type": "passive",
+          "description": "The Lackey is defeated when they take any damage. For every 3 damage a PC deals to the Lackey, defeat an additional Minion within range the attack would succeed against."
+        },
+        {
+          "id": "srd-adv-jagged-knife-lackey-feat-group-attack",
+          "name": "Group Attack",
+          "type": "action",
+          "description": "**Spend a Fear** to choose a target and spotlight all Jagged Knife Lackeys within Close range of them. Those Minions move into Melee range of the target and make one shared attack roll. On a success, they deal 2 physical damage each. Combine this damage."
+        }
+      ],
+      "currentHp": 1,
+      "is_public": false,
+      "conditions": "",
+      "difficulty": 9,
+      "instanceId": "b57fd235-a5d2-44d4-87c8-7bbfb7589791",
+      "play_count": "0",
+      "popularity": "00",
+      "stress_max": 1,
+      "clone_count": "0",
+      "description": "A thief with simple clothes and small daggers, eager to prove themselves.",
+      "elementType": "adversary",
+      "experiences": [
+        {
+          "id": "srd-adv-jagged-knife-lackey-exp-thief",
+          "name": "Thief",
+          "modifier": 2
+        }
+      ],
+      "minPartySize": 2,
+      "currentStress": 0,
+      "hp_thresholds": {
+        "major": null,
+        "severe": null
+      },
+      "minionGroupId": "8b97d960-4911-473a-8c58-45fcf9203289",
+      "visibleToPlayers": false
+    },
+    {
+      "id": "srd-adv-jagged-knife-bandit",
+      "name": "Jagged Knife Bandit",
+      "role": "standard",
+      "tier": 1,
+      "mapId": "5f55fa5c-2025-4d7c-b6b5-29a7b74cbd41",
+      "attack": {
+        "name": "Daggers",
+        "range": "Melee",
+        "trait": "Phy",
+        "damage": "1d8+1",
+        "modifier": 1
+      },
+      "hp_max": 5,
+      "motive": "Escape, profit, steal, throw smoke",
+      "tokenX": 61.64189152225303,
+      "tokenY": 112.12870666717127,
+      "_source": "srd",
+      "altitude": 0,
+      "features": [
+        {
+          "id": "srd-adv-jagged-knife-bandit-feat-climber",
+          "name": "Climber",
+          "type": "passive",
+          "description": "The Bandit climbs just as easily as they run."
+        },
+        {
+          "id": "srd-adv-jagged-knife-bandit-feat-from-above",
+          "name": "From Above",
+          "type": "passive",
+          "description": "When the Bandit succeeds on a standard attack from above a target, they deal **1d10+1** physical damage instead of their standard damage."
+        }
+      ],
+      "currentHp": 5,
+      "is_public": false,
+      "conditions": "",
+      "difficulty": 12,
+      "instanceId": "8c5794cc-7e0b-465a-94c1-8fc6168181ad",
+      "play_count": "0",
+      "popularity": "00",
+      "stress_max": 3,
+      "clone_count": "0",
+      "description": "A cunning criminal in a cloak bearing one of the gang's iconic knives.",
+      "elementType": "adversary",
+      "experiences": [
+        {
+          "id": "srd-adv-jagged-knife-bandit-exp-thief",
+          "name": "Thief",
+          "modifier": 2
+        }
+      ],
+      "minPartySize": 5,
+      "currentStress": 0,
+      "hp_thresholds": {
+        "major": 8,
+        "severe": 14
+      },
+      "visibleToPlayers": false
+    },
+    {
+      "id": "srd-adv-jagged-knife-lackey",
+      "name": "Jagged Knife Lackey",
+      "role": "minion",
+      "tier": 1,
+      "mapId": "5f55fa5c-2025-4d7c-b6b5-29a7b74cbd41",
+      "attack": {
+        "name": "Daggers",
+        "range": "Melee",
+        "trait": "Phy",
+        "damage": "2",
+        "modifier": -2
+      },
+      "hp_max": 1,
+      "motive": "Escape, profit, throw smoke",
+      "tokenX": 39.22759836037147,
+      "tokenY": 72.45963688255826,
+      "_source": "srd",
+      "altitude": 0,
+      "features": [
+        {
+          "id": "srd-adv-jagged-knife-lackey-feat-minion-3",
+          "name": "Minion (3)",
+          "type": "passive",
+          "description": "The Lackey is defeated when they take any damage. For every 3 damage a PC deals to the Lackey, defeat an additional Minion within range the attack would succeed against."
+        },
+        {
+          "id": "srd-adv-jagged-knife-lackey-feat-group-attack",
+          "name": "Group Attack",
+          "type": "action",
+          "description": "**Spend a Fear** to choose a target and spotlight all Jagged Knife Lackeys within Close range of them. Those Minions move into Melee range of the target and make one shared attack roll. On a success, they deal 2 physical damage each. Combine this damage."
+        }
+      ],
+      "currentHp": 1,
+      "is_public": false,
+      "conditions": "",
+      "difficulty": 9,
+      "instanceId": "0534f8e2-c961-4d32-aa37-ae7d73082a52",
+      "play_count": "0",
+      "popularity": "00",
+      "stress_max": 1,
+      "clone_count": "0",
+      "description": "A thief with simple clothes and small daggers, eager to prove themselves.",
+      "elementType": "adversary",
+      "experiences": [
+        {
+          "id": "srd-adv-jagged-knife-lackey-exp-thief",
+          "name": "Thief",
+          "modifier": 2
+        }
+      ],
+      "minPartySize": 5,
+      "currentStress": 0,
+      "hp_thresholds": {
+        "major": null,
+        "severe": null
+      },
+      "minionGroupId": "9d2222d3-c544-424b-9e2e-477d6e0d0fd4",
+      "visibleToPlayers": false
+    },
+    {
+      "id": "srd-adv-jagged-knife-bandit",
+      "name": "Jagged Knife Bandit",
+      "role": "standard",
+      "tier": 1,
+      "mapId": "5f55fa5c-2025-4d7c-b6b5-29a7b74cbd41",
+      "attack": {
+        "name": "Daggers",
+        "range": "Melee",
+        "trait": "Phy",
+        "damage": "1d8+1",
+        "modifier": 1
+      },
+      "hp_max": 5,
+      "motive": "Escape, profit, steal, throw smoke",
+      "tokenX": 98.86675060236215,
+      "tokenY": 85.91010381030833,
+      "_source": "srd",
+      "altitude": 0,
+      "features": [
+        {
+          "id": "srd-adv-jagged-knife-bandit-feat-climber",
+          "name": "Climber",
+          "type": "passive",
+          "description": "The Bandit climbs just as easily as they run."
+        },
+        {
+          "id": "srd-adv-jagged-knife-bandit-feat-from-above",
+          "name": "From Above",
+          "type": "passive",
+          "description": "When the Bandit succeeds on a standard attack from above a target, they deal **1d10+1** physical damage instead of their standard damage."
+        }
+      ],
+      "currentHp": 5,
+      "is_public": false,
+      "conditions": "",
+      "difficulty": 12,
+      "instanceId": "63ed8b2e-7c2b-4334-94c6-85b5e59e7e71",
+      "play_count": "0",
+      "popularity": "00",
+      "stress_max": 3,
+      "clone_count": "0",
+      "description": "A cunning criminal in a cloak bearing one of the gang's iconic knives.",
+      "elementType": "adversary",
+      "experiences": [
+        {
+          "id": "srd-adv-jagged-knife-bandit-exp-thief",
+          "name": "Thief",
+          "modifier": 2
+        }
+      ],
+      "minPartySize": 6,
+      "currentStress": 0,
+      "hp_thresholds": {
+        "major": 8,
+        "severe": 14
+      },
+      "visibleToPlayers": false
+    },
+    {
+      "id": "srd-adv-jagged-knife-bandit",
+      "name": "Jagged Knife Bandit",
+      "role": "standard",
+      "tier": 1,
+      "mapId": "5f55fa5c-2025-4d7c-b6b5-29a7b74cbd41",
+      "attack": {
+        "name": "Daggers",
+        "range": "Melee",
+        "trait": "Phy",
+        "damage": "1d8+1",
+        "modifier": 1
+      },
+      "hp_max": 5,
+      "motive": "Escape, profit, steal, throw smoke",
+      "tokenX": 17.30032909221461,
+      "tokenY": 68.31734622968827,
+      "_source": "srd",
+      "altitude": 0,
+      "features": [
+        {
+          "id": "srd-adv-jagged-knife-bandit-feat-climber",
+          "name": "Climber",
+          "type": "passive",
+          "description": "The Bandit climbs just as easily as they run."
+        },
+        {
+          "id": "srd-adv-jagged-knife-bandit-feat-from-above",
+          "name": "From Above",
+          "type": "passive",
+          "description": "When the Bandit succeeds on a standard attack from above a target, they deal **1d10+1** physical damage instead of their standard damage."
+        }
+      ],
+      "currentHp": 5,
+      "is_public": false,
+      "conditions": "",
+      "difficulty": 12,
+      "instanceId": "f12178f4-97ca-4530-a020-4e9175839337",
+      "play_count": "0",
+      "popularity": "00",
+      "stress_max": 3,
+      "clone_count": "0",
+      "description": "A cunning criminal in a cloak bearing one of the gang's iconic knives.",
+      "elementType": "adversary",
+      "experiences": [
+        {
+          "id": "srd-adv-jagged-knife-bandit-exp-thief",
+          "name": "Thief",
+          "modifier": 2
+        }
+      ],
+      "minPartySize": 7,
+      "currentStress": 0,
+      "hp_thresholds": {
+        "major": 8,
+        "severe": 14
+      },
+      "visibleToPlayers": false
+    },
+    {
+      "id": "srd-adv-jagged-knife-bandit",
+      "name": "Jagged Knife Bandit",
+      "role": "standard",
+      "tier": 1,
+      "mapId": "5f55fa5c-2025-4d7c-b6b5-29a7b74cbd41",
+      "attack": {
+        "name": "Daggers",
+        "range": "Melee",
+        "trait": "Phy",
+        "damage": "1d8+1",
+        "modifier": 1
+      },
+      "hp_max": 5,
+      "motive": "Escape, profit, steal, throw smoke",
+      "tokenX": 89.62611025698594,
+      "tokenY": 112.74350173630457,
+      "_source": "srd",
+      "altitude": 0,
+      "features": [
+        {
+          "id": "srd-adv-jagged-knife-bandit-feat-climber",
+          "name": "Climber",
+          "type": "passive",
+          "description": "The Bandit climbs just as easily as they run."
+        },
+        {
+          "id": "srd-adv-jagged-knife-bandit-feat-from-above",
+          "name": "From Above",
+          "type": "passive",
+          "description": "When the Bandit succeeds on a standard attack from above a target, they deal **1d10+1** physical damage instead of their standard damage."
+        }
+      ],
+      "currentHp": 5,
+      "is_public": false,
+      "conditions": "",
+      "difficulty": 12,
+      "instanceId": "e092f3d9-7787-415c-a98b-5fef8b64d7c3",
+      "play_count": "0",
+      "popularity": "00",
+      "stress_max": 3,
+      "clone_count": "0",
+      "description": "A cunning criminal in a cloak bearing one of the gang's iconic knives.",
+      "elementType": "adversary",
+      "experiences": [
+        {
+          "id": "srd-adv-jagged-knife-bandit-exp-thief",
+          "name": "Thief",
+          "modifier": 2
+        }
+      ],
+      "minPartySize": 8,
+      "currentStress": 0,
+      "hp_thresholds": {
+        "major": 8,
+        "severe": 14
+      },
+      "visibleToPlayers": false
+    },
+    {
+      "id": "srd-adv-jagged-knife-hexer",
+      "name": "Jagged Knife Hexer",
+      "role": "support",
+      "tier": 1,
+      "mapId": "5f55fa5c-2025-4d7c-b6b5-29a7b74cbd41",
+      "attack": {
+        "name": "Staff",
+        "range": "Far",
+        "trait": "Mag",
+        "damage": "1d6+2",
+        "modifier": 2
+      },
+      "hp_max": 4,
+      "motive": "Command, hex, profit",
+      "tokenX": 10.725258077235402,
+      "tokenY": 33.84264955655402,
+      "_source": "srd",
+      "altitude": 0,
+      "features": [
+        {
+          "id": "srd-adv-jagged-knife-hexer-feat-curse",
+          "name": "Curse",
+          "type": "action",
+          "description": "Choose a target within Far range and temporarily _Curse_ them. While the target is _Cursed_, you can **mark a Stress** when that target rolls with Hope to make the roll be with Fear instead."
+        },
+        {
+          "id": "srd-adv-jagged-knife-hexer-feat-chaotic-flux",
+          "name": "Chaotic Flux",
+          "type": "action",
+          "description": "Make an attack against up to three targets within Very Close range. **Mark a Stress** to deal **2d6+3** magic damage to targets the Hexer succeeded against."
+        }
+      ],
+      "currentHp": 4,
+      "is_public": false,
+      "conditions": "",
+      "difficulty": 13,
+      "instanceId": "32620b86-d1db-4591-a8d5-dc804a000577",
+      "play_count": "0",
+      "popularity": "00",
+      "stress_max": 4,
+      "clone_count": "0",
+      "description": "A staff-wielding bandit in a cloak adorned with magical paraphernalia, using curses to vex their foes.",
+      "elementType": "adversary",
+      "experiences": [
+        {
+          "id": "srd-adv-jagged-knife-hexer-exp-magical-knowledge",
+          "name": "Magical Knowledge",
+          "modifier": 2
+        }
+      ],
+      "minPartySize": 6,
+      "currentStress": 0,
+      "hp_thresholds": {
+        "major": 5,
+        "severe": 9
+      },
+      "visibleToPlayers": false
+    },
+    {
+      "id": "srd-adv-jagged-knife-shadow",
+      "name": "Jagged Knife Shadow",
+      "role": "skulk",
+      "tier": 1,
+      "mapId": "5f55fa5c-2025-4d7c-b6b5-29a7b74cbd41",
+      "attack": {
+        "name": "Daggers",
+        "range": "Melee",
+        "trait": "Phy",
+        "damage": "1d4+4",
+        "modifier": 1
+      },
+      "hp_max": 3,
+      "motive": "Ambush, conceal, divide, profit",
+      "tokenX": 73.27728503055116,
+      "tokenY": 104.74679374511365,
+      "_source": "srd",
+      "altitude": 0,
+      "features": [
+        {
+          "id": "srd-adv-jagged-knife-shadow-feat-backstab",
+          "name": "Backstab",
+          "type": "passive",
+          "description": "When the Shadow succeeds on a standard attack that has advantage, they deal **1d6+6** physical damage instead of their standard damage."
+        },
+        {
+          "id": "srd-adv-jagged-knife-shadow-feat-cloaked",
+          "name": "Cloaked",
+          "type": "action",
+          "description": "Become _Hidden_ until after the Shadow's next attack. Attacks made while _Hidden_ from this feature have advantage."
+        }
+      ],
+      "currentHp": 3,
+      "is_public": false,
+      "conditions": "",
+      "difficulty": 12,
+      "instanceId": "283cbfe8-756c-4e57-9cca-f89dc4599471",
+      "play_count": "0",
+      "popularity": "00",
+      "stress_max": 3,
+      "clone_count": "0",
+      "description": "A nimble scoundrel bearing a wicked knife and utilizing shadow magic to isolate targets.",
+      "elementType": "adversary",
+      "experiences": [
+        {
+          "id": "srd-adv-jagged-knife-shadow-exp-intrusion",
+          "name": "Intrusion",
+          "modifier": 3
+        }
+      ],
+      "minPartySize": 8,
+      "currentStress": 0,
+      "hp_thresholds": {
+        "major": 4,
+        "severe": 8
+      },
+      "visibleToPlayers": false
+    },
+    {
+      "id": "srd-adv-jagged-knife-lackey",
+      "name": "Jagged Knife Lackey",
+      "role": "minion",
+      "tier": 1,
+      "mapId": "5f55fa5c-2025-4d7c-b6b5-29a7b74cbd41",
+      "attack": {
+        "name": "Daggers",
+        "range": "Melee",
+        "trait": "Phy",
+        "damage": "2",
+        "modifier": -2
+      },
+      "hp_max": 1,
+      "motive": "Escape, profit, throw smoke",
+      "tokenX": 74.04739064144941,
+      "tokenY": 77.27992673367518,
+      "_source": "srd",
+      "altitude": 0,
+      "features": [
+        {
+          "id": "srd-adv-jagged-knife-lackey-feat-minion-3",
+          "name": "Minion (3)",
+          "type": "passive",
+          "description": "The Lackey is defeated when they take any damage. For every 3 damage a PC deals to the Lackey, defeat an additional Minion within range the attack would succeed against."
+        },
+        {
+          "id": "srd-adv-jagged-knife-lackey-feat-group-attack",
+          "name": "Group Attack",
+          "type": "action",
+          "description": "**Spend a Fear** to choose a target and spotlight all Jagged Knife Lackeys within Close range of them. Those Minions move into Melee range of the target and make one shared attack roll. On a success, they deal 2 physical damage each. Combine this damage."
+        }
+      ],
+      "currentHp": 1,
+      "is_public": false,
+      "conditions": "",
+      "difficulty": 9,
+      "instanceId": "e9b01d57-e3a5-49a7-bf41-fd09cdfd6c1c",
+      "play_count": "0",
+      "popularity": "00",
+      "stress_max": 1,
+      "clone_count": "0",
+      "description": "A thief with simple clothes and small daggers, eager to prove themselves.",
+      "elementType": "adversary",
+      "experiences": [
+        {
+          "id": "srd-adv-jagged-knife-lackey-exp-thief",
+          "name": "Thief",
+          "modifier": 2
+        }
+      ],
+      "minPartySize": 2,
+      "currentStress": 0,
+      "hp_thresholds": {
+        "major": null,
+        "severe": null
+      },
+      "minionGroupId": "8b97d960-4911-473a-8c58-45fcf9203289",
+      "visibleToPlayers": false
+    },
+    {
+      "id": "srd-adv-jagged-knife-lackey",
+      "name": "Jagged Knife Lackey",
+      "role": "minion",
+      "tier": 1,
+      "mapId": "5f55fa5c-2025-4d7c-b6b5-29a7b74cbd41",
+      "attack": {
+        "name": "Daggers",
+        "range": "Melee",
+        "trait": "Phy",
+        "damage": "2",
+        "modifier": -2
+      },
+      "hp_max": 1,
+      "motive": "Escape, profit, throw smoke",
+      "tokenX": 34.286848739945995,
+      "tokenY": 63.026669269439964,
+      "_source": "srd",
+      "altitude": 0,
+      "features": [
+        {
+          "id": "srd-adv-jagged-knife-lackey-feat-minion-3",
+          "name": "Minion (3)",
+          "type": "passive",
+          "description": "The Lackey is defeated when they take any damage. For every 3 damage a PC deals to the Lackey, defeat an additional Minion within range the attack would succeed against."
+        },
+        {
+          "id": "srd-adv-jagged-knife-lackey-feat-group-attack",
+          "name": "Group Attack",
+          "type": "action",
+          "description": "**Spend a Fear** to choose a target and spotlight all Jagged Knife Lackeys within Close range of them. Those Minions move into Melee range of the target and make one shared attack roll. On a success, they deal 2 physical damage each. Combine this damage."
+        }
+      ],
+      "currentHp": 1,
+      "is_public": false,
+      "conditions": "",
+      "difficulty": 9,
+      "instanceId": "789bc799-8bc4-450c-b40e-38ebac37a5d3",
+      "play_count": "0",
+      "popularity": "00",
+      "stress_max": 1,
+      "clone_count": "0",
+      "description": "A thief with simple clothes and small daggers, eager to prove themselves.",
+      "elementType": "adversary",
+      "experiences": [
+        {
+          "id": "srd-adv-jagged-knife-lackey-exp-thief",
+          "name": "Thief",
+          "modifier": 2
+        }
+      ],
+      "minPartySize": 5,
+      "currentStress": 0,
+      "hp_thresholds": {
+        "major": null,
+        "severe": null
+      },
+      "minionGroupId": "9d2222d3-c544-424b-9e2e-477d6e0d0fd4",
+      "visibleToPlayers": false
+    },
+    {
+      "id": "srd-adv-jagged-knife-lackey",
+      "name": "Jagged Knife Lackey",
+      "role": "minion",
+      "tier": 1,
+      "mapId": "5f55fa5c-2025-4d7c-b6b5-29a7b74cbd41",
+      "attack": {
+        "name": "Daggers",
+        "range": "Melee",
+        "trait": "Phy",
+        "damage": "2",
+        "modifier": -2
+      },
+      "hp_max": 1,
+      "motive": "Escape, profit, throw smoke",
+      "tokenX": 87.44105846043567,
+      "tokenY": 118.50023968253363,
+      "_source": "srd",
+      "altitude": 0,
+      "features": [
+        {
+          "id": "srd-adv-jagged-knife-lackey-feat-minion-3",
+          "name": "Minion (3)",
+          "type": "passive",
+          "description": "The Lackey is defeated when they take any damage. For every 3 damage a PC deals to the Lackey, defeat an additional Minion within range the attack would succeed against."
+        },
+        {
+          "id": "srd-adv-jagged-knife-lackey-feat-group-attack",
+          "name": "Group Attack",
+          "type": "action",
+          "description": "**Spend a Fear** to choose a target and spotlight all Jagged Knife Lackeys within Close range of them. Those Minions move into Melee range of the target and make one shared attack roll. On a success, they deal 2 physical damage each. Combine this damage."
+        }
+      ],
+      "currentHp": 1,
+      "is_public": false,
+      "conditions": "",
+      "difficulty": 9,
+      "instanceId": "ee816c07-8ba8-4e73-a30e-e6b8e94e73f7",
+      "play_count": "0",
+      "popularity": "00",
+      "stress_max": 1,
+      "clone_count": "0",
+      "description": "A thief with simple clothes and small daggers, eager to prove themselves.",
+      "elementType": "adversary",
+      "experiences": [
+        {
+          "id": "srd-adv-jagged-knife-lackey-exp-thief",
+          "name": "Thief",
+          "modifier": 2
+        }
+      ],
+      "minPartySize": 2,
+      "currentStress": 0,
+      "hp_thresholds": {
+        "major": null,
+        "severe": null
+      },
+      "minionGroupId": "8b97d960-4911-473a-8c58-45fcf9203289",
+      "visibleToPlayers": false
+    },
+    {
+      "id": "srd-adv-jagged-knife-lackey",
+      "name": "Jagged Knife Lackey",
+      "role": "minion",
+      "tier": 1,
+      "mapId": "5f55fa5c-2025-4d7c-b6b5-29a7b74cbd41",
+      "attack": {
+        "name": "Daggers",
+        "range": "Melee",
+        "trait": "Phy",
+        "damage": "2",
+        "modifier": -2
+      },
+      "hp_max": 1,
+      "motive": "Escape, profit, throw smoke",
+      "tokenX": 90.8235829668559,
+      "tokenY": 124.69449395905218,
+      "_source": "srd",
+      "altitude": 0,
+      "features": [
+        {
+          "id": "srd-adv-jagged-knife-lackey-feat-minion-3",
+          "name": "Minion (3)",
+          "type": "passive",
+          "description": "The Lackey is defeated when they take any damage. For every 3 damage a PC deals to the Lackey, defeat an additional Minion within range the attack would succeed against."
+        },
+        {
+          "id": "srd-adv-jagged-knife-lackey-feat-group-attack",
+          "name": "Group Attack",
+          "type": "action",
+          "description": "**Spend a Fear** to choose a target and spotlight all Jagged Knife Lackeys within Close range of them. Those Minions move into Melee range of the target and make one shared attack roll. On a success, they deal 2 physical damage each. Combine this damage."
+        }
+      ],
+      "currentHp": 1,
+      "is_public": false,
+      "conditions": "",
+      "difficulty": 9,
+      "instanceId": "0d207435-edca-4e83-90b8-b794b97fbbcd",
+      "play_count": "0",
+      "popularity": "00",
+      "stress_max": 1,
+      "clone_count": "0",
+      "description": "A thief with simple clothes and small daggers, eager to prove themselves.",
+      "elementType": "adversary",
+      "experiences": [
+        {
+          "id": "srd-adv-jagged-knife-lackey-exp-thief",
+          "name": "Thief",
+          "modifier": 2
+        }
+      ],
+      "minPartySize": 5,
+      "currentStress": 0,
+      "hp_thresholds": {
+        "major": null,
+        "severe": null
+      },
+      "minionGroupId": "9d2222d3-c544-424b-9e2e-477d6e0d0fd4",
+      "visibleToPlayers": false
+    },
+    {
+      "id": "srd-adv-jagged-knife-lackey",
+      "name": "Jagged Knife Lackey",
+      "role": "minion",
+      "tier": 1,
+      "mapId": "5f55fa5c-2025-4d7c-b6b5-29a7b74cbd41",
+      "attack": {
+        "name": "Daggers",
+        "range": "Melee",
+        "trait": "Phy",
+        "damage": "2",
+        "modifier": -2
+      },
+      "hp_max": 1,
+      "motive": "Escape, profit, throw smoke",
+      "tokenX": 65.63598628341315,
+      "tokenY": 117.71923115304558,
+      "_source": "srd",
+      "altitude": 0,
+      "features": [
+        {
+          "id": "srd-adv-jagged-knife-lackey-feat-minion-3",
+          "name": "Minion (3)",
+          "type": "passive",
+          "description": "The Lackey is defeated when they take any damage. For every 3 damage a PC deals to the Lackey, defeat an additional Minion within range the attack would succeed against."
+        },
+        {
+          "id": "srd-adv-jagged-knife-lackey-feat-group-attack",
+          "name": "Group Attack",
+          "type": "action",
+          "description": "**Spend a Fear** to choose a target and spotlight all Jagged Knife Lackeys within Close range of them. Those Minions move into Melee range of the target and make one shared attack roll. On a success, they deal 2 physical damage each. Combine this damage."
+        }
+      ],
+      "currentHp": 1,
+      "is_public": false,
+      "conditions": "",
+      "difficulty": 9,
+      "instanceId": "7b1e3eff-453c-463b-95e9-57bf5d18d7ca",
+      "play_count": "0",
+      "popularity": "00",
+      "stress_max": 1,
+      "clone_count": "0",
+      "description": "A thief with simple clothes and small daggers, eager to prove themselves.",
+      "elementType": "adversary",
+      "experiences": [
+        {
+          "id": "srd-adv-jagged-knife-lackey-exp-thief",
+          "name": "Thief",
+          "modifier": 2
+        }
+      ],
+      "minPartySize": 2,
+      "currentStress": 0,
+      "hp_thresholds": {
+        "major": null,
+        "severe": null
+      },
+      "minionGroupId": "8b97d960-4911-473a-8c58-45fcf9203289",
+      "visibleToPlayers": false
+    },
+    {
+      "id": "srd-adv-jagged-knife-lackey",
+      "name": "Jagged Knife Lackey",
+      "role": "minion",
+      "tier": 1,
+      "mapId": "5f55fa5c-2025-4d7c-b6b5-29a7b74cbd41",
+      "attack": {
+        "name": "Daggers",
+        "range": "Melee",
+        "trait": "Phy",
+        "damage": "2",
+        "modifier": -2
+      },
+      "hp_max": 1,
+      "motive": "Escape, profit, throw smoke",
+      "tokenX": 101.3546153107327,
+      "tokenY": 81.11207901559375,
+      "_source": "srd",
+      "altitude": 0,
+      "features": [
+        {
+          "id": "srd-adv-jagged-knife-lackey-feat-minion-3",
+          "name": "Minion (3)",
+          "type": "passive",
+          "description": "The Lackey is defeated when they take any damage. For every 3 damage a PC deals to the Lackey, defeat an additional Minion within range the attack would succeed against."
+        },
+        {
+          "id": "srd-adv-jagged-knife-lackey-feat-group-attack",
+          "name": "Group Attack",
+          "type": "action",
+          "description": "**Spend a Fear** to choose a target and spotlight all Jagged Knife Lackeys within Close range of them. Those Minions move into Melee range of the target and make one shared attack roll. On a success, they deal 2 physical damage each. Combine this damage."
+        }
+      ],
+      "currentHp": 1,
+      "is_public": false,
+      "conditions": "",
+      "difficulty": 9,
+      "instanceId": "36fb5320-c833-4417-890a-2677d1d66580",
+      "play_count": "0",
+      "popularity": "00",
+      "stress_max": 1,
+      "clone_count": "0",
+      "description": "A thief with simple clothes and small daggers, eager to prove themselves.",
+      "elementType": "adversary",
+      "experiences": [
+        {
+          "id": "srd-adv-jagged-knife-lackey-exp-thief",
+          "name": "Thief",
+          "modifier": 2
+        }
+      ],
+      "minPartySize": 5,
+      "currentStress": 0,
+      "hp_thresholds": {
+        "major": null,
+        "severe": null
+      },
+      "minionGroupId": "9d2222d3-c544-424b-9e2e-477d6e0d0fd4",
+      "visibleToPlayers": false
+    },
+    {
+      "id": "srd-adv-jagged-knife-lackey",
+      "name": "Jagged Knife Lackey",
+      "role": "minion",
+      "tier": 1,
+      "mapId": "5f55fa5c-2025-4d7c-b6b5-29a7b74cbd41",
+      "attack": {
+        "name": "Daggers",
+        "range": "Melee",
+        "trait": "Phy",
+        "damage": "2",
+        "modifier": -2
+      },
+      "hp_max": 1,
+      "motive": "Escape, profit, throw smoke",
+      "tokenX": 69.19007872394245,
+      "tokenY": 75.78094035479981,
+      "_source": "srd",
+      "altitude": 0,
+      "features": [
+        {
+          "id": "srd-adv-jagged-knife-lackey-feat-minion-3",
+          "name": "Minion (3)",
+          "type": "passive",
+          "description": "The Lackey is defeated when they take any damage. For every 3 damage a PC deals to the Lackey, defeat an additional Minion within range the attack would succeed against."
+        },
+        {
+          "id": "srd-adv-jagged-knife-lackey-feat-group-attack",
+          "name": "Group Attack",
+          "type": "action",
+          "description": "**Spend a Fear** to choose a target and spotlight all Jagged Knife Lackeys within Close range of them. Those Minions move into Melee range of the target and make one shared attack roll. On a success, they deal 2 physical damage each. Combine this damage."
+        }
+      ],
+      "currentHp": 1,
+      "is_public": false,
+      "conditions": "",
+      "difficulty": 9,
+      "instanceId": "a66d4ca8-27a6-4e7a-a44b-4c5fcf402ba9",
+      "play_count": "0",
+      "popularity": "00",
+      "stress_max": 1,
+      "clone_count": "0",
+      "description": "A thief with simple clothes and small daggers, eager to prove themselves.",
+      "elementType": "adversary",
+      "experiences": [
+        {
+          "id": "srd-adv-jagged-knife-lackey-exp-thief",
+          "name": "Thief",
+          "modifier": 2
+        }
+      ],
+      "minPartySize": 2,
+      "currentStress": 0,
+      "hp_thresholds": {
+        "major": null,
+        "severe": null
+      },
+      "minionGroupId": "8b97d960-4911-473a-8c58-45fcf9203289",
+      "visibleToPlayers": false
+    },
+    {
+      "id": "srd-adv-jagged-knife-lackey",
+      "name": "Jagged Knife Lackey",
+      "role": "minion",
+      "tier": 1,
+      "mapId": "5f55fa5c-2025-4d7c-b6b5-29a7b74cbd41",
+      "attack": {
+        "name": "Daggers",
+        "range": "Melee",
+        "trait": "Phy",
+        "damage": "2",
+        "modifier": -2
+      },
+      "hp_max": 1,
+      "motive": "Escape, profit, throw smoke",
+      "tokenX": 101.35461531073267,
+      "tokenY": 81.11207901559375,
+      "_source": "srd",
+      "altitude": 0,
+      "features": [
+        {
+          "id": "srd-adv-jagged-knife-lackey-feat-minion-3",
+          "name": "Minion (3)",
+          "type": "passive",
+          "description": "The Lackey is defeated when they take any damage. For every 3 damage a PC deals to the Lackey, defeat an additional Minion within range the attack would succeed against."
+        },
+        {
+          "id": "srd-adv-jagged-knife-lackey-feat-group-attack",
+          "name": "Group Attack",
+          "type": "action",
+          "description": "**Spend a Fear** to choose a target and spotlight all Jagged Knife Lackeys within Close range of them. Those Minions move into Melee range of the target and make one shared attack roll. On a success, they deal 2 physical damage each. Combine this damage."
+        }
+      ],
+      "currentHp": 1,
+      "is_public": false,
+      "conditions": "",
+      "difficulty": 9,
+      "instanceId": "20f5b073-a501-4dff-8756-fddea5bbe1cf",
+      "play_count": "0",
+      "popularity": "00",
+      "stress_max": 1,
+      "clone_count": "0",
+      "description": "A thief with simple clothes and small daggers, eager to prove themselves.",
+      "elementType": "adversary",
+      "experiences": [
+        {
+          "id": "srd-adv-jagged-knife-lackey-exp-thief",
+          "name": "Thief",
+          "modifier": 2
+        }
+      ],
+      "minPartySize": 2,
+      "currentStress": 0,
+      "hp_thresholds": {
+        "major": null,
+        "severe": null
+      },
+      "minionGroupId": "8b97d960-4911-473a-8c58-45fcf9203289",
+      "visibleToPlayers": false
+    },
+    {
+      "id": "srd-adv-jagged-knife-lackey",
+      "name": "Jagged Knife Lackey",
+      "role": "minion",
+      "tier": 1,
+      "mapId": "5f55fa5c-2025-4d7c-b6b5-29a7b74cbd41",
+      "attack": {
+        "name": "Daggers",
+        "range": "Melee",
+        "trait": "Phy",
+        "damage": "2",
+        "modifier": -2
+      },
+      "hp_max": 1,
+      "motive": "Escape, profit, throw smoke",
+      "tokenX": 60.30484762261919,
+      "tokenY": 118.07464039709853,
+      "_source": "srd",
+      "altitude": 0,
+      "features": [
+        {
+          "id": "srd-adv-jagged-knife-lackey-feat-minion-3",
+          "name": "Minion (3)",
+          "type": "passive",
+          "description": "The Lackey is defeated when they take any damage. For every 3 damage a PC deals to the Lackey, defeat an additional Minion within range the attack would succeed against."
+        },
+        {
+          "id": "srd-adv-jagged-knife-lackey-feat-group-attack",
+          "name": "Group Attack",
+          "type": "action",
+          "description": "**Spend a Fear** to choose a target and spotlight all Jagged Knife Lackeys within Close range of them. Those Minions move into Melee range of the target and make one shared attack roll. On a success, they deal 2 physical damage each. Combine this damage."
+        }
+      ],
+      "currentHp": 1,
+      "is_public": false,
+      "conditions": "",
+      "difficulty": 9,
+      "instanceId": "8a72b8d3-82b7-4f83-8a24-126bc51eb236",
+      "play_count": "0",
+      "popularity": "00",
+      "stress_max": 1,
+      "clone_count": "0",
+      "description": "A thief with simple clothes and small daggers, eager to prove themselves.",
+      "elementType": "adversary",
+      "experiences": [
+        {
+          "id": "srd-adv-jagged-knife-lackey-exp-thief",
+          "name": "Thief",
+          "modifier": 2
+        }
+      ],
+      "minPartySize": 2,
+      "currentStress": 0,
+      "hp_thresholds": {
+        "major": null,
+        "severe": null
+      },
+      "minionGroupId": "8b97d960-4911-473a-8c58-45fcf9203289",
+      "visibleToPlayers": false
+    },
+    {
+      "id": "srd-adv-jagged-knife-lackey",
+      "name": "Jagged Knife Lackey",
+      "role": "minion",
+      "tier": 1,
+      "mapId": "5f55fa5c-2025-4d7c-b6b5-29a7b74cbd41",
+      "attack": {
+        "name": "Daggers",
+        "range": "Melee",
+        "trait": "Phy",
+        "damage": "2",
+        "modifier": -2
+      },
+      "hp_max": 1,
+      "motive": "Escape, profit, throw smoke",
+      "tokenX": 38.62488373539043,
+      "tokenY": 61.38686597065612,
+      "_source": "srd",
+      "altitude": 0,
+      "features": [
+        {
+          "id": "srd-adv-jagged-knife-lackey-feat-minion-3",
+          "name": "Minion (3)",
+          "type": "passive",
+          "description": "The Lackey is defeated when they take any damage. For every 3 damage a PC deals to the Lackey, defeat an additional Minion within range the attack would succeed against."
+        },
+        {
+          "id": "srd-adv-jagged-knife-lackey-feat-group-attack",
+          "name": "Group Attack",
+          "type": "action",
+          "description": "**Spend a Fear** to choose a target and spotlight all Jagged Knife Lackeys within Close range of them. Those Minions move into Melee range of the target and make one shared attack roll. On a success, they deal 2 physical damage each. Combine this damage."
+        }
+      ],
+      "currentHp": 1,
+      "is_public": false,
+      "conditions": "",
+      "difficulty": 9,
+      "instanceId": "09e66137-5e8c-4ab5-922d-e8a4660be469",
+      "play_count": "0",
+      "popularity": "00",
+      "stress_max": 1,
+      "clone_count": "0",
+      "description": "A thief with simple clothes and small daggers, eager to prove themselves.",
+      "elementType": "adversary",
+      "experiences": [
+        {
+          "id": "srd-adv-jagged-knife-lackey-exp-thief",
+          "name": "Thief",
+          "modifier": 2
+        }
+      ],
+      "minPartySize": 2,
+      "currentStress": 0,
+      "hp_thresholds": {
+        "major": null,
+        "severe": null
+      },
+      "minionGroupId": "8b97d960-4911-473a-8c58-45fcf9203289",
+      "visibleToPlayers": false
+    },
+    {
+      "id": "srd-adv-jagged-knife-lackey",
+      "name": "Jagged Knife Lackey",
+      "role": "minion",
+      "tier": 1,
+      "mapId": "5f55fa5c-2025-4d7c-b6b5-29a7b74cbd41",
+      "attack": {
+        "name": "Daggers",
+        "range": "Melee",
+        "trait": "Phy",
+        "damage": "2",
+        "modifier": -2
+      },
+      "hp_max": 1,
+      "motive": "Escape, profit, throw smoke",
+      "tokenX": 9.125916478997208,
+      "tokenY": 78.80191892924971,
+      "_source": "srd",
+      "altitude": 0,
+      "features": [
+        {
+          "id": "srd-adv-jagged-knife-lackey-feat-minion-3",
+          "name": "Minion (3)",
+          "type": "passive",
+          "description": "The Lackey is defeated when they take any damage. For every 3 damage a PC deals to the Lackey, defeat an additional Minion within range the attack would succeed against."
+        },
+        {
+          "id": "srd-adv-jagged-knife-lackey-feat-group-attack",
+          "name": "Group Attack",
+          "type": "action",
+          "description": "**Spend a Fear** to choose a target and spotlight all Jagged Knife Lackeys within Close range of them. Those Minions move into Melee range of the target and make one shared attack roll. On a success, they deal 2 physical damage each. Combine this damage."
+        }
+      ],
+      "currentHp": 1,
+      "is_public": false,
+      "conditions": "",
+      "difficulty": 9,
+      "instanceId": "db3a20aa-1b60-43b9-81d0-c8f2fb2ed96f",
+      "play_count": "0",
+      "popularity": "00",
+      "stress_max": 1,
+      "clone_count": "0",
+      "description": "A thief with simple clothes and small daggers, eager to prove themselves.",
+      "elementType": "adversary",
+      "experiences": [
+        {
+          "id": "srd-adv-jagged-knife-lackey-exp-thief",
+          "name": "Thief",
+          "modifier": 2
+        }
+      ],
+      "minPartySize": 5,
+      "currentStress": 0,
+      "hp_thresholds": {
+        "major": null,
+        "severe": null
+      },
+      "minionGroupId": "9d2222d3-c544-424b-9e2e-477d6e0d0fd4",
+      "visibleToPlayers": false
+    },
+    {
+      "id": "srd-adv-jagged-knife-lackey",
+      "name": "Jagged Knife Lackey",
+      "role": "minion",
+      "tier": 1,
+      "mapId": "5f55fa5c-2025-4d7c-b6b5-29a7b74cbd41",
+      "attack": {
+        "name": "Daggers",
+        "range": "Melee",
+        "trait": "Phy",
+        "damage": "2",
+        "modifier": -2
+      },
+      "hp_max": 1,
+      "motive": "Escape, profit, throw smoke",
+      "tokenX": 93.0024980754888,
+      "tokenY": 118.07464039709852,
+      "_source": "srd",
+      "altitude": 0,
+      "features": [
+        {
+          "id": "srd-adv-jagged-knife-lackey-feat-minion-3",
+          "name": "Minion (3)",
+          "type": "passive",
+          "description": "The Lackey is defeated when they take any damage. For every 3 damage a PC deals to the Lackey, defeat an additional Minion within range the attack would succeed against."
+        },
+        {
+          "id": "srd-adv-jagged-knife-lackey-feat-group-attack",
+          "name": "Group Attack",
+          "type": "action",
+          "description": "**Spend a Fear** to choose a target and spotlight all Jagged Knife Lackeys within Close range of them. Those Minions move into Melee range of the target and make one shared attack roll. On a success, they deal 2 physical damage each. Combine this damage."
+        }
+      ],
+      "currentHp": 1,
+      "is_public": false,
+      "conditions": "",
+      "difficulty": 9,
+      "instanceId": "fc4f4781-c19f-4c7e-8a93-20a86ddef44e",
+      "play_count": "0",
+      "popularity": "00",
+      "stress_max": 1,
+      "clone_count": "0",
+      "description": "A thief with simple clothes and small daggers, eager to prove themselves.",
+      "elementType": "adversary",
+      "experiences": [
+        {
+          "id": "srd-adv-jagged-knife-lackey-exp-thief",
+          "name": "Thief",
+          "modifier": 2
+        }
+      ],
+      "minPartySize": 5,
+      "currentStress": 0,
+      "hp_thresholds": {
+        "major": null,
+        "severe": null
+      },
+      "minionGroupId": "9d2222d3-c544-424b-9e2e-477d6e0d0fd4",
+      "visibleToPlayers": false
+    },
+    {
+      "id": "srd-adv-jagged-knife-lackey",
+      "name": "Jagged Knife Lackey",
+      "role": "minion",
+      "tier": 1,
+      "mapId": "5f55fa5c-2025-4d7c-b6b5-29a7b74cbd41",
+      "attack": {
+        "name": "Daggers",
+        "range": "Melee",
+        "trait": "Phy",
+        "damage": "2",
+        "modifier": -2
+      },
+      "hp_max": 1,
+      "motive": "Escape, profit, throw smoke",
+      "tokenX": 105.61952623936783,
+      "tokenY": 86.44321767638772,
+      "_source": "srd",
+      "altitude": 0,
+      "features": [
+        {
+          "id": "srd-adv-jagged-knife-lackey-feat-minion-3",
+          "name": "Minion (3)",
+          "type": "passive",
+          "description": "The Lackey is defeated when they take any damage. For every 3 damage a PC deals to the Lackey, defeat an additional Minion within range the attack would succeed against."
+        },
+        {
+          "id": "srd-adv-jagged-knife-lackey-feat-group-attack",
+          "name": "Group Attack",
+          "type": "action",
+          "description": "**Spend a Fear** to choose a target and spotlight all Jagged Knife Lackeys within Close range of them. Those Minions move into Melee range of the target and make one shared attack roll. On a success, they deal 2 physical damage each. Combine this damage."
+        }
+      ],
+      "currentHp": 1,
+      "is_public": false,
+      "conditions": "",
+      "difficulty": 9,
+      "instanceId": "19e7b9c2-2230-48d3-ad54-313490fc8a90",
+      "play_count": "0",
+      "popularity": "00",
+      "stress_max": 1,
+      "clone_count": "0",
+      "description": "A thief with simple clothes and small daggers, eager to prove themselves.",
+      "elementType": "adversary",
+      "experiences": [
+        {
+          "id": "srd-adv-jagged-knife-lackey-exp-thief",
+          "name": "Thief",
+          "modifier": 2
+        }
+      ],
+      "minPartySize": 5,
+      "currentStress": 0,
+      "hp_thresholds": {
+        "major": null,
+        "severe": null
+      },
+      "minionGroupId": "9d2222d3-c544-424b-9e2e-477d6e0d0fd4",
+      "visibleToPlayers": false
+    },
+    {
+      "id": "srd-adv-jagged-knife-lackey",
+      "name": "Jagged Knife Lackey",
+      "role": "minion",
+      "tier": 1,
+      "mapId": "5f55fa5c-2025-4d7c-b6b5-29a7b74cbd41",
+      "attack": {
+        "name": "Daggers",
+        "range": "Melee",
+        "trait": "Phy",
+        "damage": "2",
+        "modifier": -2
+      },
+      "hp_max": 1,
+      "motive": "Escape, profit, throw smoke",
+      "tokenX": 14.634759761817632,
+      "tokenY": 63.34161681294724,
+      "_source": "srd",
+      "altitude": 0,
+      "features": [
+        {
+          "id": "srd-adv-jagged-knife-lackey-feat-minion-3",
+          "name": "Minion (3)",
+          "type": "passive",
+          "description": "The Lackey is defeated when they take any damage. For every 3 damage a PC deals to the Lackey, defeat an additional Minion within range the attack would succeed against."
+        },
+        {
+          "id": "srd-adv-jagged-knife-lackey-feat-group-attack",
+          "name": "Group Attack",
+          "type": "action",
+          "description": "**Spend a Fear** to choose a target and spotlight all Jagged Knife Lackeys within Close range of them. Those Minions move into Melee range of the target and make one shared attack roll. On a success, they deal 2 physical damage each. Combine this damage."
+        }
+      ],
+      "currentHp": 1,
+      "is_public": false,
+      "conditions": "",
+      "difficulty": 9,
+      "instanceId": "9acdd3f3-111a-49f7-b28e-4a0a8e439bb0",
+      "play_count": "0",
+      "popularity": "00",
+      "stress_max": 1,
+      "clone_count": "0",
+      "description": "A thief with simple clothes and small daggers, eager to prove themselves.",
+      "elementType": "adversary",
+      "experiences": [
+        {
+          "id": "srd-adv-jagged-knife-lackey-exp-thief",
+          "name": "Thief",
+          "modifier": 2
+        }
+      ],
+      "minPartySize": 5,
+      "currentStress": 0,
+      "hp_thresholds": {
+        "major": null,
+        "severe": null
+      },
+      "minionGroupId": "9d2222d3-c544-424b-9e2e-477d6e0d0fd4",
+      "visibleToPlayers": false
+    }
+  ],
+  "gmActiveViewId": "5c7ea44d-3873-457a-9594-04c190d06bee",
+  "tableBattleMods": {
+    "damageBoostD4": false,
+    "lessDifficult": false,
+    "moreDangerous": false,
+    "damageBoostStatic": false,
+    "damageBoostPlusOne": false,
+    "slightlyMoreDangerous": true
+  },
+  "conditionsHistory": [],
+  "featureCountdowns": {},
+  "sessionCountdowns": [],
+  "id": "srd-scene-crossroads-ambush",
+  "_source": "dt"
+}

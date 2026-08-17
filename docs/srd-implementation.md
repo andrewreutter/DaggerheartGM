@@ -13,8 +13,8 @@ See [Maintenance Instructions](#maintenance-instructions) at the bottom.
 | Collection                                | Count | Browsable | Selectable  | Features                                                         | Overall     |
 | ----------------------------------------- | ----- | --------- | ----------- | ---------------------------------------------------------------- | ----------- |
 | [Adversaries](#adversaries-129)           | 129   | Done      | N/A (table) | Attacks rollable                                                 | **Done**    |
-| [Environments](#environments-19)          | 19    | Done      | N/A (table) | Display; [17 starter scenes](#srd-starter-scenes-17)             | **Done**    |
-| [Starter scenes](#srd-starter-scenes-17)  | 17    | Display   | N/A (table) | Generated (1/environment except Ambushed/Ambushers); SVG map     | **Display** |
+| [Environments](#environments-19)          | 19    | Done      | N/A (table) | Display; [2 authored DT scenes](#dt-catalog-scenes-2)            | **Done**    |
+| [DT catalog scenes](#dt-catalog-scenes-2) | 2     | Display   | N/A (table) | Hand-authored (Crossroads Ambush, Cross the Raging River); real map images | **Display** |
 | [Weapons](#weapons-186)                   | 186   | N/A       | Done        | 25/38 automated; 38/38 in V2 `weapon_properties` registry         | **Partial** |
 | [Armor](#armor-34)                        | 34    | N/A       | Done        | 18/21 automated; 21/21 in V2 `armor_properties` registry        | **Partial** |
 | [Classes](#classes-9)                     | 9     | N/A       | Done        | 9/9 clickable; 7/9 Phase 2 hooks                                 | **Partial** |
@@ -28,7 +28,7 @@ See [Maintenance Instructions](#maintenance-instructions) at the bottom.
 | [Consumables](#consumables-60)            | 60    | API only  | Indirect    | V2 registry + inventory merge; **Potion of Stability** Rest banner + rest slots (most others narrative) | **Partial** |
 
 
-**Totals:** 746 SRD submodule elements + 17 generated starter scenes. ~360 fully implemented (adversaries + environments + weapons + abilities as display + armor stat/roll/slot-triggered/damage-type-gated features), ~143 partially implemented, ~243 not in the UI. Starter scenes are **Display** (Library + existing Scene → Table flow).
+**Totals:** 746 SRD submodule elements + 2 hand-authored DT catalog scenes. ~360 fully implemented (adversaries + environments + weapons + abilities as display + armor stat/roll/slot-triggered/damage-type-gated features), ~143 partially implemented, ~243 not in the UI. DT catalog scenes are **Display** (Library + existing Scene → Table flow).
 
 ---
 
@@ -48,9 +48,9 @@ No per-element tracking needed — all adversaries share the same rendering and 
 
 No per-element tracking needed.
 
-### SRD starter scenes (17)
+### DT catalog scenes (2)
 
-**Status: Display.** One generated starter scene per SRD environment except Ambushed and Ambushers (`srd-env-ambushed`, `srd-env-ambushers` — those environments stay in the library; no scene is seeded). Not in the SRD parser `COLLECTION_NAMES`; seeded into `external_item_cache` (`source='dt'`, ids `srd-scene-*`) by `npm run generate:srd-scenes`, not `loadSrdIntoDb`. Each scene is a flat table snapshot with an SVG placeholder map and budget-capped adversaries drawn from the environment's `potential_adversaries`. Browsable in the Library (`GET /api/data/scenes?includeSrd=1` and Library All) when official catalog is on — Scenes Include labels that catalog **DT** (Mine+DT / DT); cards show the DT badge. Play uses the existing Scene → Table flow (`add-scene-snapshot`) — no new scene mechanics. Display is the correct final state: content is shown and placeable; automation is the shared Scene editor / Add Scene path.
+**Status: Display.** Two hand-authored DT catalog scenes are included: **Crossroads Ambush** (`srd-scene-crossroads-ambush`) and **Cross the Raging River** (`srd-scene-cross-the-raging-river`). They are stored as JSON files in `data/dt-scenes/` and seeded into `external_item_cache` (`source='dt'`) by `npm run generate:srd-scenes` (not by `loadSrdIntoDb`). Unlike the old generated scenes, they carry real Supabase-hosted map images, real adversary/environment elements, and GM notes authored by the DM. Browsable in the Library under the DT badge (Scenes Include Mine+DT / DT). Crossroads Ambush links to Cross the Raging River via `nextScenes` for the Load Scene chip. The old 17 auto-generated environment scenes were removed by migration 044 and are recoverable with `npm run generate:srd-scenes -- --from-environments` (opt-in only). Display is the correct final state: content is shown and placeable; automation is the shared Scene editor / Add Scene path.
 
 ---
 
