@@ -58,6 +58,7 @@ import { AppRoot } from './components/AppRoot.jsx';
 import { UnifiedImportProvider, useUnifiedImport } from './lib/unified-import-context.jsx';
 import { AuthLanding } from './components/AuthLanding.jsx';
 import { HomeAuthenticated } from './components/HomeAuthenticated.jsx';
+import { HomeFeatureShots } from './components/HomeFeatureShots.jsx';
 import { AdminAiUsagePage } from './components/AdminAiUsagePage.jsx';
 import { AdminBugReportsPage } from './components/AdminBugReportsPage.jsx';
 import { buildLibraryModalPath } from './lib/library-modal-path.js';
@@ -2175,7 +2176,7 @@ function App() {
             onLibraryCardDimensionsChange={handleLibraryCardDimensionsChange}
           />
         ) : (
-          <div className="flex-1 flex flex-col items-center justify-center p-8 bg-gradient-to-b from-dh-surface to-dh-canvas">
+          <div className="flex-1 min-h-0 overflow-y-auto flex flex-col items-center px-8 py-10 bg-gradient-to-b from-dh-surface to-dh-canvas">
             <img src="/assets/daggertop-logo.png" alt="Daggertop" className="w-40 h-40 object-contain mb-4" />
             <h1 className="text-5xl font-bold text-red-500 tracking-wider mb-3 flex items-center gap-3">DAGGERTOP</h1>
             <p className="text-lg text-dh-muted mb-4 text-center max-w-lg">The best way to play the Daggerheart RPG.</p>
@@ -2186,6 +2187,7 @@ function App() {
               <li className="flex gap-2"><span className="text-red-500 mt-0.5 shrink-0">•</span><span>Library of adversaries, environments, and more — pick up and play or dive deep into homebrew built by you and other creators.</span></li>
             </ul>
             <AuthLanding initialMode={route.authMode || 'signin'} />
+            <HomeFeatureShots />
           </div>
         ))}
             {user && (
