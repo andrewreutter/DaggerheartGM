@@ -132,6 +132,39 @@ describe('parseRoute /admin', () => {
   });
 });
 
+describe('parseRoute legal pages', () => {
+  it('parses /terms, /privacy, /support, /cookies as simple public views', () => {
+    expect(parseRoute('/terms')).toEqual({
+      view: 'terms',
+      tab: null,
+      itemId: null,
+      librarySemantic: null,
+      librarySearchQuery: null,
+    });
+    expect(parseRoute('/privacy')).toEqual({
+      view: 'privacy',
+      tab: null,
+      itemId: null,
+      librarySemantic: null,
+      librarySearchQuery: null,
+    });
+    expect(parseRoute('/support')).toEqual({
+      view: 'support',
+      tab: null,
+      itemId: null,
+      librarySemantic: null,
+      librarySearchQuery: null,
+    });
+    expect(parseRoute('/cookies')).toEqual({
+      view: 'cookies',
+      tab: null,
+      itemId: null,
+      librarySemantic: null,
+      librarySearchQuery: null,
+    });
+  });
+});
+
 describe('parseRoute /join', () => {
   it('parses /join/:token', () => {
     expect(parseRoute('/join/abc123')).toEqual({ view: 'join', token: 'abc123' });

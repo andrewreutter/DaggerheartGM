@@ -86,6 +86,10 @@ export function pathnameOnly(fullPath) {
  *   /library/:tab/:id              -> { view: 'library', tab, itemId }
  *   /admin/ai-usage                -> { view: 'adminAiUsage' } (admin-only UI)
  *   /admin/bug-reports             -> { view: 'adminBugReports' } (admin-only UI)
+ *   /terms                         -> { view: 'terms' } (public — Terms of Service)
+ *   /privacy                       -> { view: 'privacy' } (public — Privacy Policy)
+ *   /support                       -> { view: 'support' } (public — Support/Contact)
+ *   /cookies                       -> { view: 'cookies' } (public — Cookie Policy)
  *   /table/:tableId                -> { view: 'table', tableId }
  *   /table/:tableId/:collection/:id -> table + modal deep-link
  *   /join/:token                   -> { view: 'join', token }
@@ -120,6 +124,22 @@ export function parseRoute(pathWithOptionalQuery) {
 
   if (parts[0] === 'admin' && parts[1] === 'bug-reports') {
     return { view: 'adminBugReports', tab: null, itemId: null, librarySemantic: null, librarySearchQuery: null };
+  }
+
+  if (parts[0] === 'terms') {
+    return { view: 'terms', tab: null, itemId: null, librarySemantic: null, librarySearchQuery: null };
+  }
+
+  if (parts[0] === 'privacy') {
+    return { view: 'privacy', tab: null, itemId: null, librarySemantic: null, librarySearchQuery: null };
+  }
+
+  if (parts[0] === 'support') {
+    return { view: 'support', tab: null, itemId: null, librarySemantic: null, librarySearchQuery: null };
+  }
+
+  if (parts[0] === 'cookies') {
+    return { view: 'cookies', tab: null, itemId: null, librarySemantic: null, librarySearchQuery: null };
   }
 
   if (parts[0] === 'join' && parts[1]) {

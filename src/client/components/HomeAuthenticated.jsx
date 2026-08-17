@@ -1,6 +1,7 @@
 import React from 'react';
 import { Plus, Users } from 'lucide-react';
 import { LibraryView } from './LibraryView.jsx';
+import { Footer } from './Footer.jsx';
 
 function playerLabel(player) {
   if (!player) return '';
@@ -184,6 +185,8 @@ export function HomeAuthenticated({
           />
         </div>
       </section>
+
+      <Footer navigate={navigate} />
     </div>
   );
 }

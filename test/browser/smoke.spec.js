@@ -35,6 +35,16 @@ test('sign-in page renders when not authenticated', async ({ page }) => {
   await expect(page.locator('h2', { hasText: 'GM Moves' })).toBeVisible();
   await expect(page.locator('h2', { hasText: 'Map and Camera Management' })).toBeVisible();
   await expect(page.locator('img[alt*="Spotlight beams"]')).toBeVisible();
+
+  // Footer: single row of exactly the 4 legal/support links.
+  const footerNav = page.locator('footer nav');
+  await expect(footerNav).toBeVisible();
+  await expect(footerNav.getByRole('link')).toHaveText(['Terms', 'Privacy', 'Support', 'Cookies']);
+
+  // Clicking Terms navigates to /terms and renders its heading.
+  await footerNav.getByRole('link', { name: 'Terms' }).click();
+  await expect(page).toHaveURL(/\/terms$/);
+  await expect(page.locator('h1', { hasText: 'Terms of Service' })).toBeVisible();
 });
 
 // ---------------------------------------------------------------------------

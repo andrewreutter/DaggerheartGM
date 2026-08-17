@@ -64,6 +64,11 @@ import { HomeAuthenticated } from './components/HomeAuthenticated.jsx';
 import { HomeFeatureShots } from './components/HomeFeatureShots.jsx';
 import { AdminAiUsagePage } from './components/AdminAiUsagePage.jsx';
 import { AdminBugReportsPage } from './components/AdminBugReportsPage.jsx';
+import { Footer } from './components/Footer.jsx';
+import { TermsPage } from './components/legal/TermsPage.jsx';
+import { PrivacyPage } from './components/legal/PrivacyPage.jsx';
+import { SupportPage } from './components/legal/SupportPage.jsx';
+import { CookiesPage } from './components/legal/CookiesPage.jsx';
 import { buildLibraryModalPath } from './lib/library-modal-path.js';
 
 function NavImportBtn() {
@@ -2298,8 +2303,37 @@ function App() {
             </ul>
             <AuthLanding initialMode={route.authMode || 'signin'} />
             <HomeFeatureShots />
+            <Footer navigate={navigate} />
           </div>
         ))}
+            <div
+              className="flex-1 overflow-hidden flex flex-col"
+              style={{ display: route.view === 'terms' ? 'flex' : 'none' }}
+              aria-hidden={route.view !== 'terms'}
+            >
+              {route.view === 'terms' && <TermsPage navigate={navigate} />}
+            </div>
+            <div
+              className="flex-1 overflow-hidden flex flex-col"
+              style={{ display: route.view === 'privacy' ? 'flex' : 'none' }}
+              aria-hidden={route.view !== 'privacy'}
+            >
+              {route.view === 'privacy' && <PrivacyPage navigate={navigate} />}
+            </div>
+            <div
+              className="flex-1 overflow-hidden flex flex-col"
+              style={{ display: route.view === 'support' ? 'flex' : 'none' }}
+              aria-hidden={route.view !== 'support'}
+            >
+              {route.view === 'support' && <SupportPage navigate={navigate} />}
+            </div>
+            <div
+              className="flex-1 overflow-hidden flex flex-col"
+              style={{ display: route.view === 'cookies' ? 'flex' : 'none' }}
+              aria-hidden={route.view !== 'cookies'}
+            >
+              {route.view === 'cookies' && <CookiesPage navigate={navigate} />}
+            </div>
             {user && (
             <>
             <div

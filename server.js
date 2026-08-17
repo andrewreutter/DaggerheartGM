@@ -209,7 +209,7 @@ app.use(compression({
   // SSE connections (EventSource) must not be gzip-compressed. When connecting directly to Express
   // (e.g. local dev), the browser sends Accept-Encoding: gzip and the compression middleware wraps
   // the SSE stream, causing named events (banners, table_state) to be silently swallowed by the
-  // browser's EventSource parser. On production (Fly.io) the reverse proxy strips Accept-Encoding
+  // browser's EventSource parser. On production (Railway) the reverse proxy strips Accept-Encoding
   // from SSE requests before forwarding, so this was never an issue there.
   filter: (req, res) => {
     if (req.headers.accept?.includes('text/event-stream')) return false;
@@ -5091,7 +5091,7 @@ async function startServer() {
     // T9: Stripe reconciliation cron — safety-net sweep for missed/failed webhooks.
     // Runs daily at 2 AM. Queries recent Stripe Checkout Sessions and backfills any
     // paid_through_at extensions that were missed (e.g. server was down during webhook delivery).
-    // fly.toml min_machines_running = 1 ensures this always runs.
+    // Railway keeps the service running continuously (no scale-to-zero), so this always runs.
     cron.schedule('0 2 * * *', async () => {
       if (!isStripeConfigured()) return;
       try {
