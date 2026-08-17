@@ -30,6 +30,7 @@ test('sign-in page renders when not authenticated', async ({ page }) => {
   // unauthenticated landing page is visible: the "Daggertop" h1 is always present.
   await expect(page.locator('h1', { hasText: 'Daggertop' })).toBeVisible({ timeout: 10000 });
   await expect(page.locator('h2', { hasText: 'Spotlight Management' })).toBeVisible();
+  await expect(page.locator('h2', { hasText: 'GM Moves' })).toBeVisible();
   await expect(page.locator('h2', { hasText: 'Map and Camera Management' })).toBeVisible();
   await expect(page.locator('img[alt*="Spotlight beams"]')).toBeVisible();
 });

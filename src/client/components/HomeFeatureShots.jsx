@@ -16,6 +16,18 @@ export const HOME_FEATURE_SHOTS = [
     ],
   },
   {
+    id: 'gm-moves',
+    title: 'GM Moves',
+    image: '/assets/home/gm-moves.png',
+    imageAlt: 'GM Moves overlay with Default Moves, Passives and Reactions, Fear Actions, and Actions',
+    bullets: [
+      'Default Moves stay on hand, plus every passive, Fear action, and attack from what is on the table.',
+      'Grouped by source — environments first, then adversaries — so you can scan in Encounter order.',
+      'Moves whose tokens sit outside the current camera fold under Off camera.',
+      'Click an attack to roll it at the table.',
+    ],
+  },
+  {
     id: 'map-and-camera-management',
     title: 'Map and Camera Management',
     image: '/assets/home/map-and-camera-management.png',
