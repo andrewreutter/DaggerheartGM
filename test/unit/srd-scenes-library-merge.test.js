@@ -1,7 +1,8 @@
 /**
- * SRD starter scenes live in `external_item_cache` (source='srd', collection='scenes').
+ * Starter scenes live in `external_item_cache` (source='dt', collection='scenes').
  * `getUnifiedItems` must union that cache when includeSrd is on; Library All's scenes
- * branch must pass includeSrd through. `pg` is mocked — no live DB or seed script.
+ * branch must pass includeSrd through. Other collections still query source='srd'.
+ * `pg` is mocked — no live DB or seed script.
  */
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -28,14 +29,14 @@ const { getUnifiedItems, getUnifiedLibraryAll, getUnifiedLibraryAllBranchCounts 
 const APP_ID = 'test-app';
 const USER_ID = 'user-1';
 
-const SRD_SCENE_ROW = {
+const DT_SCENE_ROW = {
   id: 'srd-scene-abandoned-grove',
-  data: { name: 'Abandoned Grove', tier: 1, _source: 'srd' },
+  data: { name: 'Abandoned Grove', tier: 1, _source: 'dt' },
   user_id: null,
   is_public: false,
   cc: 0,
   pc: 0,
-  _source: 'srd',
+  _source: 'dt',
 };
 
 const OWN_SCENE_ROW = {
@@ -52,10 +53,16 @@ function isScenesQuery(params) {
   return Array.isArray(params) && params.includes('scenes');
 }
 
-function sqlQueriesSrdSceneCache(sql, params) {
+function sqlQueriesExtCacheSource(sql, params, collection, source) {
   return /external_item_cache/i.test(sql)
-    && isScenesQuery(params)
-    && params.some((p) => Array.isArray(p) && p.includes('srd'));
+    && Array.isArray(params)
+    && params.includes(collection)
+    && params.some((p) => Array.isArray(p) && p.includes(source));
+}
+
+function sqlQueriesDtSceneCache(sql, params) {
+  return sqlQueriesExtCacheSource(sql, params, 'scenes', 'dt')
+    && !params.some((p) => Array.isArray(p) && p.includes('srd'));
 }
 
 function installQueryImpl({ sceneRows = [] } = {}) {
@@ -76,8 +83,8 @@ beforeEach(() => {
 });
 
 describe('getUnifiedItems scenes + external_item_cache', () => {
-  it('includeSrd=true queries the cache and returns seeded SRD scenes', async () => {
-    installQueryImpl({ sceneRows: [SRD_SCENE_ROW] });
+  it('includeSrd=true queries the cache and returns seeded DT scenes', async () => {
+    installQueryImpl({ sceneRows: [DT_SCENE_ROW] });
 
     const result = await getUnifiedItems(APP_ID, USER_ID, 'scenes', {
       includeMine: false,
@@ -89,12 +96,29 @@ describe('getUnifiedItems scenes + external_item_cache', () => {
       limit: 20,
     });
 
-    expect(calls.some(({ sql, params }) => sqlQueriesSrdSceneCache(sql, params))).toBe(true);
+    expect(calls.some(({ sql, params }) => sqlQueriesDtSceneCache(sql, params))).toBe(true);
     expect(result.totalCount).toBe(1);
     expect(result.items).toHaveLength(1);
     expect(result.items[0].id).toBe('srd-scene-abandoned-grove');
     expect(result.items[0].name).toBe('Abandoned Grove');
-    expect(result.items[0]._source).toBe('srd');
+    expect(result.items[0]._source).toBe('dt');
+  });
+
+  it('includeSrd=true still queries source srd for non-scene collections', async () => {
+    installQueryImpl();
+
+    await getUnifiedItems(APP_ID, USER_ID, 'adversaries', {
+      includeMine: false,
+      includePublic: false,
+      includeSrd: true,
+      search: '',
+      sort: 'name',
+      offset: 0,
+      limit: 20,
+    });
+
+    expect(calls.some(({ sql, params }) => sqlQueriesExtCacheSource(sql, params, 'adversaries', 'srd'))).toBe(true);
+    expect(calls.some(({ sql, params }) => sqlQueriesExtCacheSource(sql, params, 'adversaries', 'dt'))).toBe(false);
   });
 
   it('includeSrd=false does not query external_item_cache for scenes', async () => {
@@ -111,12 +135,12 @@ describe('getUnifiedItems scenes + external_item_cache', () => {
     });
 
     expect(calls.some(({ sql }) => /external_item_cache/i.test(sql))).toBe(false);
-    expect(result.items.every((item) => item._source !== 'srd')).toBe(true);
+    expect(result.items.every((item) => item._source !== 'srd' && item._source !== 'dt')).toBe(true);
     expect(result.items.some((item) => item.id === 'srd-scene-abandoned-grove')).toBe(false);
   });
 
-  it('merges own items with SRD cache rows when both sources are on', async () => {
-    installQueryImpl({ sceneRows: [OWN_SCENE_ROW, SRD_SCENE_ROW] });
+  it('merges own items with DT cache rows when both sources are on', async () => {
+    installQueryImpl({ sceneRows: [OWN_SCENE_ROW, DT_SCENE_ROW] });
 
     const result = await getUnifiedItems(APP_ID, USER_ID, 'scenes', {
       includeMine: true,
@@ -128,7 +152,7 @@ describe('getUnifiedItems scenes + external_item_cache', () => {
       limit: 20,
     });
 
-    expect(calls.some(({ sql, params }) => sqlQueriesSrdSceneCache(sql, params))).toBe(true);
+    expect(calls.some(({ sql, params }) => sqlQueriesDtSceneCache(sql, params))).toBe(true);
     expect(calls.some(({ sql }) => /FROM items/i.test(sql))).toBe(true);
     expect(result.items.map((i) => i.id).sort()).toEqual(['my-scene', 'srd-scene-abandoned-grove']);
   });
@@ -154,7 +178,7 @@ describe('Library All scenes branch', () => {
   };
 
   it('includeSrd=true includes the scenes cache query', async () => {
-    installQueryImpl({ sceneRows: [SRD_SCENE_ROW] });
+    installQueryImpl({ sceneRows: [DT_SCENE_ROW] });
 
     const result = await getUnifiedLibraryAll(APP_ID, USER_ID, {
       ...baseOpts,
@@ -163,13 +187,13 @@ describe('Library All scenes branch', () => {
       limit: 50,
     });
 
-    expect(calls.some(({ sql, params }) => sqlQueriesSrdSceneCache(sql, params))).toBe(true);
+    expect(calls.some(({ sql, params }) => sqlQueriesDtSceneCache(sql, params))).toBe(true);
     expect(result.countsByCollection.scenes).toBe(1);
     expect(result.items.filter((i) => i._collection === 'scenes')).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           id: 'srd-scene-abandoned-grove',
-          _source: 'srd',
+          _source: 'dt',
           _collection: 'scenes',
         }),
       ])
@@ -181,13 +205,13 @@ describe('Library All scenes branch', () => {
 
     await getUnifiedLibraryAll(APP_ID, USER_ID, { ...baseOpts, includeSrd: false });
 
-    expect(calls.some(({ sql, params }) => sqlQueriesSrdSceneCache(sql, params))).toBe(false);
+    expect(calls.some(({ sql, params }) => sqlQueriesDtSceneCache(sql, params))).toBe(false);
     expect(calls.filter(({ sql, params }) => /external_item_cache/i.test(sql) && isScenesQuery(params))).toHaveLength(0);
   });
 
   it('counts scenes once (not via SRD_COLLECTION_NAMES and the scenes branch)', async () => {
     expect(SRD_COLLECTION_NAMES).not.toContain('scenes');
-    installQueryImpl({ sceneRows: [SRD_SCENE_ROW, OWN_SCENE_ROW] });
+    installQueryImpl({ sceneRows: [DT_SCENE_ROW, OWN_SCENE_ROW] });
 
     const counts = await getUnifiedLibraryAllBranchCounts(APP_ID, USER_ID, {
       ...baseOpts,

@@ -101,6 +101,7 @@ import {
   isPrepModeElementUpdateBlocked,
 } from '../lib/table-session-gate.js';
 import { isOwnItem, DEFAULT_CHARACTER_STARTING_HOPE, ROLES } from '../lib/constants.js';
+import { canEditLibraryCatalogItem, isCatalogSource } from '../lib/library-catalog-edit.js';
 import {
   characterDrawerEditMismatch as computeCharacterDrawerEditMismatch,
   shouldSuppressCharacterOverlayOutsideDismiss,
@@ -3269,7 +3270,8 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
       navigate(gameTableBasePath, { replace: true });
       return;
     }
-    const canEditOriginal = isOwnItem(baseElement);
+    const canEditOriginal = isOwnItem(baseElement)
+      || canEditLibraryCatalogItem(baseElement, { isAdmin, collection: modalCollection });
     let mode;
     let item;
     if (modalCollection === 'characters') {
@@ -3416,7 +3418,8 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
 
   const handleEditClick = (instances, baseElement, collection) => {
     navigate(`${gameTableBasePath}/${collection}/${baseElement.id}`);
-    const canEditOriginal = isOwnItem(baseElement);
+    const canEditOriginal = isOwnItem(baseElement)
+      || canEditLibraryCatalogItem(baseElement, { isAdmin, collection });
     if (!canEditOriginal) {
       setEditState({ step: 'form', item: getItemData(baseElement), collection, mode: 'copy', instances, baseElement });
     } else {
@@ -7882,7 +7885,10 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
       <EditChoiceDialog
         itemName={editState.baseElement.name}
         contextLabel="Table"
-        canEditOriginal={isOwnItem(editState.baseElement)}
+        canEditOriginal={
+          isOwnItem(editState.baseElement)
+          || canEditLibraryCatalogItem(editState.baseElement, { isAdmin, collection: editState.collection })
+        }
         onEditCopy={handleChoiceEditCopy}
         onEditOriginal={handleChoiceEditOriginal}
         onClose={closeEditModal}
@@ -7896,6 +7902,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
         collection={editState.collection}
         data={data}
         editable={true}
+        officialCatalogEdit={editState.mode === 'original' && isCatalogSource(editState.item)}
         isNew={editState.mode === 'new'}
         presentation={editState.presentation ?? 'center'}
         onCharacterDrawerChromeSync={setCharacterDrawerChromeSync}

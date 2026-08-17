@@ -38,6 +38,9 @@
   --dh-badge-srd-bg: 88 28 135;
   --dh-badge-srd-text: 250 245 255;
   --dh-badge-srd-border: 167 139 250;
+  --dh-badge-dt-bg: 19 78 74;
+  --dh-badge-dt-text: 204 251 241;
+  --dh-badge-dt-border: 45 212 191;
   --dh-badge-public-bg: 30 58 138;
   --dh-badge-public-text: 191 219 254;
   --dh-badge-public-border: 37 99 235;
@@ -131,6 +134,11 @@
   background: rgb(var(--dh-badge-srd-bg) / 0.92);
   color: rgb(var(--dh-badge-srd-text) / 1);
   border-color: rgb(var(--dh-badge-srd-border) / 1);
+}
+.dh-badge-dt {
+  background: rgb(var(--dh-badge-dt-bg) / 0.92);
+  color: rgb(var(--dh-badge-dt-text) / 1);
+  border-color: rgb(var(--dh-badge-dt-border) / 1);
 }
 .dh-badge-public {
   background: rgb(var(--dh-badge-public-bg) / 0.92);

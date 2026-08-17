@@ -9,7 +9,13 @@ import { readFile, readdir } from 'fs/promises';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { COLLECTION_NAMES, getCollection } from './srd/parser.js';
-import { getSyncState, setSyncState, upsertExternalCache, deleteExternalCacheBySource } from './db.js';
+import {
+  getSyncState,
+  setSyncState,
+  upsertExternalCache,
+  listExternalCacheBySource,
+  deleteExternalCacheByIds,
+} from './db.js';
 import { formatSrdCacheStamp } from './srd-sync-state.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -53,8 +59,35 @@ export async function getSubmoduleHash() {
 }
 
 /**
+ * Per-id SRD cache sync: skip overwrite when `data._adminEditedAt` is set;
+ * delete leftover cache ids that are not admin-edited.
+ * @param {{ external_id: string, data?: object }[]} existingRows
+ * @param {{ id: string }[]} incomingItems
+ */
+export function planSrdCollectionCacheSync(existingRows, incomingItems) {
+  const existingById = new Map((existingRows || []).map((row) => [row.external_id, row.data]));
+  const incomingIds = new Set((incomingItems || []).map((item) => item.id).filter(Boolean));
+  const upserts = [];
+  for (const item of incomingItems || []) {
+    if (!item?.id) continue;
+    const existing = existingById.get(item.id);
+    if (existing?._adminEditedAt) continue;
+    upserts.push(item);
+  }
+  const deleteIds = [];
+  for (const row of existingRows || []) {
+    if (!row?.external_id) continue;
+    if (incomingIds.has(row.external_id)) continue;
+    if (row.data?._adminEditedAt) continue;
+    deleteIds.push(row.external_id);
+  }
+  return { upserts, deleteIds };
+}
+
+/**
  * Load all SRD collections into external_item_cache.
- * If the current hash matches sync_state, skip. Otherwise truncate SRD rows per collection and reload.
+ * If the current hash matches sync_state, skip. Otherwise per-id upsert,
+ * preserving admin-edited rows (`data._adminEditedAt`).
  */
 export async function loadSrdIntoDb(appId) {
   const currentHash = await getSubmoduleHash();
@@ -72,17 +105,17 @@ export async function loadSrdIntoDb(appId) {
 
   const counts = {};
   for (const collection of COLLECTION_NAMES) {
-    await deleteExternalCacheBySource(appId, 'srd', collection);
     const rows = await getCollection(collection);
-    if (!rows?.length) {
-      counts[collection] = 0;
-      continue;
+    const existing = await listExternalCacheBySource(appId, 'srd', collection);
+    const { upserts, deleteIds } = planSrdCollectionCacheSync(existing, rows || []);
+    if (deleteIds.length) {
+      await deleteExternalCacheByIds(appId, 'srd', collection, deleteIds);
     }
-    for (const item of rows) {
+    for (const item of upserts) {
       const { id, ...data } = item;
       await upsertExternalCache(appId, 'srd', collection, id, { ...data, _source: 'srd' }, '');
     }
-    counts[collection] = rows.length;
+    counts[collection] = rows?.length ?? 0;
   }
 
   await setSyncState(appId, 'srd_hash', cacheStamp);

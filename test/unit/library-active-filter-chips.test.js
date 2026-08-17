@@ -14,6 +14,16 @@ describe('formatIncludesForChipLabel', () => {
   it('maps legacy includes to the active single-select mode label', () => {
     expect(formatIncludesForChipLabel(['own', 'hod'])).toBe('Mine');
   });
+
+  it('uses SRD wording for non-scene collections', () => {
+    expect(formatIncludesForChipLabel(['own', 'srd'])).toBe('Mine + SRD');
+    expect(formatIncludesForChipLabel(['srd'], 'adversaries')).toBe('SRD');
+  });
+
+  it('uses DT wording for scenes', () => {
+    expect(formatIncludesForChipLabel(['own', 'srd'], 'scenes')).toBe('Mine + DT');
+    expect(formatIncludesForChipLabel(['srd'], 'scenes')).toBe('DT');
+  });
 });
 
 describe('getActiveLibraryFilterChipSpecs', () => {

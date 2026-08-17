@@ -1,8 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import {
   collectSceneLibraryCardGroups,
+  formatSceneLibraryBpLabel,
   formatSceneLibraryRowTitle,
   libraryPickerRowMeta,
+  sceneLibraryBpRange,
   sceneMapPreviewAspectRatio,
 } from '../../src/client/lib/scene-library-card-contents.js';
 
@@ -107,6 +109,75 @@ describe('collectSceneLibraryCardGroups', () => {
   it('returns no groups for an empty or missing scene', () => {
     expect(collectSceneLibraryCardGroups(null)).toEqual([]);
     expect(collectSceneLibraryCardGroups({})).toEqual([]);
+  });
+});
+
+describe('formatSceneLibraryBpLabel', () => {
+  it('uses designed party size when no N+ adversaries are present', () => {
+    const scene = {
+      partySize: 4,
+      activeElements: [
+        { elementType: 'adversary', role: 'bruiser', tier: 1 },
+      ],
+    };
+    expect(sceneLibraryBpRange(scene)).toEqual({ pcMin: 4, pcMax: null, bpMin: 4, bpMax: 4 });
+    expect(formatSceneLibraryBpLabel(scene)).toBe('4 BP for 4 PCs');
+  });
+
+  it('singularizes 1 PC when the scene is designed for one character', () => {
+    const scene = {
+      partySize: 1,
+      activeElements: [
+        { elementType: 'adversary', role: 'standard', tier: 1 },
+      ],
+    };
+    expect(formatSceneLibraryBpLabel(scene)).toBe('2 BP for 1 PC');
+  });
+
+  it('defaults missing party size to 4 and still labels an empty scene', () => {
+    expect(formatSceneLibraryBpLabel({ activeElements: [] })).toBe('0 BP for 4 PCs');
+  });
+
+  it('spans 1 under the smallest N+ through the largest N+ (4+ and 7+ → 3-7)', () => {
+    const scene = {
+      partySize: 4,
+      activeElements: [
+        { elementType: 'adversary', role: 'standard', tier: 1 },
+        { elementType: 'adversary', role: 'solo', tier: 3, minPartySize: 4 },
+        { elementType: 'adversary', role: 'solo', tier: 3, minPartySize: 7 },
+      ],
+    };
+    // At 3 PCs: standard only (2). At 7 PCs: standard + both solos (2+5+5=12).
+    expect(sceneLibraryBpRange(scene)).toEqual({ pcMin: 3, pcMax: 7, bpMin: 2, bpMax: 12 });
+    expect(formatSceneLibraryBpLabel(scene)).toBe('2-12 BP for 3-7 PCs');
+  });
+
+  it('uses a single 4+ adversary as a 3-4 PC span', () => {
+    const scene = {
+      partySize: 5,
+      activeElements: [
+        { elementType: 'adversary', role: 'standard', tier: 1 },
+        { elementType: 'adversary', role: 'bruiser', tier: 1, minPartySize: 4 },
+      ],
+    };
+    expect(sceneLibraryBpRange(scene)).toEqual({ pcMin: 3, pcMax: 4, bpMin: 2, bpMax: 6 });
+    expect(formatSceneLibraryBpLabel(scene)).toBe('2-6 BP for 3-4 PCs');
+  });
+
+  it('ignores Always (minPartySize ≤ 1) and environment N+ tags', () => {
+    const scene = {
+      partySize: 4,
+      activeElements: [
+        { elementType: 'adversary', role: 'standard', tier: 1, minPartySize: 1 },
+        { elementType: 'environment', name: 'Grove', minPartySize: 5 },
+      ],
+    };
+    expect(formatSceneLibraryBpLabel(scene)).toBe('2 BP for 4 PCs');
+  });
+
+  it('returns empty for a missing scene', () => {
+    expect(formatSceneLibraryBpLabel(null)).toBe('');
+    expect(formatSceneLibraryBpLabel(undefined)).toBe('');
   });
 });
 

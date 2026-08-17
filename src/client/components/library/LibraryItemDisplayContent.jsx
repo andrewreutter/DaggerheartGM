@@ -11,7 +11,7 @@ import { coerceLibraryAttack } from '../../lib/library-attack-display.js';
 import { libraryTierBodyLine, showLibraryLevelBadge } from '../../lib/library-tier-subtitle.js';
 import { expandDomainCardEntries } from '../../lib/library-domain-cards.js';
 import { TierShieldBadge } from '../TierShieldBadge.jsx';
-import { collectSceneLibraryCardGroups, formatSceneLibraryRowTitle, sceneMapPreviewAspectRatio } from '../../lib/scene-library-card-contents.js';
+import { collectSceneLibraryCardGroups, formatSceneLibraryBpLabel, formatSceneLibraryRowTitle, sceneMapPreviewAspectRatio } from '../../lib/scene-library-card-contents.js';
 
 const GENERIC_DETAIL_SET = new Set(LIBRARY_GENERIC_DETAIL_COLLECTIONS);
 
@@ -603,7 +603,7 @@ const SCENE_CARD_FILL_BELOW =
   'min-h-0 shrink-[999] basis-auto overflow-hidden flex flex-col gap-1.5';
 
 /**
- * Lightweight scene summary: first-map thumbnail, denormalized tier/BP, and item titles.
+ * Lightweight scene summary: first-map thumbnail, denormalized tier, BP-for-PCs badge, and item titles.
  * @param {{ item: object, compact?: boolean, fill?: boolean }} props
  *   `fill` — library grid card: map keeps its aspect preferred size and grows into leftover
  *   height; content below truncates first, and the map shrinks only after that is gone.
@@ -614,7 +614,8 @@ export function SceneLibraryCard({ item, compact = false, fill = false }) {
   const mapAspect = sceneMapPreviewAspectRatio(map);
   const groups = collectSceneLibraryCardGroups(item);
   const showTier = item?.tier != null && item.tier !== '';
-  const showBp = item?.bp != null && item.bp !== '';
+  const bpLabel = formatSceneLibraryBpLabel(item);
+  const showBp = Boolean(bpLabel);
   const showBelow = showTier || showBp || groups.length > 0;
 
   const mapBoxClass = fill
@@ -631,8 +632,8 @@ export function SceneLibraryCard({ item, compact = false, fill = false }) {
             </span>
           ) : null}
           {showBp ? (
-            <span className="text-xs font-semibold tabular-nums text-blue-200 border border-blue-700/50 bg-blue-900/30 rounded px-1.5 py-0.5">
-              {item.bp} BP
+            <span className={`font-semibold tabular-nums text-blue-200 border border-blue-700/50 bg-blue-900/30 rounded px-1.5 py-0.5 ${compact || fill ? 'text-[10px]' : 'text-xs'}`}>
+              {bpLabel}
             </span>
           ) : null}
         </div>

@@ -2,9 +2,10 @@ import { describe, it, expect } from 'vitest';
 import { shouldCloneOnAddToTable } from '../../src/client/lib/add-to-table-clone.js';
 
 describe('shouldCloneOnAddToTable', () => {
-  it('never clones scenes (own, SRD, or public) — place the snapshot only', () => {
+  it('never clones scenes (own, SRD, DT, or public) — place the snapshot only', () => {
     expect(shouldCloneOnAddToTable('scenes', { id: 'mine', _source: 'own' })).toBe(false);
     expect(shouldCloneOnAddToTable('scenes', { id: 'srd-scene-abandoned-grove', _source: 'srd' })).toBe(false);
+    expect(shouldCloneOnAddToTable('scenes', { id: 'srd-scene-abandoned-grove', _source: 'dt' })).toBe(false);
     expect(shouldCloneOnAddToTable('scenes', { id: 'pub', _source: 'public' })).toBe(false);
     expect(shouldCloneOnAddToTable('scenes', { id: 'legacy-own' })).toBe(false);
   });

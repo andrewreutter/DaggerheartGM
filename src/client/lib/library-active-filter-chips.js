@@ -14,12 +14,13 @@ function truncateForChip(s, max = 48) {
 }
 
 /** Human-readable source selection for chip labels (matches single-select Include strip). */
-export function formatIncludesForChipLabel(includes) {
+export function formatIncludesForChipLabel(includes, collection) {
   const mode = getLibraryIncludeMode(includes);
+  const catalogLabel = collection === 'scenes' ? 'DT' : 'SRD';
   if (mode === 'all') return 'All';
-  if (mode === 'mine_srd') return 'Mine + SRD';
+  if (mode === 'mine_srd') return `Mine + ${catalogLabel}`;
   if (mode === 'own') return 'Mine';
-  if (mode === 'srd') return 'SRD';
+  if (mode === 'srd') return catalogLabel;
   if (mode === 'public') return 'Public';
   return 'All';
 }
@@ -61,12 +62,12 @@ export function getActiveLibraryFilterChipSpecs(filters, collection) {
   }
 
   if (!includesMatchDefault(includes)) {
-    const src = formatIncludesForChipLabel(includes);
+    const src = formatIncludesForChipLabel(includes, collection);
     chips.push({
       key: 'resetIncludes',
       label: `Source: ${src}`,
       kind: 'resetIncludes',
-      title: 'Reset sources to Mine + SRD',
+      title: collection === 'scenes' ? 'Reset sources to Mine + DT' : 'Reset sources to Mine + SRD',
     });
   }
 

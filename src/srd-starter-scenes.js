@@ -34,6 +34,14 @@ export const STARTER_SCENE_EXCLUDED_ENV_IDS = Object.freeze([
   'srd-env-ambushers',
 ]);
 
+/** Official catalog cache source for generated starter scenes (ids stay `srd-scene-*`). */
+export const STARTER_SCENE_CACHE_SOURCE = 'dt';
+
+/** Skip re-seed when an admin has edited the cache row, unless `--force`. */
+export function shouldSkipAdminEditedStarterScene(existingData, { force = false } = {}) {
+  return Boolean(existingData?._adminEditedAt) && !force;
+}
+
 /** Stable scene ids that must not be upserted (and may be deleted on re-seed). */
 export const STARTER_SCENE_EXCLUDED_SCENE_IDS = Object.freeze([
   'srd-scene-ambushed',
@@ -267,7 +275,7 @@ export function buildSrdStarterScene(env, opts = {}) {
     id: sceneId,
     name,
     description: env?.description || '',
-    _source: 'srd',
+    _source: 'dt',
     maps: [
       {
         id: STARTER_SCENE_MAP_ID,

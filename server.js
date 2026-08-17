@@ -9,7 +9,7 @@ import { readFile } from 'fs/promises';
 import { initializeApp, getApps } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import cron from 'node-cron';
-import { runMigrations, getPool, getItems, getPublicItems, upsertItem, deleteItem, countItems, getItemsPaginated, countCommunityItems, getCommunityItemsPaginated, getItemsByIds, getItem, recordClone, recordPlay, upsertMirror, findAutoClone, getUnifiedItems, getUnifiedLibraryAll, getUnifiedLibraryAllBranchCounts, getExternalCacheByIds, getTableStatesByPlayerEmail, getTableStateById, listTableStates, summarizeTablePlayerRoster, appendDiceRoll, ackDiceRoll, getRecentDiceRolls, setBannerStatus, getPendingBanners, getDiceRollById, updateDiceRollData, resolveCharacterElements as resolveCharacterElementsDb, stripCharacterElementsForDb, getResolvedTableState, setTableStateNotifyHook, getUserPreferences, upsertUserPreferences, queryAiUsageAggregates, stampFreeTrialStart, checkTableIsLive, extendTableCampaignPass, recordCampaignPassPurchase, markStripeEventProcessed, recordCharacterTablePlacement, removeCharacterTablePlacementsForTable, createTableInviteLink, revokeTableInviteLink, getActiveTableInviteLink, redeemTableInviteLink, deleteTableInviteLinksForTable, countUserAiCallsThisMonth, getBugReportsPaginated, countBugReports, setBugReportStatus, updateBugReportNotes, BUG_REPORT_STATUSES, getCharacterById, upsertCharacterForTable, deleteCharacterForTable, stampCharacterTableId } from './src/db.js';
+import { runMigrations, getPool, getItems, getPublicItems, upsertItem, deleteItem, countItems, getItemsPaginated, countCommunityItems, getCommunityItemsPaginated, getItemsByIds, getItem, recordClone, recordPlay, upsertMirror, findAutoClone, getUnifiedItems, getUnifiedLibraryAll, getUnifiedLibraryAllBranchCounts, getExternalCacheByIds, upsertExternalCache, getTableStatesByPlayerEmail, getTableStateById, listTableStates, summarizeTablePlayerRoster, appendDiceRoll, ackDiceRoll, getRecentDiceRolls, setBannerStatus, getPendingBanners, getDiceRollById, updateDiceRollData, resolveCharacterElements as resolveCharacterElementsDb, stripCharacterElementsForDb, getResolvedTableState, setTableStateNotifyHook, getUserPreferences, upsertUserPreferences, queryAiUsageAggregates, stampFreeTrialStart, checkTableIsLive, extendTableCampaignPass, recordCampaignPassPurchase, markStripeEventProcessed, recordCharacterTablePlacement, removeCharacterTablePlacementsForTable, createTableInviteLink, revokeTableInviteLink, getActiveTableInviteLink, redeemTableInviteLink, deleteTableInviteLinksForTable, countUserAiCallsThisMonth, getBugReportsPaginated, countBugReports, setBugReportStatus, updateBugReportNotes, BUG_REPORT_STATUSES, getCharacterById, upsertCharacterForTable, deleteCharacterForTable, stampCharacterTableId } from './src/db.js';
 import { isStripeConfigured, getStripe, constructWebhookEvent, CAMPAIGN_PASS_PRICE_CENTS, getCampaignPassPriceId } from './src/stripe.js';
 import { srdRouter, warmCache, getItem as getSrdItem } from './src/srd/index.js';
 import { loadSrdIntoDb } from './src/srd-loader.js';
@@ -69,6 +69,11 @@ import {
   sanitizeImageFields as sanitizeImageFieldsImpl,
   sanitizeItemImageDataUrlsDeep as sanitizeItemImageDataUrlsDeepImpl,
 } from './src/server/item-image-storage.js';
+import {
+  assertAdminCatalogWrite,
+  catalogItemDataFromCacheRow,
+  stampAdminCatalogData,
+} from './src/server/admin-catalog-write.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const FEATURES_V2_ROOT = join(__dirname, 'src', 'features-v2');
@@ -99,6 +104,10 @@ const QA_EMAILS = (process.env.QA_EMAILS || '')
 
 function isQaEmail(email) {
   return QA_EMAILS.includes(email?.toLowerCase());
+}
+
+function isAdminEmail(email) {
+  return ADMIN_EMAILS.includes(email?.toLowerCase());
 }
 
 // Global AI kill switch — set AI_FEATURES_DISABLED=1 to disable all AI surfaces regardless of key presence.
@@ -1353,7 +1362,7 @@ app.get('/api/data', requireAuth, async (req, res) => {
 
 /** SRD-backed unified list + app-only collections */
 const PAGINATED_COLLECTIONS = [...SRD_COLLECTION_NAMES, 'features', 'scenes', 'adventures', 'characters'];
-/** Parser collections plus scenes (SRD starter scenes live in `external_item_cache`, not the SRD parser). */
+/** Parser collections plus scenes (DT starter scenes live in `external_item_cache`, not the SRD parser). */
 const UNIFIED_COLLECTIONS = [...SRD_COLLECTION_NAMES, 'scenes'];
 
 async function fetchDbCounts(appId, uid, collection, { includeMine = true, includePublic, includeMirrors = true, search, tier, tierMax, tiers = [], typeField, typeValue, typeValues = [] }) {
@@ -1745,15 +1754,17 @@ app.post('/api/data/resolve', requireAuth, async (req, res) => {
       if (!missing.length) return dbItems;
 
       let extras = [];
-      if (['adversaries', 'environments'].includes(col)) {
+      if (['adversaries', 'environments', 'scenes'].includes(col)) {
         const cacheItems = await getExternalCacheByIds(APP_ID, col, missing);
         const cacheIds = new Set(cacheItems.map(i => i.id));
         extras = cacheItems;
-        const stillMissing = missing.filter(id => !cacheIds.has(id));
-        for (const id of stillMissing) {
-          if (id.startsWith('srd-')) {
-            const item = await getSrdItem(col, id);
-            if (item) extras.push({ ...item, _source: 'srd' });
+        if (col !== 'scenes') {
+          const stillMissing = missing.filter(id => !cacheIds.has(id));
+          for (const id of stillMissing) {
+            if (id.startsWith('srd-')) {
+              const item = await getSrdItem(col, id);
+              if (item) extras.push({ ...item, _source: 'srd' });
+            }
           }
         }
       } else {
@@ -1814,7 +1825,7 @@ app.post('/api/data/:collection/clone', requireAuth, async (req, res) => {
       }
       if (dbSource) effectiveSource = dbSource;
     }
-    if (source._source === 'srd' && sourceId) {
+    if ((source._source === 'srd' || source._source === 'dt') && sourceId) {
       const cachedRows = await getExternalCacheByIds(APP_ID, collection, [sourceId]);
       if (cachedRows.length > 0) {
         effectiveSource = cachedRows[0];
@@ -2432,6 +2443,68 @@ function deepMergePreservingImages(current, incoming) {
   return result;
 }
 
+async function writeAdminCatalogItem({ collection, item, isAdmin, ownerUid }) {
+  const gate = assertAdminCatalogWrite({ isAdmin, collection, source: item?._source });
+  if (gate.reason === 'not-catalog') return { handled: false };
+  if (!gate.ok) return { handled: true, status: gate.status, error: gate.error };
+  const id = item.id;
+  if (!id) return { handled: true, status: 404, error: 'Catalog item not found' };
+  const cached = await getExternalCacheByIds(APP_ID, collection, [id]);
+  if (!cached.length) return { handled: true, status: 404, error: 'Catalog item not found' };
+  const existing = cached[0];
+  const catalogSource = existing._source === 'dt' || existing._source === 'srd' ? existing._source : item._source;
+  const existingData = catalogItemDataFromCacheRow(existing);
+  const {
+    id: _id,
+    is_public: _ip,
+    _source: _s,
+    _owner: _o,
+    _clientId: _cid,
+    clone_count: _cc,
+    play_count: _pc,
+    popularity: _pop,
+    ...incoming
+  } = item;
+  let dataToSave = deepMergePreservingImages(existingData, incoming);
+  dataToSave = await sanitizeItemImageDataUrlsDeep(ownerUid, dataToSave);
+  dataToSave = stampAdminCatalogData(dataToSave, catalogSource);
+  await upsertExternalCache(APP_ID, catalogSource, collection, id, dataToSave, '');
+  return { handled: true, status: 200, item: { id, ...dataToSave, _source: catalogSource } };
+}
+
+async function writeAdminCatalogImage({ collection, id, imageUpdates, jsonPath, isAdmin, ownerUid }) {
+  const cached = await getExternalCacheByIds(APP_ID, collection, [id]);
+  if (!cached.length) return { handled: false };
+  const existing = cached[0];
+  const gate = assertAdminCatalogWrite({ isAdmin, collection, source: existing._source });
+  if (!gate.ok) return { handled: true, status: gate.status || 403, error: gate.error || 'Admin access required' };
+  const catalogSource = existing._source;
+  const existingData = catalogItemDataFromCacheRow(existing);
+  const pathParts = (jsonPath || '').split('.').filter(Boolean);
+  let merged;
+  if (pathParts.length === 0) {
+    merged = { ...existingData, ...imageUpdates };
+  } else {
+    merged = JSON.parse(JSON.stringify(existingData));
+    let ptr = merged;
+    for (let i = 0; i < pathParts.length - 1; i++) {
+      const part = pathParts[i];
+      const key = /^\d+$/.test(part) ? parseInt(part, 10) : part;
+      ptr = ptr?.[key];
+      if (!ptr) break;
+    }
+    const lastPart = pathParts[pathParts.length - 1];
+    const lastKey = /^\d+$/.test(lastPart) ? parseInt(lastPart, 10) : lastPart;
+    if (ptr && typeof ptr === 'object') {
+      ptr[lastKey] = { ...(ptr[lastKey] || {}), ...imageUpdates };
+    }
+  }
+  let dataToSave = await sanitizeItemImageDataUrlsDeep(ownerUid, merged);
+  dataToSave = stampAdminCatalogData(dataToSave, catalogSource);
+  await upsertExternalCache(APP_ID, catalogSource, collection, id, dataToSave, '');
+  return { handled: true, status: 200, item: { id, ...dataToSave, _source: catalogSource } };
+}
+
 app.put('/api/data/:collection/:id/image', requireAuth, async (req, res) => {
   const { collection, id } = req.params;
   if (!COLLECTIONS.includes(collection)) {
@@ -2481,7 +2554,25 @@ app.put('/api/data/:collection/:id/image', requireAuth, async (req, res) => {
 
     const current = await getItem(APP_ID, req.uid, collection, id);
     if (!current) {
-      return res.status(404).json({ error: 'Item not found' });
+      const sanitizedMiss = await sanitizeImageFields(req.uid, { imageUrl, _additionalImages });
+      const catalogUpdates = {};
+      if (imageUrl !== undefined) catalogUpdates.imageUrl = sanitizedMiss.imageUrl;
+      if (_additionalImages !== undefined) catalogUpdates._additionalImages = sanitizedMiss._additionalImages;
+      const written = await writeAdminCatalogImage({
+        collection,
+        id,
+        imageUpdates: catalogUpdates,
+        jsonPath,
+        isAdmin: isAdminEmail(req.email),
+        ownerUid: req.uid,
+      });
+      if (!written.handled) {
+        return res.status(404).json({ error: 'Item not found' });
+      }
+      if (written.status !== 200) {
+        return res.status(written.status).json({ error: written.error });
+      }
+      return res.json(written.item);
     }
     const pathParts = (jsonPath || '').split('.').filter(Boolean);
     // Defense in depth: upload any inline data: URLs before they reach the DB.
@@ -2576,6 +2667,19 @@ app.put('/api/data/:collection', requireAuth, async (req, res) => {
 
   const { id: _id, is_public, _source, _owner, _clientId, ...incoming } = item;
   try {
+    const catalogWrite = await writeAdminCatalogItem({
+      collection,
+      item,
+      isAdmin: isAdminEmail(req.email),
+      ownerUid: req.uid,
+    });
+    if (catalogWrite.handled) {
+      if (catalogWrite.status !== 200) {
+        return res.status(catalogWrite.status).json({ error: catalogWrite.error });
+      }
+      return res.json(catalogWrite.item);
+    }
+
     let dataToSave = incoming;
     if (id) {
       const current = await getItem(APP_ID, req.uid, collection, id);

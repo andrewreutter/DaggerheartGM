@@ -10,6 +10,7 @@ import { AdventureForm } from '../forms/AdventureForm.jsx';
 import { CharacterForm } from '../forms/CharacterForm.jsx';
 import { GenericSrdLibraryForm } from '../forms/GenericSrdLibraryForm.jsx';
 import { SOURCE_BADGE, isOwnItem, DEFAULT_CHARACTER_STARTING_HOPE } from '../../lib/constants.js';
+import { isCatalogSource } from '../../lib/library-catalog-edit.js';
 import { generateId } from '../../lib/helpers.js';
 import { ensureEditorListIds } from '../../lib/ensure-editor-list-ids.js';
 import { getBaselineStats, getUnscaledAdversary, computeScaledStats } from '../../lib/adversary-defaults.js';
@@ -76,7 +77,8 @@ const COLLECTION_LABELS = {
  *   item          – item to view/edit (pass `{}` for new)
  *   collection    – 'adversaries' | 'environments' | 'scenes' | 'adventures'
   *   data          – app-level data for ref resolution (adventure sub-item preview)
- *   editable      – boolean; false for SRD/public catalog items
+ *   editable      – boolean; false for catalog/public items unless admin is editing official SRD/DT
+ *   officialCatalogEdit – optional; when true, show the “official catalog” warning chip. Defaults to editable + srd/dt `_source` (Library). Game Table copy mode must pass false.
  *   onSave        – async (formData) => void; called by auto-save with full item data
    *   onSaveElement – optional; for scene inline element edits
  *   onDelete      – optional () => void
@@ -104,6 +106,7 @@ export const ItemDetailModal = forwardRef(function ItemDetailModal({
   addToTableMenu,
   onEdit,
   isAdmin = false,
+  officialCatalogEdit,
   onClose,
   partySize = 1,
   partyTier = 1,
@@ -430,6 +433,7 @@ export const ItemDetailModal = forwardRef(function ItemDetailModal({
   })();
   const badge = SOURCE_BADGE[item?._source];
   const isOwn = isOwnItem(item);
+  const editingOfficialCatalog = officialCatalogEdit ?? (editable && isCatalogSource(item));
   const v2LibrarySourcePath = useMemo(() => {
     if (collection === 'features' && item?._resolveV2) {
       return resolveV2FeatureSourcePath({ ...item._resolveV2, name: item.name });
@@ -775,6 +779,7 @@ export const ItemDetailModal = forwardRef(function ItemDetailModal({
                   <ItemActionButtons
                     variant="header"
                     isOwn={isOwn}
+                    canEdit={editable}
                     itemName={displayItem?.name}
                     addToTableMenu={addToTableMenu}
                     onAddToTable={addToTableMenu ? undefined : onAddToTable}
@@ -876,6 +881,7 @@ export const ItemDetailModal = forwardRef(function ItemDetailModal({
               <ItemActionButtons
                 variant="header"
                 isOwn={isOwn}
+                canEdit={editable}
                 itemName={displayItem?.name}
                 addToTableMenu={addToTableMenu}
                 onAddToTable={addToTableMenu ? undefined : onAddToTable}
@@ -904,6 +910,14 @@ export const ItemDetailModal = forwardRef(function ItemDetailModal({
               </>
             )}
           </div>
+          )}
+
+          {editingOfficialCatalog && (
+            <div className="flex items-start gap-3 px-5 py-2 border-b border-teal-800/50 bg-teal-950/40 shrink-0">
+              <p className="text-sm text-teal-100/95 leading-snug">
+                Editing official {item._source === 'dt' ? 'DT' : 'SRD'} catalog — changes apply for every table.
+              </p>
+            </div>
           )}
 
           {showCharAutosaveHint && (

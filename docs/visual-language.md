@@ -45,6 +45,7 @@ Single semantic family so spell buttons, domain picks, and domain UI read as one
 |--------|---------------|------|--------|
 | **Mine** | `.dh-badge-mine` (theme RGB vars in `src/input.css`) | — | User-owned items |
 | **SRD** | `.dh-badge-srd` | — | Core SRD rows |
+| **DT** | `.dh-badge-dt` | — | Official starter scenes (teal; distinct from SRD purple) |
 | **Public** | `.dh-badge-public` | — | Community public |
 
 `SOURCE_BADGE` in `src/client/lib/constants.js` applies `dh-badge` + per-source classes.

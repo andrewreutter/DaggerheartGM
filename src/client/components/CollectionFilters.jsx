@@ -3,7 +3,7 @@ import { TIERS } from '../lib/constants.js';
 import { TierSelector } from './TierSelector.jsx';
 import { LibraryTierShieldRow } from './LibraryTierShieldRow.jsx';
 import { ABILITY_LEVELS, formatFeatScopeLabel, getLibraryFilterConfig } from '../lib/library-filter-config.js';
-import { LIBRARY_SOURCE_MODE_OPTIONS, getLibraryIncludeMode } from '../lib/library-default-filters.js';
+import { getLibraryIncludeMode, librarySourceModeOptionsForCollection } from '../lib/library-default-filters.js';
 import {
   readSharedLibraryFilters,
   getFirstActiveStructuralGroup,
@@ -154,7 +154,7 @@ export function LibrarySearchIncludeStrip({ filters, onFilterChange, collection,
       <div className="inline-flex max-w-full items-center gap-2 flex-nowrap text-xs text-dh-muted">
         <span className={stripHeadingCls}>Include</span>
         <div className={includeSegWrap}>
-          {LIBRARY_SOURCE_MODE_OPTIONS.map(({ mode: m, label }) => (
+          {librarySourceModeOptionsForCollection(collection).map(({ mode: m, label }) => (
             <button
               key={m}
               type="button"
@@ -320,7 +320,7 @@ function BarFilters({
           <div className="inline-flex max-w-full items-center gap-2 flex-nowrap text-xs text-dh-muted">
             <span className={headingCls}>Include</span>
             <div className={includeSegWrap}>
-              {LIBRARY_SOURCE_MODE_OPTIONS.map(({ mode: m, label }) => (
+              {librarySourceModeOptionsForCollection(collection).map(({ mode: m, label }) => (
                 <button
                   key={m}
                   type="button"
@@ -546,7 +546,7 @@ function PanelFilters({
         <div className="min-w-0">
           <div className="mb-1.5 text-xs font-medium uppercase tracking-wider text-dh-muted">Source</div>
           <div className={includeSegWrap}>
-            {LIBRARY_SOURCE_MODE_OPTIONS.map(({ mode: m, label }) => (
+            {librarySourceModeOptionsForCollection(collection).map(({ mode: m, label }) => (
               <button
                 key={m}
                 type="button"

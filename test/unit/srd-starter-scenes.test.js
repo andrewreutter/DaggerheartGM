@@ -19,6 +19,8 @@ import {
   shouldGenerateStarterScene,
   STARTER_SCENE_EXCLUDED_ENV_IDS,
   STARTER_SCENE_EXCLUDED_SCENE_IDS,
+  STARTER_SCENE_CACHE_SOURCE,
+  shouldSkipAdminEditedStarterScene,
 } from '../../src/srd-starter-scenes.js';
 
 const REQUIRED_SCENE_KEYS = [
@@ -282,7 +284,9 @@ describe('buildSrdStarterScene', () => {
     for (const key of REQUIRED_SCENE_KEYS) {
       expect(scene, `missing ${key}`).toHaveProperty(key);
     }
-    expect(scene._source).toBe('srd');
+    expect(scene._source).toBe('dt');
+    expect(STARTER_SCENE_CACHE_SOURCE).toBe('dt');
+    expect(scene.id).toMatch(/^srd-scene-/);
     expect(scene.maps[0].id).toBe(STARTER_SCENE_MAP_ID);
     expect(scene.maps[0].mapImageUrl).toBe(buildOpts().mapImageUrl);
     expect(scene.maps[0].mapSizeFt).toBe(250);
@@ -361,5 +365,14 @@ describe('buildSrdStarterScene', () => {
     expect(scene.activeElements[0].name).toBe('Abandoned Grove');
     const adv = scene.activeElements.find((el) => el.elementType === 'adversary' && el.id === 'srd-adv-bear');
     expect(adv.name).toBe('Bear');
+  });
+});
+
+describe('shouldSkipAdminEditedStarterScene', () => {
+  it('skips when _adminEditedAt is set unless force', () => {
+    expect(shouldSkipAdminEditedStarterScene({ _adminEditedAt: '2026-08-16T00:00:00.000Z' })).toBe(true);
+    expect(shouldSkipAdminEditedStarterScene({ _adminEditedAt: '2026-08-16T00:00:00.000Z' }, { force: true })).toBe(false);
+    expect(shouldSkipAdminEditedStarterScene({})).toBe(false);
+    expect(shouldSkipAdminEditedStarterScene(null)).toBe(false);
   });
 });

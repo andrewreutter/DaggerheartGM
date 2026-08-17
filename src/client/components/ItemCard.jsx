@@ -246,13 +246,13 @@ export function ItemCard({
    * Preview cards: open from the body when there's more to read (ellipsis) or the item is yours to edit.
    * Compact cards (no preview): always open — otherwise there's no way to see full details.
    */
-  const cardClickOpensModal = !showPreview || isOwn || previewClipped;
+  const cardClickOpensModal = !showPreview || isOwn || Boolean(onEdit) || previewClipped;
 
   const hasTablePick = ownedTables?.length && onAddToTable;
   const hasTableAdd = !ownedTables?.length && onAddToTable;
   const hasAdd = Boolean(hasTablePick || hasTableAdd);
   const hasClone = Boolean(onClone);
-  const hasEdit = Boolean(isOwn && onEdit);
+  const hasEdit = Boolean(onEdit);
   const hasDelete = Boolean(isOwn && onDelete);
   const hasV2Inspect = Boolean(v2LibrarySourcePath);
   const hasAnyRowAction = hasAdd || hasClone || hasEdit || hasDelete || hasV2Inspect;
@@ -268,6 +268,7 @@ export function ItemCard({
         variant="card"
         stopPropagation={false}
         isOwn={isOwn}
+        canEdit={Boolean(onEdit)}
         itemName={item.name}
         addToTableMenu={
           ownedTables?.length && onAddToTable
@@ -278,7 +279,7 @@ export function ItemCard({
           !ownedTables?.length && onAddToTable ? () => onAddToTable(item, tab) : undefined
         }
         onClone={onClone ? () => onClone(item) : undefined}
-        onEdit={isOwn && onEdit ? () => onEdit(item) : undefined}
+        onEdit={onEdit ? () => onEdit(item) : undefined}
         onDelete={isOwn && onDelete ? () => onDelete(tab, item.id) : undefined}
       />
     </>

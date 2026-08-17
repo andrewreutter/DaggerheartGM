@@ -10,7 +10,7 @@ const ICON_SIZE = 14;
  * Renders Add to Table, Clone, Edit, Delete with consistent visibility logic:
  * - Add to Table: when onAddToTable
  * - Clone: when onClone
- * - Edit: when isOwn && onEdit
+ * - Edit: when canEdit && onEdit (`canEdit` defaults to `isOwn`; admin catalog passes canEdit)
  * - Delete: when isOwn && onDelete
  *
  * @param {Object} props
@@ -31,6 +31,7 @@ export function ItemActionButtons({
   onEdit,
   onDelete,
   isOwn,
+  canEdit = isOwn,
   itemName = '',
   cloningStatus = '',
   variant = 'card',
@@ -218,7 +219,7 @@ export function ItemActionButtons({
           </button>
         </Tooltip>
       )}
-      {isOwn && onEdit && (
+      {canEdit && onEdit && (
         <Tooltip label="Edit">
           <button
             type="button"

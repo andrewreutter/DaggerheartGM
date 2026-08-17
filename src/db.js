@@ -635,6 +635,28 @@ export async function deleteExternalCacheBySource(appId, source, collection) {
   );
 }
 
+/** Existing cache rows for one official-catalog source + collection (`external_id` + `data`). */
+export async function listExternalCacheBySource(appId, source, collection) {
+  const db = getPool();
+  const { rows } = await db.query(
+    `SELECT external_id, data FROM external_item_cache
+     WHERE app_id = $1 AND source = $2 AND collection = $3`,
+    [appId, source, collection]
+  );
+  return rows;
+}
+
+export async function deleteExternalCacheByIds(appId, source, collection, ids) {
+  if (!ids?.length) return 0;
+  const db = getPool();
+  const { rowCount } = await db.query(
+    `DELETE FROM external_item_cache
+     WHERE app_id = $1 AND source = $2 AND collection = $3 AND external_id = ANY($4)`,
+    [appId, source, collection, ids]
+  );
+  return rowCount;
+}
+
 /**
  * Return Set of external_ids we have in cache for a given source.
  * Used by HoD sync to skip items we already have (incremental mode).
@@ -749,23 +771,29 @@ export async function getUnifiedItems(appId, userId, collection, {
 
   if (includeMine || includePublic) {
     const srcClauses = [];
+    let viewerUidParam = null;
     if (includeMine) {
       srcClauses.push(`i.user_id = $${p}`);
       params.push(userId);
+      viewerUidParam = p;
       p++;
     }
     if (includePublic) {
-      srcClauses.push(`(i.is_public = true AND i.user_id != $${p} AND i.user_id != '${MIRROR_USER_ID}' AND ${scrapedCatalogPublicExcludeSql('i')})`);
+      // Include the viewer's own public rows here too (Mine also lists them).
+      // One SELECT + OR, so All / Mine+Public does not double-count.
+      srcClauses.push(`(i.is_public = true AND i.user_id != '${MIRROR_USER_ID}' AND ${scrapedCatalogPublicExcludeSql('i')})`);
+    }
+    if (viewerUidParam == null) {
       params.push(userId);
+      viewerUidParam = p;
       p++;
     }
     const srcSQL = srcClauses.join(' OR ');
-    const uidParam = includeMine ? 1 : 2;
     parts.push(`(
       SELECT i.id, i.data, i.user_id, i.is_public,
         COALESCE((SELECT COUNT(*) FROM item_popularity ip WHERE ip.app_id = i.app_id AND ip.collection = i.collection AND ip.item_id = i.id AND ip.action = 'clone'), 0) AS cc,
         COALESCE((SELECT COUNT(*) FROM item_popularity ip WHERE ip.app_id = i.app_id AND ip.collection = i.collection AND ip.item_id = i.id AND ip.action = 'play'), 0) AS pc,
-        CASE WHEN i.user_id = $${uidParam} THEN 'own' ELSE 'public' END AS _source,
+        CASE WHEN i.user_id = $${viewerUidParam} THEN 'own' ELSE 'public' END AS _source,
         ${typeExpr} AS type_val,
         (${tierExpr})::int AS tier_val,
         ${extraTypeExpr} AS extra_type_val
@@ -777,7 +805,7 @@ export async function getUnifiedItems(appId, userId, collection, {
   }
 
   const extSources = [];
-  if (includeSrd) extSources.push('srd');
+  if (includeSrd) extSources.push(collection === 'scenes' ? 'dt' : 'srd');
 
   if (extSources.length > 0) {
     parts.push(`(
@@ -948,7 +976,7 @@ async function fetchFeaturesLibraryAllBranch(opts, countOnly) {
 
 /**
  * Own + public `scenes` rows for Library "All", plus `external_item_cache` when
- * `includeSrd` is on (SRD starter scenes are cache-backed, not in the parser).
+ * `includeSrd` is on (DT starter scenes are cache-backed, not in the parser).
  * Scenes are not in `SRD_COLLECTION_NAMES`, so this is the only Library All scenes branch.
  * @param {boolean} countOnly - pass through to getUnifiedItems (no row fetch when true)
  */

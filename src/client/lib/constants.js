@@ -15,8 +15,9 @@ export const isOwnItem = (item) => !item?._source || item._source === 'own';
 export const SOURCE_BADGE = {
   own:    { label: 'Mine',   className: 'dh-badge dh-badge-mine' },
   srd:    { label: 'SRD',    className: 'dh-badge dh-badge-srd' },
+  dt:     { label: 'DT',     className: 'dh-badge dh-badge-dt' },
   public: { label: 'Public', className: 'dh-badge dh-badge-public' },
   v2:     { label: 'V2',     className: 'dh-badge dh-badge-srd' },
 };
 
-export const SOURCE_ORDER = { own: 0, srd: 1, v2: 1, public: 2 };
+export const SOURCE_ORDER = { own: 0, srd: 1, dt: 1, v2: 1, public: 2 };

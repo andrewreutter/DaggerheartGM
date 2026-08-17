@@ -51,6 +51,26 @@ export function includesFromIncludeMode(mode) {
   return [];
 }
 
+/** Official catalog cache `source` for a library collection (`includeSrd` still gates the query). */
+export function catalogCacheSourceForCollection(collection) {
+  return collection === 'scenes' ? 'dt' : 'srd';
+}
+
+/**
+ * Include-strip options. Persist/API modes stay `mine_srd` / `srd`; Scenes remaps the visible labels to DT.
+ * @param {string} [collection]
+ */
+export function librarySourceModeOptionsForCollection(collection) {
+  if (collection !== 'scenes') return LIBRARY_SOURCE_MODE_OPTIONS;
+  return Object.freeze([
+    { mode: 'all', label: 'All' },
+    { mode: 'mine_srd', label: 'Mine+DT' },
+    { mode: 'own', label: 'Mine' },
+    { mode: 'srd', label: 'DT' },
+    { mode: 'public', label: 'Public' },
+  ]);
+}
+
 /** Canonical storage shape for Include (single mode, no redundant multi-select arrays). */
 export function canonicalizeIncludesArray(includes) {
   return includesFromIncludeMode(getLibraryIncludeMode(includes));

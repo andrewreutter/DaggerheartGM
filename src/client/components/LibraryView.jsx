@@ -37,6 +37,7 @@ import { buildLibraryAllApiOpts } from '../lib/library-all-api-params.js';
 import { useLibraryAllSearch } from '../lib/useLibraryAllSearch.js';
 import { useCharacterSrdData } from '../lib/useCharacterSrdData.js';
 import { isOwnItem } from '../lib/constants.js';
+import { canEditLibraryCatalogItem } from '../lib/library-catalog-edit.js';
 import { loadLibraryAllCounts, conceptAiEnabled } from '../lib/api.js';
 import { useAiUiPreference } from '../lib/ai-ui-preference-context.jsx';
 import { shouldShowConceptAiUi } from '../lib/ai-ui-visibility.js';
@@ -146,7 +147,7 @@ const TAB_LABEL_BY_ID = Object.fromEntries(TABS.map(t => [t.id, t.label]));
 /** Portaled “New” type menu — must be excluded from outside-dismiss (menu is not under `newItemMenuWrapRef`). */
 const NEW_ITEM_MENU_SELECTOR = '[data-library-new-item-menu]';
 
-/** Paginated library tabs: SRD unified collections plus user-content scenes (no SRD source). */
+/** Paginated library tabs: SRD unified collections plus scenes (official DT catalog + Mine/Public). */
 const PAGINATED_LIBRARY_TABS = new Set([...SRD_UNIFIED_COLLECTIONS, 'scenes']);
 
 /** Game Table can only add these library types */
@@ -470,6 +471,11 @@ export function LibraryView({
   const canEditInModal = LIBRARY_USER_EDITABLE_COLLECTIONS.has(modalCollection);
 
   const modalItemIsOwn = resolvedModalItem && isOwnItem(resolvedModalItem);
+  const modalItemCanEditCatalog = canEditLibraryCatalogItem(resolvedModalItem, {
+    isAdmin,
+    collection: modalCollection,
+  });
+  const modalItemCanEdit = (modalState?.isNew || modalItemIsOwn || modalItemCanEditCatalog) && canEditInModal;
 
   // Handle deep-link routes: /library/:tab/:id opens the modal.
   const { itemId, action, libraryNewCollection } = route;
@@ -953,9 +959,9 @@ export function LibraryView({
           item={resolvedModalItem}
           collection={modalCollection}
           data={data}
-          editable={(modalState.isNew || modalItemIsOwn) && canEditInModal}
+          editable={modalItemCanEdit}
           onSave={handleSave}
-          onSaveElement={activeTab === 'scenes' && modalItemIsOwn ? handleSaveElement : null}
+          onSaveElement={activeTab === 'scenes' && modalItemCanEdit ? handleSaveElement : null}
           saveImage={saveImage}
           onDelete={modalItemIsOwn ? () => handleDelete(modalCollection, resolvedModalItem?.id) : null}
           onClone={LIBRARY_NON_CLONEABLE_COLLECTIONS.has(modalCollection) ? undefined : () => handleClone(resolvedModalItem)}
@@ -964,7 +970,7 @@ export function LibraryView({
             tables: ownedTablesForPicker,
             onPick: (tableId) => guardedAddToTable(resolvedModalItem, modalCollection, tableId),
           } : undefined}
-          onEdit={modalItemIsOwn ? () => {} : null}
+          onEdit={modalItemCanEdit ? () => {} : null}
           isAdmin={isAdmin}
           onClose={closeModal}
           partySize={partySize}
@@ -1262,7 +1268,11 @@ export function LibraryView({
                               tab={cardCol}
                               data={data}
                               onView={(i) => openModal(i)}
-                              onEdit={isOwnItem(item) ? (i) => openModal(i) : null}
+                              onEdit={
+                                isOwnItem(item) || canEditLibraryCatalogItem(item, { isAdmin, collection: cardCol })
+                                  ? (i) => openModal(i)
+                                  : null
+                              }
                               onDelete={isOwnItem(item) ? handleDelete : null}
                               onClone={LIBRARY_NON_CLONEABLE_COLLECTIONS.has(cardCol) ? undefined : () => handleClone(item)}
                               onAddToTable={TABLE_ADDABLE_COLLECTIONS.has(activeTab === 'all' ? item._collection : activeTab) ? guardedAddToTable : undefined}
@@ -1333,7 +1343,11 @@ export function LibraryView({
                   tab={cardCol}
                   data={data}
                   onView={(item) => openModal(item)}
-                  onEdit={isOwnItem(item) ? (item) => openModal(item) : null}
+                  onEdit={
+                    isOwnItem(item) || canEditLibraryCatalogItem(item, { isAdmin, collection: cardCol })
+                      ? (item) => openModal(item)
+                      : null
+                  }
                   onDelete={isOwnItem(item) ? handleDelete : null}
                   onClone={LIBRARY_NON_CLONEABLE_COLLECTIONS.has(cardCol) ? undefined : () => handleClone(item)}
                   onAddToTable={TABLE_ADDABLE_COLLECTIONS.has(activeTab === 'all' ? item._collection : activeTab) ? guardedAddToTable : undefined}
