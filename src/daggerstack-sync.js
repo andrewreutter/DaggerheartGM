@@ -15,6 +15,7 @@ import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { getCollection } from './srd/index.js';
 import { computeWeaponModifiers, computeArmorModifiers, computeProficiency } from './client/lib/character-calc.js';
+import { normalizeInventoryList } from './client/lib/character-inventory.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -313,7 +314,9 @@ export async function syncDaggerstackCharacter(url, email, password) {
 
   // Inventory
   const gold = raw.inventory?.gold ?? 0;
-  const inventoryItems = (raw.inventory?.items || []).map(i => ({ name: i.name, quantity: i.quantity ?? 1 }));
+  const inventoryItems = normalizeInventoryList(
+    (raw.inventory?.items || []).map((i) => ({ name: i.name, quantity: i.quantity ?? 1 })),
+  );
 
   // All features
   const classFeatures = classData ? (classData.classFeatures || []).map(f => ({

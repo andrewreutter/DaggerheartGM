@@ -8,6 +8,7 @@ import { EncounterAdversaryInstancePlayerSummary } from './EncounterAdversaryMar
 import { playerEncounterInstanceRowVisible } from '../lib/encounter-adversary-player-summary.js';
 import { PlayerAdversaryTargetAid } from './PlayerAdversaryTargetAid.jsx';
 import { GameTableCharacterListCard } from './GameTableCharacterListCard.jsx';
+import { PartyLootCard, PartyLootSheet } from './PartyLootCard.jsx';
 import { AnchoredFloatingPanel } from './AnchoredFloatingPanel.jsx';
 import { ActionLog } from './ActionLog.jsx';
 import { parseAllCountdownValues, generateId, effectiveThresholds, effectiveEvasion, computeHpLoss, isAdversaryDefeated, getDifficultyLabel, parseBeastformBonus, isWingsOfLightFlying, extractGmFeatureWhenClause } from '../lib/helpers.js';
@@ -31,6 +32,13 @@ import { EncounterNoteEditorModal } from './modals/EncounterNoteEditorModal.jsx'
 import { ReactionCallModal } from './modals/ReactionCallModal.jsx';
 import { CreateSceneModal } from './modals/CreateSceneModal.jsx';
 import { TRAIT_FULL } from './CharacterDisplay.jsx';
+import {
+  buildInventoryMoveActionNotification,
+  buildPartyLootActionNotification,
+  inventoryScopeLabel,
+  listInventoryMoveDestinations,
+  normalizePartyLoot,
+} from '../lib/party-loot.js';
 import { MarkdownText } from '../lib/markdown.js';
 import { handleAiConceptTextareaKeyDown } from '../lib/ai-concept-textarea.js';
 import { indexResolvedItemsByRequestId } from '../lib/resolve-items-index.js';
@@ -460,7 +468,7 @@ function buildGameTableNewEnvironmentStub(tier = 1, type = 'exploration') {
   };
 }
 
-export function GMTableView({ tableId, activeElements, updateActiveElement: pushTableElementUpdate, removeActiveElement, updateActiveElementsBaseData, data, saveItem, saveImage, addToTable, addElements, sendDoAddToTable, onMergeAdversary, user, route, navigate, featureCountdowns = {}, sessionCountdowns = [], updateCountdown, partySize = 1, partyTier = 1, characters = [], tableBattleMods, nextScenes = [], setTableBattleMods, fearCount = 0, setFearCount, spotlight = null, onSpotlightChange, conditionsHistory = [], onAddConditionsHistoryEntry, onRemoveConditionsHistoryEntry, tableName = '', gmDisplayName = '', tableStateReady = false, onTableNameChange, onDeleteTable, ensureAdventuresLoaded, ensureCharactersLoaded, clearTable, isPlayer = false, isSpectator = false, isPublic = false, onPublicChange, audienceOnlineCount = 0, playerEmail, connectedPlayers = [], playerEmails = [], playerNames = {}, inviteLink = null, onGenerateInviteLink, onRevokeInviteLink, onRemovePlayerEmail, onLeaveTable, gmUid, onPlayerAddCharacter, pendingBanners = [], pendingPlayerIntent = null, intentDifficultyUpdate = null, spotlightRequestGrant = null, onSpotlightRequestGrantConsumed, onFeatureRequestSuccess, onFeatureRequestCancel, rangerFocusRequestedBannerIds, onRangerFocusRerollRequestSuccess, onRangerFocusRerollRequestCancel, previewAsPlayerEmail = null, onPreviewAsPlayer, onExitPreview, actionLog = [], setActionLog, mapConfig, maps = [], activeMapId = null, gmMapView = null, onSetActiveMap, onAddMap, onAddMapWithImage, onRemoveMap, onRenameMap, onMapConfigChange, onMapViewSync, lifeSupportSelections = {}, onLifeSupportSelect, onLifeSupportClear, restMovesSelections = {}, onRestMoveSelect, onRestMoveClear, tableFeatureState = {}, sessionPlayAllowed = true, sessionStarted = true, sessionPaused = false, mapPings = [], onDismissMapPing = () => {}, appendMapPing = () => {},
+export function GMTableView({ tableId, activeElements, updateActiveElement: pushTableElementUpdate, removeActiveElement, updateActiveElementsBaseData, data, saveItem, saveImage, addToTable, addElements, sendDoAddToTable, onMergeAdversary, user, route, navigate, featureCountdowns = {}, sessionCountdowns = [], updateCountdown, partySize = 1, partyTier = 1, characters = [], tableBattleMods, nextScenes = [], setTableBattleMods, fearCount = 0, setFearCount, partyLoot: partyLootProp, onSetPartyLoot, onMoveInventoryItem, spotlight = null, onSpotlightChange, conditionsHistory = [], onAddConditionsHistoryEntry, onRemoveConditionsHistoryEntry, tableName = '', gmDisplayName = '', tableStateReady = false, onTableNameChange, onDeleteTable, ensureAdventuresLoaded, ensureCharactersLoaded, clearTable, isPlayer = false, isSpectator = false, isPublic = false, onPublicChange, audienceOnlineCount = 0, playerEmail, connectedPlayers = [], playerEmails = [], playerNames = {}, inviteLink = null, onGenerateInviteLink, onRevokeInviteLink, onRemovePlayerEmail, onLeaveTable, gmUid, onPlayerAddCharacter, pendingBanners = [], pendingPlayerIntent = null, intentDifficultyUpdate = null, spotlightRequestGrant = null, onSpotlightRequestGrantConsumed, onFeatureRequestSuccess, onFeatureRequestCancel, rangerFocusRequestedBannerIds, onRangerFocusRerollRequestSuccess, onRangerFocusRerollRequestCancel, previewAsPlayerEmail = null, onPreviewAsPlayer, onExitPreview, actionLog = [], setActionLog, mapConfig, maps = [], activeMapId = null, gmMapView = null, onSetActiveMap, onAddMap, onAddMapWithImage, onRemoveMap, onRenameMap, onMapConfigChange, onMapViewSync, lifeSupportSelections = {}, onLifeSupportSelect, onLifeSupportClear, restMovesSelections = {}, onRestMoveSelect, onRestMoveClear, tableFeatureState = {}, sessionPlayAllowed = true, sessionStarted = true, sessionPaused = false, mapPings = [], onDismissMapPing = () => {}, appendMapPing = () => {},
   mapScribbles = [],
   mapViews = [], gmActiveViewId = null, onSetActiveView, onAddMapViewOp, onRemoveMapView, onRenameMapView, onSetViewBroadcast, onSetViewLocked, onSetMapShare,
   onSetMapOverlay,
@@ -497,6 +505,14 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
       registry: v2Registry ?? undefined,
     }),
     [activeElements, fearCount, mapConfig, tableFeatureState, v2Registry]
+  );
+
+  const partyLoot = useMemo(() => normalizePartyLoot(partyLootProp), [partyLootProp]);
+  const inventoryMoveCharacters = useMemo(
+    () => activeElements
+      .filter((el) => el.elementType === 'character')
+      .map((el) => ({ instanceId: el.instanceId, name: el.name })),
+    [activeElements],
   );
 
   /** Mirrors `table_state` top for `gateTableOpForPrepMode` (sendOp bypass path). */
@@ -647,7 +663,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     hideDelay: 120,
     isTouch,
     mode: 'click',
-    getClickToggleKey: (d) => d?.element?.instanceId,
+    getClickToggleKey: (d) => (d?.type === 'party' ? 'party-loot' : d?.element?.instanceId),
     suppressOutsideDismissRef: suppressCharacterOverlayOutsideDismissRef,
   });
   const gmMovesOverlay    = useHoverOverlay({ hideDelay: 150, isTouch });
@@ -876,6 +892,8 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
         hope: el.hope,
         currentArmor: el.currentArmor,
         conditions: el.conditions,
+        gold: el.gold,
+        inventory: el.inventory,
         playerName: el.playerName || character.playerName,
       };
       updateActiveElement(el.instanceId, updatedCharacter);
@@ -1491,6 +1509,48 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     }
     dismissAllHoverCards();
     postActionNotification(payload, tableId).catch(() => {});
+  };
+
+  const gmCanEditPartyLoot = !isPlayer && typeof onSetPartyLoot === 'function';
+
+  const applyPartyLootPatch = (patch, options = {}) => {
+    if (!gmCanEditPartyLoot || !patch) return false;
+    const notification = buildPartyLootActionNotification(partyLoot, patch);
+    if (!sessionPlayAllowed) {
+      if (playBlockedAllowAllEdits) {
+        onSetPartyLoot(patch, { bypassPrepGate: true });
+        handleActionNotification(notification);
+        return true;
+      }
+      setPlayBlockedDialog({ kind: 'party-loot', action: 'set', patch, notification });
+      return false;
+    }
+    onSetPartyLoot(patch);
+    handleActionNotification(notification);
+    return true;
+  };
+
+  const applyInventoryMoveToTable = (from, dest, uid, itemName) => {
+    if (!gmCanEditPartyLoot || typeof onMoveInventoryItem !== 'function' || !dest) return false;
+    const to = dest.scope === 'party'
+      ? { scope: 'party' }
+      : { scope: 'character', instanceId: dest.instanceId };
+    const fromLabel = inventoryScopeLabel(from, inventoryMoveCharacters);
+    const toLabel = dest.label || inventoryScopeLabel(to, inventoryMoveCharacters);
+    const notification = buildInventoryMoveActionNotification({ itemName, fromLabel, toLabel });
+    const move = { from, to, uid };
+    if (!sessionPlayAllowed) {
+      if (playBlockedAllowAllEdits) {
+        onMoveInventoryItem(move, { bypassPrepGate: true });
+        handleActionNotification(notification);
+        return true;
+      }
+      setPlayBlockedDialog({ kind: 'party-loot', action: 'move', move, notification });
+      return false;
+    }
+    onMoveInventoryItem(move);
+    handleActionNotification(notification);
+    return true;
   };
 
   const handleRestBannerV2Chip = useCallback(
@@ -3630,8 +3690,24 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
         tableId,
         { bypassPrepGate: true }
       ).catch(() => {});
+    } else if (dlg.kind === 'party-loot') {
+      if (dlg.action === 'move' && dlg.move) {
+        onMoveInventoryItem?.(dlg.move, { bypassPrepGate: true });
+      } else if (dlg.patch) {
+        onSetPartyLoot?.(dlg.patch, { bypassPrepGate: true });
+      }
+      if (dlg.notification) {
+        dismissAllHoverCards();
+        postActionNotification(
+          withActionBannerSuppression(dlg.notification, {
+            actionAdversaryTargets: actionAdversaryTargetsRef.current,
+          }),
+          tableId,
+          { bypassPrepGate: true }
+        ).catch(() => {});
+      }
     }
-  }, [pushTableElementUpdate, postRollToServer, postActionNotification, dismissAllHoverCards]);
+  }, [pushTableElementUpdate, postRollToServer, postActionNotification, dismissAllHoverCards, onSetPartyLoot, onMoveInventoryItem]);
 
   const allowAllEditsAndConfirmPending = useCallback(() => {
     setPlayBlockedAllowAllEdits(true);
@@ -6334,6 +6410,16 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
             );
           })}
 
+          <PartyLootCard
+            gold={partyLoot.gold}
+            itemCount={partyLoot.inventory.length}
+            sheetTriggerProps={characterOverlay.triggerProps((e) => ({
+              type: 'party',
+              top: e.currentTarget.getBoundingClientRect().top,
+              bottom: e.currentTarget.getBoundingClientRect().bottom,
+            }))}
+          />
+
           {consolidatedElements.filter(item => item.kind === 'character').length === 0 && (
             <div className="text-center text-dh-muted text-xs py-6">
               No characters yet.
@@ -7905,7 +7991,26 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     />
 
     {/* Character sheet overlay — right of Characters panel; sheet + editor share one rounded card (editor slides from behind). Mounts before ItemDetailModal so the editor portal target exists. */}
-    {characterOverlay.isOpen && (() => {
+    {characterOverlay.isOpen && characterOverlay.data?.type === 'party' && (
+      <PartyLootSheet
+        partyLoot={partyLoot}
+        editable={gmCanEditPartyLoot}
+        onGoldChange={(g) => applyPartyLootPatch({ gold: g })}
+        onInventoryChange={(list) => applyPartyLootPatch({ inventory: list })}
+        moveDestinations={listInventoryMoveDestinations({
+          current: { scope: 'party' },
+          characters: inventoryMoveCharacters,
+        })}
+        onMoveItem={(uid, dest) => {
+          const item = (partyLoot.inventory || []).find((e) => e.uid === uid);
+          applyInventoryMoveToTable({ scope: 'party' }, dest, uid, item?.name);
+        }}
+        onClose={characterOverlay.close}
+        overlayRef={characterOverlay.overlayRef}
+        overlayHandlers={characterOverlay.overlayHandlers}
+      />
+    )}
+    {characterOverlay.isOpen && characterOverlay.data?.type !== 'party' && characterOverlay.data?.element && (() => {
       const liveEl = activeElements.find(e => e.instanceId === characterOverlay.data.element.instanceId) || characterOverlay.data.element;
       const isMyCharacter = playerEmail != null && liveEl.assignedPlayerEmail === playerEmail;
       const editDrawerOpen = editState?.step === 'form' && editState?.presentation === 'rightDrawer';
@@ -8035,6 +8140,23 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                     tableFeatureState={tableFeatureState}
                     tableId={tableId}
                     precomputedDisplayEl={precomputedSheetDisplayEl}
+                    inventoryMoveDestinations={gmCanEditPartyLoot
+                      ? listInventoryMoveDestinations({
+                          current: { scope: 'character', instanceId: liveEl.instanceId },
+                          characters: inventoryMoveCharacters,
+                        })
+                      : undefined}
+                    onMoveInventoryItem={gmCanEditPartyLoot
+                      ? (uid, dest) => {
+                          const item = (liveEl.inventory || []).find((e) => e.uid === uid);
+                          applyInventoryMoveToTable(
+                            { scope: 'character', instanceId: liveEl.instanceId },
+                            dest,
+                            uid,
+                            item?.name,
+                          );
+                        }
+                      : undefined}
                   />
                 );
               })()}

@@ -199,6 +199,16 @@ describe('table-session-gate', () => {
     expect(gateTableOpForPrepMode(paused, { op: 'replace-scene-snapshot', maps: [], mapViews: [], elements: [] }).ok).toBe(true);
   });
 
+  it('blocks set-party-loot and move-inventory-item during prep', () => {
+    expect(gateTableOpForPrepMode(prepState, { op: 'set-party-loot', gold: 1 }).ok).toBe(false);
+    expect(gateTableOpForPrepMode(prepState, {
+      op: 'move-inventory-item',
+      from: { scope: 'party' },
+      to: { scope: 'character', instanceId: 'c1' },
+      uid: 'u1',
+    }).ok).toBe(false);
+  });
+
   it('allows set-spotlight during prep so the GM can assign a holder before session start', () => {
     const g = gateTableOpForPrepMode(prepState, {
       op: 'set-spotlight',

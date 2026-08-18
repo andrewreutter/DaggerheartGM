@@ -64,6 +64,22 @@ describe('stripCharacterElementsForDb', () => {
     });
   });
 
+  it('preserves gold and inventory runtime fields on character elements', () => {
+    const elements = [
+      {
+        instanceId: 'char-1',
+        elementType: 'character',
+        id: 'lib-char-1',
+        name: 'Rowan',
+        gold: 465,
+        inventory: [{ uid: 'inv-1', name: 'Rope', quantity: 1 }],
+      },
+    ];
+    const [stripped] = stripCharacterElementsForDb(elements);
+    expect(stripped.gold).toBe(465);
+    expect(stripped.inventory).toEqual([{ uid: 'inv-1', name: 'Rope', quantity: 1 }]);
+  });
+
   it('leaves non-character elements untouched', () => {
     const elements = [{ instanceId: 'adv-1', elementType: 'adversary', name: 'Goblin' }];
     const [result] = stripCharacterElementsForDb(elements);

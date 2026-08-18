@@ -25,6 +25,7 @@ import { applyLibraryArtToSceneMaps, buildAddMapOpFromLibraryItem, buildEmptyLib
 import { planTableMapLibraryImport } from './lib/map-library-import.js';
 import { shouldOfferReplaceOrAdd, buildSceneSnapshotTableOp, sceneHasActiveBattleMods } from './lib/scene-load-dialog.js';
 import { UPDATE_BASE_DATA_RUNTIME_KEYS, applyTableOp } from './lib/table-ops.js';
+import { applyInventoryMove, normalizePartyLoot } from './lib/party-loot.js';
 import {
   buildLibraryAdversaryElements,
   characterCountFromElements,
@@ -159,6 +160,7 @@ function App() {
   const [tableBattleMods, setTableBattleMods] = useState(DEFAULT_BATTLE_MODS);
   const [nextScenes, setNextScenes] = useState([]);
   const [fearCount, setFearCount] = useState(0);
+  const [partyLoot, setPartyLoot] = useState(() => normalizePartyLoot(null));
   const [spotlight, setSpotlight] = useState(null);
   const [conditionsHistory, setConditionsHistory] = useState([]);
   const [tableName, setTableName] = useState('');
@@ -891,6 +893,7 @@ function App() {
     if (prevTableIdRef.current !== null && prevTableIdRef.current !== route.tableId) {
       setActiveElements([]);
       setFearCount(0);
+      setPartyLoot(normalizePartyLoot(null));
       setSpotlight(null);
       setConditionsHistory([]);
       setFeatureCountdowns({});
@@ -939,6 +942,7 @@ function App() {
         setTableBattleMods(DEFAULT_BATTLE_MODS);
         setNextScenes([]);
         setFearCount(0);
+        setPartyLoot(normalizePartyLoot(null));
         setSpotlight(null);
         setConditionsHistory([]);
         setPlayerEmails([]);
@@ -968,6 +972,7 @@ function App() {
       if (tableState.tableBattleMods) setTableBattleMods(tableState.tableBattleMods);
       setNextScenes(Array.isArray(tableState.nextScenes) ? tableState.nextScenes : []);
       if (tableState.fearCount != null) setFearCount(tableState.fearCount);
+      setPartyLoot(normalizePartyLoot(tableState.partyLoot));
       if (tableState.spotlight) setSpotlight(tableState.spotlight);
       else setSpotlight(null);
       setConditionsHistory(Array.isArray(tableState.conditionsHistory) ? tableState.conditionsHistory : []);
@@ -1081,6 +1086,7 @@ function App() {
           setActiveElements(prev => reconcileElementsById(prev, state.elements));
         }
         if (state.fearCount != null) setFearCount(state.fearCount);
+        setPartyLoot(normalizePartyLoot(state.partyLoot));
         if (state.spotlight) setSpotlight(state.spotlight);
         else setSpotlight(null);
         if (Array.isArray(state.conditionsHistory)) setConditionsHistory(state.conditionsHistory);
@@ -1202,6 +1208,7 @@ function App() {
           setActiveElements(prev => reconcileElementsById(prev, state.elements));
         }
         if (state.fearCount != null) setFearCount(state.fearCount);
+        setPartyLoot(normalizePartyLoot(state.partyLoot));
         if (state.spotlight) setSpotlight(state.spotlight);
         else setSpotlight(null);
         if (Array.isArray(state.conditionsHistory)) setConditionsHistory(state.conditionsHistory);
@@ -1326,6 +1333,7 @@ function App() {
           setActiveElements(prev => reconcileElementsById(prev, state.elements));
         }
         if (state.fearCount != null) setFearCount(state.fearCount);
+        setPartyLoot(normalizePartyLoot(state.partyLoot));
         if (state.spotlight) setSpotlight(state.spotlight);
         else setSpotlight(null);
         if (Array.isArray(state.conditionsHistory)) setConditionsHistory(state.conditionsHistory);
@@ -1803,6 +1811,31 @@ function App() {
     const resolved = typeof valueOrFn === 'function' ? valueOrFn(fearCount) : valueOrFn;
     setFearCount(resolved);
     postTableOp({ op: 'set-fear', fearCount: resolved }, tableId);
+  };
+
+  const sendSetPartyLoot = (patch, options = {}) => {
+    const next = normalizePartyLoot({
+      ...partyLoot,
+      ...(patch && typeof patch === 'object' ? patch : {}),
+    });
+    setPartyLoot(next);
+    const op = { op: 'set-party-loot' };
+    if (patch && typeof patch === 'object') {
+      if ('gold' in patch) op.gold = next.gold;
+      if ('inventory' in patch) op.inventory = next.inventory;
+    }
+    if (options.bypassPrepGate) op.bypassPrepGate = true;
+    postTableOp(op, tableId);
+  };
+
+  const sendMoveInventoryItem = (move, options = {}) => {
+    const patch = applyInventoryMove({ activeElements, partyLoot }, move);
+    if (!patch.partyLoot && !patch.activeElements) return;
+    if (patch.partyLoot) setPartyLoot(patch.partyLoot);
+    if (patch.activeElements) setActiveElements(patch.activeElements);
+    const op = { op: 'move-inventory-item', from: move.from, to: move.to, uid: move.uid };
+    if (options.bypassPrepGate) op.bypassPrepGate = true;
+    postTableOp(op, tableId);
   };
 
   const sendSetSpotlight = (next) => {
@@ -2694,6 +2727,9 @@ function App() {
                 setTableBattleMods={effectiveIsPlayer ? () => {} : sendSetTableBattleMods}
                 fearCount={fearCount}
                 setFearCount={effectiveIsPlayer ? () => {} : sendSetFearCount}
+                partyLoot={partyLoot}
+                onSetPartyLoot={effectiveIsPlayer ? undefined : sendSetPartyLoot}
+                onMoveInventoryItem={effectiveIsPlayer ? undefined : sendMoveInventoryItem}
                 spotlight={spotlight}
                 onSpotlightChange={effectiveIsPlayer ? undefined : sendSetSpotlight}
                 conditionsHistory={conditionsHistory}

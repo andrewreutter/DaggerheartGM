@@ -19,7 +19,8 @@ import {
   CharacterSheetDeclarativeCards,
   CharacterAbilityList,
   CharacterVaultAbilityList,
-  CharacterInventory,
+  GoldTracker,
+  CharacterInventoryList,
   TRAIT_FULL,
   formatGold,
   parseBeastformBonus,
@@ -58,6 +59,8 @@ import {
   patchSheetDisplayNames,
 } from '../lib/sheet-display-names.js';
 import { SheetDisplayNameDialog } from './modals/SheetDisplayNameDialog.jsx';
+import { InventoryItemPickerModal } from './modals/InventoryItemPickerModal.jsx';
+import { addInventoryEntries } from '../lib/character-inventory.js';
 import { rangeBandNameToFt } from '../lib/map-range.js';
 import { formatTargetSummary } from '../lib/helpers.js';
 import {
@@ -247,6 +250,9 @@ export function CharacterHoverCard({
    * (same inputs, same result — avoids duplicating that work per open sheet).
    */
   precomputedDisplayEl,
+  /** Game Table: destinations for the inventory-row move menu (Party Loot + other PCs). */
+  inventoryMoveDestinations,
+  onMoveInventoryItem,
 }) {
   /** Manual Hope/Stress/Armor/HP tracks — GM only on Game Table (players keep `updateFn` for rolls, features, etc.). */
   const gmResourceTrackCheckboxEdits = !isPlayer;
@@ -263,6 +269,7 @@ export function CharacterHoverCard({
   // In-place target menu before sending roll: { type: 'weapon'|'beastform', rollText, displayName, rollMeta, validTargets, opts?, anchorRect? }
   const [targetMenuPending, setTargetMenuPending] = useState(null);
   const [sheetNameEdit, setSheetNameEdit] = useState(null);
+  const [inventoryPickerOpen, setInventoryPickerOpen] = useState(false);
 
   /** GM or assigned player with `updateFn` — full V2 card chips (Beastform, Evolution, Elemental Incarnation, domain cards). */
   const v2TableScoped = !!(updateFn && tableId);
@@ -1503,7 +1510,35 @@ export function CharacterHoverCard({
               </Section>
             )}
 
-            <CharacterInventory el={el} />
+            {(gmResourceTrackCheckboxEdits || el.gold != null || (el.inventory || []).length > 0) && (
+              <Section label="Inventory">
+                {(gmResourceTrackCheckboxEdits || el.gold != null) && (
+                  <div className="mb-1.5">
+                    <GoldTracker
+                      gold={el.gold ?? 0}
+                      editable={gmResourceTrackCheckboxEdits}
+                      onChange={gmResourceTrackCheckboxEdits
+                        ? (queueManualTrackEdit
+                          ? (g) => queueManualTrackEdit(el, { gold: g })
+                          : (g) => updateFn?.(el.instanceId, { gold: g }))
+                        : undefined}
+                    />
+                  </div>
+                )}
+                <CharacterInventoryList
+                  inventory={el.inventory || []}
+                  editable={gmResourceTrackCheckboxEdits}
+                  onChange={gmResourceTrackCheckboxEdits
+                    ? (queueManualTrackEdit
+                      ? (list) => queueManualTrackEdit(el, { inventory: list })
+                      : (list) => updateFn?.(el.instanceId, { inventory: list }))
+                    : undefined}
+                  onOpenPicker={() => setInventoryPickerOpen(true)}
+                  moveDestinations={gmResourceTrackCheckboxEdits ? inventoryMoveDestinations : undefined}
+                  onMoveItem={gmResourceTrackCheckboxEdits ? onMoveInventoryItem : undefined}
+                />
+              </Section>
+            )}
           </div>
         </div>
       </div>
@@ -1532,6 +1567,17 @@ export function CharacterHoverCard({
     )}
 
     {/* ── Feature input overlay (e.g. Sorcerer Channel Raw Power card level) ── */}
+    {inventoryPickerOpen && (
+      <InventoryItemPickerModal
+        onClose={() => setInventoryPickerOpen(false)}
+        onConfirm={(entries) => {
+          const next = addInventoryEntries(el.inventory, entries);
+          if (queueManualTrackEdit) queueManualTrackEdit(el, { inventory: next });
+          else updateFn?.(el.instanceId, { inventory: next });
+        }}
+      />
+    )}
+
     {sheetNameEdit && updateFn && el.instanceId && (
       <SheetDisplayNameDialog
         open

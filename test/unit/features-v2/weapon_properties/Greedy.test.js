@@ -15,7 +15,7 @@ import { applyMutations, GOLD_COINS_PER_HANDFUL } from '../../../../src/features
 describe('Greedy', () => {
   it('shows a reviewAction chip on a successful attack when the actor has enough gold', () => {
     const { chips } = runReviewAction(Greedy, {
-      activeElements: [mockCharacter({ instanceId: 'char-1', gold: 20 }), mockAdversary()],
+      activeElements: [mockCharacter({ instanceId: 'char-1', gold: 2 }), mockAdversary()],
       rolls: mockRoll({ isSuccess: true }),
       action: mockAction({ type: 'attack' }),
     });
@@ -26,7 +26,7 @@ describe('Greedy', () => {
 
   it('onUse adds +1 static to damage roll', () => {
     const table = mockTable({
-      activeElements: [mockCharacter({ instanceId: 'char-1', gold: 20 }), mockAdversary()],
+      activeElements: [mockCharacter({ instanceId: 'char-1', gold: 2 }), mockAdversary()],
       rolls: mockRoll({ isSuccess: true }),
       action: mockAction({ type: 'attack' }),
     });
@@ -44,7 +44,7 @@ describe('Greedy', () => {
 
   it('deductChipCosts queues spendGold for goldCost', () => {
     const table = mockTable({
-      activeElements: [mockCharacter({ instanceId: 'char-1', gold: 20 }), mockAdversary()],
+      activeElements: [mockCharacter({ instanceId: 'char-1', gold: 2 }), mockAdversary()],
       rolls: mockRoll({ isSuccess: true }),
       action: mockAction({ type: 'attack' }),
     });

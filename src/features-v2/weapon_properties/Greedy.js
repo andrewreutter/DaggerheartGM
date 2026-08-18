@@ -3,7 +3,7 @@ import { GOLD_COINS_PER_HANDFUL } from '../engine/table.js';
 
 /**
  * SRD: Spend a handful of gold to gain a +1 bonus to your Proficiency on a damage roll.
- * One SRD handful = `GOLD_COINS_PER_HANDFUL` coins in the character’s integer `gold` field (base‑9 inventory).
+ * One SRD handful = `GOLD_COINS_PER_HANDFUL` (the ones digit of the integer `gold` field).
  * Effect: +1 static on the damage roll (Proficiency bonus applied to damage).
  */
 export const Greedy = {

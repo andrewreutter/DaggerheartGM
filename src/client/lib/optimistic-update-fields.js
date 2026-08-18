@@ -26,6 +26,9 @@ export const OPTIMISTIC_ELEMENT_UPDATE_FIELDS = new Set([
   'minPartySize',
   // GM hide/reveal — tray eye + map sub-token must flip immediately
   'visibleToPlayers',
+  // Game Table gold / inventory (runtime, not library)
+  'gold',
+  'inventory',
 ]);
 
 /**

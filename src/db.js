@@ -1392,6 +1392,8 @@ const CHARACTER_RUNTIME_KEYS_DB = new Set([
   'v2PendingMove',
   'v2MoveLockRollDbId',
   'v2MoveLockSource',
+  'gold',
+  'inventory',
 ]);
 const CHARACTER_PERSIST_KEYS_DB = new Set([...CHARACTER_RUNTIME_KEYS_DB, 'id', 'name']);
 

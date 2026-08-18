@@ -106,6 +106,72 @@ describe('applyTableOp', () => {
     expect(result.fearCount).toBe(5);
   });
 
+  it('set-party-loot merges gold and inventory into partyLoot', () => {
+    const state = {
+      partyLoot: { gold: 4, inventory: [{ uid: 'a', name: 'Rope', quantity: 1 }] },
+    };
+    const goldOnly = applyTableOp({ op: 'set-party-loot', gold: 12 }, state);
+    expect(goldOnly.partyLoot.gold).toBe(12);
+    expect(goldOnly.partyLoot.inventory).toEqual([{ uid: 'a', name: 'Rope', quantity: 1 }]);
+    const invOnly = applyTableOp(
+      { op: 'set-party-loot', inventory: [{ uid: 'b', name: 'Torch', quantity: 2 }] },
+      state,
+    );
+    expect(invOnly.partyLoot.gold).toBe(4);
+    expect(invOnly.partyLoot.inventory).toEqual([{ uid: 'b', name: 'Torch', quantity: 2 }]);
+  });
+
+  it('move-inventory-item moves a row character ↔ party', () => {
+    const item = { uid: 'u1', name: 'Torch', quantity: 1 };
+    const toParty = applyTableOp(
+      {
+        op: 'move-inventory-item',
+        from: { scope: 'character', instanceId: 'c1' },
+        to: { scope: 'party' },
+        uid: 'u1',
+      },
+      {
+        partyLoot: { gold: 0, inventory: [] },
+        activeElements: [
+          { instanceId: 'c1', elementType: 'character', name: 'Ava', inventory: [item] },
+        ],
+      },
+    );
+    expect(toParty.partyLoot.inventory).toEqual([item]);
+    expect(toParty.activeElements[0].inventory).toEqual([]);
+
+    const toChar = applyTableOp(
+      {
+        op: 'move-inventory-item',
+        from: { scope: 'party' },
+        to: { scope: 'character', instanceId: 'c1' },
+        uid: 'u1',
+      },
+      {
+        partyLoot: { gold: 0, inventory: [item] },
+        activeElements: [
+          { instanceId: 'c1', elementType: 'character', name: 'Ava', inventory: [] },
+        ],
+      },
+    );
+    expect(toChar.partyLoot.inventory).toEqual([]);
+    expect(toChar.activeElements[0].inventory).toEqual([item]);
+  });
+
+  it('clear-table preserves partyLoot (not in the returned patch)', () => {
+    const state = {
+      activeElements: [
+        mkElement({ instanceId: 'char-1', elementType: 'character', name: 'Hero' }),
+        mkElement({ instanceId: 'env-1', elementType: 'environment', name: 'Forest' }),
+      ],
+      featureCountdowns: { 'some|key|0': 2 },
+      partyLoot: { gold: 7, inventory: [{ uid: 'x', name: 'Key', quantity: 1 }] },
+    };
+    const result = applyTableOp({ op: 'clear-table' }, state);
+    expect(result).not.toHaveProperty('partyLoot');
+    expect({ ...state, ...result }.partyLoot).toEqual(state.partyLoot);
+  });
+
   it('set-table-public sets isPublic', () => {
     expect(applyTableOp({ op: 'set-table-public', isPublic: true }, {}).isPublic).toBe(true);
     expect(applyTableOp({ op: 'set-table-public', isPublic: false }, { isPublic: true }).isPublic).toBe(false);
@@ -1543,6 +1609,8 @@ describe('CHARACTER_RUNTIME_KEYS', () => {
     expect(CHARACTER_RUNTIME_KEYS).toContain('assignedPlayerUid');
     expect(CHARACTER_RUNTIME_KEYS).toContain('playerName');
     expect(CHARACTER_RUNTIME_KEYS).toContain('prayerDice');
+    expect(CHARACTER_RUNTIME_KEYS).toContain('gold');
+    expect(CHARACTER_RUNTIME_KEYS).toContain('inventory');
   });
 
   it('does NOT contain base-data keys that should come from the library', () => {

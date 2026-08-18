@@ -450,17 +450,17 @@ Not yet implemented: beastform stats in the Library browser (display-only), char
 
 ## Items (60)
 
-**Status: Partial.** Items are served via `GET /api/srd/items`. Character inventory entries can reference SRD item ids; `loadCharacterFeatures` merges V2 item descriptors from `src/features-v2/items/` (all 60 registered). There is no dedicated SRD item picker in the character builder UI yet; automation is per-item (e.g. Gems attach to weapons, Relics grant traits). **Belt of Unity** — once per session, spend 5 Hope to lead a three-PC Tag Team Roll: `BeltOfUnity.js` wires Hope, session frequency, and an `actionLoop` table notice (Tag Team resolution remains at the table).
+**Status: Partial.** Items are served via `GET /api/srd/items`. Character inventory is a Game Table runtime field (`CHARACTER_RUNTIME_KEYS`); the table also has a root **Party Loot** stash (`partyLoot`) with the same gold/inventory row shape. `InventoryItemPickerModal` lets the GM add Weapons / Armor / Items / Consumables (Mine+SRD) or a custom row to a character or the party bag. Entries can carry an SRD/library `id`; `loadCharacterFeatures` merges V2 item descriptors from `src/features-v2/items/` (all 60 registered) from **character** inventory only (party stash does not attach features). Automation is per-item (e.g. Gems attach to weapons, Relics grant traits). **Belt of Unity** — once per session, spend 5 Hope to lead a three-PC Tag Team Roll: `BeltOfUnity.js` wires Hope, session frequency, and an `actionLoop` table notice (Tag Team resolution remains at the table).
 
-To implement: add an item picker to the character builder or inventory UI, display item effects consistently, and extend per-item automation where the rules allow.
+To implement: display item effects consistently and extend per-item automation where the rules allow.
 
 ---
 
 ## Consumables (60)
 
-**Status: Partial.** Consumables are normalized in the SRD and merged from `src/features-v2/consumables/` when the character’s **inventory** lists the item name (see `loadCharacterFeatures`). There is no dedicated Library picker for consumables; automation is per-item. **Potion of Stability** — `placement: 'rest'` chip on the Short/Long Rest banner, `onUse` removes the potion and grants extra downtime slots for that rest via CONV-011 `passiveStatMods` (`docs/v2-code-conventions.md` CONV-011). Most other consumables remain narrative or unimplemented in V2.
+**Status: Partial.** Consumables are normalized in the SRD and merged from `src/features-v2/consumables/` when the character’s **inventory** lists the item name or id (see `loadCharacterFeatures`). The Game Table inventory picker includes a Consumables tab (character sheets and the Party Loot bag). Party-stash consumables do not merge into character features until moved onto a PC. **Potion of Stability** — `placement: 'rest'` chip on the Short/Long Rest banner, `onUse` removes the potion and grants extra downtime slots for that rest via CONV-011 `passiveStatMods` (`docs/v2-code-conventions.md` CONV-011). Most other consumables remain narrative or unimplemented in V2.
 
-To implement: extend per-consumable automation (combat potions, healing rolls, etc.) and optional inventory UX beyond name-based merge.
+To implement: extend per-consumable automation (combat potions, healing rolls, etc.).
 
 ---
 
@@ -473,10 +473,9 @@ To implement: extend per-consumable automation (combat potions, healing rolls, e
 
 ### Medium Effort (new UI, reuse existing systems)
 
-1. **Items as SRD picker**: Add item selection to character inventory (display + Relic stat mods)
-2. **Consumables tracker**: Add consumable slots with dice-roll integration for potions
-3. **Hope Feature automation**: "Use Hope Feature" button that spends 3 Hope and applies the effect
-4. **Multi-ancestry in form UI**: Data model supports it, form only shows first ancestry
+1. **Consumables tracker**: Add consumable slots with dice-roll integration for potions
+2. **Hope Feature automation**: "Use Hope Feature" button that spends 3 Hope and applies the effect
+3. **Multi-ancestry in form UI**: Data model supports it, form only shows first ancestry
 
 ### Large Effort (new subsystems)
 

@@ -21,6 +21,7 @@ import { playerCanAccessMapViewSelection } from './map-view-player-sync.js';
 import { normalizeMapArtistFields } from './map-artist.js';
 import { normalizeNextScenes } from './scene-load-dialog.js';
 import { syncLibraryMapOntoTableMaps } from './map-library.js';
+import { applyInventoryMove, normalizePartyLoot } from './party-loot.js';
 
 /** Keep legacy `gmMapView` + `activeMapId` aligned with `gmActiveViewId` for snapshots. */
 function syncGmMapViewFromActiveView(state) {
@@ -86,13 +87,19 @@ export const CHARACTER_RUNTIME_KEYS = [
   /** V2: frozen actor during `move(..., freezeOther)` — pairs with `moveDisabledSources` row for that banner. */
   'v2MoveLockRollDbId',
   'v2MoveLockSource',
+  /** Game Table runtime: gold integer (ones=handfuls, tens=bags, hundreds+=chests). */
+  'gold',
+  /** Game Table runtime: inventory rows `{ uid, name, quantity, id?, refCollection? }`. */
+  'inventory',
 ];
 
 /**
- * Optional top-level keys on the `table_state` JSON document (alongside `elements`, `fearCount`, …)
- * used by the V2 engine for **session-wide** `gameState.featureState` (e.g. Bard Rally `partyDice`
- * on the Rally `featureState` bag when the host merges table + character state).
+ * Optional top-level keys on the `table_state` JSON document (alongside `elements`, `fearCount`,
+ * `partyLoot`, …) used by the V2 engine for **session-wide** `gameState.featureState` (e.g. Bard Rally
+ * `partyDice` on the Rally `featureState` bag when the host merges table + character state).
  * The DB stores the full `table_state` blob; these keys are not stripped (only character elements are stripped).
+ * `partyLoot` (`{ gold, inventory }`) is table-root loot — not a V2 feature bag; `clear-table` /
+ * `replace-scene-snapshot` leave it untouched.
  */
 export const TABLE_STATE_V2_ROOT_KEYS = ['featureState'];
 
@@ -230,6 +237,19 @@ export function applyTableOp(op, state) {
     }
     case 'set-fear':
       return { fearCount: op.fearCount };
+    case 'set-party-loot': {
+      const current = normalizePartyLoot(state.partyLoot);
+      const next = { ...current };
+      if ('gold' in op && op.gold !== undefined) {
+        next.gold = Math.max(0, Math.floor(Number(op.gold) || 0));
+      }
+      if ('inventory' in op) {
+        next.inventory = normalizePartyLoot({ inventory: op.inventory }).inventory;
+      }
+      return { partyLoot: next };
+    }
+    case 'move-inventory-item':
+      return applyInventoryMove(state, { from: op.from, to: op.to, uid: op.uid });
     case 'set-spotlight':
       return { spotlight: op.spotlight };
     case 'add-conditions-history-entry':

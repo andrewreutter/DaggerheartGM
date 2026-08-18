@@ -54,8 +54,11 @@ import { tokenDistanceFt, getTokenFootprintFt, DEFAULT_TOKEN_FOOTPRINT_FT } from
 
 const MUTATIONS_KEY = Symbol('mutations');
 
-/** One SRD “handful” of gold in the character’s integer `gold` field (base‑9 inventory). */
-export const GOLD_COINS_PER_HANDFUL = 9;
+/**
+ * One SRD handful of gold. Gold is a flat integer whose ones/tens/hundreds digits
+ * are handfuls/bags/chests — spending a handful subtracts 1.
+ */
+export const GOLD_COINS_PER_HANDFUL = 1;
 
 /** Core rules: each PC may initiate a Tag Team Roll this many times per session before features add extras. */
 export const DEFAULT_TAG_TEAM_INITIATIONS_PER_SESSION = 1;

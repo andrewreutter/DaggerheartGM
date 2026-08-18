@@ -206,6 +206,20 @@ export function buildManualTrackActionRoll(targetEl, updates) {
     titles.push(title);
     bodies.push(body);
   }
+  if (updates.gold !== undefined) {
+    const before = targetEl.gold ?? 0;
+    const after = updates.gold;
+    const delta = after - before;
+    if (delta > 0) titles.push(`Gained ${delta} gold`);
+    else if (delta < 0) titles.push(`Spent ${-delta} gold`);
+    else titles.push('Gold');
+    bodies.push(`Gold changed from ${before} to ${after}`);
+  }
+  if (updates.inventory !== undefined) {
+    const after = Array.isArray(updates.inventory) ? updates.inventory.length : 0;
+    titles.push('Inventory');
+    bodies.push(`Inventory updated (${after} item${after !== 1 ? 's' : ''})`);
+  }
 
   const actionText = bodies.length ? bodies.join('\n') : 'Resource updated.';
   const actionName = titles.length ? titles.join(' · ') : 'Resource updated';

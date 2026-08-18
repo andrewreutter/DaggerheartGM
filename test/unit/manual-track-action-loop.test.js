@@ -68,6 +68,17 @@ describe('manual-track-action-loop', () => {
     expect(r.actionText).toContain('Armor marked changed from 0 to 2');
   });
 
+  it('buildManualTrackActionRoll describes gold and inventory updates', () => {
+    const r = buildManualTrackActionRoll(
+      { instanceId: 'i', name: 'Zed', elementType: 'character', gold: 10, inventory: [] },
+      { gold: 9, inventory: [{ uid: 'a', name: 'Rope', quantity: 1 }] },
+    );
+    expect(r.actionName).toContain('Spent 1 gold');
+    expect(r.actionName).toContain('Inventory');
+    expect(r.actionText).toContain('Gold changed from 10 to 9');
+    expect(r.actionText).toContain('Inventory updated (1 item)');
+  });
+
   it('getPendingManualTrackAckDeltas returns stress and HP deltas vs server el', () => {
     const el = { instanceId: 'c1', maxHp: 10, currentHp: 5, currentStress: 2, maxStress: 6 };
     const pending = {

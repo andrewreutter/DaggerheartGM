@@ -1,8 +1,10 @@
 import {
   User, Shield, AlertCircle, AlertTriangle, Swords, Package,
   ChevronDown, ChevronRight, Dices, X, Flame, Mountain, Droplets, Wind, Sparkles, Sticker,
+  Minus, Plus,
 } from 'lucide-react';
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback, useEffect, useRef, useLayoutEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { MarkdownText } from '../lib/markdown.js';
 import { effectiveThresholds, parseBeastformBonus, getEvasionModifierTotal, formatEvasionModifierTooltip } from '../lib/helpers.js';
 import { buildModifierChipHoverTitle } from '../lib/modifier-chip-title.js';
@@ -67,6 +69,20 @@ import {
   characterHasFeatureCardActions,
   characterHasLoadoutCardActions,
 } from '../lib/character-sheet-card-actions.js';
+import {
+  goldToSlots,
+  isGoldOverSrdCap,
+  formatGold,
+  parseGoldInput,
+} from '../lib/character-gold.js';
+import {
+  normalizeInventoryList,
+  removeInventoryEntry,
+  updateInventoryEntryQuantity,
+  updateInventoryEntryName,
+  isLibraryLinkedInventoryEntry,
+} from '../lib/character-inventory.js';
+import { DH_OUTSIDE_DISMISS_EXEMPT_ATTR } from '../lib/useHoverOverlay.js';
 
 export {
   resolveHopeFeatureName,
@@ -77,20 +93,7 @@ export {
   characterHasLoadoutCardActions,
 };
 
-// ─── Gold helpers ─────────────────────────────────────────────────────────────
-
-/** Convert raw gold integer to handfuls / bags / chests using base-9 math. */
-export function formatGold(gold) {
-  const g = Math.max(0, Math.floor(gold || 0));
-  const chests = Math.floor(g / 81);
-  const bags = Math.floor((g % 81) / 9);
-  const handfuls = g % 9;
-  const parts = [];
-  if (chests) parts.push(`${chests} chest${chests !== 1 ? 's' : ''}`);
-  if (bags) parts.push(`${bags} bag${bags !== 1 ? 's' : ''}`);
-  if (handfuls || !parts.length) parts.push(`${handfuls} handful${handfuls !== 1 ? 's' : ''}`);
-  return parts.join(', ');
-}
+export { goldToSlots, isGoldOverSrdCap, formatGold, parseGoldInput };
 
 // ─── Trait display ─────────────────────────────────────────────────────────────
 
@@ -2595,30 +2598,390 @@ export function CharacterVaultAbilityList({
   return <Section label="VAULT">{inner}</Section>;
 }
 
+const INVENTORY_COLLECTION_LABEL = {
+  weapons: 'Weapon',
+  armor: 'Armor',
+  items: 'Item',
+  consumables: 'Consumable',
+};
+
+const GOLD_DIGIT_CLASS = 'text-[1.75rem] leading-none font-semibold tabular-nums text-amber-200';
+const GOLD_LABEL_CLASS = 'text-[9px] uppercase tracking-wide text-dh-muted whitespace-nowrap';
+const GOLD_RULE_H = 'h-px w-4 bg-dh-muted/50';
+const GOLD_RULE_V = 'w-px h-3.5 bg-dh-muted/50';
+
+function GoldSrdCapWarning() {
+  return (
+    <Tooltip label="Over the SRD's 1-chest limit" placement="top">
+      <span className="inline-flex items-center text-amber-400" aria-label="Over the SRD's 1-chest limit">
+        <AlertTriangle size={10} />
+      </span>
+    </Tooltip>
+  );
+}
+
+function GoldAnnotatedDigits({ chests, bags, handfuls, overCap, editable, onEdit, ariaLabel }) {
+  const DigitWrap = editable ? 'button' : 'div';
+  const wrapProps = editable
+    ? { type: 'button', onClick: onEdit, 'aria-label': `${ariaLabel}. Click to edit`, title: 'Click to edit gold' }
+    : { 'aria-label': ariaLabel };
+  return (
+    <DigitWrap
+      {...wrapProps}
+      className={`inline-grid grid-cols-[auto_auto_auto_auto_auto] grid-rows-[auto_auto_auto] items-end justify-items-center max-w-full ${
+        editable ? 'bg-transparent border-0 p-0.5 rounded hover:bg-dh-inset/50 cursor-text' : ''
+      }`}
+    >
+      <span className={`col-start-3 row-start-1 ${GOLD_LABEL_CLASS}`}>Bags</span>
+      <span className={`col-start-3 row-start-2 ${GOLD_RULE_V}`} aria-hidden />
+      <span className="col-start-1 row-start-3 flex items-center gap-1 justify-self-end self-center pr-0.5">
+        <span className={GOLD_LABEL_CLASS}>Chests</span>
+        {overCap ? <GoldSrdCapWarning /> : null}
+        <span className={GOLD_RULE_H} aria-hidden />
+      </span>
+      <span className={`col-start-2 row-start-3 ${GOLD_DIGIT_CLASS}`}>{chests}</span>
+      <span className={`col-start-3 row-start-3 ${GOLD_DIGIT_CLASS}`}>{bags}</span>
+      <span className={`col-start-4 row-start-3 ${GOLD_DIGIT_CLASS}`}>{handfuls}</span>
+      <span className="col-start-5 row-start-3 flex items-center gap-1 justify-self-start self-center pl-0.5">
+        <span className={GOLD_RULE_H} aria-hidden />
+        <span className={GOLD_LABEL_CLASS}>Handfuls</span>
+      </span>
+    </DigitWrap>
+  );
+}
+
+/**
+ * Annotated chests / bags / handfuls digits (left / above / right) over a single gold integer.
+ * Click the number to edit; Save or Enter commits once (Escape cancels).
+ */
+export function GoldTracker({ gold, editable, onChange }) {
+  const g = Math.max(0, Math.floor(gold || 0));
+  const slots = goldToSlots(g);
+  const overCap = isGoldOverSrdCap(g);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState('');
+  const inputRef = useRef(null);
+
+  useEffect(() => {
+    if (!editing) return;
+    const id = window.setTimeout(() => {
+      const el = inputRef.current;
+      if (!el) return;
+      el.focus();
+      el.select();
+    }, 0);
+    return () => window.clearTimeout(id);
+  }, [editing]);
+
+  const startEdit = () => {
+    if (!editable) return;
+    setDraft(String(g));
+    setEditing(true);
+  };
+
+  const cancelEdit = () => {
+    setEditing(false);
+    setDraft('');
+  };
+
+  const commitEdit = () => {
+    const next = parseGoldInput(draft);
+    setEditing(false);
+    setDraft('');
+    if (next !== g) onChange?.(next);
+  };
+
+  return (
+    <div className="space-y-1">
+      <div className="flex items-center gap-1 text-[11px]">
+        <Package size={10} className="text-dh-hope-soft shrink-0" />
+        <span className="text-dh-muted">Gold</span>
+      </div>
+      {editing ? (
+        <div className="space-y-1.5">
+          <input
+            ref={inputRef}
+            type="text"
+            inputMode="numeric"
+            pattern="[0-9]*"
+            value={draft}
+            onChange={(e) => setDraft(e.target.value.replace(/\D/g, ''))}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                e.stopPropagation();
+                commitEdit();
+              } else if (e.key === 'Escape') {
+                e.preventDefault();
+                e.stopPropagation();
+                cancelEdit();
+              }
+            }}
+            className="w-full bg-dh-raised border border-dh-strong rounded px-2 py-1 text-center text-[1.75rem] leading-none font-semibold tabular-nums text-amber-200 focus:outline-none focus:border-amber-500/60"
+            aria-label="Gold amount"
+          />
+          <div className="flex justify-center gap-2">
+            <button
+              type="button"
+              onClick={cancelEdit}
+              className="px-2.5 py-1 rounded text-[11px] font-medium border border-dh-border text-dh-muted hover:bg-dh-hover/50"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={commitEdit}
+              className="px-2.5 py-1 rounded text-[11px] font-medium bg-sky-700/80 hover:bg-sky-600 text-white border border-sky-600/60"
+            >
+              Save
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="flex justify-center">
+          <GoldAnnotatedDigits
+            chests={slots.chests}
+            bags={slots.bags}
+            handfuls={slots.handfuls}
+            overCap={overCap}
+            editable={editable}
+            onEdit={startEdit}
+            ariaLabel={`Gold ${g}: ${formatGold(g)}`}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function InventoryQtyStepper({ value, onChange, disabled }) {
+  return (
+    <div className="flex items-center gap-0.5 shrink-0">
+      <button
+        type="button"
+        onClick={() => onChange(value - 1)}
+        disabled={disabled || value <= 1}
+        className="w-5 h-5 flex items-center justify-center rounded border border-dh-border bg-dh-raised text-dh hover:bg-dh-inset disabled:opacity-40 disabled:cursor-not-allowed"
+        aria-label="Decrease quantity"
+      >
+        <Minus size={10} />
+      </button>
+      <span className="w-5 text-center text-[11px] text-dh tabular-nums">{value}</span>
+      <button
+        type="button"
+        onClick={() => onChange(value + 1)}
+        disabled={disabled}
+        className="w-5 h-5 flex items-center justify-center rounded border border-dh-border bg-dh-raised text-dh hover:bg-dh-inset disabled:opacity-40 disabled:cursor-not-allowed"
+        aria-label="Increase quantity"
+      >
+        <Plus size={10} />
+      </button>
+    </div>
+  );
+}
+
+function InventoryMoveMenu({ destinations, onMove, disabled }) {
+  const [open, setOpen] = useState(false);
+  const [menuStyle, setMenuStyle] = useState(null);
+  const triggerRef = useRef(null);
+  const menuRef = useRef(null);
+
+  useLayoutEffect(() => {
+    if (!open || !triggerRef.current) {
+      setMenuStyle(null);
+      return;
+    }
+    const rect = triggerRef.current.getBoundingClientRect();
+    const MENU_MIN_W = 160;
+    const GAP = 4;
+    let left = rect.right - MENU_MIN_W;
+    if (left < 8) left = 8;
+    if (left + MENU_MIN_W > window.innerWidth - 8) left = Math.max(8, window.innerWidth - MENU_MIN_W - 8);
+    let top = rect.bottom + GAP;
+    const estimatedH = Math.min(280, 40 + destinations.length * 32);
+    if (top + estimatedH > window.innerHeight - 8) {
+      top = Math.max(8, rect.top - GAP - estimatedH);
+    }
+    setMenuStyle({
+      position: 'fixed',
+      zIndex: 80,
+      top,
+      left,
+      minWidth: MENU_MIN_W,
+      maxWidth: Math.min(240, window.innerWidth - 16),
+    });
+  }, [open, destinations.length]);
+
+  useEffect(() => {
+    if (!open) return;
+    const close = (e) => {
+      if (triggerRef.current?.contains(e.target)) return;
+      if (menuRef.current?.contains(e.target)) return;
+      setOpen(false);
+    };
+    document.addEventListener('mousedown', close, true);
+    return () => document.removeEventListener('mousedown', close, true);
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e) => {
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        setOpen(false);
+      }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [open]);
+
+  if (!destinations?.length || !onMove) return null;
+
+  return (
+    <>
+      <button
+        ref={triggerRef}
+        type="button"
+        disabled={disabled}
+        onClick={(e) => {
+          e.stopPropagation();
+          setOpen((v) => !v);
+        }}
+        onMouseDown={(e) => e.stopPropagation()}
+        className="shrink-0 w-5 h-5 flex items-center justify-center rounded text-dh-muted opacity-0 group-hover/invrow:opacity-100 focus:opacity-100 hover:text-dh hover:bg-dh-hover disabled:opacity-0"
+        aria-label="Move item"
+        aria-expanded={open}
+      >
+        <ChevronRight size={12} />
+      </button>
+      {open && menuStyle && typeof document !== 'undefined' && createPortal(
+        <div
+          ref={menuRef}
+          role="listbox"
+          aria-label="Move item to"
+          className="rounded-lg border border-dh-strong bg-dh-surface shadow-xl shadow-black/40 max-h-[min(50vh,280px)] overflow-y-auto py-1"
+          style={menuStyle}
+          {...{ [DH_OUTSIDE_DISMISS_EXEMPT_ATTR]: '' }}
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => e.stopPropagation()}
+        >
+          {destinations.map((dest) => {
+            const key = dest.scope === 'party' ? 'party' : `character:${dest.instanceId}`;
+            return (
+              <button
+                key={key}
+                type="button"
+                role="option"
+                className="w-full text-left px-3 py-1.5 text-[12px] text-dh hover:bg-dh-hover"
+                onClick={() => {
+                  setOpen(false);
+                  onMove(dest);
+                }}
+              >
+                {dest.label}
+              </button>
+            );
+          })}
+        </div>,
+        document.body,
+      )}
+    </>
+  );
+}
+
+/**
+ * Inventory name/quantity rows. Editable Game Table rows get a stepper, remove, and
+ * (for free-text) a name field. Library-linked rows show a collection badge.
+ * Optional `moveDestinations` + `onMoveItem(uid, dest)` add a hover move menu.
+ */
+export function CharacterInventoryList({ inventory, editable, onChange, onOpenPicker, moveDestinations, onMoveItem }) {
+  const rows = Array.isArray(inventory) ? inventory.filter((e) => e && typeof e === 'object') : [];
+  const canMove = editable && Array.isArray(moveDestinations) && moveDestinations.length > 0 && typeof onMoveItem === 'function';
+
+  const mutate = (fn) => {
+    if (!onChange) return;
+    const normalized = normalizeInventoryList(rows);
+    onChange(fn(normalized));
+  };
+
+  if (!editable) {
+    if (!rows.length) return null;
+    return (
+      <p className="text-[11px] text-dh-muted leading-relaxed">
+        {rows.map((item, i) => (
+          <span key={item.uid || item.id || i}>
+            {item.quantity > 1 && <span className="text-dh font-semibold">{item.quantity}× </span>}
+            <span className="text-dh">{item.name}</span>
+            {i < rows.length - 1 && <span className="text-dh-muted">, </span>}
+          </span>
+        ))}
+      </p>
+    );
+  }
+
+  return (
+    <div className="space-y-1">
+      {rows.map((item, i) => {
+        const linked = isLibraryLinkedInventoryEntry(item);
+        const rowKey = item.uid || item.id || `idx-${i}`;
+        return (
+          <div key={rowKey} className="group/invrow flex items-center gap-1.5 min-w-0">
+            <InventoryQtyStepper
+              value={Math.max(1, Math.floor(item.quantity || 1))}
+              onChange={(q) => mutate((list) => updateInventoryEntryQuantity(list, list[i].uid, q))}
+            />
+            {linked ? (
+              <span className="flex-1 min-w-0 truncate text-[11px] text-dh">{item.name}</span>
+            ) : (
+              <input
+                type="text"
+                value={item.name || ''}
+                onChange={(e) => mutate((list) => updateInventoryEntryName(list, list[i].uid, e.target.value))}
+                className="flex-1 min-w-0 bg-dh-raised border border-dh-border rounded px-1.5 py-0.5 text-[11px] text-dh focus:outline-none focus:border-dh-strong"
+                aria-label="Item name"
+              />
+            )}
+            {linked && item.refCollection && (
+              <span className="shrink-0 text-[9px] uppercase tracking-wide px-1 py-0.5 rounded bg-dh-inset text-dh-muted">
+                {INVENTORY_COLLECTION_LABEL[item.refCollection] || item.refCollection}
+              </span>
+            )}
+            {canMove && item.uid && (
+              <InventoryMoveMenu
+                destinations={moveDestinations}
+                onMove={(dest) => onMoveItem(item.uid, dest)}
+              />
+            )}
+            <button
+              type="button"
+              onClick={() => mutate((list) => removeInventoryEntry(list, list[i].uid))}
+              className="shrink-0 w-5 h-5 flex items-center justify-center rounded text-dh-muted hover:text-red-300 hover:bg-red-950/40"
+              aria-label={`Remove ${item.name || 'item'}`}
+            >
+              <X size={12} />
+            </button>
+          </div>
+        );
+      })}
+      <button
+        type="button"
+        onClick={() => onOpenPicker?.()}
+        className="mt-0.5 text-[11px] text-sky-300 hover:text-sky-200"
+      >
+        + Add item
+      </button>
+    </div>
+  );
+}
+
+/** Read-only library/detail wrapper. Game Table uses GoldTracker + CharacterInventoryList. */
 export function CharacterInventory({ el }) {
   const inventory = el.inventory || [];
   if (!inventory.length && el.gold == null) return null;
   return (
     <Section label="Inventory">
-      {el.gold != null && (
-        <div className="flex items-center gap-1 text-[11px] mb-1">
-          <Package size={10} className="text-dh-hope-soft shrink-0" />
-          <span className="text-dh-muted">Gold:</span>
-          <span className="text-dh font-semibold tabular-nums">{el.gold}</span>
-          <span className="text-dh-muted">({formatGold(el.gold)})</span>
-        </div>
-      )}
-      {inventory.length > 0 && (
-        <p className="text-[11px] text-dh-muted leading-relaxed">
-          {inventory.map((item, i) => (
-            <span key={i}>
-              {item.quantity > 1 && <span className="text-dh font-semibold">{item.quantity}× </span>}
-              <span className="text-dh">{item.name}</span>
-              {i < inventory.length - 1 && <span className="text-dh-muted">, </span>}
-            </span>
-          ))}
-        </p>
-      )}
+      {el.gold != null && <GoldTracker gold={el.gold} editable={false} />}
+      <CharacterInventoryList inventory={inventory} editable={false} />
     </Section>
   );
 }
