@@ -38,6 +38,14 @@ describe('collectNavTableEntries', () => {
     expect(entries[1].label).toBe('Bravo');
     expect(entries[2].label).toBe('Charlie');
   });
+
+  it('accepts invited rooms that use id instead of tableId', () => {
+    const entries = collectNavTableEntries(
+      [],
+      [{ id: 'inv-1', name: 'Hunt', gmName: 'Dana' }],
+    );
+    expect(entries.map((e) => e.tableId)).toEqual(['inv-1']);
+  });
 });
 
 describe('pickRecentNavTables', () => {

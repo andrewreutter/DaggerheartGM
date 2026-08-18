@@ -24,6 +24,12 @@ describe('HomeAuthenticated table card grid', () => {
     expect(src).not.toMatch(/className="space-y-2"\s*>\s*\{publicList\.map/);
   });
 
+  it('resolves Player-column table ids instead of navigating to /table/undefined', () => {
+    expect(src).toContain("import { resolveTableCardId } from '../lib/table-character-roster.js'");
+    expect(src).toContain('const tableId = resolveTableCardId(room)');
+    expect(src).not.toMatch(/onClick=\{\(\) => navigate\(`\/table\/\$\{room\.tableId\}`\)\}/);
+  });
+
   it('uses the same red CTA for Create New Table as first-table mode', () => {
     expect(src).toContain("CREATE_TABLE_CTA_CLASS = 'inline-flex items-center gap-1.5 rounded-lg bg-red-600 hover:bg-red-700 text-white");
     expect(src.match(/className=\{CREATE_TABLE_CTA_CLASS\}/g)?.length).toBe(2);

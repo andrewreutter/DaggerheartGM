@@ -173,6 +173,22 @@ export function assignSpotlightHolder(spotlight, holderType, holderInstanceId = 
 }
 
 /**
+ * Force-assign spotlight to a character (GM ack of a request). Never toggles off
+ * when that PC already holds it. Preserves `rollSeq` / `lastSeenSeq`.
+ * @param {object | null | undefined} spotlight
+ * @param {string | null | undefined} instanceId
+ */
+export function grantSpotlightToCharacter(spotlight, instanceId) {
+  const current = normalizeSpotlight(spotlight);
+  return {
+    holderType: 'character',
+    holderInstanceId: instanceId ?? null,
+    rollSeq: current.rollSeq,
+    lastSeenSeq: { ...current.lastSeenSeq },
+  };
+}
+
+/**
  * Acknowledge-time reducer. Returns the same reference when the roll does not qualify.
  */
 export function applySpotlightRollAck(spotlight, roll) {

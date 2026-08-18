@@ -32,7 +32,7 @@ import {
   planMinionGroupReconcile,
 } from './lib/party-scaled-adversaries.js';
 import { isTablePlayAllowed, isPrepModeElementUpdateBlocked } from './lib/table-session-gate.js';
-import { showChooseSpotlightBanner } from './lib/spotlight.js';
+import { grantSpotlightToCharacter, showChooseSpotlightBanner } from './lib/spotlight.js';
 import { shouldStartGmTableRoomEffects } from './lib/gm-table-sse-ownership-gate.js';
 import { shouldFetchTableState, tableAccessErrorAfterFetch } from './lib/table-state-load.js';
 import { billingNavIndicatorCopy } from './lib/billing-status-copy.js';
@@ -244,6 +244,7 @@ function App() {
   // intentDifficultyUpdate: latest `intent` SSE payload as seen by a player — used to detect when the
   // GM has finalized the difficulty for that player's own pending pre-roll banner.
   const [intentDifficultyUpdate, setIntentDifficultyUpdate] = useState(null);
+  const [spotlightRequestGrant, setSpotlightRequestGrant] = useState(null);
   // Player-only: banner IDs for which a feature reroll was requested, keyed by reaction stateKey (optimistic feedback)
   const [featureRequestedBannerIdsByKey, setFeatureRequestedBannerIdsByKey] = useState(() => ({}));
   // Player-only: banner IDs for which Ranger's Focus reroll was requested
@@ -850,6 +851,18 @@ function App() {
     setMapScribbles((prev) => (prev.some((x) => x.id === evt.id) ? prev : [...prev.slice(-400), evt]));
   }, []);
 
+  const consumeSpotlightRequestGrant = useCallback(() => setSpotlightRequestGrant(null), []);
+  const handleSpotlightRequestGrantedEvent = useCallback((e) => {
+    try {
+      const payload = JSON.parse(e.data);
+      if (!payload || typeof payload !== 'object') return;
+      if (payload.instanceId) {
+        setSpotlight((prev) => grantSpotlightToCharacter(prev, payload.instanceId));
+      }
+      setSpotlightRequestGrant(payload);
+    } catch { /* ignore */ }
+  }, []);
+
   // Canonicalize legacy /gm-table/... URLs (needs user uid for bare /gm-table and /gm-table/:collection/:id)
   useEffect(() => {
     if (!user) return;
@@ -904,6 +917,7 @@ function App() {
       setTableStateReady(false);
       setMapPings([]);
       setMapScribbles([]);
+      setSpotlightRequestGrant(null);
     }
     prevTableIdRef.current = route.tableId;
   }, [route.view, route.tableId]);
@@ -1144,6 +1158,7 @@ function App() {
         const intent = JSON.parse(e.data);
         setPendingPlayerIntent(intent); // null clears the banner
       });
+      es.addEventListener('spotlight-request-granted', handleSpotlightRequestGrantedEvent);
       es.addEventListener('map_ping', (e) => {
         try {
           const p = JSON.parse(e.data);
@@ -1163,7 +1178,7 @@ function App() {
     connect();
     postTableOp({ op: 'set-gm-display-name', gmDisplayName: user?.displayName || '' }, tableId);
     return () => { es?.close(); if (reconnectTimer) clearTimeout(reconnectTimer); };
-  }, [user?.uid, route.view, route.tableId, isPlayer, isSpectator, tableOwnerUid, appendMapPing, appendMapScribble]);
+  }, [user?.uid, route.view, route.tableId, isPlayer, isSpectator, tableOwnerUid, appendMapPing, appendMapScribble, handleSpotlightRequestGrantedEvent]);
 
   // Player SSE: receive table state snapshots, banners, and dice roll events for the invited table
   useEffect(() => {
@@ -1269,6 +1284,7 @@ function App() {
           setIntentDifficultyUpdate(JSON.parse(e.data));
         } catch { /* ignore */ }
       });
+      es.addEventListener('spotlight-request-granted', handleSpotlightRequestGrantedEvent);
       es.addEventListener('map_ping', (e) => {
         try {
           const p = JSON.parse(e.data);
@@ -1287,7 +1303,7 @@ function App() {
     };
     connect();
     return () => { es?.close(); if (reconnectTimer) clearTimeout(reconnectTimer); };
-  }, [isPlayer, isSpectator, user?.uid, route.tableId, tableOwnerUid, appendMapPing, appendMapScribble]);
+  }, [isPlayer, isSpectator, user?.uid, route.tableId, tableOwnerUid, appendMapPing, appendMapScribble, handleSpotlightRequestGrantedEvent]);
 
   // Spectator SSE: public tables (signed-in or anonymous)
   useEffect(() => {
@@ -2712,6 +2728,8 @@ function App() {
                 pendingBanners={pendingBanners}
                 pendingPlayerIntent={pendingPlayerIntent}
                 intentDifficultyUpdate={intentDifficultyUpdate}
+                spotlightRequestGrant={spotlightRequestGrant}
+                onSpotlightRequestGrantConsumed={consumeSpotlightRequestGrant}
                 onFeatureRequestSuccess={effectiveIsPlayer ? (bannerId, stateKey) => {
                   if (stateKey == null) return;
                   setFeatureRequestedBannerIdsByKey(prev => ({

@@ -92,6 +92,19 @@ describe('computeActionAckTouchesTableState', () => {
     };
     expect(computeActionAckTouchesTableState(roll, { actionAdversaryTargets: [] })).toBe(true);
   });
+
+  it('returns true for a spotlight request so the banner stays pending', () => {
+    const roll = {
+      _action: true,
+      _spotlightRequest: true,
+      actionName: 'Agility',
+      _attackerInstanceId: 'c1',
+    };
+    expect(computeActionAckTouchesTableState(roll, { actionAdversaryTargets: [] })).toBe(true);
+    expect(shouldSuppressActionBanner(roll, { actionAdversaryTargets: [] })).toBe(false);
+    const out = withActionBannerSuppression(roll, { actionAdversaryTargets: [] });
+    expect(out._suppressActionBanner).toBeUndefined();
+  });
 });
 
 describe('shouldSuppressActionBanner', () => {

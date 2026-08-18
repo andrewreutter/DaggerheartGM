@@ -49,6 +49,10 @@ import {
   qualifiesForSpotlightRoll,
 } from '../lib/spotlight.js';
 import {
+  buildSpotlightRequestNotification,
+  findPendingSpotlightRequestForCharacter,
+} from '../lib/spotlight-request.js';
+import {
   postRoll as postRollToServer,
   postTableOp,
   postTableOpAwait,
@@ -453,7 +457,7 @@ function buildGameTableNewEnvironmentStub(tier = 1, type = 'exploration') {
   };
 }
 
-export function GMTableView({ tableId, activeElements, updateActiveElement: pushTableElementUpdate, removeActiveElement, updateActiveElementsBaseData, data, saveItem, saveImage, addToTable, addElements, sendDoAddToTable, onMergeAdversary, user, route, navigate, featureCountdowns = {}, sessionCountdowns = [], updateCountdown, partySize = 1, partyTier = 1, characters = [], tableBattleMods, nextScenes = [], setTableBattleMods, fearCount = 0, setFearCount, spotlight = null, onSpotlightChange, conditionsHistory = [], onAddConditionsHistoryEntry, onRemoveConditionsHistoryEntry, tableName = '', gmDisplayName = '', tableStateReady = false, onTableNameChange, onDeleteTable, ensureAdventuresLoaded, ensureCharactersLoaded, clearTable, isPlayer = false, isSpectator = false, isPublic = false, onPublicChange, audienceOnlineCount = 0, playerEmail, connectedPlayers = [], playerEmails = [], playerNames = {}, inviteLink = null, onGenerateInviteLink, onRevokeInviteLink, onRemovePlayerEmail, onLeaveTable, gmUid, onPlayerAddCharacter, pendingBanners = [], pendingPlayerIntent = null, intentDifficultyUpdate = null, onFeatureRequestSuccess, onFeatureRequestCancel, rangerFocusRequestedBannerIds, onRangerFocusRerollRequestSuccess, onRangerFocusRerollRequestCancel, previewAsPlayerEmail = null, onPreviewAsPlayer, onExitPreview, actionLog = [], setActionLog, mapConfig, maps = [], activeMapId = null, gmMapView = null, onSetActiveMap, onAddMap, onAddMapWithImage, onRemoveMap, onRenameMap, onMapConfigChange, onMapViewSync, lifeSupportSelections = {}, onLifeSupportSelect, onLifeSupportClear, restMovesSelections = {}, onRestMoveSelect, onRestMoveClear, tableFeatureState = {}, sessionPlayAllowed = true, sessionStarted = true, sessionPaused = false, mapPings = [], onDismissMapPing = () => {}, appendMapPing = () => {},
+export function GMTableView({ tableId, activeElements, updateActiveElement: pushTableElementUpdate, removeActiveElement, updateActiveElementsBaseData, data, saveItem, saveImage, addToTable, addElements, sendDoAddToTable, onMergeAdversary, user, route, navigate, featureCountdowns = {}, sessionCountdowns = [], updateCountdown, partySize = 1, partyTier = 1, characters = [], tableBattleMods, nextScenes = [], setTableBattleMods, fearCount = 0, setFearCount, spotlight = null, onSpotlightChange, conditionsHistory = [], onAddConditionsHistoryEntry, onRemoveConditionsHistoryEntry, tableName = '', gmDisplayName = '', tableStateReady = false, onTableNameChange, onDeleteTable, ensureAdventuresLoaded, ensureCharactersLoaded, clearTable, isPlayer = false, isSpectator = false, isPublic = false, onPublicChange, audienceOnlineCount = 0, playerEmail, connectedPlayers = [], playerEmails = [], playerNames = {}, inviteLink = null, onGenerateInviteLink, onRevokeInviteLink, onRemovePlayerEmail, onLeaveTable, gmUid, onPlayerAddCharacter, pendingBanners = [], pendingPlayerIntent = null, intentDifficultyUpdate = null, spotlightRequestGrant = null, onSpotlightRequestGrantConsumed, onFeatureRequestSuccess, onFeatureRequestCancel, rangerFocusRequestedBannerIds, onRangerFocusRerollRequestSuccess, onRangerFocusRerollRequestCancel, previewAsPlayerEmail = null, onPreviewAsPlayer, onExitPreview, actionLog = [], setActionLog, mapConfig, maps = [], activeMapId = null, gmMapView = null, onSetActiveMap, onAddMap, onAddMapWithImage, onRemoveMap, onRenameMap, onMapConfigChange, onMapViewSync, lifeSupportSelections = {}, onLifeSupportSelect, onLifeSupportClear, restMovesSelections = {}, onRestMoveSelect, onRestMoveClear, tableFeatureState = {}, sessionPlayAllowed = true, sessionStarted = true, sessionPaused = false, mapPings = [], onDismissMapPing = () => {}, appendMapPing = () => {},
   mapScribbles = [],
   mapViews = [], gmActiveViewId = null, onSetActiveView, onAddMapViewOp, onRemoveMapView, onRenameMapView, onSetViewBroadcast, onSetViewLocked, onSetMapShare,
   onSetMapOverlay,
@@ -2026,6 +2030,12 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
       if (onRestMoveClear) onRestMoveClear(roll._rollDbId);
       const cyclesToClear = roll._restDuration === 'long' ? ['rest', 'longRest'] : ['rest'];
       runRestCycleClear(cyclesToClear);
+      return;
+    }
+
+    // Spotlight request: server assigns the holder on ack. No Hope/Fear/damage.
+    if (roll._spotlightRequest) {
+      if (roll._rollDbId) postBannerAck(roll._rollDbId, 'acknowledge', { tableId }).catch(() => {});
       return;
     }
 
@@ -3727,11 +3737,33 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     const targetTableId = isPlayer ? tableId : null;
     const meta = { ...rollMeta, _playerInitiated: true };
 
-    if (isPlayer && isSpotlightGatedRollMeta(rollMeta)) {
+    if (isPlayer && isSpotlightGatedRollMeta(rollMeta) && !context?.resumeFromSpotlightGrant) {
       const attackerId = rollMeta._attackerInstanceId;
       if (!isSpotlightHolder(spotlight, attackerId)) {
-        showSpotlightBlockedHint("You don't hold the spotlight.");
-        return;
+        const charForName = context?.characterEl?.instanceId === attackerId
+          ? context.characterEl
+          : (attackerId
+              ? activeElements.find((e) => e.instanceId === attackerId && e.elementType === 'character')
+              : context?.characterEl);
+        const payload = buildSpotlightRequestNotification({
+          characterName: charForName?.name,
+          displayName,
+          rollText,
+          rollMeta,
+        });
+        dismissAllHoverCards();
+        void (async () => {
+          if (tableId && attackerId) {
+            const dupes = findPendingSpotlightRequestForCharacter(pendingBanners, attackerId);
+            for (const b of dupes) {
+              await postBannerCancel(tableId, b._rollDbId);
+            }
+          }
+          if (tableId) {
+            await postActionNotification(payload, tableId);
+          }
+        })();
+        return 'spotlight-requested';
       }
     }
 
@@ -4034,6 +4066,29 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
       });
     }
   };
+
+  const handlePlayerOwnRollRef = useRef(handlePlayerOwnRoll);
+  handlePlayerOwnRollRef.current = handlePlayerOwnRoll;
+  const lastResumedGrantBannerIdRef = useRef(null);
+  useEffect(() => {
+    if (!spotlightRequestGrant) return;
+    const grant = spotlightRequestGrant;
+    onSpotlightRequestGrantConsumed?.();
+    if (user?.uid !== grant._initiatorUid) return;
+    const bannerId = grant.bannerId;
+    if (bannerId != null && lastResumedGrantBannerIdRef.current === bannerId) return;
+    if (bannerId != null) lastResumedGrantBannerIdRef.current = bannerId;
+    const resume = grant.resume;
+    if (!resume?.rollText) return;
+    const attackerId = resume.rollMeta?._attackerInstanceId || grant.instanceId;
+    const characterEl = attackerId
+      ? activeElements.find((e) => e.instanceId === attackerId && e.elementType === 'character')
+      : null;
+    handlePlayerOwnRollRef.current(resume.rollText, resume.displayName, resume.rollMeta || {}, {
+      characterEl,
+      resumeFromSpotlightGrant: true,
+    });
+  }, [spotlightRequestGrant, onSpotlightRequestGrantConsumed, user?.uid, activeElements]);
 
   const handleReactionProceed = (instanceId, marqueeRoll) => {
     if (!marqueeRoll?._reactionCall || marqueeRoll._rollDbId == null) return;

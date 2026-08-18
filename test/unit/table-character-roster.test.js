@@ -4,6 +4,7 @@ import {
   toTableCardDto,
   nextTableIsPublic,
   classifyTableViewer,
+  resolveTableCardId,
 } from '../../src/client/lib/table-character-roster.js';
 
 describe('summarizeTableCharacterRoster', () => {
@@ -73,6 +74,26 @@ describe('toTableCardDto', () => {
     expect(dto.gmUid).toBe('gm-1');
     expect(dto.tableName).toBe('Hunt');
     expect(dto.id).toBeUndefined();
+  });
+
+  it('keeps tableId on invited-room cards when the row only has tableId (SSE home_invited shape)', () => {
+    const dto = toTableCardDto(
+      { tableId: 't1', userId: 'gm-1', data: { tableName: 'Hunt', gmDisplayName: 'GM' } },
+      { tableIdKey: 'tableId' },
+    );
+    expect(dto.tableId).toBe('t1');
+    expect(dto.gmUid).toBe('gm-1');
+    expect(dto.id).toBeUndefined();
+  });
+});
+
+describe('resolveTableCardId', () => {
+  it('prefers id, then tableId, and ignores empty values', () => {
+    expect(resolveTableCardId({ id: 'a', tableId: 'b' })).toBe('a');
+    expect(resolveTableCardId({ tableId: 'b' })).toBe('b');
+    expect(resolveTableCardId({ id: '', tableId: 'b' })).toBe('b');
+    expect(resolveTableCardId({})).toBeUndefined();
+    expect(resolveTableCardId(null)).toBeUndefined();
   });
 });
 

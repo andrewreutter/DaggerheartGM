@@ -69,6 +69,25 @@ export function buildPreRollPanelTitle({
 }
 
 /**
+ * Action noun for a spotlight-request banner (`Agility`, `Longsword`, feature name).
+ * Strips the actor prefix from `displayName` when that is the only hint.
+ * @param {object} [opts]
+ * @param {string} [opts.actorName]
+ * @param {string} [opts.displayName]
+ * @param {object} [opts.rollMeta]
+ * @returns {string}
+ */
+export function buildSpotlightRequestActionLabel({ actorName, displayName, rollMeta = {} } = {}) {
+  const actor = String(actorName || '').trim();
+  const named = String(rollMeta._featureName || '').trim();
+  let action = named;
+  if (!action && rollMeta._isSpellcastRoll) action = 'Spellcast';
+  if (!action) action = stripActorPrefix(displayName, actor);
+  if (!action) action = traitLabel(rollMeta._traitKey);
+  return action || 'an action';
+}
+
+/**
  * @param {string} charName
  * @param {string} traitKey
  * @param {number} traitScore

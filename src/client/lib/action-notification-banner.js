@@ -19,6 +19,7 @@ export function computeActionAckTouchesTableState(roll, context = {}) {
     roll._manualTrackEdit ||
     roll._featureUse ||
     roll._cardToggle ||
+    roll._spotlightRequest === true ||
     roll._reactionCall === true ||
     (roll._v2DeferUntilBannerAck === true && typeof roll._v2DeferToggleNext === 'boolean') ||
     roll._wingsOfLightFlightDefer === true ||

@@ -82,7 +82,7 @@ export function collectNavTableEntries(myTables = [], myRooms = []) {
     push(t?.id, navTableDisplayLabel(t?.name), t?.updatedAt);
   }
   for (const room of myRooms) {
-    push(room?.tableId, navTableDisplayLabel(room?.tableName || room?.name, room?.gmName), room?.updatedAt);
+    push(room?.tableId || room?.id, navTableDisplayLabel(room?.tableName || room?.name, room?.gmName), room?.updatedAt);
   }
   return entries;
 }

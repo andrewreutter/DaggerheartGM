@@ -4,6 +4,7 @@ import { LibraryView } from './LibraryView.jsx';
 import { Footer } from './Footer.jsx';
 import { TableCard, tableCardTitle } from './TableCard.jsx';
 import { fetchPublicTables } from '../lib/api.js';
+import { resolveTableCardId } from '../lib/table-character-roster.js';
 
 /** Section width — not viewport — drives 1 / 2 / 3 cards across (@xs 20rem, @xl 36rem). */
 const TABLE_SECTION_CLASS = '@container min-w-0 rounded-xl border border-dh-border bg-dh-surface p-5 space-y-3';
@@ -133,16 +134,17 @@ export function HomeAuthenticated({
             ) : (
               <div className={TABLE_CARD_GRID_CLASS}>
                 {myRooms.map((room) => {
+                  const tableId = resolveTableCardId(room);
                   const title = tableCardTitle(room.tableName || room.name);
                   return (
                     <TableCard
-                      key={room.tableId}
+                      key={tableId || title}
                       title={title}
                       subtitle={room.gmName ? `GM: ${room.gmName}` : null}
                       characterCount={room.characterCount}
                       characterNames={room.characterNames}
                       previewUrl={room.previewUrl}
-                      onClick={() => navigate(`/table/${room.tableId}`)}
+                      onClick={() => { if (tableId) navigate(`/table/${tableId}`); }}
                     />
                   );
                 })}

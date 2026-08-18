@@ -811,14 +811,16 @@ export function CharacterHoverCard({
 
   // Send roll (used after target selection or when no target menu needed)
   const sendWeaponRoll = (rollText, displayName, rollMeta, opts) => {
-    onRoll(rollText, displayName, rollMeta, { characterEl: el });
+    const status = onRoll(rollText, displayName, rollMeta, { characterEl: el });
     if (selectedMod) setSelectedModId(null);
+    if (status === 'spotlight-requested') return status;
     if (opts?.devastating) {
       const maxStress = el.maxStress ?? 6;
       const newStress = Math.min((el.currentStress ?? 0) + 1, maxStress);
       updateFn(el.instanceId, { currentStress: newStress });
       setDevastatingActive(false);
     }
+    return status;
   };
 
   // ── Weapon click handler ─────────────────────────────────────────────────────
@@ -880,16 +882,20 @@ export function CharacterHoverCard({
       if (validTargets.length === 0) return;
       // Multi-target weapons: send roll immediately; target selection happens on the banner.
       if (weapon.multiTarget) {
-        sendWeaponRoll(rollText, displayName, rollMeta, opts);
-        if (rollMeta._rangerFocusAttempt && updateFn) updateFn(el.instanceId, { rangerFocusOnNextAttack: false });
+        const status = sendWeaponRoll(rollText, displayName, rollMeta, opts);
+        if (status !== 'spotlight-requested' && rollMeta._rangerFocusAttempt && updateFn) {
+          updateFn(el.instanceId, { rangerFocusOnNextAttack: false });
+        }
         return;
       }
       const anchorRect = event?.currentTarget?.getBoundingClientRect() ?? null;
       openTargetMenu({ type: 'weapon', rollText, displayName, rollMeta, validTargets, opts, anchorRect });
       return;
     }
-    sendWeaponRoll(rollText, displayName, rollMeta, opts);
-    if (rollMeta._rangerFocusAttempt && updateFn) updateFn(el.instanceId, { rangerFocusOnNextAttack: false });
+    const status = sendWeaponRoll(rollText, displayName, rollMeta, opts);
+    if (status !== 'spotlight-requested' && rollMeta._rangerFocusAttempt && updateFn) {
+      updateFn(el.instanceId, { rangerFocusOnNextAttack: false });
+    }
   } : undefined;
 
   const handleTargetMenuSelect = (target) => {
@@ -910,15 +916,19 @@ export function CharacterHoverCard({
     if (target.type === 'adversary' && target.vulnerable) {
       rollText = appendVulnerableTargetToRollText(rollText);
     }
-    onRoll(rollText, displayName, { ...rollMeta, _selectedTargetInstanceId: target.instanceId }, { characterEl: el });
+    const status = onRoll(rollText, displayName, { ...rollMeta, _selectedTargetInstanceId: target.instanceId }, { characterEl: el });
     if (type === 'weapon') {
-      if (rollMeta._rangerFocusAttempt && updateFn) updateFn(el.instanceId, { rangerFocusOnNextAttack: false });
-      if (selectedMod) setSelectedModId(null);
-      if (opts?.devastating) {
-        const maxStress = el.maxStress ?? 6;
-        const newStress = Math.min((el.currentStress ?? 0) + 1, maxStress);
-        updateFn(el.instanceId, { currentStress: newStress });
-        setDevastatingActive(false);
+      if (status !== 'spotlight-requested') {
+        if (rollMeta._rangerFocusAttempt && updateFn) updateFn(el.instanceId, { rangerFocusOnNextAttack: false });
+        if (selectedMod) setSelectedModId(null);
+        if (opts?.devastating) {
+          const maxStress = el.maxStress ?? 6;
+          const newStress = Math.min((el.currentStress ?? 0) + 1, maxStress);
+          updateFn(el.instanceId, { currentStress: newStress });
+          setDevastatingActive(false);
+        }
+      } else if (selectedMod) {
+        setSelectedModId(null);
       }
     }
     closeTargetMenu();

@@ -554,9 +554,12 @@ function ActionBanner({
 
   // Hide Cancel when Ack would not change table state (mirrors GMTableView handleBannerAcknowledge for _action).
   // V2 actionLoop notices (mutations already applied) and other informational actions only need Acknowledge.
-  // Start Session: show Cancel so the GM can dismiss without starting the session (suppression stays off in shouldSuppressActionBanner).
+  // Start Session / spotlight request: always show Cancel next to Acknowledge (grant vs dismiss).
   const actionAckTouchesTableState = computeActionAckTouchesTableState(roll, { actionAdversaryTargets });
-  const showActionBannerCancel = onCancel != null && (roll._sessionStart || actionAckTouchesTableState);
+  const isSpotlightRequest = roll._spotlightRequest === true;
+  const showActionBannerCancel = onCancel != null && (
+    roll._sessionStart || isSpotlightRequest || actionAckTouchesTableState
+  );
 
   const handleAcknowledge = () => {
     if (roll._reactionCall) {
@@ -579,6 +582,9 @@ function ActionBanner({
     : roll._action && (roll.actionName == null || roll.actionName === '' || roll.actionName === 0)
       ? (roll._featureName || 'Hope ability')
       : (roll.actionName || 'Action');
+  const cardClassName = isSpotlightRequest
+    ? 'px-5 py-3 rounded-xl shadow-2xl text-center border-2 backdrop-blur-sm text-yellow-100 border-yellow-400/35 bg-yellow-400/10'
+    : 'px-5 py-3 rounded-xl shadow-2xl text-center bg-dh-surface/90 border-2 border-dh-strong text-dh';
 
   return (
     <div
@@ -593,15 +599,15 @@ function ActionBanner({
       }}
     >
       <div
-        className="px-5 py-3 rounded-xl shadow-2xl text-center bg-dh-surface/90 border-2 border-dh-strong text-dh"
+        className={cardClassName}
         style={BANNER_CARD_SCROLL_STYLE}
       >
         {displayName && !isReactionCall && (
-          <div className="text-[11px] uppercase tracking-widest text-dh-muted mb-1">{displayName}</div>
+          <div className={`text-[11px] uppercase tracking-widest mb-1 ${isSpotlightRequest ? 'text-yellow-100/70' : 'text-dh-muted'}`}>{displayName}</div>
         )}
-        <div className="text-base font-bold text-dh mb-1">{actionTitle}</div>
+        <div className={`text-base font-bold mb-1 ${isSpotlightRequest ? 'text-yellow-50' : 'text-dh'}`}>{actionTitle}</div>
         {roll.actionText && !isReactionCall && (
-          <MarkdownText text={roll.actionText} className="text-[12px] text-dh mb-2 text-left dh-md" />
+          <MarkdownText text={roll.actionText} className={`text-[12px] mb-2 text-left dh-md ${isSpotlightRequest ? 'text-yellow-100/90' : 'text-dh'}`} />
         )}
         {(roll.tags || []).length > 0 && (
           <div className="flex flex-col gap-1 mb-2">
@@ -797,12 +803,14 @@ function ActionBanner({
           </div>
         )}
         {(!disableDismiss || showActionBannerCancel) && (
-          <div className="flex items-center justify-center gap-1.5">
+          <div className="flex items-center justify-center gap-1.5 mt-2">
             {!disableDismiss && (
               <button
                 onClick={handleAcknowledge}
                 disabled={!canAcknowledge}
-                className="flex-1 min-w-0 px-3 py-1 rounded text-[11px] font-semibold border border-dh-strong bg-dh-hover text-dh hover:bg-dh-strong transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-dh-hover"
+                className={isSpotlightRequest
+                  ? 'flex-1 min-w-0 px-3 py-1 rounded text-[11px] font-semibold border border-yellow-400/45 bg-yellow-500/20 text-yellow-50 hover:bg-yellow-500/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed'
+                  : 'flex-1 min-w-0 px-3 py-1 rounded text-[11px] font-semibold border border-dh-strong bg-dh-hover text-dh hover:bg-dh-strong transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-dh-hover'}
               >
                 Acknowledge
               </button>
@@ -810,7 +818,9 @@ function ActionBanner({
             {showActionBannerCancel && (
               <button
                 onClick={onCancel}
-                className="px-2 py-0.5 rounded text-[10px] font-medium border border-dh-strong bg-dh-surface/60 text-dh-muted hover:bg-dh-raised hover:text-dh transition-colors"
+                className={isSpotlightRequest
+                  ? 'flex-1 min-w-0 px-3 py-1 rounded text-[11px] font-semibold border border-yellow-400/35 bg-yellow-950/40 text-yellow-100/90 hover:bg-yellow-900/50 hover:text-yellow-50 transition-colors'
+                  : 'px-2 py-0.5 rounded text-[10px] font-medium border border-dh-strong bg-dh-surface/60 text-dh-muted hover:bg-dh-raised hover:text-dh transition-colors'}
               >
                 Cancel
               </button>

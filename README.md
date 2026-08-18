@@ -182,6 +182,7 @@ DaggerheartGM/
 │   ├── unit/                   # Vitest unit tests for pure logic modules
 │   │   ├── battle-points.test.js
 │   │   ├── spotlight.test.js
+│   │   ├── spotlight-request.test.js
 │   │   └── table-ops.test.js
 │   ├── browser/                # Playwright browser/visual regression tests
 │   │   └── smoke.spec.js

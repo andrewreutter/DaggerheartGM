@@ -22,7 +22,12 @@ vi.mock('../../src/db.js', () => ({
   listTableStates: vi.fn(),
   getTableStatesByPlayerEmail: vi.fn(),
   listPublicTables: vi.fn(),
-  toTableCardDto: vi.fn((row) => ({ id: row?.id, name: row?.data?.tableName || 'Table' })),
+  toTableCardDto: vi.fn((row, opts) => {
+    const id = row?.id;
+    const name = row?.data?.tableName || 'Table';
+    if (opts?.tableIdKey === 'tableId') return { tableId: id, gmUid: row?.userId || '', tableName: name, name };
+    return { id, name };
+  }),
   summarizeTableCharacterRoster: vi.fn(() => ({ count: 0, names: [] })),
 }));
 
@@ -513,8 +518,10 @@ describe('home-lobby channels', () => {
     expect(res.writes[0]).toContain('event: home_owned');
   });
 
-  it('home_invited subscribe calls getTableStatesByPlayerEmail', async () => {
-    getTableStatesByPlayerEmail.mockResolvedValue([]);
+  it('home_invited snapshot includes tableId from getTableStatesByPlayerEmail rows', async () => {
+    getTableStatesByPlayerEmail.mockResolvedValue([
+      { tableId: 'tbl-invited', userId: 'gm-1', data: { tableName: 'Hunt' } },
+    ]);
 
     const res = makeFakeRes();
     manager.subscribe('home_invited', 'alice@example.com', res);
@@ -522,8 +529,11 @@ describe('home-lobby channels', () => {
     await Promise.resolve();
 
     expect(getTableStatesByPlayerEmail).toHaveBeenCalledWith('test-app', 'alice@example.com');
-    expect(res.writes.length).toBe(1);
     expect(res.writes[0]).toContain('event: home_invited');
+    const dataLine = res.writes[0].split('\n').find((line) => line.startsWith('data: '));
+    const rooms = JSON.parse(dataLine.slice(6));
+    expect(rooms[0].tableId).toBe('tbl-invited');
+    expect(rooms[0].tableId).not.toBeUndefined();
   });
 
   it('home_public subscribe calls listPublicTables', async () => {

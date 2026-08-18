@@ -14,6 +14,7 @@ import {
   qualifiesForSpotlightRoll,
   isSpotlightGatedRollMeta,
   assignSpotlightHolder,
+  grantSpotlightToCharacter,
   applySpotlightRollAck,
 } from '../../src/client/lib/spotlight.js';
 
@@ -194,5 +195,33 @@ describe('holder helpers / assignSpotlightHolder', () => {
     const clearedGm = assignSpotlightHolder(gm, 'gm');
     expect(clearedGm.holderType).toBe(null);
     expect(isGmHolder(clearedGm)).toBe(false);
+  });
+});
+
+describe('grantSpotlightToCharacter', () => {
+  it('always sets the character holder and never toggles off', () => {
+    const fromOpen = grantSpotlightToCharacter(DEFAULT_SPOTLIGHT, 'pc-1');
+    expect(fromOpen.holderType).toBe('character');
+    expect(fromOpen.holderInstanceId).toBe('pc-1');
+    expect(fromOpen.rollSeq).toBe(DEFAULT_SPOTLIGHT.rollSeq);
+    expect(fromOpen.lastSeenSeq).toEqual(DEFAULT_SPOTLIGHT.lastSeenSeq);
+
+    const already = grantSpotlightToCharacter(fromOpen, 'pc-1');
+    expect(already.holderType).toBe('character');
+    expect(already.holderInstanceId).toBe('pc-1');
+    expect(already.rollSeq).toBe(fromOpen.rollSeq);
+
+    const switched = grantSpotlightToCharacter(fromOpen, 'pc-2');
+    expect(switched.holderType).toBe('character');
+    expect(switched.holderInstanceId).toBe('pc-2');
+  });
+
+  it('preserves rollSeq and lastSeenSeq when granting over a GM holder', () => {
+    const gm = { holderType: 'gm', holderInstanceId: null, rollSeq: 7, lastSeenSeq: { 'pc-1': 3 } };
+    const next = grantSpotlightToCharacter(gm, 'pc-1');
+    expect(next.holderType).toBe('character');
+    expect(next.holderInstanceId).toBe('pc-1');
+    expect(next.rollSeq).toBe(7);
+    expect(next.lastSeenSeq).toEqual({ 'pc-1': 3 });
   });
 });

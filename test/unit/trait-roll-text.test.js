@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildTraitRollText, buildPreRollPanelTitle } from '../../src/client/lib/trait-roll-text.js';
+import { buildTraitRollText, buildPreRollPanelTitle, buildSpotlightRequestActionLabel } from '../../src/client/lib/trait-roll-text.js';
 
 describe('buildTraitRollText', () => {
   it('builds a Duality Hope/Fear pair with a positive trait modifier', () => {
@@ -83,5 +83,32 @@ describe('buildPreRollPanelTitle', () => {
 
   it('falls back to Before you roll when nothing is known', () => {
     expect(buildPreRollPanelTitle({})).toBe('Before you roll');
+  });
+});
+
+describe('buildSpotlightRequestActionLabel', () => {
+  it('strips the actor prefix from displayName', () => {
+    expect(buildSpotlightRequestActionLabel({
+      actorName: 'Ada',
+      displayName: 'Ada Longsword',
+      rollMeta: { _attackerInstanceId: 'pc-1' },
+    })).toBe('Longsword');
+  });
+
+  it('prefers a feature name, then Spellcast, then the trait', () => {
+    expect(buildSpotlightRequestActionLabel({
+      actorName: 'Ada',
+      displayName: 'Ada Rally',
+      rollMeta: { _featureName: 'Rally' },
+    })).toBe('Rally');
+    expect(buildSpotlightRequestActionLabel({
+      actorName: 'Ada',
+      displayName: 'Ada Spellcast',
+      rollMeta: { _isSpellcastRoll: true, _traitKey: 'presence' },
+    })).toBe('Spellcast');
+    expect(buildSpotlightRequestActionLabel({
+      actorName: 'Ada',
+      rollMeta: { _traitKey: 'agility' },
+    })).toBe('Agility');
   });
 });

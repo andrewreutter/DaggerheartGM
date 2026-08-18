@@ -39,7 +39,11 @@ const CHANNEL_QUERIES = {
   },
   home_invited: async (appId, email) => {
     const rows = await getTableStatesByPlayerEmail(appId, email);
-    return rows.map((r) => toTableCardDto(r, { tableIdKey: 'tableId' }));
+    // getTableStatesByPlayerEmail returns `{ tableId, userId, data }` (no `id`).
+    return rows.map((r) => toTableCardDto(
+      { id: r.tableId ?? r.id, userId: r.userId, data: r.data, updatedAt: r.updatedAt },
+      { tableIdKey: 'tableId' },
+    ));
   },
   home_public: async (appId, _key) => {
     const rows = await listPublicTables(appId, { limit: 3 });

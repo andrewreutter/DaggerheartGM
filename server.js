@@ -46,7 +46,7 @@ import compression from 'compression';
 import { createClient as createSupabaseClient } from '@supabase/supabase-js';
 import { CHARACTER_RUNTIME_KEYS, applyTableOp } from './src/client/lib/table-ops.js';
 import { gateTableOpForPrepMode, isTablePlayAllowed } from './src/client/lib/table-session-gate.js';
-import { isSpotlightGatedRollMeta, isSpotlightHolder } from './src/client/lib/spotlight.js';
+import { grantSpotlightToCharacter, isSpotlightGatedRollMeta, isSpotlightHolder } from './src/client/lib/spotlight.js';
 import { v2RollDieExtrasFromActionLoopPayload } from './src/client/lib/v2-action-notification-dice.js';
 import { withActionBannerSuppression } from './src/client/lib/action-notification-banner.js';
 import { computePlayerV2CrossSheetChipApply } from './src/server/v2-player-cross-sheet-chip.js';
@@ -3850,6 +3850,27 @@ app.post('/api/room/my/banner-ack', requireAuth, async (req, res) => {
       }
     } catch (err) {
       console.error('[banner-ack] rest fear error:', err.message);
+    }
+  }
+
+  if (action === 'acknowledge' && bannerId && process.env.DATABASE_URL) {
+    try {
+      const row = await getDiceRollById(APP_ID, req.uid, bannerId);
+      if (row && row.status === 'pending' && row.data?._spotlightRequest === true && row.data._attackerInstanceId) {
+        const tableRow = await getTableStateById(APP_ID, tableId);
+        if (tableRow && tableRow.userId === req.uid) {
+          const next = grantSpotlightToCharacter(tableRow.data?.spotlight, row.data._attackerInstanceId);
+          await applyOpToTableState(tableId, { op: 'set-spotlight', spotlight: next });
+          subscriptionManager.broadcastBannersChannelEvent(req.uid, 'spotlight-request-granted', {
+            instanceId: row.data._attackerInstanceId,
+            resume: row.data._spotlightRequestResume || null,
+            _initiatorUid: row.data._initiatorUid || null,
+            bannerId,
+          });
+        }
+      }
+    } catch (err) {
+      console.error('[banner-ack] spotlight request error:', err.message);
     }
   }
 

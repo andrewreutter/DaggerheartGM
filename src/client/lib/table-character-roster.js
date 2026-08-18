@@ -21,9 +21,19 @@ export function summarizeTableCharacterRoster(data) {
 }
 
 /**
- * Homepage / lobby card DTO. Never includes emails.
- * @param {{ id: string, data?: object, userId?: string }} row
- * @param {{ tableIdKey?: 'id' | 'tableId' }} [opts]
+ * Table id from a lobby row or card DTO.
+ * Invited-room DB rows use `tableId`; owned/public rows and some DTOs use `id`.
+ * @param {{ id?: string, tableId?: string }|null|undefined} row
+ * @returns {string|undefined}
+ */
+export function resolveTableCardId(row) {
+  const id = row?.id || row?.tableId;
+  return typeof id === 'string' && id ? id : undefined;
+}
+
+/**
+ * @param {unknown} value
+ * @returns {number|undefined}
  */
 export function toUpdatedAtMs(value) {
   if (value == null) return undefined;
@@ -32,6 +42,11 @@ export function toUpdatedAtMs(value) {
   return Number.isFinite(t) ? t : undefined;
 }
 
+/**
+ * Homepage / lobby card DTO. Never includes emails.
+ * @param {{ id?: string, tableId?: string, data?: object, userId?: string }} row
+ * @param {{ tableIdKey?: 'id' | 'tableId' }} [opts]
+ */
 export function toTableCardDto(row, opts = {}) {
   const data = row?.data || {};
   const roster = summarizeTableCharacterRoster(data);
@@ -55,7 +70,7 @@ export function toTableCardDto(row, opts = {}) {
     }
   }
   const gmName = typeof data.gmDisplayName === 'string' ? data.gmDisplayName.trim() : '';
-  const id = row.id;
+  const id = resolveTableCardId(row);
   const base = {
     name,
     gmName,
