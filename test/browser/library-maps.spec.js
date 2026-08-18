@@ -105,8 +105,7 @@ test('GM Add Map from map-tile overlay opens picker; Create new map opens editor
   await page.getByTestId('map-camera-picker-trigger').hover();
   await expect(page.getByTestId('map-camera-picker-overlay')).toBeVisible({ timeout: 5000 });
   await page.getByTestId('map-camera-picker-overlay').hover();
-  // DOM click: pointer move onto + Add can leave the hover bridge and close the overlay;
-  // the overlay also sits under the app nav (z-70).
+  // DOM click: pointer move onto + Add can leave the hover bridge and close the overlay.
   await page.getByTestId('map-camera-picker-add-map').evaluate((el) => el.click());
   await expect(page.getByTestId('item-picker-create-map')).toBeVisible({ timeout: 10000 });
   await expect(page.getByText('Mine Crossroads')).toBeVisible();

@@ -282,6 +282,8 @@ function MapPickerMetaFields({ map, canEdit, onCommitArtist, onSizeChange, onFoc
 /**
  * Current-camera chip (aligned with the Zoom title) + hover overlay of every map row.
  * Overlay is portaled so `position: fixed` stays viewport-relative.
+ * Stack at `z-[92]` — above `ItemDetailModal` (`z-[80]`) and Scene encounter
+ * hovers (`z-[90]`/`z-[91]`) so the panel is hittable in Scene/Map editors.
  */
 export const MapCameraPicker = forwardRef(function MapCameraPicker(
   {
@@ -448,7 +450,7 @@ export const MapCameraPicker = forwardRef(function MapCameraPicker(
           role="dialog"
           aria-label="Maps and cameras"
           data-testid="map-camera-picker-overlay"
-          className="fixed z-[53] max-h-[min(70vh,calc(100dvh-1rem))] max-w-[calc(100vw-1rem)] overflow-auto rounded-lg border border-dh-border bg-dh-canvas/95 shadow-xl"
+          className="fixed z-[92] max-h-[min(70vh,calc(100dvh-1rem))] max-w-[calc(100vw-1rem)] overflow-auto rounded-lg border border-dh-border bg-dh-canvas/95 shadow-xl"
           style={{
             ...overlayStyle,
             padding: MAP_CAMERA_PICKER_OVERLAY_PADDING_PX,
