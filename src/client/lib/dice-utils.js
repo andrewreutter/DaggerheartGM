@@ -5,6 +5,38 @@
  */
 
 /**
+ * Parse NdS[kh|kl][!][mN][+/-M] notation (same grammar as server `rollDice`).
+ * @param {string | null | undefined} input
+ * @returns {{ qty: number, sides: number, keep: string | null, exploding: boolean, minimum: number | null, modifier: number } | null}
+ */
+export function parseDiceExpr(input) {
+  if (!input) return null;
+  const m = /^(\d*)d(\d+)(kh|kl)?(!)?(?:m(\d+))?([+-]\d+)?$/i.exec(String(input).trim());
+  if (!m) return null;
+  return {
+    qty: parseInt(m[1] || '1', 10),
+    sides: parseInt(m[2], 10),
+    keep: (m[3] || '').toLowerCase() || null,
+    exploding: !!m[4],
+    minimum: m[5] ? parseInt(m[5], 10) : null,
+    modifier: m[6] ? parseInt(m[6], 10) : 0,
+  };
+}
+
+/**
+ * Maximum value of the dice in an expression, excluding the numeric modifier.
+ * `2d8+5` → 16. Explosions are ignored (unbounded). Keep-highest still counts
+ * every die in the notation (`2d8kh` → 16).
+ * @param {string | null | undefined} input
+ * @returns {number}
+ */
+export function maxDamageDiceValue(input) {
+  const parsed = parseDiceExpr(input);
+  if (!parsed || parsed.qty < 1 || parsed.sides < 2) return 0;
+  return parsed.qty * parsed.sides;
+}
+
+/**
  * Parse a sub-item details string into an array of numeric die values.
  * Details strings come in two shapes:
  *   "3+4+5"       → keep-all multi-die result

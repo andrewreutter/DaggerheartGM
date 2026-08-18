@@ -113,6 +113,16 @@ describe('shouldApplyDamageOnAcknowledge', () => {
     expect(shouldApplyDamageOnAcknowledge(roll, pc, { effectiveTotal: 6 })).toBe(true);
   });
 
+  it('applies damage on an adversary natural 20 even when the total is below evasion', () => {
+    const roll = {
+      total: 20,
+      _attackerType: 'adversary',
+      subItems: [{ pre: 'Claw ', input: 'd20', result: '20', details: '(20)', post: '' }],
+    };
+    expect(shouldApplyDamageOnAcknowledge(roll, pc, { effectiveTotal: 20 })).toBe(true);
+    expect(classifyAttackAgainstTarget(roll, pc, { effectiveTotal: 20 })).toBe('hit');
+  });
+
   it('applies damage when the target has no numeric defense (unknown, not a miss)', () => {
     const roll = { total: 4, _attackerType: 'adversary' };
     expect(shouldApplyDamageOnAcknowledge(roll, { instanceId: 'pc2', type: 'character' }, { effectiveTotal: 4 })).toBe(true);

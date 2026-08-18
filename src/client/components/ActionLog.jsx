@@ -3,6 +3,8 @@ import { Dices, ChevronUp, RotateCcw } from 'lucide-react';
 import { ManualDiceBuilder } from './ManualDiceBuilder.jsx';
 import { MANUAL_DICE_SIZES } from '../lib/manual-dice-roll-text.js';
 import { isReactionRoll } from '../lib/reaction-roll-display.js';
+import { isAdversaryNatural20 } from '../lib/duality-roll-outcome.js';
+import { critExtraDamageForRoll } from '../lib/crit-damage.js';
 import {
   ACTION_LOG_DICE_BUILDER_MAX_HEIGHT,
   ACTION_LOG_LIST_MAX_HEIGHT,
@@ -44,6 +46,8 @@ function CompoundRoll({ subItems, isReaction }) {
   const dh = parseDaggerheartRoll(subItems);
   const actionItems = subItems.filter(s => !/damage/i.test(s.pre || ''));
   const damageItems = subItems.filter(s => /damage/i.test(s.pre || ''));
+  const critExtra = critExtraDamageForRoll({ subItems, dominant: dh?.dominant });
+  const adversaryCrit = !dh && isAdversaryNatural20({ subItems });
 
   return (
     <span>
@@ -84,6 +88,9 @@ function CompoundRoll({ subItems, isReaction }) {
           ) : null}
         </span>
       )}
+      {!dh && adversaryCrit && (
+        <span className="text-yellow-300 font-semibold"> Critical!</span>
+      )}
       {damageItems.map((sub, i) => {
         const c = subItemColor(sub.pre);
         return (
@@ -99,6 +106,9 @@ function CompoundRoll({ subItems, isReaction }) {
           </span>
         );
       })}
+      {critExtra > 0 && (
+        <span className="text-red-300 font-semibold"> + Crit ({critExtra})</span>
+      )}
     </span>
   );
 }

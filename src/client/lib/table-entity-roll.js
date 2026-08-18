@@ -2,7 +2,7 @@
  * Table entity + roll wrappers — canonical copy for Game Table / client code.
  */
 import { extractDetailsValues } from './dice-utils.js';
-import { isDualityCritical, isSuccessWithHope } from './duality-roll-outcome.js';
+import { isAttackCritical, isSuccessWithHope } from './duality-roll-outcome.js';
 
 const noop = () => {};
 
@@ -207,9 +207,9 @@ export function wrapRoll(roll, displayStore, characterInstanceId) {
     get hasDamage() {
       return (roll.subItems || []).some(s => /damage/i.test(s.pre || ''));
     },
-    get isSuccess() { return isDualityCritical(roll) ? true : (roll.isSuccess ?? false); },
+    get isSuccess() { return isAttackCritical(roll) ? true : (roll.isSuccess ?? false); },
     get isFailure() {
-      if (isDualityCritical(roll)) return false;
+      if (isAttackCritical(roll)) return false;
       return roll._difficulty != null ? !(roll.isSuccess ?? false) : roll.dominant === 'fear';
     },
     get hasExperience() { return !!roll._experienceHopeCost; },

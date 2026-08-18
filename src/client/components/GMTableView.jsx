@@ -42,6 +42,7 @@ import { buildReactionCallRoster, canViewerProceedReaction } from '../lib/reacti
 import { buildJoinedPlayerRoster, mergePresenceNamesIntoCache } from '../lib/joined-player-roster.js';
 import { requiresGmFinalizedDifficulty, resolveFinalizedIntentDifficulty } from '../lib/action-roll-difficulty.js';
 import { rollBeatsDefense } from '../lib/duality-roll-outcome.js';
+import { critExtraDamageForRoll } from '../lib/crit-damage.js';
 import {
   DEFAULT_SPOTLIGHT,
   applySpotlightRollAck,
@@ -310,7 +311,7 @@ function getItemData(element) {
 
 const COLLECTION_TO_ELEMENT_TYPE = { adversaries: 'adversary', environments: 'environment', characters: 'character', notes: 'note' };
 
-/** Get damage total and type from a roll. Sums all damage sub-items. Returns null if no damage sub. */
+/** Get damage total and type from a roll. Sums all damage sub-items plus crit extra. Returns null if no damage sub. */
 function getDamageFromRoll(roll) {
   const damageSubs = (roll.subItems || []).filter(s => /damage/i.test(s.pre || '') && s.input);
   if (!damageSubs.length) return null;
@@ -319,6 +320,7 @@ function getDamageFromRoll(roll) {
     const v = parseInt(sub.result, 10);
     if (!Number.isNaN(v)) total += v;
   }
+  total += critExtraDamageForRoll(roll);
   const first = damageSubs[0];
   const post = (first.post || '').trim().split(/\s+/);
   const type = (post[0] && /^[a-z]+$/.test(post[0])) ? post[0] : '';

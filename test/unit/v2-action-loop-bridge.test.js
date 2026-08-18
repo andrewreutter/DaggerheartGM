@@ -245,6 +245,20 @@ describe('v2-action-loop-bridge', () => {
     expect(r.action.isSuccess).toBe(true);
   });
 
+  it('hydrateV2RollsFromClientRoll treats adversary natural 20 as critical', () => {
+    const r = hydrateV2RollsFromClientRoll({
+      _attackerType: 'adversary',
+      isSuccess: false,
+      total: 20,
+      subItems: [
+        { pre: 'Claw ', input: 'd20', result: '20', details: '(20)', post: '' },
+        { pre: 'damage ', input: 'd8+1', result: '5', post: ' phy' },
+      ],
+    });
+    expect(r.action.isCritical).toBe(true);
+    expect(r.action.isSuccess).toBe(true);
+  });
+
   it('postTagToEngineDamageType maps phy/mag', () => {
     expect(postTagToEngineDamageType('phy')).toBe('physical');
     expect(postTagToEngineDamageType('mag')).toBe('magic');
@@ -400,6 +414,24 @@ describe('v2-action-loop-bridge', () => {
     expect(dmg.source?.instanceId).toBe('char-a');
     // effectiveThresholds major = 3 + level 1 = 4 → raw 3 is Minor → 1 HP
     expect(hp.amount).toBe(1);
+  });
+
+  it('buildV2SyntheticActionEffects includes crit extra on Duality critical (2d8+5 → +16)', () => {
+    const target = {
+      instanceId: 'char-t',
+      elementType: 'character',
+      level: 1,
+      armorThresholds: { major: 7, severe: 14 },
+    };
+    const roll = {
+      _attackerInstanceId: 'char-a',
+      _selectedTargetInstanceId: 'char-t',
+      dominant: 'critical',
+      subItems: [{ pre: 'damage ', input: '2d8+5', result: '14', post: ' phy' }],
+    };
+    const effects = buildV2SyntheticActionEffects(roll, [target]);
+    const dmg = effects.find((e) => e.type === 'damage');
+    expect(dmg.amount).toBe(14 + 16);
   });
 
   it('engineRangeBandFromDistanceFt matches engine bands', () => {

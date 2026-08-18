@@ -33,7 +33,8 @@ import { computeHpLoss, effectiveEvasion, effectiveThresholds } from './helpers.
 import { applyV2LifecycleMutations } from './table-ops.js';
 import { PENDING_EVASION_BONUS_STATE_KEY } from '../../game-constants.js';
 import { WARDEN_OF_THE_ELEMENTS_SCOPE_KEY } from '../../features-v2/engine/feature-scope-keys.js';
-import { isDualityCritical, rollBeatsDefense } from './duality-roll-outcome.js';
+import { isAttackCritical, rollBeatsDefense } from './duality-roll-outcome.js';
+import { critExtraDamageForRoll } from './crit-damage.js';
 
 /** Display names for synthetic trait sub-items (matches CharacterDisplay TRAIT_FULL). */
 const TRAIT_FULL_PRETTY = {
@@ -245,6 +246,7 @@ export function buildV2SyntheticActionEffects(roll, activeElements) {
     const v = parseInt(sub.result, 10);
     if (!Number.isNaN(v)) total += v;
   }
+  total += critExtraDamageForRoll(roll);
 
   const first = damageSubs[0];
   const post = (first.post || '').trim().split(/\s+/);
@@ -518,10 +520,10 @@ export function hydrateV2RollsFromClientRoll(roll) {
   }
 
   let isSuccess = roll.isSuccess;
-  if (isDualityCritical(roll)) {
+  if (isAttackCritical(roll)) {
     isSuccess = true;
   }
-  const isCritical = roll.dominant === 'critical';
+  const isCritical = isAttackCritical(roll);
 
   return {
     action: {

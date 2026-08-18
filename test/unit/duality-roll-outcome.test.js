@@ -24,6 +24,14 @@ describe('rollBeatsDefense', () => {
     expect(rollBeatsDefense({ dominant: 'hope', total: 18 }, 18)).toBe(true);
   });
 
+  it('always succeeds on an adversary natural 20 below evasion', () => {
+    const roll = {
+      total: 20,
+      subItems: [{ pre: 'Claw ', input: 'd20', result: '20', details: '(20)', post: '' }],
+    };
+    expect(rollBeatsDefense(roll, 25)).toBe(true);
+  });
+
   it('uses an explicit effective total when provided', () => {
     expect(rollBeatsDefense({ dominant: 'fear', total: 10 }, 14, 14)).toBe(true);
     expect(rollBeatsDefense({ dominant: 'fear', total: 10 }, 14)).toBe(false);
@@ -48,6 +56,16 @@ describe('wrapRoll Critical', () => {
     });
     expect(wrapped.isWithHope).toBe(true);
     expect(wrapped.isWithFear).toBe(false);
+    expect(wrapped.isSuccess).toBe(true);
+    expect(wrapped.isFailure).toBe(false);
+  });
+
+  it('exposes adversary natural 20 as success, never failure', () => {
+    const wrapped = wrapRoll({
+      total: 20,
+      isSuccess: false,
+      subItems: [{ pre: 'Claw ', input: 'd20', result: '20', details: '(20)', post: '' }],
+    });
     expect(wrapped.isSuccess).toBe(true);
     expect(wrapped.isFailure).toBe(false);
   });

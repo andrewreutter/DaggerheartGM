@@ -182,6 +182,7 @@ DaggerheartGM/
 │   ├── unit/                   # Vitest unit tests for pure logic modules
 │   │   ├── battle-points.test.js
 │   │   ├── duality-roll-outcome.test.js
+│   │   ├── crit-damage.test.js
 │   │   ├── spotlight.test.js
 │   │   ├── spotlight-request.test.js
 │   │   └── table-ops.test.js

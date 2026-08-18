@@ -6,7 +6,8 @@ import { Tooltip } from './Tooltip.jsx';
 import { CustomSelect } from './forms/CustomSelect.jsx';
 import { SHORT_REST_MOVES, LONG_REST_MOVES, getRestMoveDefinition } from '../lib/rest-moves.js';
 import { postRollSilent } from '../lib/api.js';
-import { parseSubDetails as _parseSubDetails, extractDetailsValues } from '../lib/dice-utils.js';
+import { parseDiceExpr, parseSubDetails as _parseSubDetails, extractDetailsValues } from '../lib/dice-utils.js';
+import { critExtraDamageForRoll } from '../lib/crit-damage.js';
 import { rangeFtToLabel } from '../lib/map-range.js';
 import {
   rollShouldUseMapFilteredTargets,
@@ -15,7 +16,7 @@ import {
   shouldApplyDamageOnAcknowledge,
   countAttackHitsAndMisses,
 } from '../lib/banner-target-roll.js';
-import { rollBeatsDefense } from '../lib/duality-roll-outcome.js';
+import { isAdversaryNatural20, rollBeatsDefense } from '../lib/duality-roll-outcome.js';
 import { formatTargetSummary, computeHpLoss } from '../lib/helpers.js';
 import { isAdversaryAttackPartyTarget } from '../lib/companion-attack-targets.js';
 import {
@@ -63,21 +64,6 @@ import { renderColoredDiceGroups, buildD100Groups } from '../lib/dice-color-grou
 const SUPPORTED_SIDES = new Set([4, 6, 8, 10, 12, 20]);
 
 // ── Notation parsing helpers ────────────────────────────────────────────────
-
-// Extended regex: NdS[kh|kl][!][mN][+/-M]
-function parseDiceExpr(input) {
-  if (!input) return null;
-  const m = /^(\d*)d(\d+)(kh|kl)?(!)?(?:m(\d+))?([+-]\d+)?$/i.exec((input || '').trim());
-  if (!m) return null;
-  return {
-    qty:      parseInt(m[1] || '1', 10),
-    sides:    parseInt(m[2], 10),
-    keep:     (m[3] || '').toLowerCase() || null, // 'kh', 'kl', or null
-    exploding: !!m[4],
-    minimum:  m[5] ? parseInt(m[5], 10) : null,
-    modifier: m[6] ? parseInt(m[6], 10) : 0,
-  };
-}
 
 // Parse the details string from a subItem. Returns { all, discarded }.
 // kh/kl format: "(3->7)" or "(3,5->7)" → all=[3,7], discarded=[3]
@@ -1430,8 +1416,9 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
   const hasDHLabels   = (roll.subItems || []).some(s => /hope/i.test(s.pre || ''))
                      && (roll.subItems || []).some(s => /fear/i.test(s.pre || ''));
   const hasDuality = effectiveDominant != null || hasDHLabels;
-  const isCritical    = effectiveDominant === 'critical';
-  const isHope        = effectiveDominant === 'hope' || isCritical;
+  const isDualityCrit  = effectiveDominant === 'critical';
+  const isCritical     = isDualityCrit || isAdversaryNatural20(roll);
+  const isHope         = effectiveDominant === 'hope' || isDualityCrit;
 
   // Hope/Fear coloration only while rolling if the duality dice were preset (e.g. augmented Kick roll).
   const dualitySubItems = (roll.subItems || []).filter(s => /hope|fear/i.test(s.pre || ''));
@@ -1441,7 +1428,9 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
   const actionItems = (roll.subItems || []).filter(s => !/damage/i.test(s.pre || '') && !EXTRA_PRE_RE.test(s.pre || ''));
   const extraItems   = (roll.subItems || []).filter(s => EXTRA_PRE_RE.test(s.pre || ''));
   const damageSubs  = (roll.subItems || []).filter(s => /damage/i.test(s.pre || '') && s.input);
-  const damageTotal = damageSubs.reduce((sum, s) => sum + (parseInt(s.result, 10) || 0), 0);
+  const diceDamageTotal = damageSubs.reduce((sum, s) => sum + (parseInt(s.result, 10) || 0), 0);
+  const critExtra = critExtraDamageForRoll(roll);
+  const damageTotal = diceDamageTotal + critExtra;
   /** Base damage used for thresholds and application. */
   const baseDamage  = (roll._damageTotalOverride != null ? roll._damageTotalOverride : damageTotal);
   const damageSub   = damageSubs[0];
@@ -1815,6 +1804,9 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
               <span className="text-2xl font-black tabular-nums ml-1">
                 {genericDiceTotalKnown ? genericTotal : <Spinner lg />}
               </span>
+              {isCritical && (resolved || genericDiceTotalKnown) && (
+                <span className="text-sm font-semibold opacity-80 ml-0.5">✦ Critical!</span>
+              )}
               {resultLabel && (
                 <span className={`text-xs font-semibold ml-1 ${resultLabelClass}`}>
                   {resultLabel}
@@ -1826,6 +1818,9 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
               <span className="text-2xl font-black tabular-nums">
                 {resolved ? genericTotal : (staticGenericTotal !== null ? staticGenericTotal : <Spinner lg />)}
               </span>
+              {isCritical && resolved && (
+                <span className="text-sm font-semibold opacity-80 ml-0.5">✦ Critical!</span>
+              )}
               {resultLabel && (
                 <span className={`text-xs font-semibold ml-1 ${resultLabelClass}`}>
                   {resultLabel}
@@ -1884,6 +1879,9 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                     )}
                   </>
                 )}
+                {critExtra > 0 && (resolved || (damageSubs.length > 0 && damageSubs.every((s) => s._preset))) && (
+                  <> <span className="text-yellow-300/90">+ Crit ({critExtra})</span></>
+                )}
                 {roll._wingsOfLightD8Result != null && (
                   <> + d8({roll._wingsOfLightD8Result})</>
                 )}
@@ -1895,7 +1893,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
               <span className="text-lg font-black tabular-nums text-red-300 ml-1">
                 {(resolved || (damageSubs.length > 0 && damageSubs.every((s) => s._preset)))
                   ? (roll._damageTotalOverride != null
-                      ? <><span>{damageTotal}</span> <span className="text-red-300/80 font-semibold">({effectiveDisplayDmg})</span></>
+                      ? <><span>{diceDamageTotal + critExtra}</span> <span className="text-red-300/80 font-semibold">({effectiveDisplayDmg})</span></>
                       : hasPhysicalResistance && isPhysicalDmg
                         ? <><span className="line-through">{displayDmg}</span> <span className="text-orange-400/95">{effectiveDisplayDmg}</span></>
                         : effectiveDisplayDmg)
