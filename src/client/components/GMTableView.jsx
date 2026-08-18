@@ -84,6 +84,7 @@ import {
   postAdversaryAiBuild,
   postEnvironmentAiBuild,
   fetchTableBillingStatus,
+  fetchTableAudience,
 } from '../lib/api.js';
 import { SupportTableModal } from './SupportTableModal.jsx';
 import { PrepSetupChecklist } from './PrepSetupChecklist.jsx';
@@ -452,7 +453,7 @@ function buildGameTableNewEnvironmentStub(tier = 1, type = 'exploration') {
   };
 }
 
-export function GMTableView({ tableId, activeElements, updateActiveElement: pushTableElementUpdate, removeActiveElement, updateActiveElementsBaseData, data, saveItem, saveImage, addToTable, addElements, sendDoAddToTable, onMergeAdversary, user, route, navigate, featureCountdowns = {}, sessionCountdowns = [], updateCountdown, partySize = 1, partyTier = 1, characters = [], tableBattleMods, nextScenes = [], setTableBattleMods, fearCount = 0, setFearCount, spotlight = null, onSpotlightChange, conditionsHistory = [], onAddConditionsHistoryEntry, onRemoveConditionsHistoryEntry, tableName = '', gmDisplayName = '', tableStateReady = false, onTableNameChange, onDeleteTable, ensureAdventuresLoaded, ensureCharactersLoaded, clearTable, isPlayer = false, playerEmail, connectedPlayers = [], playerEmails = [], playerNames = {}, inviteLink = null, onGenerateInviteLink, onRevokeInviteLink, onRemovePlayerEmail, onLeaveTable, gmUid, onPlayerAddCharacter, pendingBanners = [], pendingPlayerIntent = null, intentDifficultyUpdate = null, onFeatureRequestSuccess, onFeatureRequestCancel, rangerFocusRequestedBannerIds, onRangerFocusRerollRequestSuccess, onRangerFocusRerollRequestCancel, previewAsPlayerEmail = null, onPreviewAsPlayer, onExitPreview, actionLog = [], setActionLog, mapConfig, maps = [], activeMapId = null, gmMapView = null, onSetActiveMap, onAddMap, onAddMapWithImage, onRemoveMap, onRenameMap, onMapConfigChange, onMapViewSync, lifeSupportSelections = {}, onLifeSupportSelect, onLifeSupportClear, restMovesSelections = {}, onRestMoveSelect, onRestMoveClear, tableFeatureState = {}, sessionPlayAllowed = true, sessionStarted = true, sessionPaused = false, mapPings = [], onDismissMapPing = () => {}, appendMapPing = () => {},
+export function GMTableView({ tableId, activeElements, updateActiveElement: pushTableElementUpdate, removeActiveElement, updateActiveElementsBaseData, data, saveItem, saveImage, addToTable, addElements, sendDoAddToTable, onMergeAdversary, user, route, navigate, featureCountdowns = {}, sessionCountdowns = [], updateCountdown, partySize = 1, partyTier = 1, characters = [], tableBattleMods, nextScenes = [], setTableBattleMods, fearCount = 0, setFearCount, spotlight = null, onSpotlightChange, conditionsHistory = [], onAddConditionsHistoryEntry, onRemoveConditionsHistoryEntry, tableName = '', gmDisplayName = '', tableStateReady = false, onTableNameChange, onDeleteTable, ensureAdventuresLoaded, ensureCharactersLoaded, clearTable, isPlayer = false, isSpectator = false, isPublic = false, onPublicChange, audienceOnlineCount = 0, playerEmail, connectedPlayers = [], playerEmails = [], playerNames = {}, inviteLink = null, onGenerateInviteLink, onRevokeInviteLink, onRemovePlayerEmail, onLeaveTable, gmUid, onPlayerAddCharacter, pendingBanners = [], pendingPlayerIntent = null, intentDifficultyUpdate = null, onFeatureRequestSuccess, onFeatureRequestCancel, rangerFocusRequestedBannerIds, onRangerFocusRerollRequestSuccess, onRangerFocusRerollRequestCancel, previewAsPlayerEmail = null, onPreviewAsPlayer, onExitPreview, actionLog = [], setActionLog, mapConfig, maps = [], activeMapId = null, gmMapView = null, onSetActiveMap, onAddMap, onAddMapWithImage, onRemoveMap, onRenameMap, onMapConfigChange, onMapViewSync, lifeSupportSelections = {}, onLifeSupportSelect, onLifeSupportClear, restMovesSelections = {}, onRestMoveSelect, onRestMoveClear, tableFeatureState = {}, sessionPlayAllowed = true, sessionStarted = true, sessionPaused = false, mapPings = [], onDismissMapPing = () => {}, appendMapPing = () => {},
   mapScribbles = [],
   mapViews = [], gmActiveViewId = null, onSetActiveView, onAddMapViewOp, onRemoveMapView, onRenameMapView, onSetViewBroadcast, onSetViewLocked, onSetMapShare,
   onSetMapOverlay,
@@ -786,6 +787,18 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [playerEmails, connectedPlayers, playerNames],
   );
+  const [audienceOpen, setAudienceOpen] = useState(false);
+  const [audienceAttendees, setAudienceAttendees] = useState(null);
+  useEffect(() => {
+    if (!audienceOpen || !tableId || !(audienceOnlineCount > 0)) return undefined;
+    let cancelled = false;
+    fetchTableAudience(tableId).then((data) => {
+      if (!cancelled) setAudienceAttendees(Array.isArray(data?.attendees) ? data.attendees : []);
+    }).catch(() => {
+      if (!cancelled) setAudienceAttendees([]);
+    });
+    return () => { cancelled = true; };
+  }, [audienceOpen, tableId, audienceOnlineCount]);
   // dialogSyncing / dialogSyncError removed — character dialog replaced by Library picker
   const overlayScrollRef = useRef(null);
   const gmFeatureOverlayRef = useRef(null); // outer ref for touch outside-tap dismiss
@@ -5933,7 +5946,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     <div className="flex-1 flex flex-col overflow-hidden">
       {/* Portaled to document.body — must unmount when table view is hidden (display:none),
           or Build/Invite/Play cards linger over Library / Home. */}
-      {!isPlayer && route?.view === 'table' && (
+      {!isPlayer && !isSpectator && route?.view === 'table' && (
         <PrepSetupChecklist
           tableStateReady={tableStateReady}
           maps={maps}
@@ -5969,6 +5982,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
       {/* Players + Characters Panel */}
       <div className="w-56 bg-dh-canvas border-r border-dh-border flex flex-col overflow-y-auto shrink-0">
         {/* Support this table — top of column, above Players; visible to GM and all players */}
+        {!isSpectator && (
         <div className="px-2 py-1.5 bg-dh-canvas border-b border-dh-border shrink-0">
           <button
             type="button"
@@ -5979,6 +5993,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
             <span className="text-[11px] font-medium text-amber-300">Support this table</span>
           </button>
         </div>
+        )}
 
         {/* Players — invite link (GM) + joined roster */}
         <div className="bg-dh-canvas border-b border-dh-border shrink-0">
@@ -6102,6 +6117,29 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
               )}
             </div>
           )}
+          {audienceOnlineCount > 0 && (
+            <div className="px-3 pb-2">
+              <button
+                type="button"
+                onClick={() => setAudienceOpen((o) => !o)}
+                className="w-full flex items-center justify-between gap-2 py-1 text-left text-[10px] font-semibold uppercase tracking-wider text-dh-muted hover:text-dh"
+                aria-expanded={audienceOpen}
+              >
+                <span>Audience ({audienceOnlineCount} online)</span>
+                {audienceOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+              </button>
+              {audienceOpen && (
+                <div className="mt-1 space-y-0.5">
+                  {(audienceAttendees || []).map((a, i) => (
+                    <p key={`${a.displayName}-${i}`} className="text-xs text-dh-muted truncate">{a.displayName || 'Guest'}</p>
+                  ))}
+                  {audienceAttendees && audienceAttendees.length === 0 && (
+                    <p className="text-[11px] text-dh-muted">No one in the audience right now.</p>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         <div className="p-3 bg-dh-canvas border-b border-dh-border sticky top-0 z-10">
@@ -6112,6 +6150,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
 
         <div className="p-2 space-y-3">
           {/* + Add Character — skips picker; same as Create new character */}
+          {!isSpectator && (
           <button
             type="button"
             ref={addCharacterAnchorRef}
@@ -6124,8 +6163,9 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
             <Plus size={12} className="text-yellow-300/80" />
             <span className="text-xs font-semibold text-yellow-100/80">Add Character</span>
           </button>
+          )}
 
-          {isPlayer && onLeaveTable && (
+          {isPlayer && !isSpectator && onLeaveTable && (
             <button
               type="button"
               onClick={() => {
@@ -6139,7 +6179,9 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
           )}
 
           {/* Bug report — visible to GM and all players, never interrupts play */}
+          {!isSpectator && (
           <BugReportButton tableId={tableId} actionLog={actionLog} activeElements={activeElements} isPlayer={isPlayer} />
+          )}
 
           {/* Table-not-live error — shown only when session start is blocked */}
           {tableNotLiveError && !isPlayer && (
@@ -6900,11 +6942,11 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
         <div className="flex-1 min-h-0 p-4 overflow-hidden flex flex-col relative">
           <DiceRoller
             ref={diceRollerRef}
-            isPlayer={isPlayer}
+            isPlayer={isPlayer || isSpectator}
             diceCanvasHidden={diceCanvasHidden}
             currentUserUid={user?.uid}
-            onBannerAcknowledge={!isPlayer ? handleBannerAcknowledge : undefined}
-            onBannerCancel={!isPlayer ? handleBannerCancel : (tableId ? (bannerId, roll) => postBannerCancel(tableId, roll._rollDbId).catch(() => {}) : undefined)}
+            onBannerAcknowledge={!isPlayer && !isSpectator ? handleBannerAcknowledge : undefined}
+            onBannerCancel={isSpectator ? undefined : (!isPlayer ? handleBannerCancel : (tableId ? (bannerId, roll) => postBannerCancel(tableId, roll._rollDbId).catch(() => {}) : undefined))}
             lifeSupportSelections={lifeSupportSelections}
             onLifeSupportSelect={onLifeSupportSelect}
             onLifeSupportClear={onLifeSupportClear}
@@ -6979,6 +7021,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
             gmUid={tableId}
             user={user}
             isPlayer={isPlayer}
+            isSpectator={isSpectator}
             activeElements={activeElements}
             updateActiveElement={updateActiveElement}
             queueManualTrackEdit={queueManualTrackEdit}
@@ -7019,6 +7062,8 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
             tableStateReady={tableStateReady}
             onTableNameChange={onTableNameChange}
             onDeleteTable={onDeleteTable}
+            isPublic={isPublic}
+            onPublicChange={onPublicChange}
             onClearDice={() => diceRollerRef.current?.clearDice?.()}
             diceCanvasHidden={diceCanvasHidden}
             onToggleDiceVisibility={() => setDiceCanvasHidden(v => !v)}
@@ -7026,7 +7071,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
             onCancelAllBanners={!isPlayer ? handleCancelAllBanners : undefined}
             onTokenDragEnd={!isPlayer ? handleTokenDragEnd : undefined}
             onRemoveAdversaryFromTable={!isPlayer ? removeActiveElement : undefined}
-            onRoll={sessionPlayAllowed ? handlePlayerOwnRoll : undefined}
+            onRoll={!isSpectator && sessionPlayAllowed ? handlePlayerOwnRoll : undefined}
             mapPings={mapPings}
             onDismissMapPing={onDismissMapPing}
             appendMapPing={appendMapPing}
@@ -7059,12 +7104,12 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
         {/* Action log footer — collapsed title bar; click to open overlay with roll/action history */}
         <ActionLog
           rolls={actionLog}
-          rollBuilder={{ onRoll: (rollText, displayName) => postRoll(rollText, displayName, tableId).catch(err => handleRollTransportError(err, 'Action log roll failed:')), displayName: user?.displayName || user?.email || (isPlayer ? 'Player' : 'GM') }}
+          rollBuilder={isSpectator ? undefined : { onRoll: (rollText, displayName) => postRoll(rollText, displayName, tableId).catch(err => handleRollTransportError(err, 'Action log roll failed:')), displayName: user?.displayName || user?.email || (isPlayer ? 'Player' : 'GM') }}
         />
       </div>
 
-      {/* Encounter Panel — hidden for players */}
-      {!isPlayer && <div ref={encounterAsideRef} className="w-56 bg-dh-canvas border-l border-dh-border flex min-h-0 shrink-0 flex-col overflow-hidden">
+      {/* Encounter Panel — hidden for players and spectators */}
+      {!isPlayer && !isSpectator && <div ref={encounterAsideRef} className="w-56 bg-dh-canvas border-l border-dh-border flex min-h-0 shrink-0 flex-col overflow-hidden">
         <div className="px-2 py-2 bg-dh-canvas border-b border-dh-border sticky top-0 z-10 space-y-2">
           <div className="flex items-center justify-between">
             <h2 className="font-bold text-dh uppercase tracking-wider flex items-center gap-2 text-sm">
@@ -7569,8 +7614,8 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
         </div>
       </div>}
 
-      {/* Player Encounter Panel — read-only Fear + damaged adversaries */}
-      {isPlayer && (
+      {/* Player Encounter Panel — read-only Fear + damaged adversaries (not spectators) */}
+      {isPlayer && !isSpectator && (
         <div className="w-56 bg-dh-canvas border-l border-dh-border flex flex-col overflow-y-auto shrink-0">
           <div className="px-2 py-2 bg-dh-canvas border-b border-dh-border sticky top-0 z-10 space-y-2">
             <h2 className="font-bold text-dh uppercase tracking-wider flex items-center gap-2 text-sm">

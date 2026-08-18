@@ -903,6 +903,8 @@ function TableNameInset({
   tableStateReady = false,
   onTableNameChange,
   onDeleteTable,
+  isPublic = false,
+  onPublicChange,
 }) {
   const isNewTable = tableName === '' || tableName === 'New Table';
   const [isEditingName, setIsEditingName] = useState(false);
@@ -935,33 +937,64 @@ function TableNameInset({
 
   return (
     <div className="pointer-events-none absolute top-0 left-1/2 z-20 -translate-x-1/2">
-      <div className="pointer-events-auto flex items-center gap-1.5 rounded-b-lg border border-t-0 border-dh-border bg-dh-surface/95 px-2 py-1 shadow-md text-xs">
+      <div className={`pointer-events-auto rounded-b-lg border border-t-0 border-dh-border bg-dh-surface/95 px-2 py-1 shadow-md text-xs ${isEditingName && onTableNameChange ? 'flex flex-col gap-1.5 min-w-[16rem]' : 'flex items-center gap-1.5'}`}>
         {onTableNameChange ? (
           isEditingName ? (
             <>
-              <button
-                type="button"
-                onMouseDown={e => e.preventDefault()}
-                onClick={() => {
-                  nameInputRef.current?.focus();
-                  nameInputRef.current?.select();
-                }}
-                className="flex items-center gap-1 py-0.5 pl-0.5 pr-0 rounded hover:bg-dh-hover/80 text-dh-muted hover:text-dh transition-colors"
-                title="Table settings"
-                aria-label="Table settings"
-              >
-                <Settings size={12} className="shrink-0" />
-              </button>
-              <input
-                ref={nameInputRef}
-                type="text"
-                value={nameInput}
-                onChange={e => setNameInput(e.target.value)}
-                onBlur={commitName}
-                onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); commitName(); } }}
-                className="min-w-[120px] max-w-[240px] px-2 py-0.5 rounded bg-dh-raised border border-dh-strong text-dh font-semibold text-sm focus:outline-none focus:border-sky-500"
-                placeholder="Table name"
-              />
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onMouseDown={e => e.preventDefault()}
+                  onClick={() => {
+                    nameInputRef.current?.focus();
+                    nameInputRef.current?.select();
+                  }}
+                  className="flex items-center gap-1 py-0.5 pl-0.5 pr-0 rounded hover:bg-dh-hover/80 text-dh-muted hover:text-dh transition-colors"
+                  title="Table settings"
+                  aria-label="Table settings"
+                >
+                  <Settings size={12} className="shrink-0" />
+                </button>
+                <input
+                  ref={nameInputRef}
+                  type="text"
+                  value={nameInput}
+                  onChange={e => setNameInput(e.target.value)}
+                  onBlur={commitName}
+                  onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); commitName(); } }}
+                  className="min-w-[120px] flex-1 px-2 py-0.5 rounded bg-dh-raised border border-dh-strong text-dh font-semibold text-sm focus:outline-none focus:border-sky-500"
+                  placeholder="Table name"
+                />
+              </div>
+              {typeof onPublicChange === 'function' && (
+                <button
+                  type="button"
+                  role="checkbox"
+                  aria-checked={!!isPublic}
+                  aria-label="Public table"
+                  onMouseDown={e => e.preventDefault()}
+                  onClick={() => onPublicChange(!isPublic)}
+                  className="flex items-start gap-2 px-1 py-0.5 rounded text-left hover:bg-dh-hover/60"
+                >
+                  <span className={`mt-0.5 h-3.5 w-3.5 shrink-0 rounded border ${isPublic ? 'bg-sky-600 border-sky-500' : 'border-dh-strong bg-dh-raised'}`} aria-hidden />
+                  <span>
+                    <span className="block text-dh font-medium">Public table</span>
+                    <span className="block text-[10px] text-dh-muted leading-snug">Anyone with this link can watch. They cannot join or edit.</span>
+                  </span>
+                </button>
+              )}
+              {onDeleteTable && (
+                <button
+                  type="button"
+                  onMouseDown={e => e.preventDefault()}
+                  onClick={onDeleteTable}
+                  className="flex items-center gap-1.5 px-1 py-0.5 rounded text-dh-muted hover:text-red-400 hover:bg-dh-raised/80 transition-colors self-start"
+                  title="Delete table"
+                >
+                  <Trash2 size={12} />
+                  <span>Delete table</span>
+                </button>
+              )}
             </>
           ) : (
             <button
@@ -977,18 +1010,6 @@ function TableNameInset({
           )
         ) : (
           <span className="px-1 py-0.5 text-dh font-semibold text-sm truncate max-w-[200px]">{tableName || 'Untitled'}</span>
-        )}
-        {onDeleteTable && isEditingName && (
-          <button
-            type="button"
-            onMouseDown={e => e.preventDefault()}
-            onClick={onDeleteTable}
-            className="flex items-center gap-1.5 px-2 py-0.5 rounded text-dh-muted hover:text-red-400 hover:bg-dh-raised/80 transition-colors"
-            title="Delete table"
-          >
-            <Trash2 size={12} />
-            <span>Delete table</span>
-          </button>
         )}
       </div>
     </div>
@@ -3033,6 +3054,7 @@ export function BattleMap({
   gmUid,
   user,
   isPlayer = false,
+  isSpectator = false,
   activeElements = [],
   updateActiveElement,
   mapConfig,
@@ -3053,6 +3075,8 @@ export function BattleMap({
   tableStateReady = false,
   onTableNameChange,
   onDeleteTable,
+  isPublic = false,
+  onPublicChange,
   onClearDice,
   diceCanvasHidden = false,
   onToggleDiceVisibility,
@@ -3789,8 +3813,9 @@ export function BattleMap({
   const mapScribbleSeenIdsRef = useRef(new Set());
 
   useEffect(() => {
-    if (isPlayer) setDrawTool('scribble');
-  }, [isPlayer]);
+    if (isSpectator) setDrawTool('hand');
+    else if (isPlayer) setDrawTool('scribble');
+  }, [isPlayer, isSpectator]);
 
   useEffect(() => {
     setDrawEyedropperActive(false);
@@ -4568,8 +4593,8 @@ export function BattleMap({
   );
   /** Creator-or-GM permission rule shared by `mapImage` and `drawShape` (see map-object-transform.js). */
   const canModifyMapObjectFn = useCallback(
-    (el) => canModifyMapObject(el, { isPlayer, userUid: user?.uid }),
-    [isPlayer, user?.uid],
+    (el) => !isSpectator && canModifyMapObject(el, { isPlayer, userUid: user?.uid }),
+    [isPlayer, isSpectator, user?.uid],
   );
 
   // Build adversary instance numbers (1-based per unique id)
@@ -4596,6 +4621,7 @@ export function BattleMap({
 
   const canDrag = useCallback(
     (el) => {
+      if (isSpectator) return false;
       if (el.elementType === 'boardToken') {
         const parent = parentByInstanceId.get(el.parentInstanceId);
         if (!parent) return false;
@@ -4612,7 +4638,7 @@ export function BattleMap({
       if (el.elementType === 'adversary') return false; // players can't drag adversaries
       return isMyCharacter(el);
     },
-    [isPlayer, isMyCharacter, parentByInstanceId],
+    [isPlayer, isSpectator, isMyCharacter, parentByInstanceId],
   );
 
   // Tray: all characters — unplaced, then active-map proxies, then other-map proxies (click switches map)
@@ -6180,6 +6206,7 @@ export function BattleMap({
   }, [scheduleBullseyeFt, clearBullseyeIdleTimer]);
 
   const handleMapPingPointerDown = useCallback((e) => {
+    if (isSpectator) return;
     if (e.button !== 0) return;
     if (drawEyedropperActive) {
       e.preventDefault();
@@ -6226,6 +6253,7 @@ export function BattleMap({
     mapHeightFt,
     activeMapIdResolved,
     isPlayer,
+    isSpectator,
     appendMapPing,
     drawTool,
     drawEyedropperActive,
@@ -7362,12 +7390,14 @@ export function BattleMap({
               </div>
             )}
           <div ref={scrollWrapperRef} className="flex-1 min-h-0 min-w-0 overflow-hidden relative">
-          {!isPlayer ? (
+          {(!isPlayer || isSpectator) ? (
             <TableNameInset
               tableName={tableName}
               tableStateReady={tableStateReady}
               onTableNameChange={onTableNameChange}
               onDeleteTable={onDeleteTable}
+              isPublic={isPublic}
+              onPublicChange={onPublicChange}
             />
           ) : null}
           {showMapCameraPicker && pickerTriggerTile ? (

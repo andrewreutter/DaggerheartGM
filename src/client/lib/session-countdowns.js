@@ -127,6 +127,21 @@ export function redactTableStateForPlayerAudience(state) {
   return s;
 }
 
+/** Spectator GET/SSE: player redaction plus no invite emails / assignment emails. */
+export function redactTableStateForSpectatorAudience(state) {
+  const s = redactTableStateForPlayerAudience(state);
+  const elements = Array.isArray(s.elements)
+    ? s.elements.map((el) => {
+      if (!el || typeof el !== 'object') return el;
+      const next = { ...el };
+      delete next.assignedPlayerEmail;
+      delete next.assignedPlayerUid;
+      return next;
+    })
+    : s.elements;
+  return { ...s, elements, playerEmails: [], isPublic: true };
+}
+
 /** Hope/Fear duality parse from roll subItems (matches ActionLog). */
 export function parseDualityFromSubItems(subItems) {
   if (!Array.isArray(subItems)) return null;

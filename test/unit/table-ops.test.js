@@ -106,6 +106,12 @@ describe('applyTableOp', () => {
     expect(result.fearCount).toBe(5);
   });
 
+  it('set-table-public sets isPublic', () => {
+    expect(applyTableOp({ op: 'set-table-public', isPublic: true }, {}).isPublic).toBe(true);
+    expect(applyTableOp({ op: 'set-table-public', isPublic: false }, { isPublic: true }).isPublic).toBe(false);
+    expect(applyTableOp({ op: 'set-table-public', isPublic: 1 }, {}).isPublic).toBe(false);
+  });
+
   it('set-spotlight replaces the spotlight object', () => {
     const spotlight = { holderType: 'gm', holderInstanceId: null, rollSeq: 2, lastSeenSeq: { gm: 2 } };
     const result = applyTableOp({ op: 'set-spotlight', spotlight }, {});

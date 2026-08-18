@@ -19,11 +19,11 @@
 
 import pg from 'pg';
 import { getPendingBanners, getResolvedTableState, invalidateCharacterLibraryCache } from './db.js';
-import { redactTableStateForPlayerAudience } from './client/lib/session-countdowns.js';
+import { redactTableStateForPlayerAudience, redactTableStateForSpectatorAudience } from './client/lib/session-countdowns.js';
 
 const { Client } = pg;
 
-/** @type {WeakMap<import('http').ServerResponse, 'gm' | 'player'>} */
+/** @type {WeakMap<import('http').ServerResponse, 'gm' | 'player' | 'spectator'>} */
 const tableStateAudienceByResponse = new WeakMap();
 
 const DEBOUNCE_MS = 50;
@@ -60,13 +60,16 @@ const CHARACTER_CHANGED_NOTIFY_CHANNEL = 'character_item_changed';
  *
  * @param {string} channelName
  * @param {unknown} snapshot
- * @param {'gm'|'player'|undefined} audience
+ * @param {'gm'|'player'|'spectator'|undefined} audience
  * @returns {string}
  */
 export function buildSseEventString(channelName, snapshot, audience) {
-  const data = (channelName === 'table_state' && audience === 'player')
-    ? redactTableStateForPlayerAudience(snapshot)
-    : snapshot;
+  let data = snapshot;
+  if (channelName === 'table_state' && audience === 'player') {
+    data = redactTableStateForPlayerAudience(snapshot);
+  } else if (channelName === 'table_state' && audience === 'spectator') {
+    data = redactTableStateForSpectatorAudience(snapshot);
+  }
   return `event: ${channelName}\ndata: ${JSON.stringify(data)}\n\n`;
 }
 
@@ -157,11 +160,13 @@ class SubscriptionManager {
   /**
    * Subscribe an SSE response object to a channel.
    * Immediately pushes the current snapshot so the client doesn't miss initial state.
-   * @param {{ tableStateAudience?: 'gm' | 'player' }} [meta] — for `table_state`, controls GM-only redaction (countdowns + encounter notes)
+   * @param {{ tableStateAudience?: 'gm' | 'player' | 'spectator' }} [meta] — for `table_state`, controls GM-only redaction (countdowns + encounter notes)
    */
   subscribe(channelName, key, res, meta = {}) {
     if (meta.tableStateAudience === 'player') {
       tableStateAudienceByResponse.set(res, 'player');
+    } else if (meta.tableStateAudience === 'spectator') {
+      tableStateAudienceByResponse.set(res, 'spectator');
     } else if (meta.tableStateAudience === 'gm') {
       tableStateAudienceByResponse.set(res, 'gm');
     }
@@ -267,10 +272,11 @@ class SubscriptionManager {
     }
 
     // Compute serialized SSE strings lazily per audience (once per push, not once per client).
-    // For non-table_state channels there is only one audience; for table_state, GM and player
-    // can receive different payloads (player gets countdown/note redaction).
+    // For non-table_state channels there is only one audience; for table_state, GM / player /
+    // spectator can receive different payloads (player + spectator get countdown/note redaction).
     let gmSseStr = null;
     let playerSseStr = null;
+    let spectatorSseStr = null;
 
     for (const res of responses) {
       try {
@@ -282,6 +288,9 @@ class SubscriptionManager {
           if (audience === 'player') {
             if (playerSseStr === null) playerSseStr = buildSseEventString(channelName, snapshot, 'player');
             sseStr = playerSseStr;
+          } else if (audience === 'spectator') {
+            if (spectatorSseStr === null) spectatorSseStr = buildSseEventString(channelName, snapshot, 'spectator');
+            sseStr = spectatorSseStr;
           } else {
             if (gmSseStr === null) gmSseStr = buildSseEventString(channelName, snapshot, 'gm');
             sseStr = gmSseStr;

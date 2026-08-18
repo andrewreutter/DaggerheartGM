@@ -30,6 +30,7 @@ All payments are processed by **Stripe**; we never receive or store your full ca
 
 You can upload your own images (character portraits, custom battle maps, notes) and create your own game content (characters, adversaries, scenes, and more), some of which you may choose to make public or shared with other users.
 
+- **Public tables.** Marking a table public lists it on the signed-in home lobby and lets anyone with the URL watch (map, characters, dice, and notes that invited players can already see). Spectators cannot join as players or edit. You can uncheck Public table at any time.
 - **You own what you create.** You retain ownership of any content you upload or create.
 - **You grant us a license to host it.** By uploading content, you grant Daggertop a limited license to host, store, and display that content solely to provide the service to you and anyone you share it with.
 - **You're responsible for what you upload.** You represent that you have the necessary rights to any content you upload, and Daggertop is not liable for content submitted by users.

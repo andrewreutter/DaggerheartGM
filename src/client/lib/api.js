@@ -326,10 +326,10 @@ export const loadCollectionStream = async (collection, opts, { onBatch, onEnrich
  */
 export const loadTableState = async (tableId = null) => {
   const token = await getAuthToken();
-  if (!token) throw new Error('Not signed in');
+  if (!tableId && !token) throw new Error('Not signed in');
   const url = tableId ? `/api/data/table_state?tableId=${encodeURIComponent(tableId)}` : '/api/data/table_state';
   const res = await fetch(url, {
-    headers: apiHeaders({ Authorization: `Bearer ${token}` }),
+    headers: apiHeaders(token ? { Authorization: `Bearer ${token}` } : {}),
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const data = await res.json();
@@ -854,7 +854,7 @@ export const generateImage = async (prompt) => {
   return res.json();
 };
 
-/** Returns [{ tableId, gmUid, gmName, tableName, playerCount, players: Array<{email, name}> }] for all tables the current user is invited to. */
+/** Returns [{ tableId, gmUid, gmName, tableName, previewUrl, characterNames, characterCount, updatedAt? }] for all tables the current user is invited to. */
 export const fetchMyRooms = async () => {
   const token = await getAuthToken();
   if (!token) throw new Error('Not signed in');
@@ -865,12 +865,36 @@ export const fetchMyRooms = async () => {
   return res.json();
 };
 
-/** Returns [{ id, name, playerCount, players: Array<{email, name}> }] for all tables the current user owns. */
+/** Returns [{ id, name, gmName, previewUrl, characterNames, characterCount, updatedAt? }] for all tables the current user owns. */
 export const fetchMyTables = async () => {
   const token = await getAuthToken();
   if (!token) throw new Error('Not signed in');
   const res = await fetch('/api/my-tables', {
     headers: apiHeaders({ Authorization: `Bearer ${token}` }),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+};
+
+/** Homepage Public column. Returns [{ id, name, gmName, previewUrl, characterNames, characterCount }]. */
+export const fetchPublicTables = async ({ search = '' } = {}) => {
+  const token = await getAuthToken();
+  if (!token) throw new Error('Not signed in');
+  const params = new URLSearchParams();
+  if (search) params.set('search', search);
+  const qs = params.toString();
+  const res = await fetch(`/api/public-tables${qs ? `?${qs}` : ''}`, {
+    headers: apiHeaders({ Authorization: `Bearer ${token}` }),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+};
+
+/** Spectator names currently watching a table. Returns `{ attendees: [{ displayName }] }`. */
+export const fetchTableAudience = async (tableId) => {
+  const token = await getAuthToken();
+  const res = await fetch(`/api/room/${encodeURIComponent(tableId)}/audience`, {
+    headers: apiHeaders(token ? { Authorization: `Bearer ${token}` } : {}),
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();

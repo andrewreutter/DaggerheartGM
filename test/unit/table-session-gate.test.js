@@ -207,6 +207,11 @@ describe('table-session-gate', () => {
     expect(g.ok).toBe(true);
   });
 
+  it('allows set-table-public during prep', () => {
+    const g = gateTableOpForPrepMode(prepState, { op: 'set-table-public', isPublic: true });
+    expect(g.ok).toBe(true);
+  });
+
   it('bypassPrepGate allows a single blocked update without changing session state in the gate', () => {
     const g = gateTableOpForPrepMode(prepState, {
       op: 'update-element',

@@ -154,6 +154,7 @@ export function gateTableOpForPrepMode(state, op) {
     case 'remove-player-email':
     case 'set-gm-display-name':
     case 'set-table-name':
+    case 'set-table-public':
     case 'set-battle-mods':
       return { ok: true, op };
     case 'update-element': {

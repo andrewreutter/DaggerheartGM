@@ -62,6 +62,25 @@ describe('map-storage', () => {
       expect(opts).toEqual({ contentType: 'image/png', upsert: false });
     });
 
+    it('uses a stable fileName and upsert when replacing a table preview', async () => {
+      const uploadMock = vi.fn().mockResolvedValue({ error: null });
+      const getPublicUrlMock = vi.fn().mockReturnValue({ data: { publicUrl: 'https://cdn/preview.png' } });
+      const fromMock = vi.fn().mockReturnValue({ upload: uploadMock, getPublicUrl: getPublicUrlMock });
+      const supabase = { storage: { from: fromMock } };
+
+      const url = await uploadBufferToMapStorage(
+        supabase,
+        'gm-1',
+        Buffer.from('png'),
+        'image/png',
+        'table-previews',
+        { fileName: 'tbl-1.png', upsert: true },
+      );
+      expect(url).toBe('https://cdn/preview.png');
+      expect(uploadMock.mock.calls[0][0]).toBe('table-previews/gm-1/tbl-1.png');
+      expect(uploadMock.mock.calls[0][2]).toEqual({ contentType: 'image/png', upsert: true });
+    });
+
     it('picks the extension from MIME_TO_EXT and falls back to "bin"', async () => {
       const uploadMock = vi.fn().mockResolvedValue({ error: null });
       const fromMock = vi.fn().mockReturnValue({

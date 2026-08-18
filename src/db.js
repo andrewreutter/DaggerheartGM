@@ -10,6 +10,7 @@ import { countFeatureCatalog, filterFeatureCatalog } from './v2-feature-catalog.
 import { scrapedCatalogPublicExcludeSql } from './scraped-catalog-exclude.js';
 import { normalizePersistedCharacterElement } from './client/lib/normalize-persisted-character-element.js';
 import { attachDerivedMapConfig } from './client/lib/map-table-state.js';
+import { summarizeTableCharacterRoster, toTableCardDto } from './client/lib/table-character-roster.js';
 import { mergeUserPreferencesData, normalizeUserPreferences } from './user-preferences.js';
 import { readdir, readFile } from 'fs/promises';
 import { join, dirname } from 'path';
@@ -435,15 +436,18 @@ export async function getItemsByIds(appId, collection, ids, opts = {}) {
   });
 }
 
-export async function upsertItem(appId, userId, collection, id, data, isPublic = false) {
+export async function upsertItem(appId, userId, collection, id, data, isPublic = false, opts = {}) {
+  const preserveIsPublic = opts.preserveIsPublic === true;
   const db = getPool();
   const { rows } = await db.query(
     `INSERT INTO items (id, app_id, user_id, collection, data, is_public)
      VALUES ($1, $2, $3, $4, $5, $6)
      ON CONFLICT (app_id, user_id, collection, id)
-     DO UPDATE SET data = $5, is_public = $6, updated_at = now()
+     DO UPDATE SET data = $5,
+       is_public = CASE WHEN $7::boolean THEN items.is_public ELSE EXCLUDED.is_public END,
+       updated_at = now()
      RETURNING id`,
-    [id, appId, userId, collection, data, isPublic]
+    [id, appId, userId, collection, data, isPublic, preserveIsPublic]
   );
   if (collection === 'characters') invalidateCharacterLibraryCache(appId, id);
   return rows[0].id;
@@ -1189,46 +1193,46 @@ export async function getTableStateById(appId, tableId) {
   if (!tableId) return null;
   const db = getPool();
   const { rows } = await db.query(
-    `SELECT user_id, data FROM items
+    `SELECT user_id, data, is_public FROM items
      WHERE app_id = $1 AND collection = 'table_state' AND id = $2`,
     [appId, tableId]
   );
   if (!rows.length) return null;
   const r = rows[0];
-  return { userId: r.user_id, data: r.data };
+  return { userId: r.user_id, data: r.data, isPublic: r.is_public === true };
 }
 
 /**
  * List all table_state rows for a user (GM's owned tables).
- * Returns [{ id, data }] for use by GET /api/my-tables.
+ * Returns [{ id, data, updatedAt }] for use by GET /api/my-tables.
  */
 export async function listTableStates(appId, userId) {
   const db = getPool();
   const { rows } = await db.query(
-    `SELECT id, data FROM items
+    `SELECT id, data, updated_at FROM items
      WHERE app_id = $1 AND user_id = $2 AND collection = 'table_state'
      ORDER BY id ASC`,
     [appId, userId]
   );
-  return rows.map(r => ({ id: r.id, data: r.data }));
+  return rows.map(r => ({ id: r.id, data: r.data, updatedAt: r.updated_at }));
 }
 
 /**
  * Find all table_state records whose playerEmails array contains the given email.
  * Used by GET /api/my-rooms to let players discover which tables have invited them.
- * Returns [{ tableId, userId, data }] where tableId is the row's id, userId is the GM's Firebase UID.
+ * Returns [{ tableId, userId, data, updatedAt }] where tableId is the row's id, userId is the GM's Firebase UID.
  */
 export async function getTableStatesByPlayerEmail(appId, email) {
   const db = getPool();
   // Use the ? (key exists in array) JSONB operator to check membership.
   // Note: in node-postgres, ? is not a placeholder — $1/$2 are used for that.
   const { rows } = await db.query(
-    `SELECT id, user_id, data FROM items
+    `SELECT id, user_id, data, updated_at FROM items
      WHERE app_id = $1 AND collection = 'table_state'
      AND data->'playerEmails' ? $2`,
     [appId, email]
   );
-  return rows.map(r => ({ tableId: r.id, userId: r.user_id, data: r.data }));
+  return rows.map(r => ({ tableId: r.id, userId: r.user_id, data: r.data, updatedAt: r.updated_at }));
 }
 
 /**
@@ -1244,6 +1248,50 @@ export function summarizeTablePlayerRoster(data) {
     return { email, name: match?.playerName || email };
   });
   return { count: players.length, players };
+}
+
+export { summarizeTableCharacterRoster, toTableCardDto };
+
+/**
+ * Public Game Tables for the homepage lobby (column is `items.is_public`).
+ */
+export async function listPublicTables(appId, {
+  search = '',
+  limit = 3,
+} = {}) {
+  const db = getPool();
+  const cap = Math.max(1, Math.min(50, Number(limit) || 3));
+  const params = [appId];
+  const clauses = [`app_id = $1`, `collection = 'table_state'`, `is_public = true`];
+  const q = typeof search === 'string' ? search.trim() : '';
+  if (q) {
+    params.push(q);
+    clauses.push(`COALESCE(data->>'tableName', '') ILIKE '%' || $${params.length} || '%'`);
+  }
+  params.push(cap);
+  const { rows } = await db.query(
+    `SELECT id, user_id, data, updated_at FROM items
+     WHERE ${clauses.join(' AND ')}
+     ORDER BY updated_at DESC
+     LIMIT $${params.length}`,
+    params,
+  );
+  return rows.map((r) => ({ id: r.id, userId: r.user_id, data: r.data, updatedAt: r.updated_at }));
+}
+
+/**
+ * Write `data.tablePreviewUrl` without going through applyOpToTableState (no preview reschedule).
+ * Does not change `is_public`.
+ */
+export async function patchTablePreviewUrl(appId, tableId, url) {
+  if (!tableId) return;
+  const db = getPool();
+  await db.query(
+    `UPDATE items
+     SET data = jsonb_set(COALESCE(data, '{}'::jsonb), '{tablePreviewUrl}', to_jsonb($3::text), true)
+     WHERE app_id = $1 AND collection = 'table_state' AND id = $2`,
+    [appId, tableId, url],
+  );
 }
 
 export async function getWhiteboardSnapshot(appId, gmUid) {
@@ -1453,7 +1501,7 @@ export async function getResolvedTableState(appId, tableId) {
       ...stateData,
       top: { ...top0, lastPlayActivityAt: Date.now() },
     };
-    await upsertItem(appId, userId, 'table_state', tableId, tableStateBlobForSave(seeded), false);
+    await upsertItem(appId, userId, 'table_state', tableId, tableStateBlobForSave(seeded), false, { preserveIsPublic: true });
     stateData = seeded;
     didPersist = true;
   }
@@ -1465,7 +1513,7 @@ export async function getResolvedTableState(appId, tableId) {
         ...stateData,
         top: { ...top, sessionPaused: true },
       };
-      await upsertItem(appId, userId, 'table_state', tableId, tableStateBlobForSave(paused), false);
+      await upsertItem(appId, userId, 'table_state', tableId, tableStateBlobForSave(paused), false, { preserveIsPublic: true });
       stateData = paused;
       didPersist = true;
     }
@@ -1478,7 +1526,12 @@ export async function getResolvedTableState(appId, tableId) {
   const elements = stateData.elements || [];
   const resolved = await resolveCharacterElements(appId, elements);
   const inviteLink = await getActiveTableInviteLink(appId, tableId);
-  return attachDerivedMapConfig({ ...stateData, elements: resolved, inviteLink });
+  return attachDerivedMapConfig({
+    ...stateData,
+    elements: resolved,
+    inviteLink,
+    isPublic: row.isPublic === true,
+  });
 }
 
 export async function appendDiceRoll(appId, gmUid, rollData, opts = {}) {

@@ -9,14 +9,17 @@ import { readFile } from 'fs/promises';
 import { initializeApp, getApps } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import cron from 'node-cron';
-import { runMigrations, getPool, getItems, getPublicItems, upsertItem, deleteItem, countItems, getItemsPaginated, countCommunityItems, getCommunityItemsPaginated, getItemsByIds, getItem, recordClone, recordPlay, upsertMirror, findAutoClone, getUnifiedItems, getUnifiedLibraryAll, getUnifiedLibraryAllBranchCounts, getExternalCacheByIds, upsertExternalCache, getTableStatesByPlayerEmail, getTableStateById, listTableStates, summarizeTablePlayerRoster, appendDiceRoll, ackDiceRoll, getRecentDiceRolls, setBannerStatus, getPendingBanners, getDiceRollById, updateDiceRollData, resolveCharacterElements as resolveCharacterElementsDb, stripCharacterElementsForDb, getResolvedTableState, setTableStateNotifyHook, getUserPreferences, upsertUserPreferences, queryAiUsageAggregates, stampFreeTrialStart, checkTableIsLive, extendTableCampaignPass, recordCampaignPassPurchase, markStripeEventProcessed, recordCharacterTablePlacement, removeCharacterTablePlacementsForTable, createTableInviteLink, revokeTableInviteLink, getActiveTableInviteLink, redeemTableInviteLink, deleteTableInviteLinksForTable, countUserAiCallsThisMonth, getBugReportsPaginated, countBugReports, setBugReportStatus, updateBugReportNotes, BUG_REPORT_STATUSES, getCharacterById, upsertCharacterForTable, deleteCharacterForTable, stampCharacterTableId } from './src/db.js';
+import { runMigrations, getPool, getItems, getPublicItems, upsertItem, deleteItem, countItems, getItemsPaginated, countCommunityItems, getCommunityItemsPaginated, getItemsByIds, getItem, recordClone, recordPlay, upsertMirror, findAutoClone, getUnifiedItems, getUnifiedLibraryAll, getUnifiedLibraryAllBranchCounts, getExternalCacheByIds, upsertExternalCache, getTableStatesByPlayerEmail, getTableStateById, listTableStates, listPublicTables, patchTablePreviewUrl, toTableCardDto, appendDiceRoll, ackDiceRoll, getRecentDiceRolls, setBannerStatus, getPendingBanners, getDiceRollById, updateDiceRollData, resolveCharacterElements as resolveCharacterElementsDb, stripCharacterElementsForDb, getResolvedTableState, setTableStateNotifyHook, getUserPreferences, upsertUserPreferences, queryAiUsageAggregates, stampFreeTrialStart, checkTableIsLive, extendTableCampaignPass, recordCampaignPassPurchase, markStripeEventProcessed, recordCharacterTablePlacement, removeCharacterTablePlacementsForTable, createTableInviteLink, revokeTableInviteLink, getActiveTableInviteLink, redeemTableInviteLink, deleteTableInviteLinksForTable, countUserAiCallsThisMonth, getBugReportsPaginated, countBugReports, setBugReportStatus, updateBugReportNotes, BUG_REPORT_STATUSES, getCharacterById, upsertCharacterForTable, deleteCharacterForTable, stampCharacterTableId } from './src/db.js';
 import { isStripeConfigured, getStripe, constructWebhookEvent, CAMPAIGN_PASS_PRICE_CENTS, getCampaignPassPriceId, buildCampaignPassCheckoutSessionParams } from './src/stripe.js';
 import { srdRouter, warmCache, getItem as getSrdItem } from './src/srd/index.js';
 import { loadSrdIntoDb } from './src/srd-loader.js';
 import { loadDtScenesIntoDb } from './src/dt-scenes-loader.js';
 import { loadDtMapsIntoDb } from './src/dt-maps-loader.js';
 import { COLLECTION_NAMES as SRD_COLLECTION_NAMES } from './src/srd/parser.js';
-import { redactTableStateForPlayerAudience } from './src/client/lib/session-countdowns.js';
+import { redactTableStateForPlayerAudience, redactTableStateForSpectatorAudience } from './src/client/lib/session-countdowns.js';
+import { classifyTableViewer, nextTableIsPublic } from './src/client/lib/table-character-roster.js';
+import { scheduleTablePreviewRefresh } from './src/server/table-preview.js';
+import { createEmptyRoom, ensureRoomAudience, buildPresencePayload, buildAudienceAttendees, forEachRoomSseClient } from './src/server/room-broadcast.js';
 import { filterFeatureCatalog, getFeatureCatalogById } from './src/v2-feature-catalog.js';
 import { unifiedListConfig } from './src/unified-list-config.js';
 import multer from 'multer';
@@ -124,8 +127,8 @@ const supabase = (process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_
 // map-image upload route and the server-side blob guard in applyOpToTableState below (Fix 1,
 // game table latency plan: inline base64 `data:` URLs must never persist in table_state — they
 // get read/written/broadcast on every unrelated op for that table).
-const uploadBufferToMapStorage = (ownerUid, buffer, mimetype, folder) =>
-  uploadBufferToMapStorageImpl(supabase, ownerUid, buffer, mimetype, folder);
+const uploadBufferToMapStorage = (ownerUid, buffer, mimetype, folder, opts) =>
+  uploadBufferToMapStorageImpl(supabase, ownerUid, buffer, mimetype, folder, opts);
 const uploadDataUrlToMapStorageIfNeeded = (ownerUid, value, folder) =>
   uploadDataUrlToMapStorageIfNeededImpl(supabase, ownerUid, value, folder);
 // Item image storage helpers (bound to this process's supabase client).
@@ -919,14 +922,20 @@ function buildRerollDualityRoll(originalData, suppressAncestryFeature) {
 }
 
 // --- Multi-player room state (in-memory) ---
-// gmUid -> { players: Map<uid, { res, name, email, photoURL }>, gmClients: Set<res> }
+// tableId -> { players: Map, gmClients: Set, audience: Map }
 const rooms = new Map();
 
 
-/** Extract and verify a Firebase JWT from the ?token= query parameter. */
-async function verifyTokenFromQuery(req, res) {
+/** Extract and verify a Firebase JWT from the ?token= query parameter.
+ *  @param {{ optional?: boolean }} [opts] — when optional, missing token is a guest (invalid token still 401).
+ */
+async function verifyTokenFromQuery(req, res, opts = {}) {
+  const { optional = false } = opts;
   const { token } = req.query;
-  if (!token) { res.status(401).json({ error: 'Missing token' }); return null; }
+  if (!token) {
+    if (optional) return { uid: null, email: '', name: '', picture: '', guest: true };
+    res.status(401).json({ error: 'Missing token' }); return null;
+  }
   if (process.env.NODE_ENV === 'test') {
     if (token === 'test-token') {
       return { uid: 'test-user-uid', email: 'test@example.com', name: 'Test User', picture: '' };
@@ -953,11 +962,37 @@ const ROLL_LOG_SIZE = 50;
 /** In-memory roll log fallback keyed by gmUid (used when DB fetch fails). */
 const gmRollLogs = new Map();
 
-/** Rooms are keyed by tableId. Presence and GM clients are per-table. */
+/** Rooms are keyed by tableId. Presence, GM clients, and spectators are per-table. */
 function getOrCreateRoom(tableId) {
   if (!tableId) return null;
-  if (!rooms.has(tableId)) rooms.set(tableId, { players: new Map(), gmClients: new Set() });
-  return rooms.get(tableId);
+  if (!rooms.has(tableId)) rooms.set(tableId, createEmptyRoom());
+  return ensureRoomAudience(rooms.get(tableId));
+}
+
+function writeSseEvent(res, eventName, data) {
+  try {
+    if (!res || res.writableEnded) return;
+    res.write(`event: ${eventName}\ndata: ${JSON.stringify(data)}\n\n`);
+    res.flush?.();
+  } catch { /* ignore */ }
+}
+
+function schedulePreviewAfterTableOp(tableId, ownerUid) {
+  if (!supabase || !tableId || !ownerUid) return;
+  scheduleTablePreviewRefresh(
+    tableId,
+    async () => {
+      const row = await getTableStateById(APP_ID, tableId);
+      return row?.data || null;
+    },
+    async (png) => {
+      const url = await uploadBufferToMapStorage(ownerUid, png, 'image/png', 'table-previews', {
+        fileName: `${tableId}.png`,
+        upsert: true,
+      });
+      if (url) await patchTablePreviewUrl(APP_ID, tableId, url);
+    },
+  );
 }
 
 /**
@@ -1020,26 +1055,25 @@ async function appendRollLog(gmUid, rollData) {
 function broadcastPresenceToTable(tableId) {
   const room = rooms.get(tableId);
   if (!room) return;
-  const presence = [...room.players.entries()].map(([uid, p]) => ({ uid, name: p.name, email: p.email, photoURL: p.photoURL }));
-  const msg = `event: presence\ndata: ${JSON.stringify({ players: presence })}\n\n`;
-  for (const clientRes of room.gmClients) { clientRes.write(msg); clientRes.flush?.(); }
+  const payload = buildPresencePayload(room);
+  const audiencePayload = {
+    players: payload.players.map(({ uid, name }) => ({ uid, name })),
+    audienceOnlineCount: payload.audienceOnlineCount,
+  };
+  for (const clientRes of room.gmClients || []) writeSseEvent(clientRes, 'presence', payload);
+  for (const [, p] of room.players || []) writeSseEvent(p?.res, 'presence', payload);
+  for (const [, a] of room.audience || []) writeSseEvent(a?.res, 'presence', audiencePayload);
 }
 
-/** Ephemeral map click ping — all GM + player SSE connections for this table (no DB). */
+/** Ephemeral map click ping — GM + invited players + spectators (no DB). */
 function broadcastMapPingToTable(tableId, payload) {
   const room = rooms.get(tableId);
   if (!room) return;
   const msg = `event: map_ping\ndata: ${JSON.stringify(payload)}\n\n`;
-  for (const clientRes of room.gmClients) {
-    try {
-      if (!clientRes.writableEnded) { clientRes.write(msg); clientRes.flush?.(); }
-    } catch { /* ignore */ }
-  }
-  for (const [, p] of room.players) {
-    try {
-      if (p?.res && !p.res.writableEnded) { p.res.write(msg); p.res.flush?.(); }
-    } catch { /* ignore */ }
-  }
+  forEachRoomSseClient(room, (clientRes) => {
+    clientRes.write(msg);
+    clientRes.flush?.();
+  });
 }
 
 /** Ephemeral map scribble segment — same delivery as map_ping (no DB). */
@@ -1047,16 +1081,10 @@ function broadcastMapScribbleToTable(tableId, payload) {
   const room = rooms.get(tableId);
   if (!room) return;
   const msg = `event: map_scribble\ndata: ${JSON.stringify(payload)}\n\n`;
-  for (const clientRes of room.gmClients) {
-    try {
-      if (!clientRes.writableEnded) { clientRes.write(msg); clientRes.flush?.(); }
-    } catch { /* ignore */ }
-  }
-  for (const [, p] of room.players) {
-    try {
-      if (p?.res && !p.res.writableEnded) { p.res.write(msg); p.res.flush?.(); }
-    } catch { /* ignore */ }
-  }
+  forEachRoomSseClient(room, (clientRes) => {
+    clientRes.write(msg);
+    clientRes.flush?.();
+  });
 }
 
 async function resolveDisplayNameForMapPing(req) {
@@ -1075,21 +1103,15 @@ async function resolveDisplayNameForMapPing(req) {
 // chips are display-only (no functions): [{ label, description, hopeCost, stressCost, frequency, isToggle }]
 const pendingIntents = new Map();
 
-/** Broadcast a pending intent (or its finalize update) to every GM + player SSE connection for this table. */
+/** Broadcast a pending intent (or its finalize update) to every GM + player + spectator SSE connection for this table. */
 function broadcastIntentToRoom(tableId, intent) {
   const room = rooms.get(tableId);
   if (!room) return;
   const msg = `event: intent\ndata: ${JSON.stringify(intent)}\n\n`;
-  for (const clientRes of room.gmClients) {
-    try {
-      if (!clientRes.writableEnded) { clientRes.write(msg); clientRes.flush?.(); }
-    } catch { /* ignore */ }
-  }
-  for (const [, p] of room.players) {
-    try {
-      if (p?.res && !p.res.writableEnded) { p.res.write(msg); p.res.flush?.(); }
-    } catch { /* ignore */ }
-  }
+  forEachRoomSseClient(room, (clientRes) => {
+    clientRes.write(msg);
+    clientRes.flush?.();
+  });
 }
 
 /** Resolve table by tableId and validate requester has access (owner or in playerEmails). Returns { tableId, gmUid, tableState } or { error, message }. */
@@ -1102,6 +1124,20 @@ async function resolveTableAccess(appId, tableId, req) {
   const isPlayer = (tableState.playerEmails || []).includes(req.email);
   if (!isOwner && !isPlayer) return { error: 403, message: 'Not invited to this table' };
   return { tableId, gmUid, tableState };
+}
+
+/** Anyone who can view the table: owner, invited player, or public spectator. */
+async function resolveTableViewAccess(appId, tableId, req) {
+  const row = await getTableStateById(appId, tableId);
+  if (!row) return { error: 404, message: 'Table not found' };
+  const gmUid = row.userId;
+  const tableState = row.data || {};
+  const isOwner = !!(req.uid && req.uid === gmUid);
+  const isInvited = !!(req.email && (tableState.playerEmails || []).includes(req.email));
+  const isPublic = row.isPublic === true;
+  const role = classifyTableViewer({ isOwner, isInvited, isPublic });
+  if (role === 'denied') return { error: 403, message: 'Not invited to this table' };
+  return { tableId, gmUid, tableState, role, isPublic, row };
 }
 
 /** GM-only: table must exist, belong to reqUid, and session must be started (prep mode blocks play). */
@@ -1309,6 +1345,7 @@ async function applyOpToTableState(tableId, op, opts = {}) {
       op.op === 'set-map-fog' ||
       op.op === 'set-map-view-overlay' ||
       op.op === 'set-map-view-fog' ||
+      op.op === 'set-table-public' ||
       bypassPrepGate ||
       activityIsRecent;
     if (!skipActivityStamp) {
@@ -1317,8 +1354,13 @@ async function applyOpToTableState(tableId, op, opts = {}) {
         lastPlayActivityAt: Date.now(),
       };
     }
-    await upsertItem(APP_ID, userId, 'table_state', tableId, newState, false);
+    const nextPublic = nextTableIsPublic(row.isPublic === true, op);
+    newState.isPublic = nextPublic;
+    await upsertItem(APP_ID, userId, 'table_state', tableId, newState, nextPublic, {
+      preserveIsPublic: op.op !== 'set-table-public',
+    });
     subscriptionManager.notifyChange('table_state', tableId);
+    schedulePreviewAfterTableOp(tableId, userId);
     return newState;
   });
   roomOpLocks.set(tableId, next.catch(() => {}));
@@ -1347,10 +1389,11 @@ app.get('/api/data', requireAuth, async (req, res) => {
     }
 
     if (includePublic) {
+      const publicCollections = COLLECTIONS.filter((col) => col !== 'table_state');
       const publicResults = await Promise.all(
-        COLLECTIONS.map(col => getPublicItems(APP_ID, req.uid, col))
+        publicCollections.map(col => getPublicItems(APP_ID, req.uid, col))
       );
-      COLLECTIONS.forEach((col, i) => {
+      publicCollections.forEach((col, i) => {
         if (data[col]) data[col] = [...data[col], ...publicResults[i]];
       });
     }
@@ -1534,16 +1577,18 @@ app.get('/api/data/:collection', optionalAuth, async (req, res) => {
       if (tableId) {
         let row = await getTableStateById(APP_ID, tableId);
         // Auto-create the primary table row the first time a user accesses their own table
-        // (e.g. fresh local DB or new account with no prior table state).
-        if (!row && tableId === req.uid) {
+        // (e.g. fresh local DB or new account with no prior table state). Never for anonymous.
+        if (!row && req.uid && tableId === req.uid) {
           const emptyState = { elements: [], playerEmails: [], gmDisplayName: '', fearCount: 0, top: { sessionStarted: false } };
           await upsertItem(APP_ID, req.uid, 'table_state', tableId, emptyState, false);
-          row = { userId: req.uid, data: emptyState };
+          row = { userId: req.uid, data: emptyState, isPublic: false };
         }
         if (!row) return res.status(404).json({ error: 'Table not found' });
-        const isOwner = row.userId === req.uid;
-        const isPlayer = (row.data?.playerEmails || []).includes(req.email);
-        if (!isOwner && !isPlayer) {
+        const isOwner = !!(req.uid && row.userId === req.uid);
+        const isInvited = !!(req.email && (row.data?.playerEmails || []).includes(req.email));
+        const isPublic = row.isPublic === true;
+        const role = classifyTableViewer({ isOwner, isInvited, isPublic });
+        if (role === 'denied') {
           return res.status(403).json({ error: 'Not your table' });
         }
         // Must match SSE `table_state` snapshots from `getResolvedTableState` (idle pause, activity seed).
@@ -1551,11 +1596,22 @@ app.get('/api/data/:collection', optionalAuth, async (req, res) => {
         if (!resolvedState) {
           return res.status(404).json({ error: 'Table not found' });
         }
-        if (!isOwner && isPlayer) {
+        if (role === 'player') {
           resolvedState = redactTableStateForPlayerAudience(resolvedState);
+        } else if (role === 'spectator') {
+          resolvedState = redactTableStateForSpectatorAudience(resolvedState);
         }
-        const resolved = [{ ...resolvedState, _source: 'own', id: tableId, ownerUid: row.userId }];
+        const resolved = [{
+          ...resolvedState,
+          isPublic,
+          _source: 'own',
+          id: tableId,
+          ownerUid: row.userId,
+        }];
         return res.json({ items: resolved, totalCount: 1, dbCount: 1 });
+      }
+      if (!req.uid) {
+        return res.status(401).json({ error: 'Missing auth token' });
       }
       const rows = await listTableStates(APP_ID, req.uid);
       const resolved = await Promise.all(rows.map(async r => {
@@ -2759,15 +2815,12 @@ app.get('/api/my-rooms', requireAuth, async (req, res) => {
   try {
     const rows = await getTableStatesByPlayerEmail(APP_ID, req.email);
     res.json(rows.map(r => {
-      const roster = summarizeTablePlayerRoster(r.data);
-      return {
-        tableId: r.tableId,
-        gmUid: r.userId,
-        gmName: r.data?.gmDisplayName || '',
-        tableName: r.data?.tableName || (r.tableId === r.userId ? 'My Game Table' : 'Table'),
-        playerCount: roster.count,
-        players: roster.players,
-      };
+      const dto = toTableCardDto({ id: r.tableId, userId: r.userId, data: r.data, updatedAt: r.updatedAt }, { tableIdKey: 'tableId' });
+      if (!(r.data?.tableName && String(r.data.tableName).trim()) && r.tableId === r.userId) {
+        dto.name = 'My Game Table';
+        dto.tableName = 'My Game Table';
+      }
+      return dto;
     }));
   } catch (err) {
     console.error('GET /api/my-rooms error:', err);
@@ -2775,22 +2828,36 @@ app.get('/api/my-rooms', requireAuth, async (req, res) => {
   }
 });
 
-// GET /api/my-tables — returns tables the user owns (for nav tabs and New Table)
+// GET /api/my-tables — returns tables the user owns (homepage Owner column; nav uses a 3-recent subset)
 app.get('/api/my-tables', requireAuth, async (req, res) => {
   try {
     const rows = await listTableStates(APP_ID, req.uid);
     res.json(rows.map(r => {
-      const roster = summarizeTablePlayerRoster(r.data);
-      return {
-        id: r.id,
-        name: r.data?.tableName || (r.id === req.uid ? 'My Game Table' : 'Table'),
-        playerCount: roster.count,
-        players: roster.players,
-      };
+      const dto = toTableCardDto({ id: r.id, userId: req.uid, data: r.data, updatedAt: r.updatedAt });
+      if (!(r.data?.tableName && String(r.data.tableName).trim()) && r.id === req.uid) {
+        dto.name = 'My Game Table';
+      }
+      return dto;
     }));
   } catch (err) {
     console.error('GET /api/my-tables error:', err);
     res.status(500).json({ error: 'Failed to fetch tables' });
+  }
+});
+
+// GET /api/public-tables — homepage Public column (auth required). Default 3 most recently updated.
+app.get('/api/public-tables', requireAuth, async (req, res) => {
+  try {
+    const search = typeof req.query.search === 'string' ? req.query.search : '';
+    const limit = search.trim() ? 20 : 3;
+    const rows = await listPublicTables(APP_ID, {
+      search,
+      limit,
+    });
+    res.json(rows.map((r) => toTableCardDto({ id: r.id, userId: r.userId, data: r.data })));
+  } catch (err) {
+    console.error('GET /api/public-tables error:', err);
+    res.status(500).json({ error: 'Failed to fetch public tables' });
   }
 });
 
@@ -3247,6 +3314,18 @@ app.get('/api/room/my/players', async (req, res) => {
   const user = await verifyTokenFromQuery(req, res);
   if (!user) return;
   const tableId = req.query.tableId || user.uid;
+  try {
+    const row = await getTableStateById(APP_ID, tableId);
+    if (row && row.userId !== user.uid) {
+      return res.status(403).json({ error: 'Not your table' });
+    }
+    if (!row && tableId !== user.uid) {
+      return res.status(403).json({ error: 'Not your table' });
+    }
+  } catch (err) {
+    console.error('GET /api/room/my/players ownership check:', err);
+    return res.status(500).json({ error: 'Server error' });
+  }
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
@@ -3256,8 +3335,7 @@ app.get('/api/room/my/players', async (req, res) => {
   const room = getOrCreateRoom(tableId);
   room.gmClients.add(res);
 
-  const presence = [...room.players.entries()].map(([uid, p]) => ({ uid, name: p.name, email: p.email, photoURL: p.photoURL }));
-  res.write(`event: presence\ndata: ${JSON.stringify({ players: presence })}\n\n`);
+  writeSseEvent(res, 'presence', buildPresencePayload(room));
 
   try {
     const rolls = await getRecentDiceRolls(APP_ID, user.uid);
@@ -3319,8 +3397,7 @@ app.get('/api/room/:tableId/stream', async (req, res) => {
       applyOpToTableState(tableId, { op: 'set-player-name', email: user.email, name: user.name }).catch(() => {});
     }
 
-    const presence = [...room.players.entries()].map(([uid, p]) => ({ uid, name: p.name, email: p.email, photoURL: p.photoURL }));
-    res.write(`event: presence\ndata: ${JSON.stringify({ players: presence })}\n\n`);
+    writeSseEvent(res, 'presence', buildPresencePayload(room));
 
     try {
       const rolls = await getRecentDiceRolls(APP_ID, gmUid);
@@ -3352,6 +3429,86 @@ app.get('/api/room/:tableId/stream', async (req, res) => {
   } catch (err) {
     console.error(`GET /api/room/${tableId}/stream error:`, err);
     if (!res.headersSent) res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// GET /api/room/:tableId/public-stream — spectator SSE for public tables (token optional).
+app.get('/api/room/:tableId/public-stream', async (req, res) => {
+  const { tableId } = req.params;
+  const user = await verifyTokenFromQuery(req, res, { optional: true });
+  if (req.query.token && !user) return;
+  try {
+    const row = await getTableStateById(APP_ID, tableId);
+    if (!row || row.isPublic !== true) {
+      return res.status(403).json({ error: 'Table is not public' });
+    }
+    const gmUid = row.userId;
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    req.socket.setTimeout(0);
+    res.flushHeaders();
+
+    const room = getOrCreateRoom(tableId);
+    const sessionId = user?.uid ? `user:${user.uid}` : `guest:${randomUUID()}`;
+    const displayName = user?.uid ? (user.name || 'Guest') : 'Guest';
+    room.audience.set(sessionId, { res, displayName });
+
+    const presence = buildPresencePayload(room);
+    writeSseEvent(res, 'presence', {
+      players: presence.players.map(({ uid, name }) => ({ uid, name })),
+      audienceOnlineCount: presence.audienceOnlineCount,
+    });
+
+    try {
+      const rolls = await getRecentDiceRolls(APP_ID, gmUid);
+      if (rolls.length > 0) {
+        res.write(`event: roll-history\ndata: ${JSON.stringify({ rolls })}\n\n`);
+      }
+    } catch (err) {
+      console.error('[dice] roll-history fetch failed:', err.message);
+      const fallback = gmRollLogs.get(gmUid);
+      if (fallback?.length > 0) {
+        res.write(`event: roll-history\ndata: ${JSON.stringify({ rolls: fallback })}\n\n`);
+      }
+    }
+    res.flush?.();
+
+    subscriptionManager.subscribe('banners', gmUid, res);
+    subscriptionManager.subscribe('table_state', tableId, res, { tableStateAudience: 'spectator' });
+
+    broadcastPresenceToTable(tableId);
+
+    const existingIntent = pendingIntents.get(tableId);
+    if (existingIntent) {
+      res.write(`event: intent\ndata: ${JSON.stringify(existingIntent)}\n\n`);
+      res.flush?.();
+    }
+
+    const heartbeat = setInterval(() => { res.write(':heartbeat\n\n'); res.flush?.(); }, 30000);
+    req.on('close', () => {
+      clearInterval(heartbeat);
+      room.audience.delete(sessionId);
+      subscriptionManager.unsubscribe('banners', gmUid, res);
+      subscriptionManager.unsubscribe('table_state', tableId, res);
+      broadcastPresenceToTable(tableId);
+    });
+  } catch (err) {
+    console.error(`GET /api/room/${tableId}/public-stream error:`, err);
+    if (!res.headersSent) res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// GET /api/room/:tableId/audience — names of currently connected spectators (no emails).
+app.get('/api/room/:tableId/audience', optionalAuth, async (req, res) => {
+  try {
+    const ctx = await resolveTableViewAccess(APP_ID, req.params.tableId, req);
+    if (ctx.error) return res.status(ctx.error).json({ error: ctx.message });
+    const room = rooms.get(ctx.tableId);
+    res.json(buildAudienceAttendees(room || createEmptyRoom()));
+  } catch (err) {
+    console.error('GET /api/room/:tableId/audience error:', err);
+    res.status(500).json({ error: 'Failed to fetch audience' });
   }
 });
 

@@ -3,6 +3,7 @@ import {
   redactSessionCountdownsForAudience,
   redactEncounterNotesForAudience,
   redactTableStateForPlayerAudience,
+  redactTableStateForSpectatorAudience,
   findSessionCountdownBySource,
   deriveKindFromCountdownLabel,
   parseLegacyCountdownKey,
@@ -100,6 +101,35 @@ describe('redactTableStateForPlayerAudience', () => {
     const out = redactTableStateForPlayerAudience(state);
     expect(out.inviteLink).toBeUndefined();
     expect(out.elements).toHaveLength(1);
+  });
+});
+
+describe('redactTableStateForSpectatorAudience', () => {
+  it('strips assignment emails, playerEmails, and marks isPublic', () => {
+    const state = {
+      playerEmails: ['alice@example.com'],
+      inviteLink: { token: 'secret' },
+      elements: [
+        {
+          instanceId: 'c1',
+          elementType: 'character',
+          name: 'Briar',
+          assignedPlayerEmail: 'alice@example.com',
+          assignedPlayerUid: 'uid-1',
+        },
+        { instanceId: 'n1', elementType: 'note', visibility: 'gm' },
+      ],
+    };
+    const out = redactTableStateForSpectatorAudience(state);
+    expect(out.playerEmails).toEqual([]);
+    expect(out.isPublic).toBe(true);
+    expect(out.inviteLink).toBeUndefined();
+    expect(out.elements.some((e) => e.elementType === 'note')).toBe(false);
+    const char = out.elements.find((e) => e.instanceId === 'c1');
+    expect(char.name).toBe('Briar');
+    expect(char.assignedPlayerEmail).toBeUndefined();
+    expect(char.assignedPlayerUid).toBeUndefined();
+    expect(JSON.stringify(out)).not.toMatch(/@/);
   });
 });
 

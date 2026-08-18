@@ -41,13 +41,17 @@ export function parseDataUrl(value) {
  * @param {import('@supabase/supabase-js').SupabaseClient | null} supabase
  * @returns {Promise<string|null>} the public URL, or `null` when Supabase isn't configured.
  */
-export async function uploadBufferToMapStorage(supabase, ownerUid, buffer, mimetype, folder) {
+export async function uploadBufferToMapStorage(supabase, ownerUid, buffer, mimetype, folder, opts = {}) {
   if (!supabase) return null;
   const ext = MIME_TO_EXT[mimetype] || 'bin';
-  const storagePath = `${folder}/${ownerUid}/${randomUUID()}.${ext}`;
+  const fileName = typeof opts.fileName === 'string' && opts.fileName.trim()
+    ? opts.fileName.trim()
+    : `${randomUUID()}.${ext}`;
+  const storagePath = `${folder}/${ownerUid}/${fileName}`;
+  const upsert = opts.upsert === true;
   const { error } = await supabase.storage
     .from('whiteboard-assets')
-    .upload(storagePath, buffer, { contentType: mimetype, upsert: false });
+    .upload(storagePath, buffer, { contentType: mimetype, upsert });
   if (error) throw error;
   const { data } = supabase.storage.from('whiteboard-assets').getPublicUrl(storagePath);
   return data.publicUrl;

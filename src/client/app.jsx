@@ -2,9 +2,9 @@ import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import ReactDOM from 'react-dom/client';
 import { createPortal } from 'react-dom';
 import { signOut, onAuthStateChanged } from 'firebase/auth';
-import { BookOpen, LayoutDashboard, ChevronDown, LogOut, Upload, Download, Trash2, Circle, Plus, ScrollText, Sparkles, Bot, ShieldOff, Bug } from 'lucide-react';
+import { BookOpen, LayoutDashboard, ChevronDown, LogOut, Upload, Download, Trash2, Circle, Plus, ScrollText, Sparkles, Bot, ShieldOff, Bug, Ellipsis } from 'lucide-react';
 
-import { auth, getAuthToken, CLIENT_ID, loadCollection, loadTableState, resolveItems, saveItem as apiSaveItem, saveImage as apiSaveImage, deleteItem as apiDeleteItem, cloneItemToLibrary, recordPlay, fetchMe, fetchMyRooms, fetchMyTables, createTable, postCharacterUpdate, postAddCharacter, postTableOp, postLifeSupportSelect, postRestMoveSelect, normalizeRoll, conceptAiEnabled, imageGenEnabled, fetchTableBillingStatus, postMapImageFile, postMapImageFileForTable, postMapImageObject, postGenerateInviteLink, postRevokeInviteLink, postJoinInviteToken, postLeaveTable, putUserPreferences } from './lib/api.js';
+import { auth, getAuthToken, CLIENT_ID, loadCollection, loadTableState, resolveItems, saveItem as apiSaveItem, saveImage as apiSaveImage, deleteItem as apiDeleteItem, cloneItemToLibrary, recordPlay, fetchMe, fetchMyRooms, fetchMyTables, fetchPublicTables, createTable, postCharacterUpdate, postAddCharacter, postTableOp, postLifeSupportSelect, postRestMoveSelect, normalizeRoll, conceptAiEnabled, imageGenEnabled, fetchTableBillingStatus, postMapImageFile, postMapImageFileForTable, postMapImageObject, postGenerateInviteLink, postRevokeInviteLink, postJoinInviteToken, postLeaveTable, putUserPreferences } from './lib/api.js';
 import { dataUrlToFile, loadImageNaturalSizeFromUrl } from './lib/map-image-data-url.js';
 import { AiUiPreferenceProvider, useAiUiPreference } from './lib/ai-ui-preference-context.jsx';
 import { shouldShowConceptAiUi } from './lib/ai-ui-visibility.js';
@@ -33,7 +33,15 @@ import {
 } from './lib/party-scaled-adversaries.js';
 import { isTablePlayAllowed, isPrepModeElementUpdateBlocked } from './lib/table-session-gate.js';
 import { showChooseSpotlightBanner } from './lib/spotlight.js';
+import { shouldStartGmTableRoomEffects } from './lib/gm-table-sse-ownership-gate.js';
 import { billingNavIndicatorCopy } from './lib/billing-status-copy.js';
+import {
+  collectNavTableEntries,
+  loadTableNavAccessMap,
+  persistTableNavAccess,
+  pickRecentNavTables,
+  shouldShowNavMoreTables,
+} from './lib/nav-recent-tables.js';
 import { shouldPersistMapViewToTable } from './lib/map-view-sync.js';
 import { DEFAULT_LEGACY_MAP_ID, deriveMapConfigForViewId, deriveMapConfigForMapId } from './lib/map-table-state.js';
 import { DEFAULT_MAP_SIZE_FT } from './lib/map-dimensions-ft.js';
@@ -215,8 +223,10 @@ function App() {
   libraryCardDimensionsRef.current = libraryCardDimensions;
   const libraryCardDimensionsSaveTimerRef = useRef(null);
   const libraryCardDimensionsMigratedRef = useRef(false);
-  const [myRooms, setMyRooms] = useState([]); // [{ tableId, gmUid, gmName, tableName, playerCount, players }] — tables user is invited to
-  const [myTables, setMyTables] = useState([]); // [{ id, name, playerCount, players }] — tables user owns
+  const [myRooms, setMyRooms] = useState([]); // [{ tableId, gmUid, gmName, tableName, characterCount, characterNames }]
+  const [myTables, setMyTables] = useState([]); // [{ id, name, characterCount, characterNames, previewUrl }]
+  const [tableNavAccess, setTableNavAccess] = useState({});
+  const [publicTables, setPublicTables] = useState([]);
   const [connectedPlayers, setConnectedPlayers] = useState([]); // [{ uid, name, email, photoURL }]
   const [playerNames, setPlayerNames] = useState({}); // { [email_lowercase]: displayName } — persisted in table_state
   // pendingBanners: authoritative list from the 'banners' subscription channel
@@ -253,8 +263,10 @@ function App() {
   const myTablesFetchedRef = useRef(false);
   /** Firebase uid of the table owner; set from GET table_state (ownerUid). Undefined until first load for this tableId. */
   const [tableOwnerUid, setTableOwnerUid] = useState(undefined);
-  /** Set to 'not-found' when the table doesn't exist or the user isn't invited (403/404 from loadTableState). */
+  /** Set to 'not-found' | 'private' when GET table_state fails. */
   const [tableAccessError, setTableAccessError] = useState(null);
+  const [tableIsPublic, setTableIsPublic] = useState(false);
+  const [audienceOnlineCount, setAudienceOnlineCount] = useState(0);
   /** Set when `/join/:token` redemption fails (invalid or revoked). */
   const [joinLinkError, setJoinLinkError] = useState(null);
   const joinRedeemedTokenRef = useRef(null);
@@ -467,8 +479,10 @@ function App() {
             fetchTableBillingStatus(primaryId).then(setPrimaryTableBillingStatus).catch(() => {});
           }
         }).catch(() => { myTablesFetchedRef.current = true; });
+        fetchPublicTables().then((rows) => setPublicTables(Array.isArray(rows) ? rows : [])).catch(() => setPublicTables([]));
       } else {
         myTablesFetchedRef.current = false;
+        setPublicTables([]);
         setHideAiUi(false);
         setLibraryCardDimensions({});
         setLibraryCardDimensionsLoaded(false);
@@ -557,28 +571,67 @@ function App() {
   }, [user?.uid]);
 
   const isInvitedPlayerHeuristic = !!(user && route.tableId && myRooms.some(r => r.tableId === route.tableId) && !myTables.some(t => t.id === route.tableId));
-  // Player mode: invited guest on another GM's table (derived from ownerUid and myRooms while loading).
-  // tableOwnerUid===undefined means still loading — optimistically treat as player until ownership is confirmed,
-  // so a player never briefly sees the GM view while the table state fetch is in flight.
-  const isPlayer = route.view === 'table' && !!user && !!route.tableId && (
-    tableOwnerUid === undefined ||
-    (tableOwnerUid != null && tableOwnerUid !== user.uid) ||
-    (tableOwnerUid == null && isInvitedPlayerHeuristic)
+  const isOwner = !!(user && (
+    tableOwnerUid === user.uid
+    || (tableOwnerUid === undefined && myTables.some((t) => t.id === route.tableId))
+  ));
+  const isInvited = !!(user && (
+    isInvitedPlayerHeuristic
+    || (user.email && Array.isArray(playerEmails) && playerEmails.includes(user.email))
+  ));
+  const isSpectator = route.view === 'table' && !!route.tableId && tableIsPublic && !isOwner && !isInvited && tableOwnerUid != null;
+  const isPlayer = route.view === 'table' && !!user && !!route.tableId && !isOwner && (
+    isInvited
+    || (!tableIsPublic && tableOwnerUid != null && tableOwnerUid !== user.uid)
   );
 
-  // Redirect to home when user has no tables and is on game-table view (e.g. after deleting last table)
   useEffect(() => {
-    if (myTablesFetchedRef.current && myTables.length === 0 && route.view === 'table' && user && !isPlayer) {
+    if (!user?.uid) {
+      setTableNavAccess({});
+      return;
+    }
+    setTableNavAccess(loadTableNavAccessMap(user.uid));
+  }, [user?.uid]);
+
+  useEffect(() => {
+    if (!user?.uid || route.view !== 'table' || !route.tableId) return;
+    setTableNavAccess(persistTableNavAccess(user.uid, route.tableId));
+  }, [user?.uid, route.view, route.tableId]);
+
+  const navTableEntries = useMemo(
+    () => collectNavTableEntries(myTables, myRooms),
+    [myTables, myRooms],
+  );
+  const navRecentTables = useMemo(
+    () => pickRecentNavTables(navTableEntries, {
+      accessByTableId: tableNavAccess,
+      currentTableId: route.view === 'table' ? route.tableId : null,
+    }),
+    [navTableEntries, tableNavAccess, route.view, route.tableId],
+  );
+  const showNavMoreTables = shouldShowNavMoreTables(navTableEntries.length);
+
+  useEffect(() => {
+    if (myTablesFetchedRef.current && myTables.length === 0 && route.view === 'table' && user && !isPlayer && !isSpectator) {
+      if (tableOwnerUid === undefined && !tableAccessError) return;
+      if (tableOwnerUid && tableOwnerUid !== user.uid) return;
       navigate('/', { replace: true });
     }
-  }, [myTables.length, route.view, user, isPlayer, navigate]);
+  }, [myTables.length, route.view, user, isPlayer, isSpectator, tableOwnerUid, tableAccessError, navigate]);
 
   useEffect(() => {
     if (loading || user) return;
-    if (route.view === 'table' || route.view === 'adminAiUsage' || route.view === 'adminBugReports' || route.view === 'join') {
+    if (route.view === 'adminAiUsage' || route.view === 'adminBugReports' || route.view === 'join') {
       requireAuthRedirect('signin');
     }
   }, [loading, user, route.view, requireAuthRedirect]);
+
+  useEffect(() => {
+    if (loading || user) return;
+    if (route.view === 'table' && tableAccessError === 'private') {
+      requireAuthRedirect('signin');
+    }
+  }, [loading, user, route.view, tableAccessError, requireAuthRedirect]);
 
   useEffect(() => {
     if (!user || route.view !== 'adminAiUsage' || !adminPrivilegesKnown) return;
@@ -612,8 +665,8 @@ function App() {
   }, [route.view, route.token, user, navigate]);
 
   // GM can preview the table as a specific player (non-persisted; cleared on reload)
-  const isPreviewMode = !isPlayer && !!previewAsPlayerEmail && route.view === 'table';
-  const effectiveIsPlayer = isPlayer || isPreviewMode;
+  const isPreviewMode = !isPlayer && !isSpectator && !!previewAsPlayerEmail && route.view === 'table';
+  const effectiveIsPlayer = isPlayer || isPreviewMode || isSpectator;
   // Characters are assigned by email, so use email as the player identity for both real and preview mode
   const effectivePlayerEmail = isPlayer ? user?.email : (isPreviewMode ? previewAsPlayerEmail : undefined);
 
@@ -771,6 +824,8 @@ function App() {
   useEffect(() => {
     setTableOwnerUid(undefined);
     setTableAccessError(null);
+    setTableIsPublic(false);
+    setAudienceOnlineCount(0);
   }, [route.tableId]);
 
   useEffect(() => {
@@ -814,9 +869,8 @@ function App() {
 
   // Load table state when viewing a table (initial paint before SSE)
   useEffect(() => {
-    if (!user || route.view !== 'table' || !route.tableId) return;
+    if (route.view !== 'table' || !route.tableId) return;
     loadTableState(route.tableId).then((items) => {
-      if (!userRef.current) return;
       const tableState = items?.[0];
       if (!tableState) {
         setTableOwnerUid(null);
@@ -848,6 +902,7 @@ function App() {
         return;
       }
       setTableOwnerUid(tableState.ownerUid ?? null);
+      setTableIsPublic(tableState.isPublic === true);
       if (Array.isArray(tableState.elements)) setActiveElements(tableState.elements);
       setFeatureCountdowns(tableState.featureCountdowns || {});
       setSessionCountdowns(Array.isArray(tableState.sessionCountdowns) ? tableState.sessionCountdowns : []);
@@ -927,7 +982,12 @@ function App() {
     }).catch(err => {
       console.error('Failed to load table state:', err);
       const status = parseInt(err?.message?.match(/HTTP (\d+)/)?.[1] || '0', 10);
-      if (status === 403 || status === 404) {
+      if (status === 403) {
+        setTableOwnerUid(null);
+        setTableAccessError('private');
+        setTableStateReady(true);
+        tableStateReadyRef.current = true;
+      } else if (status === 404) {
         setTableOwnerUid(null);
         setTableAccessError('not-found');
         setTableStateReady(true);
@@ -938,7 +998,12 @@ function App() {
 
   // GM SSE: receive player presence, table state snapshots, banners, and dice roll events
   useEffect(() => {
-    if (!user || route.view !== 'table' || isPlayer) return;
+    if (!user || route.view !== 'table' || isPlayer || isSpectator) return;
+    if (!shouldStartGmTableRoomEffects({
+      routeTableId: route.tableId,
+      userUid: user.uid,
+      tableOwnerUid,
+    })) return;
     const tableId = route.tableId || user.uid;
     let es;
     let reconnectTimer;
@@ -947,7 +1012,9 @@ function App() {
       if (!token || !userRef.current) return;
       es = new EventSource(`/api/room/my/players?token=${encodeURIComponent(token)}&tableId=${encodeURIComponent(tableId)}`);
       es.addEventListener('presence', (e) => {
-        setConnectedPlayers(JSON.parse(e.data).players || []);
+        const data = JSON.parse(e.data);
+        setConnectedPlayers(data.players || []);
+        if (typeof data.audienceOnlineCount === 'number') setAudienceOnlineCount(data.audienceOnlineCount);
       });
       // Server-authoritative table state snapshot (replaces state/table-op/character-* events)
       es.addEventListener('table_state', (e) => {
@@ -971,6 +1038,7 @@ function App() {
           setTableName(state.tableName);
           setMyTables(prev => prev.map(t => t.id === tableId ? { ...t, name: state.tableName } : t));
         }
+        if (state.isPublic != null) setTableIsPublic(state.isPublic === true);
         if (state.gmDisplayName != null) setTableGmDisplayName(state.gmDisplayName);
         if (state.mapConfig != null && typeof state.mapConfig === 'object') {
           const merged = { ...DEFAULT_MAP_CONFIG, ...state.mapConfig };
@@ -1052,17 +1120,22 @@ function App() {
     connect();
     postTableOp({ op: 'set-gm-display-name', gmDisplayName: user?.displayName || '' }, tableId);
     return () => { es?.close(); if (reconnectTimer) clearTimeout(reconnectTimer); };
-  }, [user?.uid, route.view, route.tableId, isPlayer, appendMapPing, appendMapScribble]);
+  }, [user?.uid, route.view, route.tableId, isPlayer, isSpectator, tableOwnerUid, appendMapPing, appendMapScribble]);
 
   // Player SSE: receive table state snapshots, banners, and dice roll events for the invited table
   useEffect(() => {
-    if (!isPlayer || !user || !route.tableId) return;
+    if (!isPlayer || isSpectator || !user || !route.tableId) return;
     let es;
     let reconnectTimer;
     const connect = async () => {
       const token = await getAuthToken();
       if (!token || !userRef.current) return;
       es = new EventSource(`/api/room/${route.tableId}/stream?token=${encodeURIComponent(token)}`);
+      es.addEventListener('presence', (e) => {
+        const data = JSON.parse(e.data);
+        setConnectedPlayers(data.players || []);
+        if (typeof data.audienceOnlineCount === 'number') setAudienceOnlineCount(data.audienceOnlineCount);
+      });
       // Server-authoritative table state snapshot (replaces state/table-op/character-* events)
       es.addEventListener('table_state', (e) => {
         const state = JSON.parse(e.data);
@@ -1082,6 +1155,7 @@ function App() {
         if (state.playerNames != null && typeof state.playerNames === 'object') setPlayerNames(state.playerNames);
         setInviteLink(state.inviteLink ?? null);
         if (state.tableName != null) setTableName(state.tableName);
+        if (state.isPublic != null) setTableIsPublic(state.isPublic === true);
         if (state.mapConfig != null && typeof state.mapConfig === 'object') {
           const merged = { ...DEFAULT_MAP_CONFIG, ...state.mapConfig };
           setMapConfig(prev => reconcileMapConfig(prev, merged));
@@ -1170,7 +1244,116 @@ function App() {
     };
     connect();
     return () => { es?.close(); if (reconnectTimer) clearTimeout(reconnectTimer); };
-  }, [isPlayer, user?.uid, route.tableId, tableOwnerUid, appendMapPing, appendMapScribble]);
+  }, [isPlayer, isSpectator, user?.uid, route.tableId, tableOwnerUid, appendMapPing, appendMapScribble]);
+
+  // Spectator SSE: public tables (signed-in or anonymous)
+  useEffect(() => {
+    if (!isSpectator || !route.tableId) return;
+    let es;
+    let reconnectTimer;
+    const connect = async () => {
+      const token = await getAuthToken();
+      const qs = token ? `?token=${encodeURIComponent(token)}` : '';
+      es = new EventSource(`/api/room/${route.tableId}/public-stream${qs}`);
+      es.addEventListener('presence', (e) => {
+        const data = JSON.parse(e.data);
+        setConnectedPlayers(data.players || []);
+        if (typeof data.audienceOnlineCount === 'number') setAudienceOnlineCount(data.audienceOnlineCount);
+      });
+      es.addEventListener('table_state', (e) => {
+        const state = JSON.parse(e.data);
+        if (!state) return;
+        if (Array.isArray(state.elements)) {
+          setActiveElements(prev => reconcileElementsById(prev, state.elements));
+        }
+        if (state.fearCount != null) setFearCount(state.fearCount);
+        if (state.spotlight) setSpotlight(state.spotlight);
+        else setSpotlight(null);
+        if (Array.isArray(state.conditionsHistory)) setConditionsHistory(state.conditionsHistory);
+        if (state.featureCountdowns != null) setFeatureCountdowns(state.featureCountdowns);
+        if (Array.isArray(state.sessionCountdowns)) setSessionCountdowns(state.sessionCountdowns);
+        if (state.tableBattleMods != null) setTableBattleMods(state.tableBattleMods);
+        setNextScenes(Array.isArray(state.nextScenes) ? state.nextScenes : []);
+        if (Array.isArray(state.playerEmails)) setPlayerEmails(state.playerEmails);
+        setInviteLink(state.inviteLink ?? null);
+        if (state.tableName != null) setTableName(state.tableName);
+        if (state.isPublic != null) setTableIsPublic(state.isPublic === true);
+        if (state.mapConfig != null && typeof state.mapConfig === 'object') {
+          const merged = { ...DEFAULT_MAP_CONFIG, ...state.mapConfig };
+          setMapConfig(prev => reconcileMapConfig(prev, merged));
+        }
+        if (Array.isArray(state.maps)) setMaps(prev => reconcileMapsById(prev, state.maps));
+        else setMaps([]);
+        if (state.activeMapId != null) setActiveMapId(state.activeMapId);
+        else setActiveMapId(null);
+        if (state.gmMapView != null && typeof state.gmMapView === 'object') {
+          setGmMapView(state.gmMapView);
+        } else {
+          setGmMapView(null);
+        }
+        if (Array.isArray(state.mapViews)) setMapViews(prev => reconcileMapViewsById(prev, state.mapViews));
+        else setMapViews([]);
+        if (state.gmActiveViewId != null) setGmActiveViewId(state.gmActiveViewId);
+        else setGmActiveViewId(null);
+        if (state.playerMapViewFocus != null && typeof state.playerMapViewFocus === 'object') {
+          setPlayerMapViewFocus(state.playerMapViewFocus);
+        } else {
+          setPlayerMapViewFocus(null);
+        }
+        if (state.lifeSupportSelections != null) setLifeSupportSelections(state.lifeSupportSelections);
+        if (state.restMovesSelections != null) setRestMovesSelections(state.restMovesSelections);
+        if (state.featureState != null && typeof state.featureState === 'object') {
+          setTableFeatureState(state.featureState);
+        } else {
+          setTableFeatureState({});
+        }
+        if (state.top != null && typeof state.top === 'object') {
+          setTableTop(state.top);
+        } else {
+          setTableTop(null);
+        }
+        setTableStateReady(true);
+        tableStateReadyRef.current = true;
+      });
+      es.addEventListener('roll-history', (e) => {
+        const { rolls } = JSON.parse(e.data);
+        if (Array.isArray(rolls) && rolls.length) {
+          rolls.forEach(r => { if (r._rollDbId) seenLogDbIdsRef.current.add(r._rollDbId); });
+          setActionLog(rolls.map(r => ({ ...r, _logId: r._logId || `hist-${r.timestamp || Math.random()}` })));
+        }
+      });
+      es.addEventListener('banners', (e) => {
+        const data = JSON.parse(e.data);
+        setPendingBanners(Array.isArray(data) ? data.map(normalizeRoll) : data);
+      });
+      es.addEventListener('roll-log-append', (e) => {
+        try {
+          const { roll } = JSON.parse(e.data);
+          const id = roll?._rollDbId;
+          if (!id || seenLogDbIdsRef.current.has(id)) return;
+          seenLogDbIdsRef.current.add(id);
+          setActionLog(prev => [...prev.slice(-49), { ...normalizeRoll(roll), _logId: `log-${id}` }]);
+        } catch { /* ignore */ }
+      });
+      es.addEventListener('map_ping', (e) => {
+        try {
+          const p = JSON.parse(e.data);
+          if (!p?.id) return;
+          appendMapPing(p);
+        } catch { /* ignore */ }
+      });
+      es.addEventListener('map_scribble', (e) => {
+        try {
+          const s = JSON.parse(e.data);
+          if (!s?.id) return;
+          appendMapScribble(s);
+        } catch { /* ignore */ }
+      });
+      es.onerror = () => { es.close(); reconnectTimer = setTimeout(connect, 3000); };
+    };
+    connect();
+    return () => { es?.close(); if (reconnectTimer) clearTimeout(reconnectTimer); };
+  }, [isSpectator, route.tableId, appendMapPing, appendMapScribble]);
 
   // Drive Action Log live updates from the pendingBanners subscription channel and
   // roll-log-append (acknowledged-only action rows that skip the pending banner queue).
@@ -1584,6 +1767,12 @@ function App() {
     postTableOp({ op: 'set-table-name', tableName: name }, tableId);
     setTableName(name);
     setMyTables(prev => prev.map(t => t.id === tableId ? { ...t, name } : t));
+  };
+
+  const sendSetTablePublic = (isPublic) => {
+    const next = isPublic === true;
+    postTableOp({ op: 'set-table-public', isPublic: next }, tableId);
+    setTableIsPublic(next);
   };
 
   const sendSetTableBattleMods = (valueOrFn) => {
@@ -2092,29 +2281,25 @@ function App() {
               <NavBtn icon={<BookOpen />} label="Library" active={route.view === 'library'} href={lastLibraryPathRef.current} onClick={() => navigate(lastLibraryPathRef.current)} />
               <NavAssistantBtn active={libraryAssistantOpen} onClick={() => setLibraryAssistantOpen(true)} />
               {user && (<>
-              {myTables.map((t) => (
+              {navRecentTables.map((t) => (
                 <NavBtn
-                  key={t.id}
+                  key={t.tableId}
                   icon={<LayoutDashboard />}
-                  label={(t.name && t.name.trim() && t.name !== 'New Table' ? t.name : 'Game Table')}
-                  active={route.view === 'table' && route.tableId === t.id}
-                  href={`/table/${t.id}`}
-                  onClick={() => navigate(`/table/${t.id}`)}
+                  label={t.label}
+                  active={route.view === 'table' && route.tableId === t.tableId}
+                  href={`/table/${t.tableId}`}
+                  onClick={() => navigate(`/table/${t.tableId}`)}
                 />
               ))}
-              {myRooms.map((room) => {
-                const label = (room.tableName && room.tableName.trim() && room.tableName !== 'New Table' ? room.tableName : (room.gmName ? `${room.gmName}'s Game Table` : 'Game Table'));
-                return (
-                  <NavBtn
-                    key={room.tableId}
-                    icon={<LayoutDashboard />}
-                    label={label}
-                    active={route.view === 'table' && route.tableId === room.tableId}
-                    href={`/table/${room.tableId}`}
-                    onClick={() => navigate(`/table/${room.tableId}`)}
-                  />
-                );
-              })}
+              {showNavMoreTables && (
+                <NavBtn
+                  icon={<Ellipsis />}
+                  label="More"
+                  active={false}
+                  href="/"
+                  onClick={() => navigate('/')}
+                />
+              )}
               {!isPlayer && (
                 <NavBtn
                   icon={<Plus size={16} />}
@@ -2267,6 +2452,7 @@ function App() {
           <HomeAuthenticated
             myTables={myTables}
             myRooms={myRooms}
+            publicTables={publicTables}
             onCreateTable={handleCreateTable}
             navigate={navigate}
             data={data}
@@ -2393,8 +2579,6 @@ function App() {
                 onLibraryCardDimensionsChange={user ? handleLibraryCardDimensionsChange : undefined}
               />
             </div>
-            {user && (
-            <>
             <div
               className="flex-1 overflow-hidden flex flex-col"
               style={{ display: route.view === 'table' ? 'flex' : 'none' }}
@@ -2407,21 +2591,28 @@ function App() {
                   <p className="text-sm">This table doesn't exist or you haven't been invited.</p>
                 </div>
               )}
+              {tableAccessError === 'private' && user && route.view === 'table' && (
+                <div className="flex-1 flex flex-col items-center justify-center gap-3 text-dh-muted">
+                  <span className="text-5xl">🗺️</span>
+                  <p className="text-lg font-semibold text-dh">Private table</p>
+                  <p className="text-sm">You need an invite link to join this table.</p>
+                </div>
+              )}
               {!tableAccessError && <GMTableView
                 tableId={tableId}
                 activeElements={activeElements}
-                updateActiveElement={isPlayer ? handlePlayerCharacterUpdate : sendUpdateActiveElement}
+                updateActiveElement={isSpectator ? () => {} : (isPlayer ? handlePlayerCharacterUpdate : sendUpdateActiveElement)}
                 removeActiveElement={effectiveIsPlayer ? () => {} : sendRemoveActiveElement}
                 updateActiveElementsBaseData={effectiveIsPlayer ? () => {} : sendUpdateActiveElementsBaseData}
                 data={data}
-                saveItem={effectiveIsPlayer
+                saveItem={isSpectator ? undefined : (effectiveIsPlayer
                   ? (col, item) => col === 'characters' ? saveItem(col, { ...item, _tableId: tableId }) : undefined
                   : (col, item) => col === 'characters' ? saveItem(col, { ...item, _tableId: tableId }) : saveItem(col, item)
-                }
-                saveImage={effectiveIsPlayer
+                )}
+                saveImage={isSpectator ? undefined : (effectiveIsPlayer
                   ? (col, id, url, opts) => col === 'characters' ? saveImage(col, id, url, { ...opts, tableId }) : undefined
                   : (col, id, url, opts) => col === 'characters' ? saveImage(col, id, url, { ...opts, tableId }) : saveImage(col, id, url, opts)
-                }
+                )}
                 addToTable={effectiveIsPlayer ? () => {} : sendAddToTable}
                 addElements={effectiveIsPlayer ? undefined : sendAddElements}
                 sendDoAddToTable={effectiveIsPlayer ? undefined : sendDoAddToTable}
@@ -2451,7 +2642,11 @@ function App() {
                 tableName={tableName}
                 gmDisplayName={tableGmDisplayName || (user?.displayName || user?.email || '')}
                 tableStateReady={tableStateReady}
-                onTableNameChange={effectiveIsPlayer ? () => {} : sendSetTableName}
+                isSpectator={isSpectator}
+                isPublic={tableIsPublic}
+                onPublicChange={!effectiveIsPlayer ? sendSetTablePublic : undefined}
+                audienceOnlineCount={audienceOnlineCount}
+                onTableNameChange={!effectiveIsPlayer ? sendSetTableName : undefined}
                 onDeleteTable={tableId && !effectiveIsPlayer ? () => {
                   const name = (tableName?.trim() || 'Game Table');
                   setDeleteTablePending({ id: tableId, name });
@@ -2467,9 +2662,9 @@ function App() {
                 onGenerateInviteLink={effectiveIsPlayer ? undefined : sendGenerateInviteLink}
                 onRevokeInviteLink={effectiveIsPlayer ? undefined : sendRevokeInviteLink}
                 onRemovePlayerEmail={effectiveIsPlayer ? undefined : sendRemovePlayerEmail}
-                onLeaveTable={isPlayer ? sendLeaveTable : undefined}
+                onLeaveTable={isPlayer && !isSpectator ? sendLeaveTable : undefined}
                 gmUid={tableOwnerUid ?? user?.uid}
-                onPlayerAddCharacter={isPlayer ? handlePlayerAddCharacter : (isPreviewMode ? handleGmImpersonateAddCharacter : undefined)}
+                onPlayerAddCharacter={isSpectator ? undefined : (isPlayer ? handlePlayerAddCharacter : (isPreviewMode ? handleGmImpersonateAddCharacter : undefined))}
                 pendingBanners={pendingBanners}
                 pendingPlayerIntent={pendingPlayerIntent}
                 intentDifficultyUpdate={intentDifficultyUpdate}
@@ -2523,10 +2718,10 @@ function App() {
                 onAddMap={effectiveIsPlayer ? undefined : sendAddMap}
                 onAddMapWithImage={effectiveIsPlayer ? undefined : sendAddMapWithImage}
                 onReplaceMapWithImage={effectiveIsPlayer ? undefined : sendReplaceMapWithImage}
-                onAddMapImageObject={sendAddMapImageObject}
+                onAddMapImageObject={isSpectator ? undefined : sendAddMapImageObject}
                 onAddMapDrawShape={effectiveIsPlayer ? undefined : sendAddMapDrawShape}
-                onUpdateMapImageObject={sendUpdateMapImageObject}
-                onRemoveMapImageObject={sendRemoveMapImageObject}
+                onUpdateMapImageObject={isSpectator ? undefined : sendUpdateMapImageObject}
+                onRemoveMapImageObject={isSpectator ? undefined : sendRemoveMapImageObject}
                 onRemoveMap={effectiveIsPlayer ? undefined : sendRemoveMap}
                 onRenameMap={effectiveIsPlayer ? undefined : sendRenameMap}
                 onMapConfigChange={effectiveIsPlayer ? () => {} : sendSetMapConfig}
@@ -2536,10 +2731,10 @@ function App() {
                     : undefined
                 }
                 lifeSupportSelections={lifeSupportSelections}
-                onLifeSupportSelect={sendLifeSupportSelect}
+                onLifeSupportSelect={isSpectator ? () => {} : sendLifeSupportSelect}
                 onLifeSupportClear={effectiveIsPlayer ? () => {} : sendLifeSupportClear}
                 restMovesSelections={restMovesSelections}
-                onRestMoveSelect={sendRestMoveSelect}
+                onRestMoveSelect={isSpectator ? () => {} : sendRestMoveSelect}
                 onRestMoveClear={effectiveIsPlayer ? () => {} : sendRestMoveClear}
                 tableFeatureState={tableFeatureState}
                 sessionPlayAllowed={sessionPlayAllowed}
@@ -2556,7 +2751,7 @@ function App() {
                 isAdmin={isAdmin}
               />}
             </div>
-            {route.view === 'join' && (
+            {user && route.view === 'join' && (
               <div className="flex-1 flex flex-col items-center justify-center gap-3 text-dh-muted">
                 {joinLinkError ? (
                   <>
@@ -2568,8 +2763,6 @@ function App() {
                   <p className="text-dh">Joining table...</p>
                 )}
               </div>
-            )}
-            </>
             )}
           </>
         )}

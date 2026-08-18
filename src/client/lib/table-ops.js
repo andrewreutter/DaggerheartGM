@@ -980,6 +980,8 @@ export function applyTableOp(op, state) {
       return { featureState: op.featureState ?? {} };
     case 'set-table-name':
       return { tableName: op.tableName ?? '' };
+    case 'set-table-public':
+      return { isPublic: op.isPublic === true };
     case 'life-support-select': {
       const prev = state.lifeSupportSelections || {};
       const key = String(op._rollDbId);

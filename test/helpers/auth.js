@@ -124,4 +124,11 @@ export async function authenticate(page) {
       body: JSON.stringify([{ id: TEST_USER.uid, name: 'Test Table' }]),
     });
   });
+
+  await page.route('/api/public-tables*', (route) => {
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify([]),
+    });
+  });
 }

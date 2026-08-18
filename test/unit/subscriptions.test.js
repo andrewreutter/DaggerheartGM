@@ -25,10 +25,11 @@ vi.mock('../../src/db.js', () => ({
 // depending on the real redaction implementation.
 vi.mock('../../src/client/lib/session-countdowns.js', () => ({
   redactTableStateForPlayerAudience: vi.fn((snapshot) => ({ ...snapshot, _redactedForPlayer: true })),
+  redactTableStateForSpectatorAudience: vi.fn((snapshot) => ({ ...snapshot, _redactedForSpectator: true })),
 }));
 
 import { getPendingBanners, getResolvedTableState, invalidateCharacterLibraryCache } from '../../src/db.js';
-import { redactTableStateForPlayerAudience } from '../../src/client/lib/session-countdowns.js';
+import { redactTableStateForPlayerAudience, redactTableStateForSpectatorAudience } from '../../src/client/lib/session-countdowns.js';
 
 // Import the module. Because it's a singleton, import once and reset state
 // between tests manually.
@@ -60,6 +61,7 @@ describe('SubscriptionManager', () => {
     getPendingBanners.mockReset();
     getResolvedTableState.mockReset();
     redactTableStateForPlayerAudience.mockClear();
+    redactTableStateForSpectatorAudience.mockClear();
     invalidateCharacterLibraryCache.mockClear();
   });
 
@@ -380,6 +382,22 @@ describe('SubscriptionManager', () => {
     expect(redactTableStateForPlayerAudience).toHaveBeenCalledWith(snapshot);
   });
 
+  it('table_state: spectator subscriber receives spectator-redacted snapshot', async () => {
+    const snapshot = { elements: [], fearCount: 2, playerEmails: ['a@b.com'] };
+    getResolvedTableState.mockResolvedValue(snapshot);
+
+    const res = makeFakeRes();
+    manager.subscribe('table_state', 'tbl-aud-spec', res, { tableStateAudience: 'spectator' });
+    await vi.runAllTimersAsync();
+    await Promise.resolve();
+
+    expect(res.writes.length).toBe(1);
+    const expectedRedacted = { ...snapshot, _redactedForSpectator: true };
+    expect(res.writes[0]).toContain(JSON.stringify(expectedRedacted));
+    expect(redactTableStateForSpectatorAudience).toHaveBeenCalledWith(snapshot);
+    expect(redactTableStateForPlayerAudience).not.toHaveBeenCalled();
+  });
+
   it('table_state: with one GM and one player subscriber, redact is called exactly once per push', async () => {
     const snapshot = { elements: [], fearCount: 0 };
     getResolvedTableState.mockResolvedValue(snapshot);
@@ -436,6 +454,15 @@ describe('buildSseEventString', () => {
     const expectedRedacted = { ...snapshot, _redactedForPlayer: true };
     expect(str).toBe(`event: table_state\ndata: ${JSON.stringify(expectedRedacted)}\n\n`);
     expect(redactTableStateForPlayerAudience).toHaveBeenCalledWith(snapshot);
+  });
+
+  it('for table_state spectator audience, calls spectator redact', () => {
+    const snapshot = { elements: [], fearCount: 3 };
+    const str = buildSseEventString('table_state', snapshot, 'spectator');
+    const expectedRedacted = { ...snapshot, _redactedForSpectator: true };
+    expect(str).toBe(`event: table_state\ndata: ${JSON.stringify(expectedRedacted)}\n\n`);
+    expect(redactTableStateForSpectatorAudience).toHaveBeenCalledWith(snapshot);
+    expect(redactTableStateForPlayerAudience).not.toHaveBeenCalled();
   });
 
   it('produces the same string when called twice with identical args (pure/stable)', () => {

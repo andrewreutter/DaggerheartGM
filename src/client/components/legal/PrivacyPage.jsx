@@ -13,6 +13,8 @@ const PRIVACY_MARKDOWN = `
 
 We use the information above to operate the app: authenticate you, persist your game data across sessions, process payments for the Campaign Pass, and (only when you opt in) generate AI content on your behalf.
 
+If you mark a table **public**, that table (its battle map, character names and tokens, dice, and notes invited players can already see) is listed on the home lobby and can be watched by anyone with the URL — including people who are not signed in. Assignment emails are not shown to spectators.
+
 ## What We Don't Do
 
 - We don't run advertising.
