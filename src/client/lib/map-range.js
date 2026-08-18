@@ -121,9 +121,197 @@ export function combinePlanarDistanceWithAltitude(horizontalDist, aAltitudeFt = 
 }
 
 /**
+ * Point-to-token nearest-edge + sphere distance used by BattleMap bullseye highlighting.
+ *
+ * Subtracts only the token's directional ellipse radius toward the point (the point has
+ * zero radius — unlike `tokenDistanceFt`, which averages both tokens' reaches). Equal
+ * altitudes return the planar result unchanged.
+ *
+ * `tokenCx`/`tokenCy` are the token's center in feet (not top-left).
+ *
+ * @param {number} px
+ * @param {number} py
+ * @param {number} [pAltitudeFt=0]
+ * @param {number} tokenCx
+ * @param {number} tokenCy
+ * @param {{halfWidth:number,halfLength:number}} [footprint]
+ * @param {number} [tokenAltitudeFt=0]
+ * @returns {number} nearest-edge distance in feet (≥ 0)
+ */
+export function pointToTokenCenterDistanceFt(
+  px, py, pAltitudeFt = 0,
+  tokenCx, tokenCy,
+  footprint = DEFAULT_TOKEN_FOOTPRINT_FT,
+  tokenAltitudeFt = 0,
+) {
+  const fp = footprint || DEFAULT_TOKEN_FOOTPRINT_FT;
+  const dx = tokenCx - px;
+  const dy = tokenCy - py;
+  const centerDist = Math.sqrt(dx * dx + dy * dy);
+  const reach = centerDist < 1e-9
+    ? (fp.halfWidth + fp.halfLength) / 2
+    : ellipseRadiusAtAngle(fp.halfWidth, fp.halfLength, Math.atan2(dy, dx));
+  const dist = Math.max(0, centerDist - reach);
+  return combinePlanarDistanceWithAltitude(dist, pAltitudeFt, tokenAltitudeFt);
+}
+
+/**
+ * Point-to-token nearest-edge + sphere distance from a point to a token's top-left + footprint.
+ * Same formula as BattleMap range-band highlighting.
+ *
+ * @param {number} px
+ * @param {number} py
+ * @param {number} [pAltitudeFt=0]
+ * @param {number} tokenX - token top-left X (feet)
+ * @param {number} tokenY - token top-left Y (feet)
+ * @param {{halfWidth:number,halfLength:number}} [footprint]
+ * @param {number} [tokenAltitudeFt=0]
+ * @returns {number}
+ */
+export function pointToTokenDistanceFt(
+  px, py, pAltitudeFt = 0,
+  tokenX, tokenY,
+  footprint = DEFAULT_TOKEN_FOOTPRINT_FT,
+  tokenAltitudeFt = 0,
+) {
+  const fp = footprint || DEFAULT_TOKEN_FOOTPRINT_FT;
+  return pointToTokenCenterDistanceFt(
+    px, py, pAltitudeFt,
+    tokenX + fp.halfWidth, tokenY + fp.halfLength,
+    fp, tokenAltitudeFt,
+  );
+}
+
+/**
+ * Format a range/sphere distance in feet for the bullseye HUD (`"60'"`, `"97.5'"`).
+ * Rounds to one decimal; strips a trailing `.0`.
+ *
+ * @param {number} ft
+ * @returns {string}
+ */
+export function formatRangeDistanceFt(ft) {
+  const n = Number(ft);
+  if (!Number.isFinite(n) || n < 0) return "0'";
+  const rounded = Math.round(n * 10) / 10;
+  return `${rounded}'`;
+}
+
+/** Default pixel inset from the target token when placing a bullseye distance label. */
+export const BULLSEYE_CONNECTOR_LABEL_INSET_PX = 28;
+
+function normalizeSegmentLabelOpts(insetOrOpts) {
+  const defaults = {
+    insetPx: BULLSEYE_CONNECTOR_LABEL_INSET_PX,
+    originRadiusPx: 0,
+    targetRadiusPx: 0,
+    labelHalfW: 0,
+    labelHalfH: 0,
+  };
+  if (insetOrOpts && typeof insetOrOpts === 'object') {
+    const n = (v) => {
+      const x = Number(v);
+      return Number.isFinite(x) && x > 0 ? x : 0;
+    };
+    return {
+      insetPx: n(insetOrOpts.insetPx) || defaults.insetPx,
+      originRadiusPx: n(insetOrOpts.originRadiusPx),
+      targetRadiusPx: n(insetOrOpts.targetRadiusPx),
+      labelHalfW: n(insetOrOpts.labelHalfW),
+      labelHalfH: n(insetOrOpts.labelHalfH),
+    };
+  }
+  const requested = Number(insetOrOpts);
+  return {
+    ...defaults,
+    insetPx: Number.isFinite(requested) && requested > 0 ? requested : defaults.insetPx,
+  };
+}
+
+function labelOverlapsOrigin(x, y, x1, y1, originRadiusPx, labelHalfW, labelHalfH) {
+  const dist = Math.hypot(x - x1, y - y1);
+  const labelReach = Math.hypot(labelHalfW, labelHalfH);
+  return dist < originRadiusPx + labelReach;
+}
+
+/**
+ * Place a label along the segment from `(x1,y1)` (bullseye token) toward `(x2,y2)`
+ * (the other token), close to the other token rather than at the midpoint.
+ *
+ * Default: inset from the target back toward the origin. If that would sit on/behind
+ * the bullseye token, place the label on the far side of the other token instead.
+ *
+ * `insetOrOpts` may be a number (`insetPx`) or `{ insetPx, originRadiusPx, targetRadiusPx, labelHalfW, labelHalfH }`.
+ *
+ * @param {number} x1
+ * @param {number} y1
+ * @param {number} x2
+ * @param {number} y2
+ * @param {number|{ insetPx?: number, originRadiusPx?: number, targetRadiusPx?: number, labelHalfW?: number, labelHalfH?: number }} [insetOrOpts]
+ * @returns {{ x: number, y: number }}
+ */
+export function pointNearSegmentTarget(x1, y1, x2, y2, insetOrOpts = BULLSEYE_CONNECTOR_LABEL_INSET_PX) {
+  const { insetPx, originRadiusPx, targetRadiusPx, labelHalfW, labelHalfH } = normalizeSegmentLabelOpts(insetOrOpts);
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  const len = Math.hypot(dx, dy);
+  if (!(len > 0)) return { x: x2, y: y2 };
+  const nearInset = Math.min(insetPx, len * 0.35);
+  const near = {
+    x: x1 + dx * (1 - nearInset / len),
+    y: y1 + dy * (1 - nearInset / len),
+  };
+  if (!labelOverlapsOrigin(near.x, near.y, x1, y1, originRadiusPx, labelHalfW, labelHalfH)) {
+    return near;
+  }
+  const farInset = Math.max(insetPx, targetRadiusPx + 8);
+  const ux = dx / len;
+  const uy = dy / len;
+  return { x: x2 + ux * farInset, y: y2 + uy * farInset };
+}
+
+/**
+ * When the bullseye is snapped to a token, return dotted-line connectors to every other
+ * placed token at a different altitude. Distance is `pointToTokenDistanceFt` — the same
+ * measure used for range-band highlighting.
+ *
+ * @param {{ x: number, y: number, altitude?: number, excludeInstanceId?: string }|null|undefined} center
+ * @param {Array<{ element: object }|object>} tokens
+ * @param {(element: object) => { halfWidth: number, halfLength: number }} getFootprint
+ * @returns {Array<{ instanceId: string, x1: number, y1: number, x2: number, y2: number, distanceFt: number }>}
+ */
+export function collectBullseyeAltitudeConnectors(center, tokens, getFootprint) {
+  if (!center || center.excludeInstanceId == null || !Array.isArray(tokens)) return [];
+  const cAlt = center.altitude ?? 0;
+  const out = [];
+  for (const row of tokens) {
+    const el = row?.element ?? row;
+    if (!el || el.tokenX == null || el.tokenY == null) continue;
+    if (el.instanceId === center.excludeInstanceId) continue;
+    const tAlt = el.altitude ?? 0;
+    if (tAlt === cAlt) continue;
+    const footprint = getFootprint?.(el) || DEFAULT_TOKEN_FOOTPRINT_FT;
+    out.push({
+      instanceId: el.instanceId,
+      x1: center.x,
+      y1: center.y,
+      x2: el.tokenX + footprint.halfWidth,
+      y2: el.tokenY + footprint.halfLength,
+      targetHalfWidthFt: footprint.halfWidth,
+      targetHalfLengthFt: footprint.halfLength,
+      distanceFt: pointToTokenDistanceFt(
+        center.x, center.y, cAlt,
+        el.tokenX, el.tokenY, footprint, tAlt,
+      ),
+    });
+  }
+  return out;
+}
+
+/**
  * Nearest-edge distance in feet between two placed tokens, accounting for each token's own
- * (possibly non-default) footprint. Matches the distance formula used in BattleMap.jsx for
- * range band highlighting.
+ * (possibly non-default) footprint. Game Table mechanics (`rangeFrom` / attack targeting) use
+ * this token-to-token measure. BattleMap bullseye highlighting uses `pointToTokenDistanceFt`
+ * (point has zero radius) — the two agree for default-sized tokens.
  *
  * Each token's "reach" toward the other is its own directional ellipse radius at the angle
  * between the two centers; the two reaches are **averaged** (not summed) so that two

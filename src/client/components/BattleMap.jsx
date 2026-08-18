@@ -120,10 +120,11 @@ import { playerEncounterInstanceRowVisible } from '../lib/encounter-adversary-pl
 import {
   getRangeBandIndexForDistanceFt,
   getTokenFootprintFt,
-  ellipseRadiusAtAngle,
-  tokenDistanceFtForElements,
-  DEFAULT_TOKEN_FOOTPRINT_FT,
-  combinePlanarDistanceWithAltitude,
+  pointToTokenDistanceFt,
+  pointToTokenCenterDistanceFt,
+  collectBullseyeAltitudeConnectors,
+  formatRangeDistanceFt,
+  pointNearSegmentTarget,
 } from '../lib/map-range.js';
 import { computeTokenRenderPx } from '../lib/token-size.js';
 import { collectDistinctAdversaryNames, tokenAbbrevForElement } from '../lib/token-abbrev.js';
@@ -137,6 +138,7 @@ import {
   computeAltitudeStepsFromDragDeltaPx,
   formatAltitudeFt,
   isPointInExpandedHoverZone,
+  bullseyeCenterWithAltitudePreview,
 } from '../lib/token-altitude.js';
 import {
   computeMapDrawCanvasSize,
@@ -1288,11 +1290,10 @@ const placedTokenPropsAreEqual = (prev, next) => {
 /**
  * Floating altitude HUD: a map-scale stem from the token center (positive = up the
  * screen, colored to the token's ally/role fill) with a compact always-on value
- * at the tip; the interactive control (and Δ chip) sits to the left of the token
- * and is hover-only. Drag the hover control vertically to change altitude (5' steps,
- * 1:1 with stem growth at the current map scale × zoom — pointer capture keeps the
- * drag even though the control stays put); double-click resets to ground. Permission
- * mirrors `canDrag`.
+ * at the tip; the interactive control sits to the left of the token and is hover-only.
+ * Drag the hover control vertically to change altitude (5' steps, 1:1 with stem growth
+ * at the current map scale × zoom — pointer capture keeps the drag even though the
+ * control stays put); double-click resets to ground. Permission mirrors `canDrag`.
  */
 function TokenAltitudeControl({
   element,
@@ -1301,14 +1302,13 @@ function TokenAltitudeControl({
   pxPerFt,
   viewZoom,
   zIndex,
-  altitudeDeltaFt = 0,
-  showDelta = false,
   hoverFocused = false,
   positionDragActive = false,
   canAdjust = false,
   isMyCharacter = false,
   allyColorClasses = null,
   onChangeAltitude,
+  onAltitudePreview,
 }) {
   const altitude = element.altitude ?? 0;
 
@@ -1373,10 +1373,12 @@ function TokenAltitudeControl({
     const pxPerStep = altitudeDragPxPerStep(pxPerFt, viewZoom);
     const steps = computeAltitudeStepsFromDragDeltaPx(d.startClientY - e.clientY, pxPerStep);
     const newAlt = d.startAltitude + steps * ALTITUDE_STEP_FT;
+    const changed = newAlt !== d.latestAltitude;
     d.latestAltitude = newAlt;
     // Update the visual display locally — no server op yet. Stem length uses this same value.
     setDragDisplayAltitude(newAlt);
-  }, [pxPerFt, viewZoom]);
+    if (changed) onAltitudePreview?.(newAlt);
+  }, [pxPerFt, viewZoom, onAltitudePreview]);
 
   const onPointerUp = useCallback((e) => {
     const d = dragRef.current;
@@ -1385,13 +1387,15 @@ function TokenAltitudeControl({
     if (d.moved) {
       // Single server op on release; avoids SSE round-trip flicker during drag.
       onChangeAltitude?.(d.latestAltitude);
+    } else {
+      onAltitudePreview?.(null);
     }
     dragRef.current = null;
     isDraggingRef.current = false;
     setDragDisplayAltitude(null);
-  }, [onChangeAltitude]);
+  }, [onChangeAltitude, onAltitudePreview]);
 
-  if (!showTip && !showInteractive && !showDelta) return null;
+  if (!showTip && !showInteractive) return null;
 
   return (
     <>
@@ -1425,7 +1429,7 @@ function TokenAltitudeControl({
           {formatAltitudeFt(displayAltitude)}
         </div>
       )}
-      {(showDelta || showInteractive) && (
+      {showInteractive && (
         <div
           className="absolute flex items-center justify-end gap-0.5"
           style={{
@@ -1437,31 +1441,94 @@ function TokenAltitudeControl({
             pointerEvents: 'none',
           }}
         >
-          {showDelta && (
-            <div className="rounded border border-sky-700/60 bg-sky-950/85 px-1 py-0.5 text-[10px] font-semibold tabular-nums leading-none text-sky-200 shadow-sm">
-              Δ{formatAltitudeFt(altitudeDeltaFt)}
-            </div>
-          )}
-          {showInteractive && (
-            <div
-              className={`flex flex-col items-center rounded border border-dh-border bg-dh-canvas/90 px-1 py-0.5 text-[10px] font-semibold tabular-nums leading-none text-dh shadow-sm select-none ${canAdjust ? 'cursor-ns-resize' : ''}`}
-              style={{
-                width: ALTITUDE_CONTROL_WIDTH_PX,
-                pointerEvents: canAdjust ? 'auto' : 'none',
-                touchAction: canAdjust ? 'none' : undefined,
-              }}
-              onPointerDown={onPointerDown}
-              onPointerMove={onPointerMove}
-              onPointerUp={onPointerUp}
-              onPointerCancel={onPointerUp}
-            >
-              {canAdjust && <ArrowUpDown size={10} className="mb-0.5 text-dh-muted" />}
-              {formatAltitudeFt(displayAltitude)}
-            </div>
-          )}
+          <div
+            className={`flex flex-col items-center rounded border border-dh-border bg-dh-canvas/90 px-1 py-0.5 text-[10px] font-semibold tabular-nums leading-none text-dh shadow-sm select-none ${canAdjust ? 'cursor-ns-resize' : ''}`}
+            style={{
+              width: ALTITUDE_CONTROL_WIDTH_PX,
+              pointerEvents: canAdjust ? 'auto' : 'none',
+              touchAction: canAdjust ? 'none' : undefined,
+            }}
+            onPointerDown={onPointerDown}
+            onPointerMove={onPointerMove}
+            onPointerUp={onPointerUp}
+            onPointerCancel={onPointerUp}
+          >
+            {canAdjust && <ArrowUpDown size={10} className="mb-0.5 text-dh-muted" />}
+            {formatAltitudeFt(displayAltitude)}
+          </div>
         </div>
       )}
     </>
+  );
+}
+
+/** Dotted range-distance lines from a token-snapped bullseye to other tokens at a different altitude. */
+function BullseyeAltitudeConnectorOverlay({ connectors, pxPerFt, originRadiusPx = 0 }) {
+  if (!connectors?.length) return null;
+  return (
+    <g>
+      {connectors.map((c) => {
+        const x1 = c.x1 * pxPerFt;
+        const y1 = c.y1 * pxPerFt;
+        const x2 = c.x2 * pxPerFt;
+        const y2 = c.y2 * pxPerFt;
+        const dx = x2 - x1;
+        const dy = y2 - y1;
+        const planarPx = Math.hypot(dx, dy);
+        const label = formatRangeDistanceFt(c.distanceFt);
+        const fontSize = 10;
+        const padX = 4;
+        const padY = 2.5;
+        const textW = Math.max(18, label.length * 6.1);
+        const w = textW + padX * 2;
+        const h = fontSize + padY * 2;
+        const targetRadiusPx = Math.max(c.targetHalfWidthFt ?? 0, c.targetHalfLengthFt ?? 0) * pxPerFt;
+        const { x: mx, y: my } = pointNearSegmentTarget(x1, y1, x2, y2, {
+          originRadiusPx,
+          targetRadiusPx,
+          labelHalfW: w / 2,
+          labelHalfH: h / 2,
+        });
+        return (
+          <g key={c.instanceId}>
+            {planarPx >= 2 && (
+              <line
+                x1={x1}
+                y1={y1}
+                x2={x2}
+                y2={y2}
+                stroke="rgba(186, 230, 253, 0.8)"
+                strokeWidth={1.5}
+                strokeDasharray="5 4"
+                strokeLinecap="round"
+              />
+            )}
+            <rect
+              x={mx - w / 2}
+              y={my - h / 2}
+              width={w}
+              height={h}
+              rx={3}
+              fill="rgba(8, 47, 73, 0.9)"
+              stroke="rgba(3, 105, 161, 0.55)"
+              strokeWidth={1}
+            />
+            <text
+              x={mx}
+              y={my}
+              textAnchor="middle"
+              dominantBaseline="central"
+              fill="rgb(186, 230, 253)"
+              fontSize={fontSize}
+              fontWeight="600"
+              style={{ userSelect: 'none', pointerEvents: 'none', fontVariantNumeric: 'tabular-nums' }}
+            >
+              {label}
+            </text>
+          </g>
+        );
+      })}
+    </g>
   );
 }
 
@@ -3257,6 +3324,8 @@ export function BattleMap({
     if (gmMovesOverlay?.isOpen) trayAdversaryOverlay.close();
   }, [gmMovesOverlay?.isOpen, trayAdversaryOverlay.close]);
   const [bullseyeFt, setBullseyeFt] = useState(null); // { x, y, altitude?, excludeInstanceId? } in feet, null when off-map
+  /** Live altitude while dragging the HUD (table op waits until pointer-up). Range glow + distance lines read this. */
+  const [altitudeDragPreview, setAltitudeDragPreview] = useState(null); // { instanceId, altitude } | null
   /**
    * `pointermove` fires far more often than the display can paint (especially with high-poll-rate
    * mice/trackpads), and every `setBullseyeFt` call forces a full `BattleMap` re-render (bullseye
@@ -6277,50 +6346,48 @@ export function BattleMap({
     bullseyeFt && (bullseyeFt.excludeInstanceId != null || bullseyeIdleVisible)
   );
   const rangeBullseyeVisible = !!(followBullseyeFt || primaryBullseyeVisible);
+  const rangeBullseyeCenter = useMemo(
+    () => bullseyeCenterWithAltitudePreview(followBullseyeFt ?? bullseyeFt, altitudeDragPreview),
+    [followBullseyeFt, bullseyeFt, altitudeDragPreview],
+  );
 
   // Compute range band index (0–4) for each placed token based on distance to bullseye.
   // During drag from map, use the follow bullseye (moving) so highlights reflect the token being moved.
   const tokenRangeBands = useMemo(() => {
     if (!rangeBullseyeVisible) return {};
-    const center = followBullseyeFt ?? bullseyeFt;
+    const center = rangeBullseyeCenter;
     if (!center) return {};
     const result = {};
     for (const { element } of allMapTokens) {
       if (element.tokenX == null) continue;
       if (element.instanceId === center.excludeInstanceId) continue;
       const footprint = getTokenFootprintFt(resolveTokenSizeSource(element, parentByInstanceId));
-      const dx = (element.tokenX + footprint.halfWidth) - center.x;
-      const dy = (element.tokenY + footprint.halfLength) - center.y;
-      const centerDist = Math.sqrt(dx * dx + dy * dy);
-      // Point-to-token nearest-edge distance: subtract the token's own directional ellipse
-      // radius toward the point (no averaging — the point side has zero radius; shared math with map-range).
-      const reach = centerDist < 1e-9
-        ? (footprint.halfWidth + footprint.halfLength) / 2
-        : ellipseRadiusAtAngle(footprint.halfWidth, footprint.halfLength, Math.atan2(dy, dx));
-      const dist = Math.max(0, centerDist - reach);
-      const finalDist = combinePlanarDistanceWithAltitude(dist, center.altitude ?? 0, element.altitude ?? 0);
-      const bandIdx = getRangeBandIndexForDistanceFt(finalDist);
-      result[element.instanceId] = {
-        bandIdx, // -1 means Out of Range
-        altitudeDeltaFt: (element.altitude ?? 0) - (center.altitude ?? 0),
-      };
+      const dist = pointToTokenDistanceFt(
+        center.x, center.y, center.altitude ?? 0,
+        element.tokenX, element.tokenY, footprint, element.altitude ?? 0,
+      );
+      result[element.instanceId] = getRangeBandIndexForDistanceFt(dist);
     }
     return result;
-  }, [rangeBullseyeVisible, bullseyeFt, followBullseyeFt, allMapTokens, parentByInstanceId]);
+  }, [rangeBullseyeVisible, rangeBullseyeCenter, allMapTokens, parentByInstanceId]);
+
+  const bullseyeAltitudeConnectors = useMemo(() => {
+    return collectBullseyeAltitudeConnectors(
+      rangeBullseyeCenter,
+      allMapTokens,
+      (el) => getTokenFootprintFt(resolveTokenSizeSource(el, parentByInstanceId)),
+    );
+  }, [rangeBullseyeCenter, allMapTokens, parentByInstanceId]);
 
   // Dragged token's range band relative to the static (left-behind) bullseye, for ghost highlight
   const draggedTokenRangeBandFromStatic = useMemo(() => {
     if (!bullseyeFt || !followBullseyeFt) return null;
     const footprint = getTokenFootprintFt(resolveTokenSizeSource(dragRef.current?.element, parentByInstanceId));
-    const dx = followBullseyeFt.x - bullseyeFt.x;
-    const dy = followBullseyeFt.y - bullseyeFt.y;
-    const centerDist = Math.sqrt(dx * dx + dy * dy);
-    const reach = centerDist < 1e-9
-      ? (footprint.halfWidth + footprint.halfLength) / 2
-      : ellipseRadiusAtAngle(footprint.halfWidth, footprint.halfLength, Math.atan2(dy, dx));
-    const dist = Math.max(0, centerDist - reach);
-    const finalDist = combinePlanarDistanceWithAltitude(dist, bullseyeFt.altitude ?? 0, followBullseyeFt.altitude ?? 0);
-    const bandIdx = getRangeBandIndexForDistanceFt(finalDist);
+    const dist = pointToTokenCenterDistanceFt(
+      bullseyeFt.x, bullseyeFt.y, bullseyeFt.altitude ?? 0,
+      followBullseyeFt.x, followBullseyeFt.y, footprint, followBullseyeFt.altitude ?? 0,
+    );
+    const bandIdx = getRangeBandIndexForDistanceFt(dist);
     return bandIdx >= 0 ? RANGE_BANDS[bandIdx] : null;
   }, [bullseyeFt, followBullseyeFt, parentByInstanceId]);
 
@@ -6591,9 +6658,6 @@ export function BattleMap({
   };
 
   const renderTokenAltitudeHud = (element, tokenSizeWpx, tokenSizeHpx, zIndex, { isMyCharacter = false, allyColorClasses = null } = {}) => {
-    const bandInfo = tokenRangeBands[element.instanceId];
-    const bandIdx = bandInfo?.bandIdx;
-    const altitudeDeltaFt = bandInfo?.altitudeDeltaFt ?? 0;
     return (
       <TokenAltitudeControl
         element={element}
@@ -6602,14 +6666,27 @@ export function BattleMap({
         pxPerFt={pxPerFt}
         viewZoom={viewZoom}
         zIndex={zIndex}
-        altitudeDeltaFt={altitudeDeltaFt}
-        showDelta={bandIdx != null && bandIdx >= 0 && altitudeDeltaFt !== 0}
         hoverFocused={bullseyeFt?.excludeInstanceId === element.instanceId}
         positionDragActive={!!dragGhost}
         canAdjust={canDrag(element)}
         isMyCharacter={isMyCharacter}
         allyColorClasses={allyColorClasses}
-        onChangeAltitude={(ft) => updateActiveElement(element.instanceId, { altitude: ft })}
+        onAltitudePreview={(ft) => {
+          if (ft == null) {
+            setAltitudeDragPreview(null);
+            return;
+          }
+          setAltitudeDragPreview({ instanceId: element.instanceId, altitude: ft });
+        }}
+        onChangeAltitude={(ft) => {
+          updateActiveElement(element.instanceId, { altitude: ft });
+          setBullseyeFt((prev) => {
+            if (!prev || prev.excludeInstanceId !== element.instanceId) return prev;
+            if ((prev.altitude ?? 0) === ft) return prev;
+            return { ...prev, altitude: ft };
+          });
+          setAltitudeDragPreview(null);
+        }}
       />
     );
   };
@@ -6787,6 +6864,14 @@ export function BattleMap({
   const layerLetterboxClipPx = hoverPreviewActive
     ? (hoverPreviewView?.letterboxClipPx ?? null)
     : mapLetterboxClipPx;
+  const bullseyeOriginRadiusPx = (() => {
+    const snappedId = rangeBullseyeCenter?.excludeInstanceId;
+    if (!snappedId || !(layerPxPerFt > 0)) return 0;
+    const row = allMapTokens.find(({ element }) => element.instanceId === snappedId);
+    if (!row) return 0;
+    const fp = getTokenFootprintFt(resolveTokenSizeSource(row.element, parentByInstanceId));
+    return Math.max(fp.halfWidth, fp.halfLength) * layerPxPerFt;
+  })();
   const playerEmptyMapHint =
     isPlayer &&
     getPlayerTotMEmptyMapHint({
@@ -7653,6 +7738,13 @@ export function BattleMap({
                     stroke="rgba(255,255,255,0.7)"
                     strokeWidth={1}
                   />
+                  {!followBullseyeFt && (
+                    <BullseyeAltitudeConnectorOverlay
+                      connectors={bullseyeAltitudeConnectors}
+                      pxPerFt={layerPxPerFt}
+                      originRadiusPx={bullseyeOriginRadiusPx}
+                    />
+                  )}
                 </svg>
               )}
 
@@ -7708,6 +7800,11 @@ export function BattleMap({
                     stroke="rgba(255,255,255,0.7)"
                     strokeWidth={1}
                   />
+                  <BullseyeAltitudeConnectorOverlay
+                    connectors={bullseyeAltitudeConnectors}
+                    pxPerFt={layerPxPerFt}
+                    originRadiusPx={bullseyeOriginRadiusPx}
+                  />
                 </svg>
               )}
 
@@ -7738,8 +7835,7 @@ export function BattleMap({
 
               {/* Placed character tokens — rising z-index so overlaps pick the topmost; padded hit target for edges */}
               {charMapTokens.map(({ element, isMyCharacter: myChar }, stackIdx) => {
-                const bandInfo = tokenRangeBands[element.instanceId];
-                const bandIdx = bandInfo?.bandIdx;
+                const bandIdx = tokenRangeBands[element.instanceId];
                 const rangeBand = (bandIdx != null && bandIdx >= 0) ? RANGE_BANDS[bandIdx] : null;
                 const renderPx = computeTokenRenderPx(layerTokenSizePx, element);
                 const zIndex = element.instanceId === bullseyeFt?.excludeInstanceId ? SNAPPED_TOKEN_Z_INDEX : TOKEN_BASE_Z_INDEX + stackIdx;
@@ -7772,8 +7868,7 @@ export function BattleMap({
 
               {/* Placed companion / board tokens — above characters, below adversaries */}
               {boardMapTokens.map(({ element, isMyCharacter: myChar }, stackIdx) => {
-                const bandInfo = tokenRangeBands[element.instanceId];
-                const bandIdx = bandInfo?.bandIdx;
+                const bandIdx = tokenRangeBands[element.instanceId];
                 const rangeBand = bandIdx != null && bandIdx >= 0 ? RANGE_BANDS[bandIdx] : null;
                 const renderPx = computeTokenRenderPx(layerTokenSizePx, resolveTokenSizeSource(element, parentByInstanceId));
                 const zIndex = element.instanceId === bullseyeFt?.excludeInstanceId ? SNAPPED_TOKEN_Z_INDEX : TOKEN_BASE_Z_INDEX + charMapTokens.length + stackIdx;
@@ -7806,8 +7901,7 @@ export function BattleMap({
 
               {/* Placed adversary tokens — after characters so adversaries stay above; later instances stack higher */}
               {advMapTokens.map(({ element, instanceNum }, advIdx) => {
-                const bandInfo = tokenRangeBands[element.instanceId];
-                const bandIdx = bandInfo?.bandIdx;
+                const bandIdx = tokenRangeBands[element.instanceId];
                 const rangeBand = (bandIdx != null && bandIdx >= 0) ? RANGE_BANDS[bandIdx] : null;
                 const renderPx = computeTokenRenderPx(layerTokenSizePx, element);
                 const zIndex = element.instanceId === bullseyeFt?.excludeInstanceId ? SNAPPED_TOKEN_Z_INDEX : TOKEN_BASE_Z_INDEX + charMapTokens.length + boardMapTokens.length + advIdx;

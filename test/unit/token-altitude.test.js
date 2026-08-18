@@ -8,6 +8,7 @@ import {
   computeAltitudeStepsFromDragDeltaPx,
   formatAltitudeFt,
   isPointInExpandedHoverZone,
+  bullseyeCenterWithAltitudePreview,
 } from '../../src/client/lib/token-altitude.js';
 
 describe('formatAltitudeFt', () => {
@@ -116,5 +117,32 @@ describe('isPointInExpandedHoverZone', () => {
     const withStem = { ...token, stemOffsetPx: -80 };
     expect(isPointInExpandedHoverZone({ pointX: 110, pointY: 140, ...withStem })).toBe(true);
     expect(isPointInExpandedHoverZone({ pointX: 110, pointY: 180, ...withStem })).toBe(false);
+  });
+});
+
+describe('bullseyeCenterWithAltitudePreview', () => {
+  const center = { x: 10, y: 20, altitude: 0, excludeInstanceId: 'tok-a' };
+
+  it('returns the center unchanged when there is no preview', () => {
+    expect(bullseyeCenterWithAltitudePreview(center, null)).toBe(center);
+    expect(bullseyeCenterWithAltitudePreview(null, { instanceId: 'tok-a', altitude: 40 })).toBeNull();
+  });
+
+  it('ignores a preview for a different token', () => {
+    expect(bullseyeCenterWithAltitudePreview(center, { instanceId: 'tok-b', altitude: 40 })).toBe(center);
+  });
+
+  it('overlays the preview altitude onto the snapped bullseye token', () => {
+    expect(bullseyeCenterWithAltitudePreview(center, { instanceId: 'tok-a', altitude: 40 })).toEqual({
+      x: 10,
+      y: 20,
+      altitude: 40,
+      excludeInstanceId: 'tok-a',
+    });
+  });
+
+  it('returns the same object when the preview altitude already matches', () => {
+    const atForty = { ...center, altitude: 40 };
+    expect(bullseyeCenterWithAltitudePreview(atForty, { instanceId: 'tok-a', altitude: 40 })).toBe(atForty);
   });
 });

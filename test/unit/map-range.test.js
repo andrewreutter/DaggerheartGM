@@ -2,6 +2,12 @@ import { describe, it, expect } from 'vitest';
 import {
   tokenDistanceFt,
   tokenDistanceFtForElements,
+  pointToTokenDistanceFt,
+  pointToTokenCenterDistanceFt,
+  collectBullseyeAltitudeConnectors,
+  formatRangeDistanceFt,
+  pointNearSegmentTarget,
+  BULLSEYE_CONNECTOR_LABEL_INSET_PX,
   positionAtDistanceFt,
   ellipseRadiusAtAngle,
   getTokenFootprintFt,
@@ -134,6 +140,139 @@ describe('tokenDistanceFt altitude (sphere)', () => {
     const up = tokenDistanceFt(0, 0, 4, 0, undefined, undefined, 0, 20);
     const down = tokenDistanceFt(0, 0, 4, 0, undefined, undefined, 0, -20);
     expect(down).toBeCloseTo(up, 10);
+  });
+});
+
+describe('pointToTokenDistanceFt (bullseye highlighting)', () => {
+  it('matches tokenDistanceFt for two default-sized tokens (averaged reach equals one radius)', () => {
+    // Bullseye at token A center (2.5, 2.5); token B top-left (100, 0).
+    expect(pointToTokenDistanceFt(2.5, 2.5, 0, 100, 0)).toBeCloseTo(tokenDistanceFt(0, 0, 100, 0), 10);
+  });
+
+  it('subtracts only the target token reach (not averaged) for a wider token', () => {
+    const wide = { halfWidth: 5, halfLength: 2.5 };
+    // Point at (2.5, 2.5); token top-left (100, 0) → center (105, 2.5); dx=102.5; reach=5; dist=97.5
+    expect(pointToTokenDistanceFt(2.5, 2.5, 0, 100, 0, wide)).toBeCloseTo(97.5, 10);
+    expect(tokenDistanceFt(0, 0, 100, 0, undefined, wide)).toBeCloseTo(98.75, 10);
+  });
+
+  it('combines planar nearest-edge with altitude the same way highlighting does', () => {
+    const planar = pointToTokenDistanceFt(2.5, 2.5, 0, 4, 0);
+    const withAlt = pointToTokenDistanceFt(2.5, 2.5, 0, 4, 0, undefined, 60);
+    expect(withAlt).toBeCloseTo(Math.sqrt(planar * planar + 60 * 60), 5);
+  });
+
+  it('pointToTokenCenterDistanceFt accepts a precomputed token center', () => {
+    const fromTopLeft = pointToTokenDistanceFt(2.5, 2.5, 0, 100, 0);
+    const fromCenter = pointToTokenCenterDistanceFt(2.5, 2.5, 0, 102.5, 2.5);
+    expect(fromCenter).toBeCloseTo(fromTopLeft, 10);
+  });
+});
+
+describe('formatRangeDistanceFt', () => {
+  it('formats whole feet and one decimal', () => {
+    expect(formatRangeDistanceFt(60)).toBe("60'");
+    expect(formatRangeDistanceFt(97.5)).toBe("97.5'");
+    expect(formatRangeDistanceFt(60.07)).toBe("60.1'");
+  });
+
+  it('treats invalid input as 0', () => {
+    expect(formatRangeDistanceFt(undefined)).toBe("0'");
+    expect(formatRangeDistanceFt(-4)).toBe("0'");
+    expect(formatRangeDistanceFt(NaN)).toBe("0'");
+  });
+});
+
+describe('pointNearSegmentTarget', () => {
+  it('sits at the target when the segment has no length', () => {
+    expect(pointNearSegmentTarget(10, 20, 10, 20)).toEqual({ x: 10, y: 20 });
+  });
+
+  it('insets from the target toward the origin on a long segment', () => {
+    const p = pointNearSegmentTarget(0, 0, 200, 0, 28);
+    expect(p.x).toBeCloseTo(172, 10);
+    expect(p.y).toBeCloseTo(0, 10);
+    expect(p.x).toBeGreaterThan(100);
+  });
+
+  it('stays on the target half of a short segment', () => {
+    const p = pointNearSegmentTarget(0, 0, 40, 0, BULLSEYE_CONNECTOR_LABEL_INSET_PX);
+    expect(p.x).toBeCloseTo(40 - 40 * 0.35, 10);
+    expect(p.x).toBeGreaterThan(20);
+  });
+
+  it('flips to the far side of the other token when the near placement would sit on the bullseye token', () => {
+    const p = pointNearSegmentTarget(0, 0, 30, 0, {
+      insetPx: 28,
+      originRadiusPx: 16,
+      labelHalfW: 16,
+      labelHalfH: 7,
+    });
+    expect(p.x).toBeGreaterThan(30);
+    expect(p.y).toBeCloseTo(0, 10);
+  });
+
+  it('keeps the near-target placement when the bullseye token is far from the label', () => {
+    const p = pointNearSegmentTarget(0, 0, 200, 0, {
+      insetPx: 28,
+      originRadiusPx: 16,
+      labelHalfW: 16,
+      labelHalfH: 7,
+    });
+    expect(p.x).toBeCloseTo(172, 10);
+  });
+});
+
+describe('collectBullseyeAltitudeConnectors', () => {
+  const footprint = { halfWidth: 2.5, halfLength: 2.5 };
+  const getFootprint = () => footprint;
+  const hovered = {
+    instanceId: 'a',
+    tokenX: 0,
+    tokenY: 0,
+    altitude: 0,
+  };
+  const center = {
+    x: 2.5,
+    y: 2.5,
+    altitude: 0,
+    excludeInstanceId: 'a',
+  };
+
+  it('returns [] unless the bullseye is snapped to a token', () => {
+    const other = { instanceId: 'b', tokenX: 50, tokenY: 0, altitude: 20 };
+    expect(collectBullseyeAltitudeConnectors(null, [hovered, other], getFootprint)).toEqual([]);
+    expect(collectBullseyeAltitudeConnectors({ x: 10, y: 10, altitude: 0 }, [hovered, other], getFootprint)).toEqual([]);
+  });
+
+  it('skips tokens at the same altitude and the hovered token itself', () => {
+    const sameAlt = { instanceId: 'b', tokenX: 50, tokenY: 0, altitude: 0 };
+    expect(collectBullseyeAltitudeConnectors(center, [
+      { element: hovered },
+      { element: sameAlt },
+    ], getFootprint)).toEqual([]);
+  });
+
+  it('draws a connector to another token at a different altitude using highlighting distance', () => {
+    const other = { instanceId: 'b', tokenX: 50, tokenY: 0, altitude: 60 };
+    const [link] = collectBullseyeAltitudeConnectors(center, [
+      { element: hovered },
+      { element: other },
+    ], getFootprint);
+    expect(link.instanceId).toBe('b');
+    expect(link.x1).toBe(2.5);
+    expect(link.y1).toBe(2.5);
+    expect(link.x2).toBe(52.5);
+    expect(link.y2).toBe(2.5);
+    expect(link.distanceFt).toBeCloseTo(
+      pointToTokenDistanceFt(2.5, 2.5, 0, 50, 0, footprint, 60),
+      10,
+    );
+  });
+
+  it('skips unplaced tokens', () => {
+    const unplaced = { instanceId: 'b', tokenX: null, tokenY: null, altitude: 40 };
+    expect(collectBullseyeAltitudeConnectors(center, [hovered, unplaced], getFootprint)).toEqual([]);
   });
 });
 

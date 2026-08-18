@@ -106,3 +106,20 @@ export function isPointInExpandedHoverZone({
   const bottom = Math.max(tokenBottom, tipY);
   return pointX >= left && pointX <= right && pointY >= top && pointY <= bottom;
 }
+
+/**
+ * Overlay a live altitude-drag preview onto a bullseye center so range-band highlighting
+ * and distance connectors update before the table op is committed on pointer-up.
+ *
+ * @param {{ x: number, y: number, altitude?: number, excludeInstanceId?: string }|null|undefined} center
+ * @param {{ instanceId: string, altitude: number }|null|undefined} preview
+ * @returns {typeof center}
+ */
+export function bullseyeCenterWithAltitudePreview(center, preview) {
+  if (!center || !preview) return center;
+  if (center.excludeInstanceId !== preview.instanceId) return center;
+  const nextAlt = Number(preview.altitude);
+  const alt = Number.isFinite(nextAlt) ? nextAlt : 0;
+  if ((center.altitude ?? 0) === alt) return center;
+  return { ...center, altitude: alt };
+}
