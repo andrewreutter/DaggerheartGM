@@ -86,8 +86,34 @@ export function spotlightCharacterTooltip(count, name, { active = false } = {}) 
   const n = Math.max(0, Math.floor(Number(count) || 0));
   const who = typeof name === 'string' && name.trim() ? name.trim() : 'character';
   const first = `${n} turns since last Spotlight.`;
-  if (active) return `${first}\nClick to clear Spotlight.`;
-  return `${first}\nClick to give Spotlight to ${who}.`;
+  const reset = 'Shift-click to reset the counter.';
+  if (active) return `${first}\nClick to clear Spotlight.\n${reset}`;
+  return `${first}\nClick to give Spotlight to ${who}.\n${reset}`;
+}
+
+/**
+ * Stamp a character's `lastSeenSeq` to the current `rollSeq` so their catch-up
+ * counter reads 0. Does not change the holder. No-op (same reference) for `'gm'`,
+ * a missing id, or a counter that is already 0.
+ * @param {object | null | undefined} spotlight
+ * @param {string | null | undefined} instanceId
+ */
+export function resetSpotlightCatchUp(spotlight, instanceId) {
+  if (instanceId == null || instanceId === '' || instanceId === 'gm') {
+    return spotlight && typeof spotlight === 'object' ? spotlight : DEFAULT_SPOTLIGHT;
+  }
+  const current = normalizeSpotlight(spotlight);
+  const seen = current.lastSeenSeq?.[instanceId];
+  const last = Number.isFinite(seen) ? seen : 0;
+  if (last === current.rollSeq) {
+    return spotlight && typeof spotlight === 'object' ? spotlight : current;
+  }
+  return {
+    holderType: current.holderType,
+    holderInstanceId: current.holderInstanceId,
+    rollSeq: current.rollSeq,
+    lastSeenSeq: { ...current.lastSeenSeq, [instanceId]: current.rollSeq },
+  };
 }
 
 /** True when play is allowed and no one currently holds the spotlight. */

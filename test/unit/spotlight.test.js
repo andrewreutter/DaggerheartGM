@@ -15,6 +15,7 @@ import {
   isSpotlightGatedRollMeta,
   assignSpotlightHolder,
   grantSpotlightToCharacter,
+  resetSpotlightCatchUp,
   actionRollPassesSpotlightToGm,
   applySpotlightRollAck,
 } from '../../src/client/lib/spotlight.js';
@@ -181,15 +182,15 @@ describe('spotlightCatchUpCount / highestCatchUpKeys', () => {
     expect(highestCatchUpKeys(s, ['gm', 'pc-1', 'pc-2', 'pc-3'])).toEqual(['pc-1', 'pc-3']);
   });
 
-  it('builds the character-beam tooltip with turn count and give-spotlight line', () => {
+  it('builds the character-beam tooltip with turn count, click action, and shift-click reset', () => {
     expect(spotlightCharacterTooltip(3, 'Mira')).toBe(
-      '3 turns since last Spotlight.\nClick to give Spotlight to Mira.',
+      '3 turns since last Spotlight.\nClick to give Spotlight to Mira.\nShift-click to reset the counter.',
     );
     expect(spotlightCharacterTooltip(0, '  ')).toBe(
-      '0 turns since last Spotlight.\nClick to give Spotlight to character.',
+      '0 turns since last Spotlight.\nClick to give Spotlight to character.\nShift-click to reset the counter.',
     );
     expect(spotlightCharacterTooltip(2, 'Mira', { active: true })).toBe(
-      '2 turns since last Spotlight.\nClick to clear Spotlight.',
+      '2 turns since last Spotlight.\nClick to clear Spotlight.\nShift-click to reset the counter.',
     );
   });
 
@@ -220,6 +221,38 @@ describe('showChooseSpotlightBanner', () => {
     expect(showChooseSpotlightBanner(true, assignSpotlightHolder(DEFAULT_SPOTLIGHT, 'gm'))).toBe(false);
     expect(showChooseSpotlightBanner(true, assignSpotlightHolder(DEFAULT_SPOTLIGHT, 'character', 'pc-1'))).toBe(false);
     expect(showChooseSpotlightBanner(false, DEFAULT_SPOTLIGHT)).toBe(false);
+  });
+});
+
+describe('resetSpotlightCatchUp', () => {
+  it('stamps lastSeenSeq so catch-up is 0 without changing the holder', () => {
+    const s = { holderType: 'gm', holderInstanceId: null, rollSeq: 5, lastSeenSeq: { 'pc-1': 2, 'pc-2': 4 } };
+    const next = resetSpotlightCatchUp(s, 'pc-1');
+    expect(next).not.toBe(s);
+    expect(next.holderType).toBe('gm');
+    expect(next.holderInstanceId).toBe(null);
+    expect(next.rollSeq).toBe(5);
+    expect(next.lastSeenSeq).toEqual({ 'pc-1': 5, 'pc-2': 4 });
+    expect(spotlightCatchUpCount(next, 'pc-1')).toBe(0);
+    expect(spotlightCatchUpCount(next, 'pc-2')).toBe(1);
+  });
+
+  it('is a no-op (same reference) when the counter is already 0, for gm, or a missing id', () => {
+    const zeroed = { holderType: null, holderInstanceId: null, rollSeq: 4, lastSeenSeq: { 'pc-1': 4 } };
+    expect(resetSpotlightCatchUp(zeroed, 'pc-1')).toBe(zeroed);
+    expect(resetSpotlightCatchUp(zeroed, 'gm')).toBe(zeroed);
+    expect(resetSpotlightCatchUp(zeroed, null)).toBe(zeroed);
+    expect(resetSpotlightCatchUp(zeroed, '')).toBe(zeroed);
+    expect(resetSpotlightCatchUp(DEFAULT_SPOTLIGHT, 'gm')).toBe(DEFAULT_SPOTLIGHT);
+  });
+
+  it('treats a missing lastSeenSeq key as a counter to reset', () => {
+    const s = { holderType: 'character', holderInstanceId: 'pc-2', rollSeq: 3, lastSeenSeq: { 'pc-2': 1 } };
+    const next = resetSpotlightCatchUp(s, 'pc-1');
+    expect(next.holderType).toBe('character');
+    expect(next.holderInstanceId).toBe('pc-2');
+    expect(next.lastSeenSeq['pc-1']).toBe(3);
+    expect(spotlightCatchUpCount(next, 'pc-1')).toBe(0);
   });
 });
 

@@ -82,6 +82,7 @@ import {
   highestCatchUpKeys,
   isGmHolder,
   isSpotlightHolder,
+  resetSpotlightCatchUp,
   SPOTLIGHT_GM_INACTIVE_BEAM_OPACITY,
   spotlightBeamOpacity,
   spotlightCatchUpCount,
@@ -2200,7 +2201,7 @@ function SpotlightBeam({ side, active, dimGlow, count, clickable, onClick, label
       aria-label={ariaLabel}
       onClick={(e) => {
         e.stopPropagation();
-        onClick?.();
+        onClick?.(e);
       }}
     >
       {inner}
@@ -2321,7 +2322,7 @@ function TrayColumn({
                     clickable={spotlightClickable}
                     label={active ? `${element.name || 'Character'} holds the spotlight` : `Give spotlight to ${element.name || 'character'}`}
                     tooltip={spotlightCharacterTooltip(count, element.name, { active })}
-                    onClick={() => onAssignCharacterSpotlight?.(element.instanceId)}
+                    onClick={(e) => onAssignCharacterSpotlight?.(element.instanceId, e)}
                   />
                 </div>
               )}
@@ -6745,8 +6746,13 @@ export function BattleMap({
     return new Set(highestCatchUpKeys(spotlight, characters.map((c) => c.instanceId)));
   }, [showSpotlight, spotlight, characters]);
 
-  const handleAssignCharacterSpotlight = useCallback((instanceId) => {
+  const handleAssignCharacterSpotlight = useCallback((instanceId, e) => {
     if (isPlayer || !onSpotlightChange) return;
+    if (e?.shiftKey) {
+      const next = resetSpotlightCatchUp(spotlight, instanceId);
+      if (next !== spotlight) onSpotlightChange(next);
+      return;
+    }
     onSpotlightChange(assignSpotlightHolder(spotlight, 'character', instanceId));
   }, [isPlayer, onSpotlightChange, spotlight]);
 
