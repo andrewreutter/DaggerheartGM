@@ -7,6 +7,7 @@
 
 import { isAttackRollMeta } from './action-roll-difficulty.js';
 import { isReactionRoll } from './reaction-roll-display.js';
+import { isDualityCritical, rollBeatsDefense } from './duality-roll-outcome.js';
 
 export const DEFAULT_SPOTLIGHT = Object.freeze({
   holderType: null,
@@ -127,7 +128,7 @@ export function highestCatchUpKeys(spotlight, allKeys) {
 }
 
 /**
- * `'action'` — PC Duality action (Hope/Fear/Critical transfer).
+ * `'action'` — PC Duality action (Fear/failure → GM; successful Hope/Critical → open).
  * `'adversary'` — GM/adversary d20 (seq only).
  * `null` — damage-only, manual dice, reaction, rest, etc.
  */
@@ -189,6 +190,20 @@ export function grantSpotlightToCharacter(spotlight, instanceId) {
 }
 
 /**
+ * True when a PC Duality action should hand spotlight to the GM: Fear, or a failed
+ * roll. Critical is always a success with Hope.
+ */
+export function actionRollPassesSpotlightToGm(roll) {
+  if (!roll || typeof roll !== 'object') return false;
+  if (roll.dominant === 'fear') return true;
+  if (isDualityCritical(roll)) return false;
+  if (roll.isSuccess === false) return true;
+  if (roll.isSuccess === true) return false;
+  if (roll._difficulty != null) return !rollBeatsDefense(roll, roll._difficulty);
+  return false;
+}
+
+/**
  * Acknowledge-time reducer. Returns the same reference when the roll does not qualify.
  */
 export function applySpotlightRollAck(spotlight, roll) {
@@ -201,13 +216,11 @@ export function applySpotlightRollAck(spotlight, roll) {
 
   if (qual === 'action') {
     const attackerId = roll._attackerInstanceId;
-    const dominant = roll.dominant;
-    if (dominant === 'fear') {
-      if (attackerId) lastSeenSeq[attackerId] = rollSeq;
+    if (attackerId) lastSeenSeq[attackerId] = rollSeq;
+    if (actionRollPassesSpotlightToGm(roll)) {
       return { holderType: 'gm', holderInstanceId: null, rollSeq, lastSeenSeq };
     }
-    if (dominant === 'hope' || dominant === 'critical') {
-      if (attackerId) lastSeenSeq[attackerId] = rollSeq;
+    if (roll.dominant === 'hope' || roll.dominant === 'critical') {
       return { holderType: null, holderInstanceId: null, rollSeq, lastSeenSeq };
     }
   }

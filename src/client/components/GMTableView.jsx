@@ -41,6 +41,7 @@ import { buildTraitRollText, buildPreRollPanelTitle } from '../lib/trait-roll-te
 import { buildReactionCallRoster, canViewerProceedReaction } from '../lib/reaction-call-roster.js';
 import { buildJoinedPlayerRoster, mergePresenceNamesIntoCache } from '../lib/joined-player-roster.js';
 import { requiresGmFinalizedDifficulty, resolveFinalizedIntentDifficulty } from '../lib/action-roll-difficulty.js';
+import { rollBeatsDefense } from '../lib/duality-roll-outcome.js';
 import {
   DEFAULT_SPOTLIGHT,
   applySpotlightRollAck,
@@ -1981,7 +1982,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     }).catch(err => handleRollTransportError(err, 'Doubled Up roll failed:'));
   };
 
-  /** Set roll.isSuccess from selected target (adversary: difficulty, character: evasion). Used by banner reactions and virtual-weapon onAcknowledge. */
+  /** Set roll.isSuccess from selected target (adversary: difficulty, character: evasion). Critical always succeeds with Hope. */
   const enrichRollWithIsSuccess = (roll, elements) => {
     if (!roll._selectedTargetInstanceId) return;
     const target = elements?.find(e => e.instanceId === roll._selectedTargetInstanceId);
@@ -1999,7 +2000,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     if (roll.dominant != null) {
       effectiveTotal += (roll._prayerAddRollDie?.value ?? 0);
     }
-    roll.isSuccess = effectiveTotal >= defense;
+    roll.isSuccess = rollBeatsDefense(roll, defense, effectiveTotal);
   };
 
   // GM acknowledges a banner: apply all game side-effects, broadcast to other clients via banner-ack.
@@ -2447,6 +2448,12 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     }
     const spotlightQual = qualifiesForSpotlightRoll(roll);
     if (spotlightQual) {
+      if (spotlightQual === 'action') {
+        if (!roll._selectedTargetInstanceId && Array.isArray(roll._selectedTargetInstanceIds) && roll._selectedTargetInstanceIds[0]) {
+          roll._selectedTargetInstanceId = roll._selectedTargetInstanceIds[0];
+        }
+        enrichRollWithIsSuccess(roll, activeElements);
+      }
       const currentSpotlight = spotlight ?? DEFAULT_SPOTLIGHT;
       const nextSpotlight = applySpotlightRollAck(currentSpotlight, roll);
       if (nextSpotlight !== currentSpotlight) onSpotlightChange?.(nextSpotlight);

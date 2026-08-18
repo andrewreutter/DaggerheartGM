@@ -9,6 +9,7 @@ import { postRollSilent } from '../lib/api.js';
 import { parseSubDetails as _parseSubDetails, extractDetailsValues } from '../lib/dice-utils.js';
 import { rangeFtToLabel } from '../lib/map-range.js';
 import { rollShouldUseMapFilteredTargets, rollIsHitMissEligibleAttack } from '../lib/banner-target-roll.js';
+import { rollBeatsDefense } from '../lib/duality-roll-outcome.js';
 import { formatTargetSummary, computeHpLoss } from '../lib/helpers.js';
 import { isAdversaryAttackPartyTarget } from '../lib/companion-attack-targets.js';
 import {
@@ -1632,7 +1633,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
       const pending = sumPendingEvasionBonusFromFeatureState(full);
       if (pending > 0) defense += pending;
     }
-    if (effectiveAttackTotal >= defense) hitCount++;
+    if (rollBeatsDefense(roll, defense, effectiveAttackTotal)) hitCount++;
     else missCount++;
   }
   const showHitMiss =
@@ -1645,10 +1646,10 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
         : [hitCount > 0 && `${hitCount} hit${hitCount > 1 ? 's' : ''}`, missCount > 0 && `${missCount} miss${missCount > 1 ? 'es' : ''}`].filter(Boolean).join(', '))
     : null;
   // Non-attack duality rolls with a difficulty: show the DC immediately, then Success/Failure once resolved.
-  // Critical (Hope/Fear doubles) is always a success per Daggerheart rules.
+  // Critical (matching Hope/Fear) is always a success with Hope.
   const showDcTarget = roll._difficulty != null && hasDuality && !showHitMiss;
   const showSuccessFailure = showDcTarget && resolved;
-  const difficultySuccess = showSuccessFailure && (isCritical || effectiveAttackTotal >= roll._difficulty);
+  const difficultySuccess = showSuccessFailure && rollBeatsDefense(roll, roll._difficulty, effectiveAttackTotal);
   const successFailureLabel = showDcTarget
     ? (showSuccessFailure
         ? `DC ${roll._difficulty} — ${difficultySuccess ? 'Success' : 'Failure'}`

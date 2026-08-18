@@ -15,6 +15,7 @@ import {
   isSpotlightGatedRollMeta,
   assignSpotlightHolder,
   grantSpotlightToCharacter,
+  actionRollPassesSpotlightToGm,
   applySpotlightRollAck,
 } from '../../src/client/lib/spotlight.js';
 
@@ -63,6 +64,21 @@ describe('isSpotlightGatedRollMeta', () => {
   });
 });
 
+describe('actionRollPassesSpotlightToGm', () => {
+  it('is true for Fear, a miss, or a total below DC', () => {
+    expect(actionRollPassesSpotlightToGm({ dominant: 'fear' })).toBe(true);
+    expect(actionRollPassesSpotlightToGm({ dominant: 'hope', isSuccess: false })).toBe(true);
+    expect(actionRollPassesSpotlightToGm({ dominant: 'hope', total: 10, _difficulty: 12 })).toBe(true);
+  });
+
+  it('is false for Critical, a hit, or Hope with no failure signal', () => {
+    expect(actionRollPassesSpotlightToGm({ dominant: 'critical', isSuccess: false })).toBe(false);
+    expect(actionRollPassesSpotlightToGm({ dominant: 'hope', isSuccess: true })).toBe(false);
+    expect(actionRollPassesSpotlightToGm({ dominant: 'hope', total: 16, _difficulty: 12 })).toBe(false);
+    expect(actionRollPassesSpotlightToGm({ dominant: 'hope' })).toBe(false);
+  });
+});
+
 describe('applySpotlightRollAck', () => {
   it('is a no-op (same reference) for non-qualifying rolls', () => {
     const s = { ...DEFAULT_SPOTLIGHT, lastSeenSeq: {} };
@@ -84,18 +100,54 @@ describe('applySpotlightRollAck', () => {
     expect(spotlightCatchUpCount(next, 'pc-1')).toBe(0);
   });
 
-  it('opens the spotlight on Hope and Critical', () => {
+  it('transfers to GM on a failed Hope roll (miss / below DC)', () => {
     const start = assignSpotlightHolder(DEFAULT_SPOTLIGHT, 'character', 'pc-1');
-    const hope = applySpotlightRollAck(start, { dominant: 'hope', _attackerInstanceId: 'pc-1' });
+    const miss = applySpotlightRollAck(start, {
+      dominant: 'hope',
+      _attackerInstanceId: 'pc-1',
+      isSuccess: false,
+    });
+    expect(miss.holderType).toBe('gm');
+    expect(miss.holderInstanceId).toBe(null);
+    expect(miss.lastSeenSeq['pc-1']).toBe(1);
+
+    const belowDc = applySpotlightRollAck(start, {
+      dominant: 'hope',
+      _attackerInstanceId: 'pc-1',
+      total: 11,
+      _difficulty: 15,
+    });
+    expect(belowDc.holderType).toBe('gm');
+  });
+
+  it('opens the spotlight on successful Hope and Critical', () => {
+    const start = assignSpotlightHolder(DEFAULT_SPOTLIGHT, 'character', 'pc-1');
+    const hope = applySpotlightRollAck(start, { dominant: 'hope', _attackerInstanceId: 'pc-1', isSuccess: true });
     expect(hope.holderType).toBe(null);
     expect(hope.holderInstanceId).toBe(null);
     expect(hope.rollSeq).toBe(1);
     expect(hope.lastSeenSeq['pc-1']).toBe(1);
 
+    const hopeDc = applySpotlightRollAck(start, {
+      dominant: 'hope',
+      _attackerInstanceId: 'pc-1',
+      total: 16,
+      _difficulty: 15,
+    });
+    expect(hopeDc.holderType).toBe(null);
+
     const crit = applySpotlightRollAck(start, { dominant: 'critical', _attackerInstanceId: 'pc-1' });
     expect(crit.holderType).toBe(null);
     expect(crit.rollSeq).toBe(1);
     expect(crit.lastSeenSeq['pc-1']).toBe(1);
+
+    const critBelowDc = applySpotlightRollAck(start, {
+      dominant: 'critical',
+      _attackerInstanceId: 'pc-1',
+      total: 8,
+      _difficulty: 15,
+    });
+    expect(critBelowDc.holderType).toBe(null);
   });
 
   it('increments rollSeq on adversary rolls without changing the holder', () => {

@@ -33,6 +33,7 @@ import { computeHpLoss, effectiveEvasion, effectiveThresholds } from './helpers.
 import { applyV2LifecycleMutations } from './table-ops.js';
 import { PENDING_EVASION_BONUS_STATE_KEY } from '../../game-constants.js';
 import { WARDEN_OF_THE_ELEMENTS_SCOPE_KEY } from '../../features-v2/engine/feature-scope-keys.js';
+import { isDualityCritical, rollBeatsDefense } from './duality-roll-outcome.js';
 
 /** Display names for synthetic trait sub-items (matches CharacterDisplay TRAIT_FULL). */
 const TRAIT_FULL_PRETTY = {
@@ -91,7 +92,7 @@ export function enrichTableCharactersWithResolvedGear(activeElements, srdData) {
 
 /**
  * Match GMTableView `enrichRollWithIsSuccess` so `reviewAction` predicates see `roll.isSuccess`
- * after the player picks a target (before GM acknowledges).
+ * after the player picks a target (before GM acknowledges). Critical always succeeds with Hope.
  *
  * @param {object} roll — mutated in place
  * @param {object[]} activeElements
@@ -153,7 +154,7 @@ export function enrichV2RollIsSuccessFromTarget(roll, activeElements, srdData) {
   if (roll.dominant != null) {
     effectiveTotal += (roll._prayerAddRollDie?.value ?? 0);
   }
-  roll.isSuccess = effectiveTotal >= defense;
+  roll.isSuccess = rollBeatsDefense(roll, defense, effectiveTotal);
 }
 
 /**
@@ -517,7 +518,7 @@ export function hydrateV2RollsFromClientRoll(roll) {
   }
 
   let isSuccess = roll.isSuccess;
-  if (typeof isSuccess !== 'boolean' && hasDuality && roll.dominant === 'critical') {
+  if (isDualityCritical(roll)) {
     isSuccess = true;
   }
   const isCritical = roll.dominant === 'critical';

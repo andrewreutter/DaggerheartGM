@@ -232,6 +232,19 @@ describe('v2-action-loop-bridge', () => {
     expect(r.damage.damageType).toBe('physical');
   });
 
+  it('hydrateV2RollsFromClientRoll treats Critical as success even if isSuccess was stamped false', () => {
+    const r = hydrateV2RollsFromClientRoll({
+      dominant: 'critical',
+      isSuccess: false,
+      subItems: [
+        { pre: 'Hope ', input: 'd12', result: '4', post: '' },
+        { pre: 'Fear ', input: 'd12', result: '4', post: '' },
+      ],
+    });
+    expect(r.action.isCritical).toBe(true);
+    expect(r.action.isSuccess).toBe(true);
+  });
+
   it('postTagToEngineDamageType maps phy/mag', () => {
     expect(postTagToEngineDamageType('phy')).toBe('physical');
     expect(postTagToEngineDamageType('mag')).toBe('magic');
@@ -423,6 +436,15 @@ describe('v2-action-loop-bridge', () => {
     const roll = { total: 15, _selectedTargetInstanceId: 'a1' };
     const activeElements = [
       { instanceId: 'a1', elementType: 'adversary', difficulty: 14 },
+    ];
+    enrichV2RollIsSuccessFromTarget(roll, activeElements);
+    expect(roll.isSuccess).toBe(true);
+  });
+
+  it('enrichV2RollIsSuccessFromTarget treats Critical as a hit below difficulty', () => {
+    const roll = { total: 6, dominant: 'critical', _selectedTargetInstanceId: 'a1' };
+    const activeElements = [
+      { instanceId: 'a1', elementType: 'adversary', difficulty: 18 },
     ];
     enrichV2RollIsSuccessFromTarget(roll, activeElements);
     expect(roll.isSuccess).toBe(true);

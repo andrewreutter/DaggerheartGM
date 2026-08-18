@@ -2,6 +2,8 @@
  * GM-called reaction roll marquee: correlate pending sub-rolls with target instance ids.
  */
 
+import { isDualityCritical, rollBeatsDefense } from './duality-roll-outcome.js';
+
 /**
  * @param {object} [opts]
  * @param {string[]} [opts.targetInstanceIds]
@@ -32,7 +34,7 @@ export function buildReactionCallRoster({
 
 /**
  * Compact Success / Failure / Critical label for a correlated reaction sub-roll.
- * Mirrors ResultBanner difficulty math: critical always succeeds; otherwise total >= DC.
+ * Mirrors ResultBanner difficulty math: critical always succeeds with Hope; otherwise total >= DC.
  *
  * @param {object | null} subRoll
  * @param {number | null} [fallbackDifficulty]
@@ -40,15 +42,14 @@ export function buildReactionCallRoster({
  */
 export function formatReactionCallResultBadge(subRoll, fallbackDifficulty) {
   if (!subRoll || typeof subRoll.total !== 'number') return null;
-  const isCritical = subRoll.dominant === 'critical';
   const dc = subRoll._difficulty ?? fallbackDifficulty;
-  if (isCritical) {
+  if (isDualityCritical(subRoll)) {
     return { total: subRoll.total, label: '✦ Critical!', success: true };
   }
   if (dc == null) {
     return { total: subRoll.total, label: String(subRoll.total), success: null };
   }
-  const success = subRoll.total >= dc;
+  const success = rollBeatsDefense(subRoll, dc, subRoll.total);
   return { total: subRoll.total, label: success ? 'Success' : 'Failure', success };
 }
 
