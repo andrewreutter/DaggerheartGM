@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { MapPinned, Plus, Users } from 'lucide-react';
 import { LibraryView } from './LibraryView.jsx';
 import { Footer } from './Footer.jsx';
@@ -71,6 +71,7 @@ export function HomeAuthenticated({
   myTables = [],
   myRooms = [],
   publicTables = [],
+  publicLobbyGeneration = 0,
   onCreateTable,
   navigate,
   data,
@@ -96,7 +97,9 @@ export function HomeAuthenticated({
 }) {
   const [publicSearch, setPublicSearch] = useState('');
   const [publicSearchResults, setPublicSearchResults] = useState(null);
+  const prevPublicLobbyGenerationRef = useRef(publicLobbyGeneration);
 
+  // Debounced search on user input
   useEffect(() => {
     const q = publicSearch.trim();
     if (!q) {
@@ -116,6 +119,21 @@ export function HomeAuthenticated({
       clearTimeout(t);
     };
   }, [publicSearch]);
+
+  // When the SSE bumps publicLobbyGeneration, re-run the active search immediately.
+  useEffect(() => {
+    if (publicLobbyGeneration === prevPublicLobbyGenerationRef.current) return;
+    prevPublicLobbyGenerationRef.current = publicLobbyGeneration;
+    const q = publicSearch.trim();
+    if (!q) return;
+    let cancelled = false;
+    fetchPublicTables({ search: q }).then((rows) => {
+      if (!cancelled) setPublicSearchResults(Array.isArray(rows) ? rows : []);
+    }).catch(() => {
+      if (!cancelled) setPublicSearchResults([]);
+    });
+    return () => { cancelled = true; };
+  }, [publicLobbyGeneration, publicSearch]);
 
   const publicList = publicSearch.trim()
     ? (publicSearchResults || [])

@@ -131,4 +131,14 @@ export async function authenticate(page) {
       body: JSON.stringify([]),
     });
   });
+
+  // /api/home/stream — quiet SSE (heartbeat only) so existing homepage mocks are not overwritten
+  // and real-time home-lobby updates don't fire unexpected events during tests.
+  await page.route('/api/home/stream*', (route) => {
+    route.fulfill({
+      contentType: 'text/event-stream',
+      headers: { 'Cache-Control': 'no-cache', 'Connection': 'keep-alive' },
+      body: ':heartbeat\n\n',
+    });
+  });
 }

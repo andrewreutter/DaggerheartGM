@@ -37,9 +37,23 @@ export function toTableCardDto(row, opts = {}) {
   const roster = summarizeTableCharacterRoster(data);
   const rawName = typeof data.tableName === 'string' ? data.tableName.trim() : '';
   const name = rawName || 'Table';
-  const previewUrl = typeof data.tablePreviewUrl === 'string' && data.tablePreviewUrl.trim()
+  const rawPreviewUrl = typeof data.tablePreviewUrl === 'string' && data.tablePreviewUrl.trim()
     ? data.tablePreviewUrl.trim()
     : null;
+  // Append ?v=<epoch> so the browser re-fetches the upserted PNG when the preview refreshes.
+  let previewUrl = rawPreviewUrl;
+  if (rawPreviewUrl && data.tablePreviewAt != null) {
+    const at = Number(data.tablePreviewAt);
+    if (Number.isFinite(at) && at > 0) {
+      try {
+        const u = new URL(rawPreviewUrl);
+        u.searchParams.set('v', String(at));
+        previewUrl = u.toString();
+      } catch {
+        previewUrl = `${rawPreviewUrl}${rawPreviewUrl.includes('?') ? '&' : '?'}v=${at}`;
+      }
+    }
+  }
   const gmName = typeof data.gmDisplayName === 'string' ? data.gmDisplayName.trim() : '';
   const id = row.id;
   const base = {

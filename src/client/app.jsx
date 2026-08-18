@@ -227,6 +227,9 @@ function App() {
   const [myTables, setMyTables] = useState([]); // [{ id, name, characterCount, characterNames, previewUrl }]
   const [tableNavAccess, setTableNavAccess] = useState({});
   const [publicTables, setPublicTables] = useState([]);
+  // Bumped each time the home SSE pushes a new home_public snapshot; HomeAuthenticated watches
+  // this as a dep to re-run a live search when the default top-3 list updates.
+  const [publicLobbyGeneration, setPublicLobbyGeneration] = useState(0);
   const [connectedPlayers, setConnectedPlayers] = useState([]); // [{ uid, name, email, photoURL }]
   const [playerNames, setPlayerNames] = useState({}); // { [email_lowercase]: displayName } — persisted in table_state
   // pendingBanners: authoritative list from the 'banners' subscription channel
@@ -663,6 +666,43 @@ function App() {
       }
     })();
   }, [route.view, route.token, user, navigate]);
+
+  // Home SSE: keep Owner / Player / Public card lists live while the homepage is open.
+  // Opens only when the user is signed in and route.view === 'home'.
+  useEffect(() => {
+    if (!user || route.view !== 'home') return;
+    let es;
+    let reconnectTimer;
+    const connect = async () => {
+      const token = await getAuthToken();
+      if (!token || !userRef.current) return;
+      es = new EventSource(`/api/home/stream?token=${encodeURIComponent(token)}`);
+      es.addEventListener('home_owned', (e) => {
+        try {
+          const tables = JSON.parse(e.data);
+          if (Array.isArray(tables)) setMyTables(tables);
+        } catch { /* ignore */ }
+      });
+      es.addEventListener('home_invited', (e) => {
+        try {
+          const rooms = JSON.parse(e.data);
+          if (Array.isArray(rooms)) setMyRooms(rooms);
+        } catch { /* ignore */ }
+      });
+      es.addEventListener('home_public', (e) => {
+        try {
+          const tables = JSON.parse(e.data);
+          if (Array.isArray(tables)) {
+            setPublicTables(tables);
+            setPublicLobbyGeneration((g) => g + 1);
+          }
+        } catch { /* ignore */ }
+      });
+      es.onerror = () => { es.close(); reconnectTimer = setTimeout(connect, 3000); };
+    };
+    connect();
+    return () => { es?.close(); if (reconnectTimer) clearTimeout(reconnectTimer); };
+  }, [user?.uid, route.view]);
 
   // GM can preview the table as a specific player (non-persisted; cleared on reload)
   const isPreviewMode = !isPlayer && !isSpectator && !!previewAsPlayerEmail && route.view === 'table';
@@ -2453,6 +2493,7 @@ function App() {
             myTables={myTables}
             myRooms={myRooms}
             publicTables={publicTables}
+            publicLobbyGeneration={publicLobbyGeneration}
             onCreateTable={handleCreateTable}
             navigate={navigate}
             data={data}

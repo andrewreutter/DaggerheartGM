@@ -19,6 +19,7 @@ import { COLLECTION_NAMES as SRD_COLLECTION_NAMES } from './src/srd/parser.js';
 import { redactTableStateForPlayerAudience, redactTableStateForSpectatorAudience } from './src/client/lib/session-countdowns.js';
 import { classifyTableViewer, nextTableIsPublic } from './src/client/lib/table-character-roster.js';
 import { scheduleTablePreviewRefresh } from './src/server/table-preview.js';
+import { shouldNotifyHomeLobby, notifyHomeLobby } from './src/server/home-lobby.js';
 import { createEmptyRoom, ensureRoomAudience, buildPresencePayload, buildAudienceAttendees, forEachRoomSseClient } from './src/server/room-broadcast.js';
 import { filterFeatureCatalog, getFeatureCatalogById } from './src/v2-feature-catalog.js';
 import { unifiedListConfig } from './src/unified-list-config.js';
@@ -985,12 +986,18 @@ function schedulePreviewAfterTableOp(tableId, ownerUid) {
       const row = await getTableStateById(APP_ID, tableId);
       return row?.data || null;
     },
-    async (png) => {
+    async (png, stateData) => {
       const url = await uploadBufferToMapStorage(ownerUid, png, 'image/png', 'table-previews', {
         fileName: `${tableId}.png`,
         upsert: true,
       });
-      if (url) await patchTablePreviewUrl(APP_ID, tableId, url);
+      if (url) {
+        await patchTablePreviewUrl(APP_ID, tableId, url);
+        // Notify home-lobby subscribers so preview URLs update on the homepage.
+        const playerEmails = Array.isArray(stateData?.playerEmails) ? stateData.playerEmails : [];
+        const isPublic = stateData?.isPublic === true;
+        notifyHomeLobby(subscriptionManager, { ownerUid, playerEmails, notifyPublic: isPublic });
+      }
     },
   );
 }
@@ -1361,6 +1368,13 @@ async function applyOpToTableState(tableId, op, opts = {}) {
     });
     subscriptionManager.notifyChange('table_state', tableId);
     schedulePreviewAfterTableOp(tableId, userId);
+    // Notify home-lobby subscribers when card-visible fields change (name, characters, etc.).
+    if (shouldNotifyHomeLobby({ op, prevData: state, nextData: newState, prevPublic: row.isPublic === true, nextPublic })) {
+      const playerEmails = Array.isArray(newState.playerEmails)
+        ? newState.playerEmails
+        : (Array.isArray(state.playerEmails) ? state.playerEmails : []);
+      notifyHomeLobby(subscriptionManager, { ownerUid: userId, playerEmails, notifyPublic: nextPublic || row.isPublic === true });
+    }
     return newState;
   });
   roomOpLocks.set(tableId, next.catch(() => {}));
@@ -2872,6 +2886,8 @@ app.post('/api/my-tables', requireAuth, async (req, res) => {
     const tableId = randomUUID();
     const emptyState = { elements: [], playerEmails: [], gmDisplayName: '', tableName: name, top: { sessionStarted: false } };
     await upsertItem(APP_ID, req.uid, 'table_state', tableId, emptyState, false);
+    // Notify home-lobby so the Owner column updates immediately.
+    notifyHomeLobby(subscriptionManager, { ownerUid: req.uid, playerEmails: [], notifyPublic: false });
     res.status(201).json({ id: tableId, name });
   } catch (err) {
     console.error('POST /api/my-tables error:', err);
@@ -2894,6 +2910,7 @@ app.delete('/api/my-tables/:id', requireAuth, async (req, res) => {
     // Notify connected SSE clients before deletion so they can gracefully handle disconnect.
     subscriptionManager.notifyChange('table_state', tableId);
 
+    const deletedState = row.data || {};
     await deleteItem(APP_ID, req.uid, 'table_state', tableId);
 
     // Free character placement records for this table (telemetry cleanup).
@@ -2908,6 +2925,10 @@ app.delete('/api/my-tables/:id', requireAuth, async (req, res) => {
     } catch (err) {
       console.error('[invite] deleteTableInviteLinksForTable failed:', err.message);
     }
+
+    // Notify home-lobby so the Owner and Player columns update immediately.
+    const deletedEmails = Array.isArray(deletedState.playerEmails) ? deletedState.playerEmails : [];
+    notifyHomeLobby(subscriptionManager, { ownerUid: req.uid, playerEmails: deletedEmails, notifyPublic: row.isPublic === true });
 
     res.json({ ok: true });
   } catch (err) {
@@ -3308,6 +3329,31 @@ async function handleCampaignPassPurchase(session, eventId) {
   console.log(`[stripe] Campaign Pass fulfilled: table=${targetTableId} +${months}mo $${amountCents / 100} by=${purchasedByUserId}`);
   return { applied: true };
 }
+
+// GET /api/home/stream — Homepage SSE: pushes card DTO snapshots for Owner/Player/Public columns
+// Subscribed while route.view === 'home'. Auth via token query param (same as other SSE routes).
+app.get('/api/home/stream', async (req, res) => {
+  const user = await verifyTokenFromQuery(req, res);
+  if (!user) return;
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  req.socket.setTimeout(0);
+  res.flushHeaders();
+
+  const emailKey = typeof user.email === 'string' ? user.email.trim().toLowerCase() : '';
+  subscriptionManager.subscribe('home_owned', user.uid, res);
+  if (emailKey) subscriptionManager.subscribe('home_invited', emailKey, res);
+  subscriptionManager.subscribe('home_public', 'all', res);
+
+  const heartbeat = setInterval(() => { res.write(':heartbeat\n\n'); res.flush?.(); }, 30000);
+  req.on('close', () => {
+    clearInterval(heartbeat);
+    subscriptionManager.unsubscribe('home_owned', user.uid, res);
+    if (emailKey) subscriptionManager.unsubscribe('home_invited', emailKey, res);
+    subscriptionManager.unsubscribe('home_public', 'all', res);
+  });
+});
 
 // GET /api/room/my/players — GM SSE: receive player presence, table state, banners, and dice rolls
 app.get('/api/room/my/players', async (req, res) => {

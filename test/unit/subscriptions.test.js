@@ -19,6 +19,11 @@ vi.mock('../../src/db.js', () => ({
   getPendingBanners: vi.fn(),
   getResolvedTableState: vi.fn(),
   invalidateCharacterLibraryCache: vi.fn(),
+  listTableStates: vi.fn(),
+  getTableStatesByPlayerEmail: vi.fn(),
+  listPublicTables: vi.fn(),
+  toTableCardDto: vi.fn((row) => ({ id: row?.id, name: row?.data?.tableName || 'Table' })),
+  summarizeTableCharacterRoster: vi.fn(() => ({ count: 0, names: [] })),
 }));
 
 // Mock session-countdowns so we can assert player-audience redaction without
@@ -28,7 +33,7 @@ vi.mock('../../src/client/lib/session-countdowns.js', () => ({
   redactTableStateForSpectatorAudience: vi.fn((snapshot) => ({ ...snapshot, _redactedForSpectator: true })),
 }));
 
-import { getPendingBanners, getResolvedTableState, invalidateCharacterLibraryCache } from '../../src/db.js';
+import { getPendingBanners, getResolvedTableState, invalidateCharacterLibraryCache, listTableStates, getTableStatesByPlayerEmail, listPublicTables } from '../../src/db.js';
 import { redactTableStateForPlayerAudience, redactTableStateForSpectatorAudience } from '../../src/client/lib/session-countdowns.js';
 
 // Import the module. Because it's a singleton, import once and reset state
@@ -476,3 +481,90 @@ describe('buildSseEventString', () => {
 // Vitest doesn't automatically reset module-level mutable state; this is a no-op
 // placeholder so the describe block can reset the flag if needed.
 function isFirstBannersSnapshotRef_reset() {}
+
+// ── Home-lobby channels ────────────────────────────────────────────────────
+
+describe('home-lobby channels', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    manager._appId = 'test-app';
+    manager._subs = new Map();
+    manager._pending = new Map();
+    manager._lastSentPayload = new WeakMap();
+    listTableStates.mockReset();
+    getTableStatesByPlayerEmail.mockReset();
+    listPublicTables.mockReset();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('home_owned subscribe calls listTableStates and pushes an SSE snapshot', async () => {
+    const tables = [{ id: 't1', name: 'My Table' }];
+    listTableStates.mockResolvedValue([{ id: 't1', data: { tableName: 'My Table' } }]);
+
+    const res = makeFakeRes();
+    manager.subscribe('home_owned', 'uid-gm', res);
+    await vi.runAllTimersAsync();
+    await Promise.resolve();
+
+    expect(listTableStates).toHaveBeenCalledWith('test-app', 'uid-gm');
+    expect(res.writes.length).toBe(1);
+    expect(res.writes[0]).toContain('event: home_owned');
+  });
+
+  it('home_invited subscribe calls getTableStatesByPlayerEmail', async () => {
+    getTableStatesByPlayerEmail.mockResolvedValue([]);
+
+    const res = makeFakeRes();
+    manager.subscribe('home_invited', 'alice@example.com', res);
+    await vi.runAllTimersAsync();
+    await Promise.resolve();
+
+    expect(getTableStatesByPlayerEmail).toHaveBeenCalledWith('test-app', 'alice@example.com');
+    expect(res.writes.length).toBe(1);
+    expect(res.writes[0]).toContain('event: home_invited');
+  });
+
+  it('home_public subscribe calls listPublicTables', async () => {
+    listPublicTables.mockResolvedValue([]);
+
+    const res = makeFakeRes();
+    manager.subscribe('home_public', 'all', res);
+    await vi.runAllTimersAsync();
+    await Promise.resolve();
+
+    expect(listPublicTables).toHaveBeenCalledWith('test-app', { limit: 3 });
+    expect(res.writes.length).toBe(1);
+    expect(res.writes[0]).toContain('event: home_public');
+  });
+
+  it('_handleHomeLobbyChanged fans out to owner, emails, and public', () => {
+    const notifySpy = vi.spyOn(manager, 'notifyChange');
+    manager._handleHomeLobbyChanged(JSON.stringify({
+      owner_uid: 'uid-gm',
+      player_emails: ['alice@test.com', 'bob@test.com'],
+      notify_public: true,
+    }));
+    expect(notifySpy).toHaveBeenCalledWith('home_owned', 'uid-gm');
+    expect(notifySpy).toHaveBeenCalledWith('home_invited', 'alice@test.com');
+    expect(notifySpy).toHaveBeenCalledWith('home_invited', 'bob@test.com');
+    expect(notifySpy).toHaveBeenCalledWith('home_public', 'all');
+    notifySpy.mockRestore();
+  });
+
+  it('_handleHomeLobbyChanged does not notify home_public when notify_public is false', () => {
+    const notifySpy = vi.spyOn(manager, 'notifyChange');
+    manager._handleHomeLobbyChanged(JSON.stringify({
+      owner_uid: 'uid-gm',
+      player_emails: [],
+      notify_public: false,
+    }));
+    expect(notifySpy).not.toHaveBeenCalledWith('home_public', 'all');
+    notifySpy.mockRestore();
+  });
+
+  it('_handleHomeLobbyChanged is robust against malformed JSON', () => {
+    expect(() => manager._handleHomeLobbyChanged('not-json')).not.toThrow();
+  });
+});

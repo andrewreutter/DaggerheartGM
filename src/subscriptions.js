@@ -18,7 +18,7 @@
  */
 
 import pg from 'pg';
-import { getPendingBanners, getResolvedTableState, invalidateCharacterLibraryCache } from './db.js';
+import { getPendingBanners, getResolvedTableState, invalidateCharacterLibraryCache, listTableStates, getTableStatesByPlayerEmail, listPublicTables, toTableCardDto } from './db.js';
 import { redactTableStateForPlayerAudience, redactTableStateForSpectatorAudience } from './client/lib/session-countdowns.js';
 
 const { Client } = pg;
@@ -32,6 +32,19 @@ const DEBOUNCE_MS = 50;
 const CHANNEL_QUERIES = {
   banners: (appId, key) => getPendingBanners(appId, key),
   table_state: (appId, key) => getResolvedTableState(appId, key),
+  // Home-lobby channels — push card DTO snapshots to homepage subscribers
+  home_owned: async (appId, ownerUid) => {
+    const rows = await listTableStates(appId, ownerUid);
+    return rows.map((r) => toTableCardDto(r));
+  },
+  home_invited: async (appId, email) => {
+    const rows = await getTableStatesByPlayerEmail(appId, email);
+    return rows.map((r) => toTableCardDto(r, { tableIdKey: 'tableId' }));
+  },
+  home_public: async (appId, _key) => {
+    const rows = await listPublicTables(appId, { limit: 3 });
+    return rows.map((r) => toTableCardDto(r));
+  },
 };
 
 /** Maps a Postgres NOTIFY channel to the subscription channel name. */
@@ -39,6 +52,13 @@ const NOTIFY_TO_CHANNEL = {
   dice_rolls_changed: 'banners',
   table_state_changed: 'table_state',
 };
+
+/**
+ * Postgres NOTIFY channel fired by `notifyHomeLobby` on any home-lobby–affecting table write.
+ * Payload: `{ owner_uid, player_emails, notify_public }`.
+ * Handled specially to fan out to multiple subscription keys.
+ */
+const HOME_LOBBY_NOTIFY_CHANNEL = 'home_lobby_changed';
 
 /**
  * Postgres NOTIFY channel fired whenever a `characters` library row changes (any collection
@@ -111,6 +131,10 @@ class SubscriptionManager {
           this._handleCharacterItemChanged(msg.payload);
           return;
         }
+        if (msg.channel === HOME_LOBBY_NOTIFY_CHANNEL) {
+          this._handleHomeLobbyChanged(msg.payload);
+          return;
+        }
         const channelName = NOTIFY_TO_CHANNEL[msg.channel];
         if (!channelName) return;
         try {
@@ -139,6 +163,7 @@ class SubscriptionManager {
         await client.query(`LISTEN ${notifyChannel}`);
       }
       await client.query(`LISTEN ${CHARACTER_CHANGED_NOTIFY_CHANNEL}`);
+      await client.query(`LISTEN ${HOME_LOBBY_NOTIFY_CHANNEL}`);
 
       this._client = client;
       console.log('[subscriptions] LISTEN client connected');
@@ -237,6 +262,25 @@ class SubscriptionManager {
     const keyMap = this._subs.get('table_state');
     if (!keyMap) return;
     for (const key of keyMap.keys()) this.notifyChange('table_state', key);
+  }
+
+  /**
+   * Handle a `home_lobby_changed` NOTIFY. Fan out to owner, each invited email, and optionally
+   * the public `all` key.
+   * Payload: `{ owner_uid?, player_emails?: string[], notify_public?: boolean }`.
+   */
+  _handleHomeLobbyChanged(rawPayload) {
+    try {
+      const payload = JSON.parse(rawPayload || '{}');
+      if (payload.owner_uid) this.notifyChange('home_owned', payload.owner_uid);
+      for (const email of (payload.player_emails || [])) {
+        const key = typeof email === 'string' ? email.trim().toLowerCase() : '';
+        if (key) this.notifyChange('home_invited', key);
+      }
+      if (payload.notify_public) this.notifyChange('home_public', 'all');
+    } catch {
+      // malformed payload — ignore
+    }
   }
 
   /**

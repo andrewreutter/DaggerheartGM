@@ -1280,17 +1280,21 @@ export async function listPublicTables(appId, {
 }
 
 /**
- * Write `data.tablePreviewUrl` without going through applyOpToTableState (no preview reschedule).
- * Does not change `is_public`.
+ * Write `data.tablePreviewUrl` + `data.tablePreviewAt` (epoch ms) without going through
+ * applyOpToTableState (no preview reschedule). Does not change `is_public`.
  */
 export async function patchTablePreviewUrl(appId, tableId, url) {
   if (!tableId) return;
   const db = getPool();
+  const at = Date.now();
   await db.query(
     `UPDATE items
-     SET data = jsonb_set(COALESCE(data, '{}'::jsonb), '{tablePreviewUrl}', to_jsonb($3::text), true)
+     SET data = jsonb_set(
+       jsonb_set(COALESCE(data, '{}'::jsonb), '{tablePreviewUrl}', to_jsonb($3::text), true),
+       '{tablePreviewAt}', to_jsonb($4::bigint), true
+     )
      WHERE app_id = $1 AND collection = 'table_state' AND id = $2`,
-    [appId, tableId, url],
+    [appId, tableId, url, at],
   );
 }
 
