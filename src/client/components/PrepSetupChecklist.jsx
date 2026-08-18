@@ -32,7 +32,7 @@ body[data-prep-highlight="play"]   [data-prep-target="play"]   { animation:prep-
 `;
 
 const CARD_SHELL =
-  'w-full max-w-[min(420px,calc(100vw-2rem))] rounded-xl border-2 px-5 py-3 shadow-2xl backdrop-blur-sm text-left flex items-start gap-3 cursor-default';
+  'w-full max-w-[min(420px,calc(100vw-2rem))] rounded-xl border-2 px-5 py-3 shadow-2xl bg-dh-canvas/95 backdrop-blur-md text-left flex items-start gap-3 cursor-default';
 
 const CHECK_MS = 480;
 const FADE_MS = 900;
@@ -45,7 +45,7 @@ const STEP_META = {
       'Load an existing Scene or build a new one with the + Add buttons in the Encounter panel.',
       'Paste, drop, or upload a map image, or leave it empty for theater of the mind.',
     ],
-      className: 'text-violet-200 border-violet-500/40 bg-violet-950/40',
+    className: 'text-violet-100 border-violet-400/80',
     checkboxClass: 'text-violet-300',
     highlight: 'build',
   },
@@ -56,8 +56,8 @@ const STEP_META = {
       'Open Players and generate an invite link to share with your group.',
       'Ask them to add characters to the table, or add characters yourself and assign them to players later.',
     ],
-    className: 'text-yellow-100 border-yellow-400/35 bg-yellow-400/10',
-    checkboxClass: 'text-yellow-200/90',
+    className: 'text-yellow-100 border-yellow-400/80',
+    checkboxClass: 'text-yellow-300',
     highlight: 'invite',
   },
   play: {
@@ -67,7 +67,7 @@ const STEP_META = {
       "You're in prep mode — you can still adjust the map, notes, and Fear.",
       'When you\'re ready, click Start Session in the Encounter panel to roll, use features, and apply damage.',
     ],
-    className: 'text-emerald-300 border-emerald-800/60 bg-emerald-950/40',
+    className: 'text-emerald-200 border-emerald-400/80',
     checkboxClass: 'text-emerald-400',
     highlight: 'play',
   },

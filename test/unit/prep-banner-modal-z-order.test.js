@@ -46,12 +46,19 @@ describe('prep banner vs modal z-order', () => {
     expect(app).toMatch(/<ChooseSpotlightBanner \/>/);
   });
 
+  it('PrepSetupChecklist cards use an opaque dark fill so they stay readable over a light map', () => {
+    const src = readFileSync(join(root, 'src/client/components/PrepSetupChecklist.jsx'), 'utf8');
+    expect(src).toMatch(/bg-dh-canvas\/95/);
+    expect(src).not.toMatch(/bg-yellow-400\/1[05]/);
+    expect(src).not.toMatch(/bg-(violet|emerald|yellow)-\d+\/[1-4]\d/);
+  });
+
   it('PrepSetupChecklist unmounts when leaving the table view (body portal)', () => {
     // Game Table stays mounted with display:none; the checklist portals to document.body,
     // so it must be gated on route.view === 'table' or cards linger over Library/Home.
     const gmTable = readFileSync(join(root, 'src/client/components/GMTableView.jsx'), 'utf8');
     expect(gmTable).toMatch(
-      /!isPlayer && route\?\.view === ['"]table['"] && \(\s*<PrepSetupChecklist/,
+      /!isPlayer && !isSpectator && route\?\.view === ['"]table['"] && \(\s*<PrepSetupChecklist/,
     );
     const checklist = readFileSync(join(root, 'src/client/components/PrepSetupChecklist.jsx'), 'utf8');
     expect(checklist).toMatch(/createPortal\(/);
