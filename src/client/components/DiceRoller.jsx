@@ -8,7 +8,13 @@ import { SHORT_REST_MOVES, LONG_REST_MOVES, getRestMoveDefinition } from '../lib
 import { postRollSilent } from '../lib/api.js';
 import { parseSubDetails as _parseSubDetails, extractDetailsValues } from '../lib/dice-utils.js';
 import { rangeFtToLabel } from '../lib/map-range.js';
-import { rollShouldUseMapFilteredTargets, rollIsHitMissEligibleAttack } from '../lib/banner-target-roll.js';
+import {
+  rollShouldUseMapFilteredTargets,
+  rollIsHitMissEligibleAttack,
+  classifyAttackAgainstTarget,
+  shouldApplyDamageOnAcknowledge,
+  countAttackHitsAndMisses,
+} from '../lib/banner-target-roll.js';
 import { rollBeatsDefense } from '../lib/duality-roll-outcome.js';
 import { formatTargetSummary, computeHpLoss } from '../lib/helpers.js';
 import { isAdversaryAttackPartyTarget } from '../lib/companion-attack-targets.js';
@@ -1621,21 +1627,19 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
   const effectiveAttackTotal = hasDuality
     ? (total + (selectedAddRollDie?.value ?? 0))
     : genericTotal;
-  let hitCount = 0;
-  let missCount = 0;
-  for (const id of selectedTargetIds) {
-    const target = filteredTargets.find(t => t.instanceId === id);
-    if (!target) continue;
-    let defense = target.type === 'adversary' ? target.difficulty : target.evasion;
-    if (defense == null) continue;
-    if (target.type === 'character') {
-      const full = tableCharacters.find((c) => c.instanceId === id) || target;
-      const pending = sumPendingEvasionBonusFromFeatureState(full);
-      if (pending > 0) defense += pending;
-    }
-    if (rollBeatsDefense(roll, defense, effectiveAttackTotal)) hitCount++;
-    else missCount++;
-  }
+  const isLockedOnAutoSuccess = roll._rollDbId != null && lockedOnAutoSuccessRollDbIds instanceof Set && lockedOnAutoSuccessRollDbIds.has(roll._rollDbId);
+  const attackOutcomeOpts = {
+    effectiveTotal: effectiveAttackTotal,
+    tableCharacters,
+    getPendingEvasionBonus: sumPendingEvasionBonusFromFeatureState,
+    forceHit: isLockedOnAutoSuccess,
+  };
+  const selectedOutcomeTargets = selectedTargetIds
+    .map((id) => filteredTargets.find((t) => t.instanceId === id))
+    .filter(Boolean);
+  const { hitCount, missCount } = countAttackHitsAndMisses(roll, selectedOutcomeTargets, attackOutcomeOpts);
+  const selectedAllMiss = selectedOutcomeTargets.length > 0
+    && selectedOutcomeTargets.every((t) => classifyAttackAgainstTarget(roll, t, attackOutcomeOpts) === 'miss');
   const showHitMiss =
     resolved &&
     (hitCount + missCount) > 0 &&
@@ -1660,7 +1664,6 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
   const resultFailure = showHitMiss ? (hitCount === 0 && missCount > 0) : (showSuccessFailure && !difficultySuccess);
   const resultMixed = showHitMiss && hitCount > 0 && missCount > 0;
   const resultLabelClass = resultSuccess ? 'text-emerald-400' : resultFailure ? 'text-red-400' : resultMixed ? 'text-orange-400' : '';
-  const isLockedOnAutoSuccess = roll._rollDbId != null && lockedOnAutoSuccessRollDbIds instanceof Set && lockedOnAutoSuccessRollDbIds.has(roll._rollDbId);
 
   const handleResolveClick = !resolved && onResolveInstantly
     ? (e) => { e.stopPropagation(); onResolveInstantly(); }
@@ -2610,14 +2613,14 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                         <>
                           {!isPlayer && (
                             <>
-                              <Tooltip label={v2MoveBlocksAck ? (v2MoveAckTooltip || '') : selectedDamageTargetIds.length === 0 ? 'Select at least one target' : holdThemOffActive && selectedDamageTargetIds.length >= 2 ? 'Acknowledge and apply damage (3 Hope)' : 'Acknowledge and apply damage'}>
+                              <Tooltip label={v2MoveBlocksAck ? (v2MoveAckTooltip || '') : selectedDamageTargetIds.length === 0 ? 'Select at least one target' : selectedAllMiss ? 'Acknowledge without applying damage (miss)' : holdThemOffActive && selectedDamageTargetIds.length >= 2 ? (missCount > 0 ? 'Acknowledge and apply damage to hits (3 Hope)' : 'Acknowledge and apply damage (3 Hope)') : missCount > 0 ? 'Acknowledge and apply damage to hits' : 'Acknowledge and apply damage'}>
                                 <button
                                   onClick={async () => {
                                     const dmgType = dmg?.type || '';
                                     if (selectedDamageTargetIds.length > 0 && hasDamage && onApplyDamage) {
                                       for (const id of selectedDamageTargetIds) {
                                         const target = filteredTargets.find(t => t.instanceId === id);
-                                        if (target) {
+                                        if (target && shouldApplyDamageOnAcknowledge(roll, target, attackOutcomeOpts)) {
                                           const damageModifiers = [];
                                           await onApplyDamage({ ...target, useArmor: !!useArmorByTargetId[id], damageModifiers, useImpenetrable: !!useImpenetrableByTargetId[id] }, baseDamage, tags, roll, dmgType);
                                         }
@@ -2659,41 +2662,42 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                         <>
                           {!isPlayer && (
                             <>
-                              <Tooltip label={v2MoveBlocksAck ? (v2MoveAckTooltip || '') : filteredTargets.length > 0 && !selectedDamageTargetId ? 'Select a target first' : 'Acknowledge and apply damage to selected target'}>
+                              <Tooltip label={v2MoveBlocksAck ? (v2MoveAckTooltip || '') : filteredTargets.length > 0 && !selectedDamageTargetId ? 'Select a target first' : selectedAllMiss ? 'Acknowledge without applying damage (miss)' : 'Acknowledge and apply damage to selected target'}>
                                 <button
                                   onClick={async () => {
-                                    let d8Extra = 0;
                                     let alreadyAcked = false;
-                                    if (hasDamage && roll._wingsOfLightAddD8 && onGetWingsD8Extra) {
+                                    const selectedTarget = selectedDamageTargetId
+                                      ? filteredTargets.find(t => t.instanceId === selectedDamageTargetId)
+                                      : null;
+                                    const applyDamage = !!(selectedTarget && hasDamage && onApplyDamage
+                                      && shouldApplyDamageOnAcknowledge(roll, selectedTarget, attackOutcomeOpts));
+                                    let d8Extra = 0;
+                                    if (applyDamage && roll._wingsOfLightAddD8 && onGetWingsD8Extra) {
                                       d8Extra = roll._wingsOfLightD8Result ?? (await onGetWingsD8Extra(roll)) ?? 0;
                                       if (roll._wingsOfLightD8Result == null && d8Extra > 0) alreadyAcked = true;
                                     }
                                     const dmgReduction = selectedDmgReduceDie?.value ?? 0;
                                     const totalDamage = Math.max(0, (hasDamage ? baseDamage : 0) + d8Extra - dmgReduction);
-                                    if (selectedDamageTargetId && hasDamage && onApplyDamage) {
-                                      const selectedTarget = filteredTargets.find(t => t.instanceId === selectedDamageTargetId);
-                                      if (selectedTarget) {
-                                        const dmgType = dmg?.type || '';
-                                        const effectiveTargetId = selectedDamageTargetId || roll._selectedTargetInstanceId;
-                                        const damageModifiers = [];
-                                        await onApplyDamage({ ...selectedTarget, useArmor: useArmorForSelected, damageModifiers, useImpenetrable: useImpenetrableForSelected }, totalDamage, tags, roll, dmgType);
-                                      }
+                                    if (applyDamage) {
+                                      const dmgType = dmg?.type || '';
+                                      const damageModifiers = [];
+                                      await onApplyDamage({ ...selectedTarget, useArmor: useArmorForSelected, damageModifiers, useImpenetrable: useImpenetrableForSelected }, totalDamage, tags, roll, dmgType);
                                     }
                                     // Katari Retracting Claws: no damage line; V2 virtual weapon has no Phase-1 onAcknowledge — `_featureNeedsTarget` is false, so GMTableView virtual-weapon ack never runs. Apply Vulnerable on successful hit here.
                                     if (
                                       !hasDamage &&
                                       onApplyVulnerable &&
-                                      selectedDamageTargetId &&
+                                      selectedTarget &&
                                       roll._featureName === 'Retracting Claws' &&
-                                      hitCount > 0 &&
-                                      missCount === 0
+                                      classifyAttackAgainstTarget(roll, selectedTarget, attackOutcomeOpts) === 'hit'
                                     ) {
-                                      const vulnTarget = filteredTargets.find(t => t.instanceId === selectedDamageTargetId);
-                                      if (vulnTarget?.type === 'adversary') {
-                                        onApplyVulnerable(vulnTarget);
+                                      if (selectedTarget.type === 'adversary') {
+                                        onApplyVulnerable(selectedTarget);
                                       }
                                     }
-                                    if (concussiveKnockActive && onConcussiveKnock && selectedDamageTargetId) onConcussiveKnock(roll, selectedDamageTargetId);
+                                    if (concussiveKnockActive && onConcussiveKnock && selectedDamageTargetId && selectedTarget && shouldApplyDamageOnAcknowledge(roll, selectedTarget, attackOutcomeOpts)) {
+                                      onConcussiveKnock(roll, selectedDamageTargetId);
+                                    }
                                     const ackOpts = {};
                                     if (alreadyAcked) ackOpts.alreadyAcked = true;
                                     onAcknowledge?.(Object.keys(ackOpts).length > 0 ? ackOpts : undefined);

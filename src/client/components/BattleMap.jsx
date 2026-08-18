@@ -2349,11 +2349,14 @@ function TrayColumn({
  * bulk action is visually distinct from the single-token `ArrowLeftToLine`/`ArrowRightToLine`
  * buttons. Each button disables itself when it would have no effect.
  */
-function TrayBulkActionsHeader({ trayDirection, onPlaceAll, canPlaceAll, onReturnAll, canReturnAll }) {
+function TrayBulkActionsHeader({ trayDirection, onPlaceAll, canPlaceAll, onReturnAll, canReturnAll, testId }) {
   const PlaceIcon = trayDirection === 'right' ? ChevronsLeft : ChevronsRight;
   const ReturnIcon = trayDirection === 'right' ? ChevronsRight : ChevronsLeft;
   return (
-    <div className="flex items-center justify-center gap-1 p-1 border-b border-dh-border shrink-0">
+    <div
+      data-testid={testId}
+      className="flex items-center justify-center gap-1 p-1 border-b border-dh-border shrink-0"
+    >
       <Tooltip label="Place all on map" className="flex-1 min-w-0">
         <button
           type="button"
@@ -7910,8 +7913,10 @@ export function BattleMap({
             className={`relative z-20 flex flex-col shrink-0 border-l border-dh-border overflow-visible ${highlightRightTray ? 'bg-amber-900/30' : 'bg-dh-surface/60'}`}
             style={{ width: trayTokenSizePx + 16, minWidth: trayTokenSizePx + 16, maxWidth: trayTokenSizePx + 16, minHeight: 0 }}
           >
-            {showRightAdversaryTray && advTrayTokens.length > 0 && (
+            {/* Always reserve this row on the GM right tray so the GM token does not jump when the first adversary is added. */}
+            {!isPlayer && (
               <TrayBulkActionsHeader
+                testId="adversary-tray-bulk-actions"
                 trayDirection="right"
                 onPlaceAll={() => handlePlaceAllOnMap(rightTrayUnplacedElements)}
                 canPlaceAll={rightTrayUnplacedElements.length > 0}
