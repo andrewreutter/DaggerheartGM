@@ -12,6 +12,13 @@ import { normalizePersistedCharacterElement } from './client/lib/normalize-persi
 import { attachDerivedMapConfig } from './client/lib/map-table-state.js';
 import { summarizeTableCharacterRoster, toTableCardDto } from './client/lib/table-character-roster.js';
 import { mergeUserPreferencesData, normalizeUserPreferences } from './user-preferences.js';
+import { BUG_REPORT_STATUS_ORDER, isValidBugReportStatus } from './client/lib/bug-report-admin.js';
+import {
+  isDedicatedProblemDatabase,
+  isProblemDatabaseConfigured,
+  listProblemDatabaseMigrationFiles,
+  resolveProblemDatabaseUrl,
+} from './problem-database-url.js';
 import { readdir, readFile } from 'fs/promises';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
@@ -26,6 +33,15 @@ export const MIRROR_USER_ID = '__MIRROR__';
 const DIRECT_SRD_COLLECTIONS = new Set(['campaign_frames', 'rules']);
 
 let pool;
+let problemPool;
+let problemPoolUrl;
+
+export {
+  isDedicatedProblemDatabase,
+  isProblemDatabaseConfigured,
+  listProblemDatabaseMigrationFiles,
+  resolveProblemDatabaseUrl,
+};
 
 export function getPool() {
   if (!pool) {
@@ -34,9 +50,26 @@ export function getPool() {
   return pool;
 }
 
-export async function runMigrations() {
-  const db = getPool();
+/**
+ * Pool for `bug_reports` only. Uses `PROBLEM_DATABASE_URL` when set, else the main `DATABASE_URL` pool.
+ */
+export function getProblemPool() {
+  const url = resolveProblemDatabaseUrl();
+  if (!url) {
+    throw new Error('Problem database is not configured');
+  }
+  const mainUrl = typeof process.env.DATABASE_URL === 'string' ? process.env.DATABASE_URL.trim() : '';
+  if (url === mainUrl) {
+    return getPool();
+  }
+  if (!problemPool || problemPoolUrl !== url) {
+    problemPool = new Pool({ connectionString: url });
+    problemPoolUrl = url;
+  }
+  return problemPool;
+}
 
+async function applySqlMigrationFiles(db, files, { logPrefix = '[db]' } = {}) {
   await db.query(`
     CREATE TABLE IF NOT EXISTS _migrations (
       name       TEXT PRIMARY KEY,
@@ -46,10 +79,7 @@ export async function runMigrations() {
 
   const { rows: applied } = await db.query('SELECT name FROM _migrations');
   const appliedSet = new Set(applied.map(r => r.name));
-
-  const files = (await readdir(MIGRATIONS_DIR))
-    .filter(f => f.endsWith('.sql'))
-    .sort();
+  const appliedNow = [];
 
   for (const file of files) {
     if (appliedSet.has(file)) continue;
@@ -61,7 +91,8 @@ export async function runMigrations() {
       await client.query(sql);
       await client.query('INSERT INTO _migrations (name) VALUES ($1)', [file]);
       await client.query('COMMIT');
-      console.log(`[db] Applied migration: ${file}`);
+      appliedNow.push(file);
+      console.log(`${logPrefix} Applied migration: ${file}`);
     } catch (err) {
       await client.query('ROLLBACK');
       throw new Error(`Migration ${file} failed: ${err.message}`);
@@ -69,6 +100,21 @@ export async function runMigrations() {
       client.release();
     }
   }
+  return appliedNow;
+}
+
+export async function runMigrations() {
+  const files = (await readdir(MIGRATIONS_DIR))
+    .filter(f => f.endsWith('.sql'))
+    .sort();
+  return applySqlMigrationFiles(getPool(), files);
+}
+
+/** Apply `*bug_reports*` migrations on a dedicated problem DB. No-op when falling back to `DATABASE_URL`. */
+export async function runProblemDatabaseMigrations() {
+  if (!isDedicatedProblemDatabase()) return [];
+  const files = listProblemDatabaseMigrationFiles(await readdir(MIGRATIONS_DIR));
+  return applySqlMigrationFiles(getProblemPool(), files, { logPrefix: '[db:problems]' });
 }
 
 // --- Query helpers ---
@@ -1613,7 +1659,7 @@ export async function updateDiceRollData(appId, gmUid, id, dataPatch) {
   return true;
 }
 
-/** Per-user JSON preferences (e.g. hide AI UI, library card sizes). */
+/** Per-user JSON preferences (e.g. hide AI UI, library card sizes, Problem reports columns). */
 export async function getUserPreferences(appId, userId) {
   if (!process.env.DATABASE_URL) {
     return normalizeUserPreferences({});
@@ -2138,74 +2184,11 @@ export async function queryAiUsageAggregates(appId, opts) {
   return { totals, byDay };
 }
 
-/** Valid `bug_reports.status` values (admin Problem reports page tabs). */
-export const BUG_REPORT_STATUSES = ['triage', 'bug', 'feature', 'completed', 'shipped', 'cancelled'];
+/** Built-in `bug_reports.status` values (default Problem reports columns). Custom slugs also allowed via `isValidBugReportStatus`. */
+export const BUG_REPORT_STATUSES = [...BUG_REPORT_STATUS_ORDER];
+export { isValidBugReportStatus };
 
-/**
- * Returns the total number of bug reports for this app (across all GMs/tables).
- * @param {string} appId
- * @param {{ status?: string }} opts — when set (one of `BUG_REPORT_STATUSES`), filters to that status only.
- */
-export async function countBugReports(appId, { status } = {}) {
-  const db = getPool();
-  const statusClause = status ? 'AND status = $2' : '';
-  const params = status ? [appId, status] : [appId];
-  const { rows } = await db.query(
-    `SELECT COUNT(*)::int AS total FROM bug_reports WHERE app_id = $1 ${statusClause}`,
-    params
-  );
-  return rows[0]?.total ?? 0;
-}
-
-/**
- * Returns a page of bug reports for this app, newest-first.
- * @param {string} appId
- * @param {{ limit?: number, offset?: number, status?: string }} opts — `status` filters to one of `BUG_REPORT_STATUSES`; omit for all.
- */
-export async function getBugReportsPaginated(appId, { limit = 50, offset = 0, status } = {}) {
-  const db = getPool();
-  const statusClause = status ? 'AND status = $4' : '';
-  const params = status ? [appId, limit, offset, status] : [appId, limit, offset];
-  const { rows } = await db.query(
-    `SELECT id, gm_uid, table_id, payload, created_at, status, status_changed_at, status_changed_by
-     FROM bug_reports
-     WHERE app_id = $1 ${statusClause}
-     ORDER BY created_at DESC
-     LIMIT $2 OFFSET $3`,
-    params
-  );
-  return rows.map(r => ({
-    id: r.id,
-    gmUid: r.gm_uid,
-    tableId: r.table_id,
-    payload: r.payload,
-    createdAt: r.created_at,
-    status: r.status,
-    statusChangedAt: r.status_changed_at,
-    statusChangedBy: r.status_changed_by,
-  }));
-}
-
-/**
- * Moves a bug report to a different status (Triage / Bug / Feature / Completed / Shipped / Cancelled) —
- * a single-click transition between any two tabs on the admin Problem reports page.
- * @param {string} appId
- * @param {number} id
- * @param {{ status: string, changedByEmail?: string }} opts
- */
-export async function setBugReportStatus(appId, id, { status, changedByEmail } = {}) {
-  if (!BUG_REPORT_STATUSES.includes(status)) {
-    throw new Error(`Invalid bug report status: ${status}`);
-  }
-  const db = getPool();
-  const { rows } = await db.query(
-    `UPDATE bug_reports
-     SET status = $3, status_changed_at = now(), status_changed_by = $4
-     WHERE app_id = $1 AND id = $2
-     RETURNING id, gm_uid, table_id, payload, created_at, status, status_changed_at, status_changed_by`,
-    [appId, id, status, changedByEmail ?? null]
-  );
-  const r = rows[0];
+function mapBugReportRow(r) {
   if (!r) return null;
   return {
     id: r.id,
@@ -2220,6 +2203,88 @@ export async function setBugReportStatus(appId, id, { status, changedByEmail } =
 }
 
 /**
+ * Returns the total number of bug reports for this app (across all GMs/tables).
+ * @param {string} appId
+ * @param {{ status?: string }} opts — when set (a valid status slug), filters to that status only.
+ */
+export async function countBugReports(appId, { status } = {}) {
+  const db = getProblemPool();
+  const statusClause = status ? 'AND status = $2' : '';
+  const params = status ? [appId, status] : [appId];
+  const { rows } = await db.query(
+    `SELECT COUNT(*)::int AS total FROM bug_reports WHERE app_id = $1 ${statusClause}`,
+    params
+  );
+  return rows[0]?.total ?? 0;
+}
+
+/**
+ * Returns a page of bug reports for this app, newest-first.
+ * @param {string} appId
+ * @param {{ limit?: number, offset?: number, status?: string }} opts — `status` filters to a valid status slug; omit for all.
+ */
+export async function getBugReportsPaginated(appId, { limit = 50, offset = 0, status } = {}) {
+  const db = getProblemPool();
+  const statusClause = status ? 'AND status = $4' : '';
+  const params = status ? [appId, limit, offset, status] : [appId, limit, offset];
+  const { rows } = await db.query(
+    `SELECT id, gm_uid, table_id, payload, created_at, status, status_changed_at, status_changed_by
+     FROM bug_reports
+     WHERE app_id = $1 ${statusClause}
+     ORDER BY created_at DESC
+     LIMIT $2 OFFSET $3`,
+    params
+  );
+  return rows.map(mapBugReportRow);
+}
+
+/**
+ * Moves a bug report to a different status (built-in or custom column slug) —
+ * a single-click transition between any two tabs on the admin Problem reports page.
+ * @param {string} appId
+ * @param {number} id
+ * @param {{ status: string, changedByEmail?: string }} opts
+ */
+export async function setBugReportStatus(appId, id, { status, changedByEmail } = {}) {
+  if (!isValidBugReportStatus(status)) {
+    throw new Error(`Invalid bug report status: ${status}`);
+  }
+  const db = getProblemPool();
+  const { rows } = await db.query(
+    `UPDATE bug_reports
+     SET status = $3, status_changed_at = now(), status_changed_by = $4
+     WHERE app_id = $1 AND id = $2
+     RETURNING id, gm_uid, table_id, payload, created_at, status, status_changed_at, status_changed_by`,
+    [appId, id, status, changedByEmail ?? null]
+  );
+  return mapBugReportRow(rows[0]);
+}
+
+/**
+ * Insert a problem report into the problem-reports pool.
+ * @param {string} appId
+ * @param {{ gmUid: string, tableId?: string|null, payload: object, status?: string }} opts
+ * @returns {Promise<object|null>}
+ */
+export async function insertBugReportRow(appId, { gmUid, tableId, payload, status } = {}) {
+  const db = getProblemPool();
+  const useStatus = isValidBugReportStatus(status);
+  const { rows } = await db.query(
+    useStatus
+      ? `INSERT INTO bug_reports (app_id, gm_uid, table_id, payload, status)
+         VALUES ($1, $2, $3, $4, $5)
+         RETURNING id, gm_uid, table_id, payload, created_at, status, status_changed_at, status_changed_by`
+      : `INSERT INTO bug_reports (app_id, gm_uid, table_id, payload)
+         VALUES ($1, $2, $3, $4)
+         RETURNING id, gm_uid, table_id, payload, created_at, status, status_changed_at, status_changed_by`,
+    useStatus
+      ? [appId, gmUid, tableId ?? null, JSON.stringify(payload), status]
+      : [appId, gmUid, tableId ?? null, JSON.stringify(payload)]
+  );
+  return mapBugReportRow(rows[0]);
+}
+
+/**
  * Updates the admin-visible notes on a bug report by merging into the payload JSONB.
  * An empty or blank notes string removes the key.
  * @param {string} appId
@@ -2227,7 +2292,7 @@ export async function setBugReportStatus(appId, id, { status, changedByEmail } =
  * @param {string} notes
  */
 export async function updateBugReportNotes(appId, id, notes) {
-  const db = getPool();
+  const db = getProblemPool();
   const trimmed = typeof notes === 'string' ? notes.trim() : '';
   let query, params;
   if (trimmed === '') {
@@ -2244,16 +2309,5 @@ export async function updateBugReportNotes(appId, id, notes) {
     params = [appId, id, JSON.stringify(trimmed)];
   }
   const { rows } = await db.query(query, params);
-  const r = rows[0];
-  if (!r) return null;
-  return {
-    id: r.id,
-    gmUid: r.gm_uid,
-    tableId: r.table_id,
-    payload: r.payload,
-    createdAt: r.created_at,
-    status: r.status,
-    statusChangedAt: r.status_changed_at,
-    statusChangedBy: r.status_changed_by,
-  };
+  return mapBugReportRow(rows[0]);
 }

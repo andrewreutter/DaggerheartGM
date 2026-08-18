@@ -9,7 +9,7 @@ import { readFile } from 'fs/promises';
 import { initializeApp, getApps } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import cron from 'node-cron';
-import { runMigrations, getPool, getItems, getPublicItems, upsertItem, deleteItem, countItems, getItemsPaginated, countCommunityItems, getCommunityItemsPaginated, getItemsByIds, getItem, recordClone, recordPlay, upsertMirror, findAutoClone, getUnifiedItems, getUnifiedLibraryAll, getUnifiedLibraryAllBranchCounts, getExternalCacheByIds, upsertExternalCache, getTableStatesByPlayerEmail, getTableStateById, listTableStates, listPublicTables, patchTablePreviewUrl, toTableCardDto, appendDiceRoll, ackDiceRoll, getRecentDiceRolls, setBannerStatus, getPendingBanners, getDiceRollById, updateDiceRollData, resolveCharacterElements as resolveCharacterElementsDb, stripCharacterElementsForDb, getResolvedTableState, setTableStateNotifyHook, getUserPreferences, upsertUserPreferences, queryAiUsageAggregates, stampFreeTrialStart, checkTableIsLive, extendTableCampaignPass, recordCampaignPassPurchase, markStripeEventProcessed, recordCharacterTablePlacement, removeCharacterTablePlacementsForTable, createTableInviteLink, revokeTableInviteLink, getActiveTableInviteLink, redeemTableInviteLink, deleteTableInviteLinksForTable, countUserAiCallsThisMonth, getBugReportsPaginated, countBugReports, setBugReportStatus, updateBugReportNotes, BUG_REPORT_STATUSES, getCharacterById, upsertCharacterForTable, deleteCharacterForTable, stampCharacterTableId } from './src/db.js';
+import { runMigrations, getPool, getItems, getPublicItems, upsertItem, deleteItem, countItems, getItemsPaginated, countCommunityItems, getCommunityItemsPaginated, getItemsByIds, getItem, recordClone, recordPlay, upsertMirror, findAutoClone, getUnifiedItems, getUnifiedLibraryAll, getUnifiedLibraryAllBranchCounts, getExternalCacheByIds, upsertExternalCache, getTableStatesByPlayerEmail, getTableStateById, listTableStates, listPublicTables, patchTablePreviewUrl, toTableCardDto, appendDiceRoll, ackDiceRoll, getRecentDiceRolls, setBannerStatus, getPendingBanners, getDiceRollById, updateDiceRollData, resolveCharacterElements as resolveCharacterElementsDb, stripCharacterElementsForDb, getResolvedTableState, setTableStateNotifyHook, getUserPreferences, upsertUserPreferences, queryAiUsageAggregates, stampFreeTrialStart, checkTableIsLive, extendTableCampaignPass, recordCampaignPassPurchase, markStripeEventProcessed, recordCharacterTablePlacement, removeCharacterTablePlacementsForTable, createTableInviteLink, revokeTableInviteLink, getActiveTableInviteLink, redeemTableInviteLink, deleteTableInviteLinksForTable, countUserAiCallsThisMonth, getBugReportsPaginated, countBugReports, setBugReportStatus, updateBugReportNotes, insertBugReportRow, isValidBugReportStatus, isProblemDatabaseConfigured, isDedicatedProblemDatabase, runProblemDatabaseMigrations, getCharacterById, upsertCharacterForTable, deleteCharacterForTable, stampCharacterTableId } from './src/db.js';
 import { isStripeConfigured, getStripe, constructWebhookEvent, CAMPAIGN_PASS_PRICE_CENTS, getCampaignPassPriceId, buildCampaignPassCheckoutSessionParams } from './src/stripe.js';
 import { srdRouter, warmCache, getItem as getSrdItem } from './src/srd/index.js';
 import { loadSrdIntoDb } from './src/srd-loader.js';
@@ -66,6 +66,7 @@ import { registerDevAgentRoutes } from './src/server/dev-agent-routes.js';
 import { DEFAULT_CHARACTER_STARTING_HOPE, ROLES, ENV_TYPES } from './src/game-constants.js';
 import { shouldSkipActivityStamp } from './src/server/activity-stamp-throttle.js';
 import { parseHttpBooleanLoose } from './src/parse-http-bool.js';
+import { normalizeManualBugReportCreate } from './src/client/lib/bug-report-admin.js';
 import {
   MIME_TO_EXT,
   uploadBufferToMapStorage as uploadBufferToMapStorageImpl,
@@ -283,8 +284,9 @@ app.put('/api/me/preferences', requireAuth, async (req, res) => {
   const body = req.body || {};
   const hasHideAiUi = Object.prototype.hasOwnProperty.call(body, 'hideAiUi');
   const hasLibraryCardDimensions = Object.prototype.hasOwnProperty.call(body, 'libraryCardDimensions');
-  if (!hasHideAiUi && !hasLibraryCardDimensions) {
-    return res.status(400).json({ error: 'Provide hideAiUi and/or libraryCardDimensions' });
+  const hasBugReportColumns = Object.prototype.hasOwnProperty.call(body, 'bugReportColumns');
+  if (!hasHideAiUi && !hasLibraryCardDimensions && !hasBugReportColumns) {
+    return res.status(400).json({ error: 'Provide hideAiUi, libraryCardDimensions, and/or bugReportColumns' });
   }
   if (hasHideAiUi && typeof body.hideAiUi !== 'boolean') {
     return res.status(400).json({ error: 'hideAiUi must be a boolean' });
@@ -298,6 +300,9 @@ app.put('/api/me/preferences', requireAuth, async (req, res) => {
       return res.status(400).json({ error: 'libraryCardDimensions must be an object' });
     }
   }
+  if (hasBugReportColumns && !Array.isArray(body.bugReportColumns)) {
+    return res.status(400).json({ error: 'bugReportColumns must be an array' });
+  }
   if (!process.env.DATABASE_URL) {
     return res.status(503).json({ error: 'Preferences require database' });
   }
@@ -305,6 +310,7 @@ app.put('/api/me/preferences', requireAuth, async (req, res) => {
     const patch = {};
     if (hasHideAiUi) patch.hideAiUi = body.hideAiUi;
     if (hasLibraryCardDimensions) patch.libraryCardDimensions = body.libraryCardDimensions;
+    if (hasBugReportColumns) patch.bugReportColumns = body.bugReportColumns;
     const preferences = await upsertUserPreferences(APP_ID, req.uid, patch);
     res.json({ preferences });
   } catch (err) {
@@ -384,7 +390,7 @@ app.get('/api/admin/ai-usage', requireAuth, requireAdmin, async (req, res) => {
 
 /** Admin: list all bug reports across all tables, newest-first, paginated. */
 app.get('/api/admin/bug-reports', requireAuth, requireAdmin, async (req, res) => {
-  if (!process.env.DATABASE_URL) {
+  if (!isProblemDatabaseConfigured()) {
     return res.status(503).json({ error: 'Database required for bug reports' });
   }
   try {
@@ -392,7 +398,7 @@ app.get('/api/admin/bug-reports', requireAuth, requireAdmin, async (req, res) =>
     const rawOffset = parseInt(req.query?.offset, 10);
     const limit = Math.min(Number.isFinite(rawLimit) && rawLimit > 0 ? rawLimit : 50, 200);
     const offset = Number.isFinite(rawOffset) && rawOffset >= 0 ? rawOffset : 0;
-    const status = BUG_REPORT_STATUSES.includes(req.query?.status) ? req.query.status : undefined;
+    const status = isValidBugReportStatus(req.query?.status) ? req.query.status : undefined;
 
     const [items, totalCount] = await Promise.all([
       getBugReportsPaginated(APP_ID, { limit, offset, status }),
@@ -409,7 +415,7 @@ app.get('/api/admin/bug-reports', requireAuth, requireAdmin, async (req, res) =>
 
 /** Admin: update a bug report — move to a different status and/or edit admin notes. */
 app.patch('/api/admin/bug-reports/:id', requireAuth, requireAdmin, async (req, res) => {
-  if (!process.env.DATABASE_URL) {
+  if (!isProblemDatabaseConfigured()) {
     return res.status(503).json({ error: 'Database required for bug reports' });
   }
   const id = parseInt(req.params.id, 10);
@@ -422,8 +428,8 @@ app.patch('/api/admin/bug-reports/:id', requireAuth, requireAdmin, async (req, r
   if (!hasStatus && !hasNotes) {
     return res.status(400).json({ error: 'Provide status and/or notes to update' });
   }
-  if (hasStatus && !BUG_REPORT_STATUSES.includes(status)) {
-    return res.status(400).json({ error: `status must be one of: ${BUG_REPORT_STATUSES.join(', ')}` });
+  if (hasStatus && !isValidBugReportStatus(status)) {
+    return res.status(400).json({ error: 'status must be a slug (letter, then letters/digits/_/-)' });
   }
   if (hasNotes && typeof notes !== 'string') {
     return res.status(400).json({ error: 'notes must be a string' });
@@ -444,6 +450,40 @@ app.patch('/api/admin/bug-reports/:id', requireAuth, requireAdmin, async (req, r
   } catch (err) {
     console.error('PATCH /api/admin/bug-reports/:id:', err);
     res.status(500).json({ error: 'Failed to update bug report' });
+  }
+});
+
+/** Admin: create a manual problem report on the currently viewed status column. */
+app.post('/api/admin/bug-reports', requireAuth, requireAdmin, async (req, res) => {
+  if (!isProblemDatabaseConfigured()) {
+    return res.status(503).json({ error: 'Database required for bug reports' });
+  }
+  const created = normalizeManualBugReportCreate(req.body ?? {});
+  if (!created.ok) {
+    return res.status(400).json({ error: created.error });
+  }
+  try {
+    const item = await insertBugReportRow(APP_ID, {
+      gmUid: req.uid,
+      tableId: null,
+      status: created.status,
+      payload: {
+        notes: created.notes,
+        _reportedByUid: req.uid,
+        _reportedByEmail: req.email,
+        _reportedByRole: 'admin',
+        _manual: true,
+        _serverTimestamp: new Date().toISOString(),
+      },
+    });
+    if (!item) {
+      return res.status(500).json({ error: 'Failed to create bug report' });
+    }
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({ item });
+  } catch (err) {
+    console.error('POST /api/admin/bug-reports:', err);
+    res.status(500).json({ error: 'Failed to create bug report' });
   }
 });
 
@@ -3696,15 +3736,10 @@ async function insertBugReport(res, { tableId, gmUid, reporterUid, reporterEmail
     _serverTimestamp: new Date().toISOString(),
     _userAgent: userAgent,
   };
-  if (process.env.DATABASE_URL) {
+  if (isProblemDatabaseConfigured()) {
     try {
-      const db = getPool();
-      const { rows } = await db.query(
-        `INSERT INTO bug_reports (app_id, gm_uid, table_id, payload)
-         VALUES ($1, $2, $3, $4) RETURNING id`,
-        [APP_ID, gmUid, tableId, JSON.stringify(enriched)]
-      );
-      return res.json({ ok: true, id: rows[0].id });
+      const item = await insertBugReportRow(APP_ID, { gmUid, tableId, payload: enriched });
+      return res.json({ ok: true, id: item?.id ?? null });
     } catch (err) {
       console.error('[bug-report] DB insert failed:', err.message);
       return res.status(500).json({ error: 'Failed to save bug report' });
@@ -5326,6 +5361,10 @@ async function startServer() {
     });
   } else {
     console.warn('[db] DATABASE_URL not set — running without database');
+  }
+  if (isDedicatedProblemDatabase()) {
+    await runProblemDatabaseMigrations();
+    console.log('[db] Problem reports using dedicated PROBLEM_DATABASE_URL');
   }
   const httpServer = createServer(app);
   httpServer.listen(PORT, () => console.log(`Server running at http://localhost:${PORT}`));

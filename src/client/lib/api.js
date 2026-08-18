@@ -588,7 +588,7 @@ export const postRollSilent = async (rollText, displayName = '', tableId = null)
   return { ...rollData, value };
 };
 
-/** Returns `{ isAdmin, isQa, preferences?: { hideAiUi, libraryCardDimensions } }` for the currently signed-in user. */
+/** Returns `{ isAdmin, isQa, preferences?: { hideAiUi, libraryCardDimensions, bugReportColumns } }` for the currently signed-in user. */
 export const fetchMe = async () => {
   const token = await getAuthToken();
   if (!token) throw new Error('Not signed in');
@@ -621,7 +621,7 @@ export const fetchAdminAiUsage = async (query = {}) => {
 
 /**
  * Admin: paginated list of bug reports (newest-first).
- * @param {{ limit?: number, offset?: number, status?: 'triage'|'bug'|'feature'|'completed'|'shipped'|'cancelled' }} [query]
+ * @param {{ limit?: number, offset?: number, status?: string }} [query]
  */
 export const fetchAdminBugReports = async (query = {}) => {
   const token = await getAuthToken();
@@ -639,7 +639,21 @@ export const fetchAdminBugReports = async (query = {}) => {
   return body;
 };
 
-/** Moves a bug report to a different status (Triage / Bug / Feature / Completed / Shipped / Cancelled) — one click, any tab to any tab. */
+/** Admin: create a manual problem report on a status column. */
+export const postAdminBugReportCreate = async (notes, status) => {
+  const token = await getAuthToken();
+  if (!token) throw new Error('Not signed in');
+  const res = await fetch('/api/admin/bug-reports', {
+    method: 'POST',
+    headers: apiHeaders({ Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ notes, status }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+  return body;
+};
+
+/** Moves a bug report to a different status (any configured column slug) — one click, any column to any column. */
 export const postAdminBugReportStatus = async (id, status) => {
   const token = await getAuthToken();
   if (!token) throw new Error('Not signed in');
@@ -667,7 +681,7 @@ export const postAdminBugReportNotes = async (id, notes) => {
   return body;
 };
 
-/** Persist user preferences (server JSON merge). Body may include `hideAiUi` and/or `libraryCardDimensions`. */
+/** Persist user preferences (server JSON merge). Body may include `hideAiUi`, `libraryCardDimensions`, and/or `bugReportColumns`. */
 export const putUserPreferences = async (body) => {
   const token = await getAuthToken();
   if (!token) throw new Error('Not signed in');

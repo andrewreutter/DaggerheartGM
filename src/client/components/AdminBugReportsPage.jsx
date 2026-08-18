@@ -6,36 +6,53 @@ import {
   Bug,
   Check,
   Copy,
+  GripVertical,
   Inbox,
   Lightbulb,
   Pencil,
+  Plus,
   RefreshCw,
   Rocket,
   ShieldOff,
+  Tag,
   X,
 } from 'lucide-react';
-import { fetchAdminBugReports, postAdminBugReportNotes, postAdminBugReportStatus } from '../lib/api.js';
+import { fetchAdminBugReports, fetchMe, postAdminBugReportCreate, postAdminBugReportNotes, postAdminBugReportStatus, putUserPreferences } from '../lib/api.js';
 import { buildBugReportDebugText } from '../lib/bug-report-debug-text.js';
 import {
-  BUG_REPORT_STATUS_ORDER,
+  addBugReportColumn,
   bugReportSelectionState,
+  normalizeBugReportColumns,
   otherBugReportStatuses,
+  readStoredBugReportColumns,
+  reorderBugReportColumns,
   setBugReportVisibleSelection,
   toggleBugReportSelection,
+  writeStoredBugReportColumns,
 } from '../lib/bug-report-admin.js';
 
 const PAGE_SIZE = 50;
 
-/** Ordered tabs on the admin Problem reports page; also the set of valid `bug_reports.status` values. */
+/** Built-in column chrome; custom columns fall back to Tag + the stored label. */
 const STATUS_CONFIG = {
-  triage: { label: 'Triage', icon: Inbox, emptyText: 'No problem reports yet.' },
-  bug: { label: 'Bug', icon: Bug, emptyText: 'No bug reports yet.' },
-  feature: { label: 'Feature', icon: Lightbulb, emptyText: 'No feature requests yet.' },
-  completed: { label: 'Completed', icon: Check, emptyText: 'No completed reports yet.' },
-  shipped: { label: 'Shipped', icon: Rocket, emptyText: 'No shipped reports yet.' },
-  cancelled: { label: 'Cancelled', icon: Ban, emptyText: 'No cancelled reports yet.' },
+  triage: { icon: Inbox, emptyText: 'No problem reports yet.' },
+  bug: { icon: Bug, emptyText: 'No bug reports yet.' },
+  feature: { icon: Lightbulb, emptyText: 'No feature requests yet.' },
+  completed: { icon: Check, emptyText: 'No completed reports yet.' },
+  shipped: { icon: Rocket, emptyText: 'No shipped reports yet.' },
+  cancelled: { icon: Ban, emptyText: 'No cancelled reports yet.' },
 };
-const STATUS_ORDER = BUG_REPORT_STATUS_ORDER;
+
+function columnMeta(id, columns) {
+  const col = columns.find(c => c.id === id);
+  const preset = STATUS_CONFIG[id];
+  const label = col?.label ?? preset?.label ?? id;
+  return {
+    label,
+    icon: preset?.icon ?? Tag,
+    emptyText: preset?.emptyText ?? `No ${label.toLowerCase()} reports yet.`,
+  };
+}
 
 function formatTimestamp(ts) {
   if (!ts) return '—';
@@ -55,13 +72,15 @@ function formatTimestamp(ts) {
 
 function RoleBadge({ role }) {
   if (!role) return null;
-  const isGm = role === 'gm';
+  const styles = {
+    gm: 'bg-sky-900/60 text-sky-300 border border-sky-700/60',
+    player: 'bg-violet-900/60 text-violet-300 border border-violet-700/60',
+    admin: 'bg-red-900/60 text-red-200 border border-red-700/60',
+  };
   return (
     <span
       className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
-        isGm
-          ? 'bg-sky-900/60 text-sky-300 border border-sky-700/60'
-          : 'bg-violet-900/60 text-violet-300 border border-violet-700/60'
+        styles[role] ?? styles.player
       }`}
     >
       {role}
@@ -105,13 +124,13 @@ function CopyButton({ row }) {
   );
 }
 
-function StatusMoveButtons({ currentStatus, onMove, isPending, size = 'sm' }) {
-  const otherStatuses = otherBugReportStatuses(currentStatus);
+function StatusMoveButtons({ currentStatus, columns, onMove, isPending, size = 'sm' }) {
+  const otherStatuses = otherBugReportStatuses(currentStatus, columns);
   const pad = size === 'sm' ? 'px-2 py-1' : 'px-2.5 py-1.5';
   return (
     <div className="flex items-center gap-1.5 flex-wrap">
       {otherStatuses.map(status => {
-        const { label, icon: Icon } = STATUS_CONFIG[status];
+        const { label, icon: Icon } = columnMeta(status, columns);
         return (
           <button
             key={status}
@@ -126,6 +145,147 @@ function StatusMoveButtons({ currentStatus, onMove, isPending, size = 'sm' }) {
           </button>
         );
       })}
+    </div>
+  );
+}
+
+function ColumnTabs({ columns, tab, onSelect, onReorder, onAdd }) {
+  const [adding, setAdding] = useState(false);
+  const [draft, setDraft] = useState('');
+  const [addError, setAddError] = useState(null);
+  const dragIdRef = useRef(null);
+  const didDragRef = useRef(false);
+  const inputRef = useRef(null);
+
+  useEffect(() => {
+    if (adding && inputRef.current) inputRef.current.focus();
+  }, [adding]);
+
+  const commitAdd = useCallback(() => {
+    const result = addBugReportColumn(columns, draft);
+    if (!result.ok) {
+      setAddError(result.error);
+      return;
+    }
+    setDraft('');
+    setAddError(null);
+    setAdding(false);
+    onAdd(result.columns, result.column.id);
+  }, [columns, draft, onAdd]);
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center gap-1 border-b border-dh-border flex-wrap">
+        {columns.map((col) => {
+          const { label, icon: Icon } = columnMeta(col.id, columns);
+          const active = tab === col.id;
+          return (
+            <button
+              key={col.id}
+              type="button"
+              draggable
+              title="Drag to reorder"
+              onDragStart={(e) => {
+                dragIdRef.current = col.id;
+                didDragRef.current = false;
+                e.dataTransfer.effectAllowed = 'move';
+                e.dataTransfer.setData('text/plain', col.id);
+              }}
+              onDragOver={(e) => {
+                e.preventDefault();
+                e.dataTransfer.dropEffect = 'move';
+              }}
+              onDrop={(e) => {
+                e.preventDefault();
+                const fromId = dragIdRef.current || e.dataTransfer.getData('text/plain');
+                const fromIndex = columns.findIndex(c => c.id === fromId);
+                const toIndex = columns.findIndex(c => c.id === col.id);
+                if (fromIndex >= 0 && toIndex >= 0 && fromIndex !== toIndex) {
+                  didDragRef.current = true;
+                  onReorder(fromIndex, toIndex);
+                }
+                dragIdRef.current = null;
+              }}
+              onDragEnd={() => {
+                dragIdRef.current = null;
+              }}
+              onClick={() => {
+                if (didDragRef.current) {
+                  didDragRef.current = false;
+                  return;
+                }
+                onSelect(col.id);
+              }}
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium border-b-2 -mb-px transition-colors cursor-grab active:cursor-grabbing ${
+                active
+                  ? 'border-red-500 text-dh'
+                  : 'border-transparent text-dh-muted hover:text-dh'
+              }`}
+            >
+              <GripVertical size={12} className="opacity-50" />
+              <Icon size={14} />
+              {label}
+            </button>
+          );
+        })}
+        {adding ? (
+          <form
+            className="inline-flex items-center gap-1.5 px-2 py-1 -mb-px"
+            onSubmit={(e) => {
+              e.preventDefault();
+              commitAdd();
+            }}
+          >
+            <input
+              ref={inputRef}
+              value={draft}
+              onChange={e => {
+                setDraft(e.target.value);
+                setAddError(null);
+              }}
+              onKeyDown={e => {
+                if (e.key === 'Escape') {
+                  setAdding(false);
+                  setDraft('');
+                  setAddError(null);
+                }
+              }}
+              placeholder="Column name"
+              maxLength={32}
+              aria-label="New column name"
+              className="w-36 rounded border border-dh-border bg-dh-raised text-dh text-xs px-2 py-1 focus:outline-none focus:border-dh-strong focus:ring-1 focus:ring-dh-strong/40"
+            />
+            <button
+              type="submit"
+              className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs font-medium bg-emerald-800/60 text-emerald-300 border border-emerald-700/60 hover:bg-emerald-700/60"
+            >
+              Add
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setAdding(false);
+                setDraft('');
+                setAddError(null);
+              }}
+              className="inline-flex items-center rounded px-2 py-1 text-xs font-medium text-dh-muted hover:text-dh"
+            >
+              Cancel
+            </button>
+          </form>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setAdding(true)}
+            title="Add column"
+            className="inline-flex items-center gap-1 px-3 py-1.5 text-sm font-medium border-b-2 -mb-px border-transparent text-dh-muted hover:text-dh"
+          >
+            <Plus size={14} />
+            Add column
+          </button>
+        )}
+      </div>
+      {addError && <p className="text-xs text-red-400">{addError}</p>}
     </div>
   );
 }
@@ -259,11 +419,65 @@ function NotesCell({ row, onSaved }) {
   );
 }
 
+function QuickAddItemForm({ columnLabel, status, disabled, onCreated }) {
+  const [notes, setNotes] = useState('');
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState(null);
+
+  const canSubmit = notes.trim().length > 0 && !pending && !disabled;
+
+  const handleSubmit = useCallback(async (e) => {
+    e.preventDefault();
+    const trimmed = notes.trim();
+    if (!trimmed || pending || disabled) return;
+    setPending(true);
+    setError(null);
+    try {
+      const { item } = await postAdminBugReportCreate(trimmed, status);
+      if (!item) throw new Error('No item returned');
+      onCreated(item);
+      setNotes('');
+    } catch (err) {
+      setError(err?.message || String(err));
+    } finally {
+      setPending(false);
+    }
+  }, [notes, pending, disabled, status, onCreated]);
+
+  return (
+    <form onSubmit={handleSubmit} className="flex flex-col gap-1.5">
+      <div className="flex items-center gap-2">
+        <input
+          type="text"
+          value={notes}
+          onChange={(e) => setNotes(e.target.value)}
+          placeholder={`Add to ${columnLabel}…`}
+          disabled={pending || disabled}
+          aria-label={`Add item to ${columnLabel}`}
+          className="flex-1 min-w-0 rounded-md border border-dh-border bg-dh-raised px-3 py-2 text-sm text-dh placeholder:text-dh-muted focus:outline-none focus:border-red-700 disabled:opacity-50"
+        />
+        <button
+          type="submit"
+          disabled={!canSubmit}
+          className="inline-flex items-center gap-1.5 shrink-0 rounded-md px-3 py-2 text-sm font-medium bg-red-950/50 border border-red-700 text-red-200 hover:bg-red-900 disabled:opacity-50"
+        >
+          {pending ? <RefreshCw size={14} className="animate-spin" /> : <Plus size={14} />}
+          Add
+        </button>
+      </div>
+      {error && (
+        <p className="text-xs text-red-300">{error}</p>
+      )}
+    </form>
+  );
+}
+
 /**
  * @param {{ navigate: (path: string, opts?: object) => void }} props
  */
 export function AdminBugReportsPage({ navigate }) {
-  const [tab, setTab] = useState('triage'); // one of STATUS_ORDER
+  const [columns, setColumns] = useState(() => readStoredBugReportColumns() ?? normalizeBugReportColumns(null));
+  const [tab, setTab] = useState(() => (readStoredBugReportColumns() ?? normalizeBugReportColumns(null))[0]?.id ?? 'triage');
   const [items, setItems] = useState([]);
   const [totalCount, setTotalCount] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -275,6 +489,39 @@ export function AdminBugReportsPage({ navigate }) {
   const [sortColumn, setSortColumn] = useState(null); // 'time' | 'reporter'
   const [sortDir, setSortDir] = useState('desc');
   const selectAllRef = useRef(null);
+  const tabRef = useRef(tab);
+  tabRef.current = tab;
+
+  const persistColumns = useCallback(async (nextColumns, { selectId } = {}) => {
+    const normalized = normalizeBugReportColumns(nextColumns);
+    setColumns(normalized);
+    writeStoredBugReportColumns(normalized);
+    const nextTab = selectId && normalized.some(c => c.id === selectId)
+      ? selectId
+      : (normalized.some(c => c.id === tabRef.current) ? tabRef.current : normalized[0]?.id);
+    if (nextTab && nextTab !== tabRef.current) setTab(nextTab);
+    try {
+      await putUserPreferences({ bugReportColumns: normalized });
+    } catch {
+      // localStorage still has the layout
+    }
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchMe()
+      .then(({ preferences }) => {
+        if (cancelled || !preferences?.bugReportColumns) return;
+        const next = normalizeBugReportColumns(preferences.bugReportColumns);
+        setColumns(next);
+        writeStoredBugReportColumns(next);
+        if (!next.some(c => c.id === tabRef.current)) {
+          setTab(next[0]?.id ?? 'triage');
+        }
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
 
   const load = useCallback(async ({ replace = true, offset: offsetOverride, currentLength = 0 } = {}) => {
     if (replace) {
@@ -378,6 +625,12 @@ export function AdminBugReportsPage({ navigate }) {
     setItems(prev => prev.map(r => (r.id === id ? updatedItem : r)));
   }, []);
 
+  const handleQuickAddCreated = useCallback((item) => {
+    setItems(prev => [item, ...prev]);
+    setTotalCount(prev => (prev != null ? prev + 1 : 1));
+    setError(null);
+  }, []);
+
   const handleMove = useCallback(async (row, nextStatus) => {
     setPendingIds(prev => new Set(prev).add(row.id));
     try {
@@ -439,7 +692,7 @@ export function AdminBugReportsPage({ navigate }) {
           <div>
             <h1 className="text-lg font-semibold">Problem reports (admin)</h1>
             <p className="text-xs text-red-200/80">
-              In-session bug captures from GMs and players. Use the Copy button on each row to grab a full debug bundle.
+              In-session captures from GMs and players, plus items you add to the current column. Drag columns to reorder; Add column for a new status. Use Copy on each row for a debug bundle.
             </p>
           </div>
         </div>
@@ -464,27 +717,25 @@ export function AdminBugReportsPage({ navigate }) {
       </div>
 
       <div className="p-4 max-w-7xl mx-auto w-full space-y-4">
-        {/* Tabs */}
-        <div className="flex items-center gap-1 border-b border-dh-border flex-wrap">
-          {STATUS_ORDER.map(key => {
-            const { label, icon: Icon } = STATUS_CONFIG[key];
-            return (
-              <button
-                key={key}
-                type="button"
-                onClick={() => setTab(key)}
-                className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium border-b-2 -mb-px transition-colors ${
-                  tab === key
-                    ? 'border-red-500 text-dh'
-                    : 'border-transparent text-dh-muted hover:text-dh'
-                }`}
-              >
-                <Icon size={14} />
-                {label}
-              </button>
-            );
-          })}
-        </div>
+        <ColumnTabs
+          columns={columns}
+          tab={tab}
+          onSelect={setTab}
+          onReorder={(fromIndex, toIndex) => {
+            void persistColumns(reorderBugReportColumns(columns, fromIndex, toIndex));
+          }}
+          onAdd={(nextColumns, selectId) => {
+            void persistColumns(nextColumns, { selectId });
+          }}
+        />
+
+        <QuickAddItemForm
+          key={tab}
+          columnLabel={columnMeta(tab, columns).label}
+          status={tab}
+          disabled={loading}
+          onCreated={handleQuickAddCreated}
+        />
 
         {error && (
           <div className="rounded-lg border border-red-800 bg-red-950/40 text-red-200 px-4 py-3 text-sm">
@@ -497,14 +748,14 @@ export function AdminBugReportsPage({ navigate }) {
         )}
 
         {!loading && !error && items.length === 0 && (
-          <p className="text-dh-muted text-sm">{STATUS_CONFIG[tab].emptyText}</p>
+          <p className="text-dh-muted text-sm">{columnMeta(tab, columns).emptyText}</p>
         )}
 
         {items.length > 0 && (
           <>
             <div className="flex flex-wrap items-center justify-between gap-3">
               <p className="text-xs text-dh-muted">
-                Showing {items.length}{totalCount != null ? ` of ${totalCount}` : ''} {STATUS_CONFIG[tab].label.toLowerCase()} reports
+                Showing {items.length}{totalCount != null ? ` of ${totalCount}` : ''} {columnMeta(tab, columns).label.toLowerCase()} reports
                 {selectedCount > 0 ? ` · ${selectedCount} selected` : ''}
               </p>
               {selectedCount > 0 && (
@@ -512,6 +763,7 @@ export function AdminBugReportsPage({ navigate }) {
                   <span className="text-xs font-medium text-dh-muted whitespace-nowrap">Move selected to</span>
                   <StatusMoveButtons
                     currentStatus={tab}
+                    columns={columns}
                     onMove={handleBulkMove}
                     isPending={bulkPending}
                     size="md"
@@ -582,6 +834,7 @@ export function AdminBugReportsPage({ navigate }) {
                           <td className="px-3 py-2">
                             <StatusMoveButtons
                               currentStatus={row.status ?? tab}
+                              columns={columns}
                               onMove={(status) => handleMove(row, status)}
                               isPending={isPending}
                             />

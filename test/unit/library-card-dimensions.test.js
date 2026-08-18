@@ -19,6 +19,7 @@ import {
   mergeUserPreferencesData,
   normalizeUserPreferences,
 } from '../../src/user-preferences.js';
+import { DEFAULT_BUG_REPORT_COLUMNS } from '../../src/client/lib/bug-report-admin.js';
 
 describe('library-card-dimensions', () => {
   const store = new Map();
@@ -163,6 +164,7 @@ describe('user-preferences merge', () => {
     expect(normalizeUserPreferences(null)).toEqual({
       hideAiUi: false,
       libraryCardDimensions: {},
+      bugReportColumns: DEFAULT_BUG_REPORT_COLUMNS.map(c => ({ id: c.id, label: c.label })),
     });
   });
 
@@ -180,7 +182,22 @@ describe('user-preferences merge', () => {
         weapons: { width: 400, height: 176 },
         armor: { width: 300, height: 120 },
       },
+      bugReportColumns: DEFAULT_BUG_REPORT_COLUMNS.map(c => ({ id: c.id, label: c.label })),
     });
+  });
+
+  it('replaces bugReportColumns without clearing other prefs', () => {
+    const next = [
+      { id: 'triage', label: 'Triage' },
+      { id: 'in-progress', label: 'In Progress' },
+    ];
+    const merged = mergeUserPreferencesData(
+      { hideAiUi: true, libraryCardDimensions: { weapons: { width: 400, height: 176 } } },
+      { bugReportColumns: next },
+    );
+    expect(merged.hideAiUi).toBe(true);
+    expect(merged.libraryCardDimensions).toEqual({ weapons: { width: 400, height: 176 } });
+    expect(merged.bugReportColumns).toEqual(next);
   });
 
   it('updates hideAiUi without clearing dimensions', () => {

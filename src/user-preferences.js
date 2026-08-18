@@ -7,6 +7,7 @@ import {
   mergeLibraryCardDimensions,
   normalizeLibraryCardDimensions,
 } from './client/lib/library-card-dimensions.js';
+import { normalizeBugReportColumns } from './client/lib/bug-report-admin.js';
 
 /** Normalize a stored or API preferences object. */
 export function normalizeUserPreferences(data) {
@@ -14,6 +15,7 @@ export function normalizeUserPreferences(data) {
   return {
     hideAiUi: !!d.hideAiUi,
     libraryCardDimensions: normalizeLibraryCardDimensions(d.libraryCardDimensions),
+    bugReportColumns: normalizeBugReportColumns(d.bugReportColumns),
   };
 }
 
@@ -21,6 +23,7 @@ export function normalizeUserPreferences(data) {
  * Merge a preferences patch onto existing prefs.
  * - `hideAiUi` updates only when the patch includes a boolean.
  * - `libraryCardDimensions` deep-merges per library tab.
+ * - `bugReportColumns` replaces the full ordered column list when present.
  */
 export function mergeUserPreferencesData(existing, patch) {
   const base = normalizeUserPreferences(existing);
@@ -30,5 +33,8 @@ export function mergeUserPreferencesData(existing, patch) {
     libraryCardDimensions: Object.prototype.hasOwnProperty.call(p, 'libraryCardDimensions')
       ? mergeLibraryCardDimensions(base.libraryCardDimensions, p.libraryCardDimensions)
       : base.libraryCardDimensions,
+    bugReportColumns: Object.prototype.hasOwnProperty.call(p, 'bugReportColumns')
+      ? normalizeBugReportColumns(p.bugReportColumns)
+      : base.bugReportColumns,
   };
 }
