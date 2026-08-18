@@ -1,71 +1,14 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { MapPinned, Plus, Users } from 'lucide-react';
+import { Plus } from 'lucide-react';
 import { LibraryView } from './LibraryView.jsx';
 import { Footer } from './Footer.jsx';
+import { TableCard, tableCardTitle } from './TableCard.jsx';
 import { fetchPublicTables } from '../lib/api.js';
-
-function CharacterNameChips({ names }) {
-  const list = Array.isArray(names) ? names.filter((n) => typeof n === 'string' && n.trim()) : [];
-  if (list.length === 0) {
-    return <p className="text-[11px] text-dh-muted">No characters yet</p>;
-  }
-  return (
-    <div className="flex flex-wrap gap-1">
-      {list.map((name, i) => (
-        <span
-          key={`${name}-${i}`}
-          className="max-w-full truncate text-[10px] px-1.5 py-0.5 rounded-full bg-dh-raised border border-dh-border text-dh-muted"
-          title={name}
-        >
-          {name}
-        </span>
-      ))}
-    </div>
-  );
-}
 
 /** Section width — not viewport — drives 1 / 2 / 3 cards across (@xs 20rem, @xl 36rem). */
 const TABLE_SECTION_CLASS = '@container min-w-0 rounded-xl border border-dh-border bg-dh-surface p-5 space-y-3';
 const TABLE_CARD_GRID_CLASS = 'grid grid-cols-1 @xs:grid-cols-2 @xl:grid-cols-3 gap-2';
 const CREATE_TABLE_CTA_CLASS = 'inline-flex items-center gap-1.5 rounded-lg bg-red-600 hover:bg-red-700 text-white px-5 py-3 text-sm font-semibold shadow-sm transition-colors';
-
-function TableCard({ title, subtitle, characterCount, characterNames, previewUrl, onClick }) {
-  const count = Number.isFinite(characterCount)
-    ? characterCount
-    : (Array.isArray(characterNames) ? characterNames.length : 0);
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="w-full h-full text-left rounded-xl border border-dh-border bg-dh-canvas/40 hover:bg-dh-hover/60 hover:border-dh-strong overflow-hidden transition-colors"
-    >
-      <div className="aspect-video bg-dh-raised/60 flex items-center justify-center overflow-hidden">
-        {previewUrl ? (
-          <img src={previewUrl} alt="" className="w-full h-full object-cover" />
-        ) : (
-          <MapPinned size={28} className="text-dh-muted" aria-hidden />
-        )}
-      </div>
-      <div className="p-3">
-        <div className="flex items-start justify-between gap-3 mb-2">
-          <div className="min-w-0">
-            <p className="font-semibold text-dh truncate">{title}</p>
-            {subtitle && <p className="text-xs text-dh-muted truncate mt-0.5">{subtitle}</p>}
-          </div>
-          <span className="shrink-0 inline-flex items-center gap-1 text-[11px] font-mono text-dh-muted">
-            <Users size={12} aria-hidden />
-            {count}
-          </span>
-        </div>
-        <CharacterNameChips names={characterNames} />
-      </div>
-    </button>
-  );
-}
-
-function tableCardTitle(name) {
-  return (name && name.trim() && name !== 'New Table') ? name : 'Game Table';
-}
 
 export function HomeAuthenticated({
   myTables = [],

@@ -62,6 +62,25 @@ test('anonymous visitor hitting a private table is sent to sign-in', async ({ pa
   await expect(page).toHaveURL(/authMode=signin/, { timeout: 10000 });
 });
 
+test('anonymous home Public Games shot shows live public table cards', async ({ page }) => {
+  await mockAnonymousConfig(page);
+  await page.route('/api/public-tables*', (route) => {
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify([
+        { id: 'p1', name: 'Crossroads Watch', gmName: 'Dana', characterNames: ['Briar'], characterCount: 1, previewUrl: null },
+        { id: 'p2', name: 'River Watch', gmName: 'Dana', characterNames: ['Thorn'], characterCount: 1, previewUrl: null },
+        { id: 'p3', name: 'Hollow Watch', gmName: 'Dana', characterNames: ['Ash'], characterCount: 1, previewUrl: null },
+      ]),
+    });
+  });
+  await page.goto('/');
+  await expect(page.getByRole('heading', { name: 'Public Games' })).toBeVisible({ timeout: 10000 });
+  const shot = page.locator('#home-shot-public-games');
+  await expect(shot.getByRole('button', { name: /Crossroads Watch/ })).toBeVisible();
+  await expect(shot.getByText('Briar')).toBeVisible();
+});
+
 test('home Public column lists public tables and search hits the API', async ({ page }) => {
   await authenticate(page);
   await page.unroute('/api/public-tables*');

@@ -34,6 +34,7 @@ test('sign-in page renders when not authenticated', async ({ page }) => {
   await expect(page.locator('h2', { hasText: 'Spotlight Management' })).toBeVisible();
   await expect(page.locator('h2', { hasText: 'GM Moves' })).toBeVisible();
   await expect(page.locator('h2', { hasText: 'Map and Camera Management' })).toBeVisible();
+  await expect(page.locator('h2', { hasText: 'Public Games' })).toBeVisible();
   await expect(page.locator('img[alt*="Spotlight beams"]')).toBeVisible();
 
   // Footer: single row of exactly the 4 legal/support links.
@@ -67,5 +68,13 @@ test('authenticated user can navigate to the GM Table', async ({ page }) => {
   await page.goto('/table/test-user-uid');
 
   // The GM Table has an "Add Character" button in the characters panel.
+  await expect(page.locator('text=Add Character')).toBeVisible({ timeout: 10000 });
+});
+
+test('trailing slash on a table URL is the same table, not a private-table gate', async ({ page }) => {
+  await authenticate(page);
+  await page.goto('/table/test-user-uid/');
+  await expect(page).toHaveURL(/\/table\/test-user-uid$/);
+  await expect(page.getByText('Private table')).toHaveCount(0);
   await expect(page.locator('text=Add Character')).toBeVisible({ timeout: 10000 });
 });

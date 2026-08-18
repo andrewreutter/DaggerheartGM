@@ -68,6 +68,7 @@ describe('public table GET / GM SSE ownership', () => {
   it('GET /api/public-tables does not exclude tables the viewer owns or is invited to', () => {
     const start = serverSrc.indexOf("app.get('/api/public-tables'");
     const block = serverSrc.slice(start, start + 800);
+    expect(block).toMatch(/app\.get\('\/api\/public-tables',\s*optionalAuth/);
     expect(block).toMatch(/listPublicTables/);
     expect(block).not.toMatch(/excludeUserId/);
     expect(block).not.toMatch(/excludeEmail/);

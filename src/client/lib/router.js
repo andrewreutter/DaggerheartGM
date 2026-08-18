@@ -74,6 +74,25 @@ export function pathnameOnly(fullPath) {
 }
 
 /**
+ * Strip trailing slashes from a pathname. `/` stays `/`.
+ * `/table/:id/` and `/table/:id` must be the same route.
+ */
+export function canonicalizePathname(pathname) {
+  if (pathname == null || pathname === '') return '/';
+  const trimmed = String(pathname).replace(/\/+$/, '');
+  return trimmed === '' ? '/' : trimmed;
+}
+
+/** Canonicalize pathname and keep `?query` intact. */
+export function canonicalizeAppPath(pathWithOptionalQuery) {
+  const full = pathWithOptionalQuery == null ? '' : String(pathWithOptionalQuery);
+  const qIdx = full.indexOf('?');
+  const pathname = qIdx >= 0 ? full.slice(0, qIdx) : full;
+  const search = qIdx >= 0 ? full.slice(qIdx) : '';
+  return canonicalizePathname(pathname) + search;
+}
+
+/**
  * Parses a pathname into a structured route descriptor.
  *
  * Supported patterns:
@@ -91,6 +110,7 @@ export function pathnameOnly(fullPath) {
  *   /support                       -> { view: 'support' } (public — Support/Contact)
  *   /cookies                       -> { view: 'cookies' } (public — Cookie Policy)
  *   /table/:tableId                -> { view: 'table', tableId }
+ *   /table/:tableId/               -> same (trailing slashes are stripped)
  *   /table/:tableId/:collection/:id -> table + modal deep-link
  *   /join/:token                   -> { view: 'join', token }
  *   /gm-table/...                  -> legacy (prefer legacyGmTableToCanonical + redirect)
@@ -103,7 +123,7 @@ export function pathnameOnly(fullPath) {
 export function parseRoute(pathWithOptionalQuery) {
   const full = pathWithOptionalQuery || '';
   const qIdx = full.indexOf('?');
-  const pathname = qIdx >= 0 ? full.slice(0, qIdx) : full;
+  const pathname = canonicalizePathname(qIdx >= 0 ? full.slice(0, qIdx) : full);
   const embeddedSearch = qIdx >= 0 ? full.slice(qIdx + 1) : '';
   const searchParams =
     embeddedSearch !== ''
@@ -190,12 +210,14 @@ function homeRoute(searchParams) {
 function getInitialPath() {
   const p = window.location.pathname;
   const search = window.location.search || '';
-  const canon = legacyGmTableToCanonical(p, null);
-  if (canon && canon !== p) {
-    window.history.replaceState(null, '', canon + search);
-    return canon + search;
+  const slashCanon = canonicalizePathname(p);
+  const gmCanon = legacyGmTableToCanonical(slashCanon, null);
+  const canonPath = gmCanon || slashCanon;
+  const next = canonPath + search;
+  if (canonPath !== p) {
+    window.history.replaceState(null, '', next);
   }
-  return p + search;
+  return next;
 }
 
 /**
@@ -211,14 +233,14 @@ export function useRouter() {
     const onPopState = () => {
       const nextPath = window.location.pathname;
       const search = window.location.search || '';
-      const next = nextPath + search;
-      const canon = legacyGmTableToCanonical(nextPath, null);
-      if (canon && canon !== nextPath) {
-        window.history.replaceState(null, '', canon + search);
-        setPath(canon + search);
-      } else {
-        setPath(next);
+      const slashCanon = canonicalizePathname(nextPath);
+      const gmCanon = legacyGmTableToCanonical(slashCanon, null);
+      const canonPath = gmCanon || slashCanon;
+      const next = canonPath + search;
+      if (canonPath !== nextPath) {
+        window.history.replaceState(null, '', next);
       }
+      setPath(next);
     };
     window.addEventListener('popstate', onPopState);
     return () => window.removeEventListener('popstate', onPopState);
@@ -226,8 +248,10 @@ export function useRouter() {
 
   useEffect(() => {
     const pathOnly = pathnameOnly(path);
-    const canon = legacyGmTableToCanonical(pathOnly, null);
-    if (canon && canon !== pathOnly) {
+    const slashCanon = canonicalizePathname(pathOnly);
+    const gmCanon = legacyGmTableToCanonical(slashCanon, null);
+    const canon = gmCanon || slashCanon;
+    if (canon !== pathOnly) {
       const search = path.includes('?') ? path.slice(path.indexOf('?')) : window.location.search || '';
       window.history.replaceState(null, '', canon + search);
       setPath(canon + search);
@@ -235,12 +259,13 @@ export function useRouter() {
   }, [path]);
 
   const navigate = useCallback((to, { replace = false } = {}) => {
+    const dest = canonicalizeAppPath(to);
     if (replace) {
-      window.history.replaceState(null, '', to);
+      window.history.replaceState(null, '', dest);
     } else {
-      window.history.pushState(null, '', to);
+      window.history.pushState(null, '', dest);
     }
-    setPath(to);
+    setPath(dest);
   }, []);
 
   return { route: parseRoute(path), navigate };

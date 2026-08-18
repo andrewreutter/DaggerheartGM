@@ -876,15 +876,14 @@ export const fetchMyTables = async () => {
   return res.json();
 };
 
-/** Homepage Public column. Returns [{ id, name, gmName, previewUrl, characterNames, characterCount }]. */
+/** Homepage Public column (anonymous OK). Returns [{ id, name, gmName, previewUrl, characterNames, characterCount }]. */
 export const fetchPublicTables = async ({ search = '' } = {}) => {
   const token = await getAuthToken();
-  if (!token) throw new Error('Not signed in');
   const params = new URLSearchParams();
   if (search) params.set('search', search);
   const qs = params.toString();
   const res = await fetch(`/api/public-tables${qs ? `?${qs}` : ''}`, {
-    headers: apiHeaders({ Authorization: `Bearer ${token}` }),
+    headers: apiHeaders(token ? { Authorization: `Bearer ${token}` } : {}),
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();

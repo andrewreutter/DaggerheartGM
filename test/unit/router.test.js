@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseRoute, legacyGmTableToCanonical, DEFAULT_LIBRARY_TAB, shouldHandleSpaNavClick } from '../../src/client/lib/router.js';
+import { parseRoute, legacyGmTableToCanonical, DEFAULT_LIBRARY_TAB, shouldHandleSpaNavClick, canonicalizePathname, canonicalizeAppPath } from '../../src/client/lib/router.js';
 
 describe('parseRoute /library', () => {
   it('defaults tab to All when path is /library or tab segment is invalid', () => {
@@ -171,10 +171,28 @@ describe('parseRoute /join', () => {
   });
 });
 
+describe('canonicalizeAppPath', () => {
+  it('strips trailing slashes except on /', () => {
+    expect(canonicalizePathname('/')).toBe('/');
+    expect(canonicalizePathname('/table/abc/')).toBe('/table/abc');
+    expect(canonicalizePathname('/table/abc///')).toBe('/table/abc');
+    expect(canonicalizeAppPath('/table/abc/?x=1')).toBe('/table/abc?x=1');
+    expect(canonicalizeAppPath('/')).toBe('/');
+  });
+});
+
 describe('parseRoute /table', () => {
   const gmUid = '9s3M6tgScJgXhKgYOHZVYAStNQi2';
   const secondaryTableId = 'd6f893df-6a9a-44da-b722-7d4de2c35e97';
   const charId = '5c098068-7751-416c-8a5f-24ca3494574b';
+
+  it('treats a trailing slash as the same table id', () => {
+    const withSlash = parseRoute(`/table/${secondaryTableId}/`);
+    const without = parseRoute(`/table/${secondaryTableId}`);
+    expect(withSlash).toEqual(without);
+    expect(withSlash.tableId).toBe(secondaryTableId);
+    expect(withSlash.view).toBe('table');
+  });
 
   it('parses secondary table + character modal', () => {
     const r = parseRoute(`/table/${secondaryTableId}/characters/${charId}`);

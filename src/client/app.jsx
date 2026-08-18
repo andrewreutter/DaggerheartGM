@@ -34,6 +34,7 @@ import {
 import { isTablePlayAllowed, isPrepModeElementUpdateBlocked } from './lib/table-session-gate.js';
 import { showChooseSpotlightBanner } from './lib/spotlight.js';
 import { shouldStartGmTableRoomEffects } from './lib/gm-table-sse-ownership-gate.js';
+import { shouldFetchTableState, tableAccessErrorAfterFetch } from './lib/table-state-load.js';
 import { billingNavIndicatorCopy } from './lib/billing-status-copy.js';
 import {
   collectNavTableEntries,
@@ -909,8 +910,12 @@ function App() {
 
   // Load table state when viewing a table (initial paint before SSE)
   useEffect(() => {
-    if (route.view !== 'table' || !route.tableId) return;
+    if (!shouldFetchTableState({ view: route.view, tableId: route.tableId, authSettled: !loading })) return;
+    let cancelled = false;
     loadTableState(route.tableId).then((items) => {
+      if (cancelled) return;
+      const accessErr = tableAccessErrorAfterFetch({ ok: true });
+      if (accessErr !== undefined) setTableAccessError(accessErr);
       const tableState = items?.[0];
       if (!tableState) {
         setTableOwnerUid(null);
@@ -1020,21 +1025,19 @@ function App() {
         })();
       }
     }).catch(err => {
+      if (cancelled) return;
       console.error('Failed to load table state:', err);
       const status = parseInt(err?.message?.match(/HTTP (\d+)/)?.[1] || '0', 10);
-      if (status === 403) {
+      const accessErr = tableAccessErrorAfterFetch({ ok: false, httpStatus: status });
+      if (accessErr === 'private' || accessErr === 'not-found') {
         setTableOwnerUid(null);
-        setTableAccessError('private');
-        setTableStateReady(true);
-        tableStateReadyRef.current = true;
-      } else if (status === 404) {
-        setTableOwnerUid(null);
-        setTableAccessError('not-found');
+        setTableAccessError(accessErr);
         setTableStateReady(true);
         tableStateReadyRef.current = true;
       }
     });
-  }, [user?.uid, route.view, route.tableId]);
+    return () => { cancelled = true; };
+  }, [loading, user?.uid, route.view, route.tableId]);
 
   // GM SSE: receive player presence, table state snapshots, banners, and dice roll events
   useEffect(() => {
@@ -2529,7 +2532,7 @@ function App() {
               <li className="flex gap-2"><span className="text-red-500 mt-0.5 shrink-0">•</span><span>Library of adversaries, environments, and more — pick up and play or dive deep into homebrew built by you and other creators.</span></li>
             </ul>
             <AuthLanding initialMode={route.authMode || 'signin'} />
-            <HomeFeatureShots />
+            <HomeFeatureShots navigate={navigate} />
             <Footer navigate={navigate} />
           </div>
         ))}

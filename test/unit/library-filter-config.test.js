@@ -7,6 +7,7 @@ import {
   readSharedSearchQuery,
   readSharedIncludes,
   getLibraryFilterConfig,
+  LIBRARY_CUSTOM_DETAIL_COLLECTIONS,
   LIBRARY_GENERIC_DETAIL_COLLECTIONS,
   formatFeatScopeLabel,
 } from '../../src/client/lib/library-filter-config.js';
@@ -48,6 +49,7 @@ describe('library-filter-config', () => {
   it('generic detail excludes form-based collections', () => {
     expect(LIBRARY_GENERIC_DETAIL_COLLECTIONS).toContain('weapons');
     expect(LIBRARY_GENERIC_DETAIL_COLLECTIONS).not.toContain('adversaries');
+    expect(LIBRARY_CUSTOM_DETAIL_COLLECTIONS.has('characters')).toBe(true);
   });
 
   describe('formatFeatScopeLabel', () => {

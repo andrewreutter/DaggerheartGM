@@ -2859,8 +2859,8 @@ app.get('/api/my-tables', requireAuth, async (req, res) => {
   }
 });
 
-// GET /api/public-tables — homepage Public column (auth required). Default 3 most recently updated.
-app.get('/api/public-tables', requireAuth, async (req, res) => {
+// GET /api/public-tables — homepage Public column + anonymous marketing shot. Default 3 most recently updated.
+app.get('/api/public-tables', optionalAuth, async (req, res) => {
   try {
     const search = typeof req.query.search === 'string' ? req.query.search : '';
     const limit = search.trim() ? 20 : 3;

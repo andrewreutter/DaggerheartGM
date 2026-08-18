@@ -172,7 +172,7 @@ export function getLibraryFilterConfig(collection) {
 }
 
 /** Collections with custom detail panes in ItemDetailModal (not generic JSON) */
-export const LIBRARY_CUSTOM_DETAIL_COLLECTIONS = new Set(['adversaries', 'environments', 'maps', 'scenes', 'adventures']);
+export const LIBRARY_CUSTOM_DETAIL_COLLECTIONS = new Set(['adversaries', 'environments', 'maps', 'scenes', 'adventures', 'characters']);
 
 /** SRD unified tabs that use the generic structured read-only detail view */
 export const LIBRARY_GENERIC_DETAIL_COLLECTIONS = SRD_UNIFIED_COLLECTIONS.filter(

@@ -28,6 +28,7 @@ import {
 } from '../../lib/advancement-rules.js';
 import { dedupeAbilitiesById, generateId } from '../../lib/helpers.js';
 import { getAncestryExperienceBonus } from '../../lib/ancestry-experience-bonus.js';
+import { highestTraitNames, pickRandom, pickSuggestedClassLoadout } from '../../lib/character-class-suggested-loadout.js';
 import { v2ClassSubclassFeatureDescriptorsByName } from '../../lib/v2-class-subclass-feature-descriptors.js';
 import { collectEditorCardsForCharacter } from '../../lib/build-feature-card-model.js';
 import { DeclarativeSchemaEditorCard } from '../DeclarativeSchemaCard.jsx';
@@ -66,22 +67,6 @@ const TRAIT_ABBREV = {
 };
 
 const TRAIT_KEYS_ORDER = ['agility', 'strength', 'finesse', 'instinct', 'presence', 'knowledge'];
-
-function highestTraitNames(traits) {
-  if (!traits) return [];
-  let max = -Infinity;
-  for (const k of TRAIT_KEYS_ORDER) {
-    const v = traits[k] ?? 0;
-    if (v > max) max = v;
-  }
-  if (max === -Infinity) return [];
-  return TRAIT_KEYS_ORDER.filter(k => (traits[k] ?? 0) === max);
-}
-
-function pickRandom(arr) {
-  if (!arr?.length) return undefined;
-  return arr[Math.floor(Math.random() * arr.length)];
-}
 
 /** Muted meta to the right of domain card names: Level · domain · type */
 function formatDomainAbilityMetaLine(ability) {
@@ -691,91 +676,31 @@ export function CharacterForm({
     if (idx >= 0) availablePool.splice(idx, 1);
   }
 
-  const handleFillOutAutomatically = useCallback(() => {
-    const best = highestTraitNames(formData.traits);
-    const favored = (w) => best.includes((w.trait || '').toLowerCase());
-
-    const primaryWeapons = weaponOptions.filter(w => w.primary_or_secondary !== 'Secondary');
-    const primaryFavored = primaryWeapons.filter(favored);
-    const primaryCandidates = primaryFavored.length ? primaryFavored : primaryWeapons;
-    const primaryWeapon = pickRandom(primaryCandidates);
-    const primaryWeaponId = primaryWeapon?.id ?? null;
-    const isTwoHanded = primaryWeapon?.burden === 'Two-Handed';
-
-    let secondaryWeaponId = null;
-    if (!isTwoHanded) {
-      const secondaryWeapons = weaponOptions.filter(w => w.primary_or_secondary !== 'Primary');
-      const secondaryFavored = secondaryWeapons.filter(favored);
-      const secondaryCandidates = secondaryFavored.length ? secondaryFavored : secondaryWeapons;
-      const secondaryWeapon = pickRandom(secondaryCandidates);
-      secondaryWeaponId = secondaryWeapon?.id ?? null;
-    }
-
-    const randomArmor = pickRandom(armorOptions);
-    const armorId = randomArmor?.id ?? null;
-
-    const domains = selectedClass?.domains || [];
-    const byDomain = {};
-    for (const a of abilityOptions) {
-      const d = a.domain || '';
-      if (!byDomain[d]) byDomain[d] = [];
-      byDomain[d].push(a);
-    }
-    const abilityIds = [];
-    const used = new Set();
-    for (let i = 0; i < 2; i++) {
-      const domainName = domains[i];
-      const abilities = byDomain[domainName] || [];
-      const available = abilities.filter(a => !used.has(a.id));
-      const chosen = pickRandom(available);
-      if (chosen) used.add(chosen.id);
-      abilityIds.push(chosen?.id ?? null);
-    }
-
-    const experiences = (formData.experiences || []).map((exp, i) => ({
-      ...exp,
-      name: `Experience ${i + 1} - choose during play`,
-    }));
-
-    const ancestryId = formData.ancestryIds?.[0];
-    const ancestryName = ancestryId ? srdData?.ancestriesById?.[ancestryId]?.name : null;
-    const expBonus = ancestryName ? getAncestryExperienceBonus(ancestryName) : null;
-    let experienceBonusChoices = formData.experienceBonusChoices;
-    if (expBonus) {
-      const expIds = (formData.experiences || []).map(e => e.id).filter(Boolean);
-      const chosenExpId = pickRandom(expIds) ?? expIds[0] ?? null;
-      experienceBonusChoices = { ...(formData.experienceBonusChoices || {}), [expBonus.featureName]: chosenExpId };
-    }
-
-    let companion = formData.companion;
-    if (selectedSubclass?.name === 'Beastbound' && companion) {
-      const compExps = (companion.experiences || []).map((exp, i) => ({
-        ...exp,
-        name: `Experience ${i + 1} - choose during play`,
-      }));
-      companion = {
-        ...companion,
-        name: companion.name || 'Companion',
-        species: companion.species || 'To be determined during play',
-        attackName: companion.attackName || 'Attack',
-        experiences: compExps,
-      };
-    }
-
-    set({
-      primaryWeaponId,
-      secondaryWeaponId,
-      armorId,
-      abilityIds,
-      domainSlotAcquiredLevel: syncDomainSlotAcquiredLevelForAbilityIds(formData, abilityIds),
-      experiences,
-      ...(expBonus ? { experienceBonusChoices } : {}),
-      ...(companion != null ? { companion } : {}),
-      background: 'To be determined during play.',
-      connectionText: 'To be determined during play.',
-      description: formData.description || 'A 1st level character ready for adventure.',
+  const applySuggestedLoadoutToPatch = useCallback((patch, newClass) => {
+    if (!newClass || !srdData) return patch;
+    const next = { ...formData, ...patch };
+    const preview = recomputeCharacter(
+      { ...next, armorId: null, primaryWeaponId: null, secondaryWeaponId: null },
+      srdData,
+    );
+    const loadout = pickSuggestedClassLoadout({
+      traits: preview.traits,
+      weapons: weaponOptions,
+      armor: armorOptions,
+      abilities: srdData.abilities || [],
+      classDomains: newClass.domains || [],
+      characterLevel: next.level ?? 1,
+      multiclassDomain: next.multiclassDomain || null,
     });
-  }, [formData, weaponOptions, armorOptions, abilityOptions, selectedClass, selectedSubclass, srdData, set]);
+    return {
+      ...patch,
+      ...loadout,
+      domainSlotAcquiredLevel: syncDomainSlotAcquiredLevelForAbilityIds(
+        { ...next, ...loadout },
+        loadout.abilityIds,
+      ),
+    };
+  }, [formData, srdData, weaponOptions, armorOptions]);
 
   const handleRandomizeBigFour = useCallback(() => {
     const newClass = pickRandom(classOptions);
@@ -808,8 +733,8 @@ export function CharacterForm({
         experiences: [{ name: '', score: 2, id: generateId() }, { name: '', score: 2, id: generateId() }],
       };
     }
-    set(patch);
-  }, [classOptions, ancestryOptions, communityOptions, srdData, formData.companion, set]);
+    set(applySuggestedLoadoutToPatch(patch, newClass));
+  }, [classOptions, ancestryOptions, communityOptions, srdData, formData.companion, set, applySuggestedLoadoutToPatch]);
 
   if (srdLoading) {
     return <div className="p-4 text-dh-muted text-sm">Loading SRD data...</div>;
@@ -977,7 +902,7 @@ export function CharacterForm({
                 advancementChoicesLockedThroughLevel: 1,
               };
               if (suggestedTraits) patch.baseTraits = suggestedTraits;
-              set(patch);
+              set(applySuggestedLoadoutToPatch(patch, newClass));
             },
             options: classOptions.map(c => c.id),
             getOptionKey: id => id,
@@ -1077,7 +1002,7 @@ export function CharacterForm({
               )}
             </div>
             {selectedClass?.suggested_traits && (
-              <div className="text-sky-400/60">Suggested traits applied — adjust below if desired</div>
+              <div className="text-sky-400/60">Suggested traits, weapons, and armor applied. Random domain cards applied. Adjust below if desired.</div>
             )}
           </div>
         ) : null}
@@ -1136,18 +1061,6 @@ export function CharacterForm({
           })}
         </div>
       </FormRow>
-
-      {level === 1 && (
-        <button
-          type="button"
-          onClick={handleFillOutAutomatically}
-          disabled={!displayForm.classId || !displayForm.subclassId || !displayForm.ancestryIds?.[0] || !displayForm.communityId}
-          title={!(displayForm.classId && displayForm.subclassId && displayForm.ancestryIds?.[0] && displayForm.communityId) ? 'Select class, subclass, ancestry, and community to enable' : undefined}
-          className="w-full mb-4 py-2 px-4 rounded border text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed bg-sky-900/60 border-sky-700 text-sky-200 hover:bg-sky-800 hover:border-sky-600 disabled:hover:bg-sky-900/60 disabled:hover:border-sky-700"
-        >
-          Randomize remaining selections
-        </button>
-      )}
 
       {/* ── Equipment: Armor ── */}
       <FormRow label="Armor">

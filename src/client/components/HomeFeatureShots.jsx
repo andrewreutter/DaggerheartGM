@@ -1,9 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { TableCard, tableCardTitle } from './TableCard.jsx';
 
 /**
  * Marketing screenshot series on the unauthenticated home page.
- * Add entries here — every image uses the same width and keeps its own aspect ratio.
+ * Add entries here — screenshot slides use the same width and keep their own aspect ratio.
+ * The last Public Games shot renders live public table cards instead of a PNG.
  */
 export const HOME_FEATURE_SHOTS = [
   {
@@ -12,10 +14,9 @@ export const HOME_FEATURE_SHOTS = [
     image: '/assets/home/character-builder.png',
     imageAlt: 'Character builder with name, portrait, class, subclass, ancestry, community, traits, armor, weapons, experiences, and domain cards',
     bullets: [
-      'Name, pronouns, portrait, and token size sit at the top — then class, subclass, ancestry, and community.',
-      'Randomize the archetype, or pick each yourself. Suggested traits fill in; change any score you want.',
-      'Armor and weapons sort with trait-optimized first, so a Strength Seraph sees Mace and Round Shield.',
-      'Experiences and domain cards land on the same sheet. The character is ready for the table.',
+      'Create a random character with just a click, a name, and experiences. Adjust to taste.',
+      'Character sheet updates as you adjust, so you can see the changes in real time.',
+      'Level up just as easily with full support up to 10th level',
     ],
   },
   {
@@ -24,9 +25,9 @@ export const HOME_FEATURE_SHOTS = [
     image: '/assets/home/action-first-character-sheet.png',
     imageAlt: 'Two-column character sheet with Hope, defense tracks, click-to-roll traits, weapons, feature actions, and domain card loadout',
     bullets: [
-      'Hope, evasion, thresholds, and HP sit where you can see them — then click a trait or Spellcast to roll.',
-      'Weapons and experiences are one tap. Features expand in place with the moves you actually use.',
-      'Actions and Loadout live on the right: Prayer Dice, Flying, domain cards — play from the sheet, not a binder.',
+      'Sheet is organized around actions, so you can see the moves you actually use.',
+      'Click a Trait, Spellcast, or a Weapon to roll it on the table.',
+      'Mechanical support for every class, subclass, ancestry, and community feature.',
     ],
   },
   {
@@ -87,6 +88,17 @@ export const HOME_FEATURE_SHOTS = [
       'Hover a camera to preview it; click to switch the table. Broadcast so players share your framing.',
     ],
   },
+  {
+    id: 'public-games',
+    kind: 'publicTables',
+    title: 'Public Games',
+    imageAlt: 'Public table card with map preview, GM name, and party character chips',
+    bullets: [
+      'GMs can mark a table Public. The three most recently updated games show up here.',
+      'Each card has a live map preview, the GM’s name, and the party.',
+      'Click a card to watch. Sign in when you want to join as a player or start a table.',
+    ],
+  },
 ];
 
 /** Shared image width for every homepage screenshot. Height follows the file’s aspect ratio. */
@@ -115,7 +127,102 @@ export function wrapHomeFeatureShotIndex(index, length, delta = 1) {
   return ((start + step) % length + length) % length;
 }
 
-function HomeFeatureCarousel({ shots }) {
+/** Dwell on Public Games long enough to cycle every live public table card. */
+export function homeFeatureCarouselDwellMs(shot, publicTableCount) {
+  if (shot?.kind === 'publicTables' && Number.isFinite(publicTableCount) && publicTableCount > 1) {
+    return HOME_FEATURE_CAROUSEL_INTERVAL_MS * Math.trunc(publicTableCount);
+  }
+  return HOME_FEATURE_CAROUSEL_INTERVAL_MS;
+}
+
+/** Uniform scale that fits `content` inside `container`. Allows upscaling. Returns 1 when any side is not a positive finite size. */
+export function computeScaleToFit(contentWidth, contentHeight, containerWidth, containerHeight) {
+  const dims = [contentWidth, contentHeight, containerWidth, containerHeight];
+  if (dims.some((n) => !Number.isFinite(n) || n <= 0)) return 1;
+  return Math.min(containerWidth / contentWidth, containerHeight / contentHeight);
+}
+
+function HomePublicTablesShot({ tables, tableIndex, reduceMotion, onOpenTable }) {
+  const fadeClass = reduceMotion ? '' : 'transition-opacity duration-700';
+  const frameRef = useRef(null);
+  const contentRef = useRef(null);
+  const [scale, setScale] = useState(1);
+  const hasCards = Array.isArray(tables) && tables.length > 0;
+
+  useLayoutEffect(() => {
+    const frame = frameRef.current;
+    const content = contentRef.current;
+    if (!frame || !content || !hasCards) return undefined;
+    const update = () => {
+      setScale(computeScaleToFit(
+        content.offsetWidth,
+        content.offsetHeight,
+        frame.clientWidth,
+        frame.clientHeight,
+      ));
+    };
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(frame);
+    ro.observe(content);
+    return () => ro.disconnect();
+  }, [hasCards, tables]);
+
+  if (!Array.isArray(tables)) {
+    return (
+      <div data-testid="home-public-tables-shot" className="h-full w-full" />
+    );
+  }
+  if (tables.length === 0) {
+    return (
+      <div
+        data-testid="home-public-tables-shot"
+        className="flex items-center justify-center h-full px-6 text-dh-muted text-sm text-center"
+      >
+        No public tables right now.
+      </div>
+    );
+  }
+  const safeIndex = wrapHomeFeatureShotIndex(tableIndex, tables.length, 0);
+  return (
+    <div
+      data-testid="home-public-tables-shot"
+      className="h-full w-full p-4 box-border"
+    >
+      <div ref={frameRef} className="h-full w-full flex items-center justify-center overflow-hidden">
+        <div
+          ref={contentRef}
+          className="w-[20rem] shrink-0"
+          style={{ transform: `scale(${scale})` }}
+        >
+          <div className="grid">
+            {tables.map((table, i) => (
+              <div
+                key={table.id}
+                className={`col-start-1 row-start-1 ${fadeClass} ${i === safeIndex ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
+                aria-hidden={i !== safeIndex}
+              >
+                <TableCard
+                  title={tableCardTitle(table.name)}
+                  subtitle={table.gmName ? `GM: ${table.gmName}` : null}
+                  characterCount={table.characterCount}
+                  characterNames={table.characterNames}
+                  previewUrl={table.previewUrl}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onOpenTable?.(table.id);
+                  }}
+                />
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function HomeFeatureCarousel({ shots, publicTables, publicTableIndex, onOpenTable }) {
   const [index, setIndex] = useState(0);
   const [rotationEpoch, setRotationEpoch] = useState(0);
   const [reduceMotion, setReduceMotion] = useState(
@@ -131,12 +238,13 @@ function HomeFeatureCarousel({ shots }) {
 
   useEffect(() => {
     if (shots.length < 2) return undefined;
+    const dwell = homeFeatureCarouselDwellMs(shots[index], Array.isArray(publicTables) ? publicTables.length : 0);
     const id = window.setInterval(() => {
       if (document.hidden) return;
       setIndex((i) => wrapHomeFeatureShotIndex(i, shots.length, 1));
-    }, HOME_FEATURE_CAROUSEL_INTERVAL_MS);
+    }, dwell);
     return () => window.clearInterval(id);
-  }, [shots.length, rotationEpoch]);
+  }, [shots, index, publicTables, rotationEpoch]);
 
   const current = shots[index];
   if (!current) return null;
@@ -184,13 +292,28 @@ function HomeFeatureCarousel({ shots }) {
             onClick={scrollToShot}
           >
             {shots.map((shot, i) => (
-              <img
-                key={shot.id}
-                src={shot.image}
-                alt={i === index ? shot.imageAlt : ''}
-                aria-hidden={i !== index}
-                className={`absolute inset-0 w-full h-full object-contain ${fadeClass} ${i === index ? 'opacity-100' : 'opacity-0'}`}
-              />
+              shot.kind === 'publicTables' ? (
+                <div
+                  key={shot.id}
+                  className={`absolute inset-0 ${fadeClass} ${i === index ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
+                  aria-hidden={i !== index}
+                >
+                  <HomePublicTablesShot
+                    tables={publicTables}
+                    tableIndex={publicTableIndex}
+                    reduceMotion={reduceMotion}
+                    onOpenTable={onOpenTable}
+                  />
+                </div>
+              ) : (
+                <img
+                  key={shot.id}
+                  src={shot.image}
+                  alt={i === index ? shot.imageAlt : ''}
+                  aria-hidden={i !== index}
+                  className={`absolute inset-0 w-full h-full object-contain ${fadeClass} ${i === index ? 'opacity-100' : 'opacity-0'}`}
+                />
+              )
             ))}
           </div>
           {shots.length > 1 && (
@@ -244,11 +367,61 @@ function HomeFeatureCarousel({ shots }) {
   );
 }
 
-export function HomeFeatureShots() {
+export function HomeFeatureShots({ navigate }) {
+  const [publicTables, setPublicTables] = useState(null);
+  const [publicTableIndex, setPublicTableIndex] = useState(0);
+  const [reduceMotion, setReduceMotion] = useState(
+    () => typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+  );
+
+  useEffect(() => {
+    const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const syncMotion = () => setReduceMotion(mq.matches);
+    mq.addEventListener('change', syncMotion);
+    return () => mq.removeEventListener('change', syncMotion);
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    import('../lib/api.js')
+      .then(({ fetchPublicTables }) => fetchPublicTables())
+      .then((rows) => {
+        if (cancelled) return;
+        const list = Array.isArray(rows) ? rows.slice(0, 3) : [];
+        setPublicTables(list);
+        setPublicTableIndex(0);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setPublicTables([]);
+          setPublicTableIndex(0);
+        }
+      });
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    if (!Array.isArray(publicTables) || publicTables.length < 2) return undefined;
+    const id = window.setInterval(() => {
+      if (document.hidden) return;
+      setPublicTableIndex((i) => wrapHomeFeatureShotIndex(i, publicTables.length, 1));
+    }, HOME_FEATURE_CAROUSEL_INTERVAL_MS);
+    return () => window.clearInterval(id);
+  }, [publicTables]);
+
+  const onOpenTable = (tableId) => {
+    if (tableId && navigate) navigate(`/table/${tableId}`);
+  };
+
   if (HOME_FEATURE_SHOTS.length === 0) return null;
   return (
     <div className="w-full max-w-5xl mt-16 pt-12 border-t border-dh-border/70">
-      <HomeFeatureCarousel shots={HOME_FEATURE_SHOTS} />
+      <HomeFeatureCarousel
+        shots={HOME_FEATURE_SHOTS}
+        publicTables={publicTables}
+        publicTableIndex={publicTableIndex}
+        onOpenTable={onOpenTable}
+      />
       {HOME_FEATURE_SHOTS.map((shot) => (
         <section
           key={shot.id}
@@ -259,11 +432,22 @@ export function HomeFeatureShots() {
             <h2 className="text-2xl font-bold text-dh tracking-wide mb-3">{shot.title}</h2>
             <HomeFeatureBulletList bullets={shot.bullets} />
           </div>
-          <img
-            src={shot.image}
-            alt={shot.imageAlt}
-            className={SHOT_IMAGE_CLASS}
-          />
+          {shot.kind === 'publicTables' ? (
+            <div className="w-full max-w-[36rem] aspect-[16/10] rounded-lg border border-dh-border shadow-xl bg-dh-canvas overflow-hidden">
+              <HomePublicTablesShot
+                tables={publicTables}
+                tableIndex={publicTableIndex}
+                reduceMotion={reduceMotion}
+                onOpenTable={onOpenTable}
+              />
+            </div>
+          ) : (
+            <img
+              src={shot.image}
+              alt={shot.imageAlt}
+              className={SHOT_IMAGE_CLASS}
+            />
+          )}
         </section>
       ))}
     </div>
