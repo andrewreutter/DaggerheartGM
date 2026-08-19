@@ -217,7 +217,7 @@ function getRowOverlayPng(row) {
 /** Padding around map token wrappers for easier drag grabs; visual token size unchanged. */
 const MAP_TOKEN_HIT_PADDING_PX = 12;
 
-/** Width in px of the character tokens shelf (left tray). Used by DiceRoller to offset the banner strip. */
+/** Width in px of the character / adversary token shelves. Used by DiceRoller to inset the banner strip from both trays. */
 export const CHARACTER_TRAY_WIDTH_PX = 36 + 16;
 /** Shared height for the map-draw/scribble strip and tray place/return headers so they align.
  *  Inline px (not a Tailwind arbitrary class) so compact 14px chevrons cannot shrink the row.
@@ -7294,7 +7294,21 @@ export function BattleMap({
                       </span>
                     </>
                   ) : (
-                    <span className="text-dh-muted font-semibold tracking-wide">Scribble</span>
+                    <>
+                      {showPlayerPlaceImageButton && (
+                        <Tooltip label="Place an image on the map">
+                          <button
+                            type="button"
+                            onClick={() => openMapImageQuickPickWithCenter(null)}
+                            className="inline-flex items-center justify-center rounded border border-dh-strong bg-dh-raised/70 p-1.5 text-sky-400 hover:text-sky-300 hover:border-sky-800/60"
+                            aria-label="Place image on map"
+                          >
+                            <ImageIcon size={15} aria-hidden />
+                          </button>
+                        </Tooltip>
+                      )}
+                      <span className="text-dh-muted font-semibold tracking-wide">Scribble</span>
+                    </>
                   )}
                   {!isPlayer && (
                     <>
@@ -8015,21 +8029,9 @@ export function BattleMap({
               </div>
             </div>
           ) : null}
-          {(showPlayerPlaceImageButton || showMapArtistCredit) && (
+          {showMapArtistCredit && (
             <div className="pointer-events-none absolute right-2 bottom-2 z-20 flex flex-col items-end gap-1.5">
-              {showPlayerPlaceImageButton && (
-                <Tooltip label="Place an image on the map">
-                  <button
-                    type="button"
-                    aria-label="Place image on map"
-                    onClick={() => openMapImageQuickPickWithCenter(null)}
-                    className="pointer-events-auto shrink-0 p-1.5 rounded border border-dh-strong bg-dh-raised/90 shadow-md hover:bg-dh-hover text-sky-400 hover:text-sky-300"
-                  >
-                    <ImageIcon size={14} />
-                  </button>
-                </Tooltip>
-              )}
-              {showMapArtistCredit ? <MapArtistCredit map={displayMapRow} /> : null}
+              <MapArtistCredit map={displayMapRow} />
             </div>
           )}
           </div>

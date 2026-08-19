@@ -3,10 +3,15 @@
  *
  * The dice "floor" is the bottom edge of the canvas container. Banners sit
  * {@link BANNER_STRIP_BOTTOM} above the overlay bottom and grow upward.
+ * The strip is {@link BANNER_STRIP_FLEX_DIRECTION} `row-reverse`: the oldest
+ * banner anchors at the bottom-right of the map and newer banners stack left.
  * To keep settled dice from landing behind banners:
  * 1. Each banner card is hard-capped at {@link BANNER_MAX_HEIGHT} and scrolls internally.
  * 2. The canvas bottom inset is always banner max height + strip offset — not a disconnected guess.
  */
+
+/** Flex direction so the first (oldest) banner sits on the right. */
+export const BANNER_STRIP_FLEX_DIRECTION = 'row-reverse';
 
 /** Distance from the overlay bottom to the banner strip. */
 export const BANNER_STRIP_BOTTOM = '2.5rem';
@@ -31,3 +36,29 @@ export const BANNER_CARD_SCROLL_STYLE = {
   overflowY: 'auto',
   overscrollBehavior: 'contain',
 };
+
+/** Extra gap between the strip and each token tray. */
+const BANNER_STRIP_TRAY_GAP_PX = 16;
+
+/**
+ * Absolute layout for the pending-banner strip. `leftOffset` / `rightOffset`
+ * keep the strip off the character / adversary trays so the oldest banner sits
+ * on the map, not over a tray.
+ */
+export function bannerStripStyle({ leftOffset = 0, rightOffset = 0 } = {}) {
+  return {
+    position: 'absolute',
+    bottom: BANNER_STRIP_BOTTOM,
+    left: leftOffset,
+    right: rightOffset,
+    marginLeft: BANNER_STRIP_TRAY_GAP_PX,
+    marginRight: BANNER_STRIP_TRAY_GAP_PX,
+    display: 'flex',
+    flexDirection: BANNER_STRIP_FLEX_DIRECTION,
+    alignItems: 'flex-end',
+    gap: '0.5rem',
+    padding: '0 0.75rem',
+    overflow: 'hidden',
+    pointerEvents: 'auto',
+  };
+}

@@ -6,6 +6,7 @@ import { BookOpen, LayoutDashboard, ChevronDown, LogOut, Upload, Download, Trash
 
 import { auth, getAuthToken, CLIENT_ID, loadCollection, loadTableState, resolveItems, saveItem as apiSaveItem, saveImage as apiSaveImage, deleteItem as apiDeleteItem, cloneItemToLibrary, recordPlay, fetchMe, fetchMyRooms, fetchMyTables, fetchPublicTables, createTable, postCharacterUpdate, postAddCharacter, postTableOp, postLifeSupportSelect, postRestMoveSelect, normalizeRoll, conceptAiEnabled, imageGenEnabled, fetchTableBillingStatus, postMapImageFile, postMapImageFileForTable, postMapImageObject, postGenerateInviteLink, postRevokeInviteLink, postJoinInviteToken, postLeaveTable, putUserPreferences } from './lib/api.js';
 import { dataUrlToFile, loadImageNaturalSizeFromUrl } from './lib/map-image-data-url.js';
+import { withImageUploadBusy } from './lib/image-upload-busy.js';
 import { AiUiPreferenceProvider, useAiUiPreference } from './lib/ai-ui-preference-context.jsx';
 import { shouldShowConceptAiUi } from './lib/ai-ui-visibility.js';
 import {
@@ -2079,7 +2080,7 @@ function App() {
    * `img.mapImageUrl` may be an inline `data:` URL (e.g. a client-side canvas crop) — upload it to
    * Storage first so the table_state row never carries a base64 blob (Fix 1, game table latency plan).
    */
-  const sendAddMapWithImage = useCallback(async (img) => {
+  const sendAddMapWithImage = useCallback(async (img) => withImageUploadBusy(async () => {
     let mapImageUrl = img.mapImageUrl;
     if (typeof mapImageUrl === 'string' && mapImageUrl.startsWith('data:')) {
       const file = await dataUrlToFile(mapImageUrl, 'map-image');
@@ -2099,13 +2100,13 @@ function App() {
       extraCameraVisibleNorms: img.extraCameraVisibleNorms,
     }), tableId);
     if (tableId) navigate(`/table/${tableId}/maps/${stub.id}`);
-  }, [tableId, navigate]);
+  }), [tableId, navigate]);
 
   /**
    * Replace the current map's image in place (`set-map`).
    * Mirrors sendAddMapWithImage's upload-then-op pattern.
    */
-  const sendReplaceMapWithImage = useCallback(async (file, { fork = true, libraryMapId = null } = {}) => {
+  const sendReplaceMapWithImage = useCallback(async (file, { fork = true, libraryMapId = null } = {}) => withImageUploadBusy(async () => {
     const uploaded = await postMapImageFile(file);
     if (!uploaded?.url) throw new Error('Map image upload did not return a URL');
     const { width, height } = await loadImageNaturalSizeFromUrl(uploaded.url);
@@ -2130,10 +2131,10 @@ function App() {
         console.warn('Library map image save failed', err);
       }
     }
-  }, [sendSetMapConfig]);
+  }), [sendSetMapConfig]);
 
   /** Upload a file and add it as a `mapImage` element on the current active map. */
-  const sendAddMapImageObject = useCallback(async (file, opts = {}) => {
+  const sendAddMapImageObject = useCallback(async (file, opts = {}) => withImageUploadBusy(async () => {
     let uploaded;
     if (effectiveIsPlayer) {
       uploaded = await postMapImageFileForTable(tableId, file);
@@ -2166,7 +2167,7 @@ function App() {
     } else {
       postTableOp({ op: 'add-elements', elements: [el] }, tableId);
     }
-  }, [tableId, effectiveIsPlayer, user?.uid]);
+  }), [tableId, effectiveIsPlayer, user?.uid]);
 
   /** Add a `drawShape` (rect/oval/brush) vector element on the current map — GM only, no upload. */
   const sendAddMapDrawShape = useCallback((shape) => {

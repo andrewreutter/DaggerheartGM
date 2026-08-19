@@ -3,6 +3,7 @@ import { Plus, Trash2, Star, User } from 'lucide-react';
 import { ImageGenerator } from '../ImageGenerator.jsx';
 import { postImageUpload } from '../../lib/api.js';
 import { dataUrlToFile } from '../../lib/map-image-data-url.js';
+import { withImageUploadBusy } from '../../lib/image-upload-busy.js';
 
 /**
  * List-based image editor for item forms. Supports add/remove images via URL,
@@ -40,9 +41,11 @@ export function ImageEditor({ imageUrl, _additionalImages, onChange, onImageSave
     if (raw.startsWith('data:')) {
       setUploading(true);
       try {
-        const file = await dataUrlToFile(raw, 'item-image');
-        const { url: hosted } = await postImageUpload(file);
-        url = hosted;
+        url = await withImageUploadBusy(async () => {
+          const file = await dataUrlToFile(raw, 'item-image');
+          const { url: hosted } = await postImageUpload(file);
+          return hosted;
+        });
       } catch {
         // Fall back to raw data URL (local dev without Supabase)
       } finally {

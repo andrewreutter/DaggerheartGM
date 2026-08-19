@@ -5,6 +5,7 @@ import { useAiUiPreference } from '../lib/ai-ui-preference-context.jsx';
 import { shouldShowImageGenAiUi } from '../lib/ai-ui-visibility.js';
 import { buildImagePrompt } from '../lib/ai-image-prompts.js';
 import { dataUrlToFile, imageSrcToDataUrlForApi } from '../lib/map-image-data-url.js';
+import { withImageUploadBusy } from '../lib/image-upload-busy.js';
 import { AiImageWorkbench } from './AiImageWorkbench.jsx';
 
 /**
@@ -47,7 +48,7 @@ export function ImageGenerator({ formData, collection, onImageGenerated, inline 
     setEditedPrompt(buildImagePrompt(formData, collection));
   };
 
-  const uploadGeneratedDataUrl = useCallback(async (dataUrl) => {
+  const uploadGeneratedDataUrl = useCallback(async (dataUrl) => withImageUploadBusy(async () => {
     try {
       const file = await dataUrlToFile(dataUrl, 'ai-image');
       const { url } = await postImageUpload(file);
@@ -56,7 +57,7 @@ export function ImageGenerator({ formData, collection, onImageGenerated, inline 
       // Fall back to the raw data URL if upload fails (local dev without Supabase, etc.)
       return dataUrl;
     }
-  }, []);
+  }), []);
 
   const handleGenerate = useCallback(async () => {
     setError(null);

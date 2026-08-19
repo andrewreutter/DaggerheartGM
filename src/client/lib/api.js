@@ -1,4 +1,5 @@
 import { buildLibraryAllSearchParams } from './library-all-api-params.js';
+import { withImageUploadBusy } from './image-upload-busy.js';
 import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
 
@@ -1185,12 +1186,17 @@ export const postMapScribble = async (tableId, payload, isGm) => {
   }
 };
 
+function runImageUpload(opts, run) {
+  return opts?.silent ? run() : withImageUploadBusy(run);
+}
+
 /**
  * Upload an item image (character portrait, adversary art, etc.) to Supabase Storage or
  * receive a data URL fallback when Storage is not configured. Field name must be `file`
- * (multer). Returns `{ url }`.
+ * (multer). Returns `{ url }`. Pass `{ silent: true }` to skip the full-screen upload spinner
+ * (background overlay hosting).
  */
-export const postImageUpload = async (file) => {
+export const postImageUpload = async (file, opts) => runImageUpload(opts, async () => {
   const token = await getAuthToken();
   if (!token) throw new Error('Not signed in');
   const form = new FormData();
@@ -1203,13 +1209,14 @@ export const postImageUpload = async (file) => {
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
   return body;
-};
+});
 
 /**
  * GM: upload a map image file to storage (Supabase) or receive a data URL fallback.
- * Field name must be `file` (multer). Returns `{ url }`.
+ * Field name must be `file` (multer). Returns `{ url }`. Pass `{ silent: true }` to skip
+ * the full-screen upload spinner (background overlay hosting).
  */
-export const postMapImageFile = async (file) => {
+export const postMapImageFile = async (file, opts) => runImageUpload(opts, async () => {
   const token = await getAuthToken();
   if (!token) throw new Error('Not signed in');
   const form = new FormData();
@@ -1222,10 +1229,10 @@ export const postMapImageFile = async (file) => {
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
   return body;
-};
+});
 
 /** Player: upload a map/overlay image for a table the user is invited to. Returns `{ url }`. */
-export const postMapImageFileForTable = async (tableId, file) => {
+export const postMapImageFileForTable = async (tableId, file, opts) => runImageUpload(opts, async () => {
   const token = await getAuthToken();
   if (!token) throw new Error('Not signed in');
   const form = new FormData();
@@ -1238,7 +1245,7 @@ export const postMapImageFileForTable = async (tableId, file) => {
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
   return body;
-};
+});
 
 /** Player (or GM): add/update/remove a mapImage element on the table via the player-safe route. */
 export const postMapImageObject = async (tableId, payload) => {

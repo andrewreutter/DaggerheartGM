@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { Plus, Trash2, Upload, FileText, X } from 'lucide-react';
 import { postImageUpload } from '../../lib/api.js';
 import { dataUrlToFile } from '../../lib/map-image-data-url.js';
+import { withImageUploadBusy } from '../../lib/image-upload-busy.js';
 import { FullPageOverlay, FullPageOverlayHeader } from '../FullPageOverlay.jsx';
 import { loadPageLayoutFromFile } from '../../lib/page-layout-load.js';
 import {
@@ -656,9 +657,11 @@ export function UnifiedImportModal({
         // Upload any inline data: imageUrl before saving/adding to the table.
         if (typeof toSave.imageUrl === 'string' && toSave.imageUrl.startsWith('data:')) {
           try {
-            const file = await dataUrlToFile(toSave.imageUrl, 'import-image');
-            const { url } = await postImageUpload(file);
-            toSave = { ...toSave, imageUrl: url };
+            toSave = await withImageUploadBusy(async () => {
+              const file = await dataUrlToFile(toSave.imageUrl, 'import-image');
+              const { url } = await postImageUpload(file);
+              return { ...toSave, imageUrl: url };
+            });
           } catch {
             // Fall back to the data URL (local dev without Supabase)
           }

@@ -38,6 +38,7 @@ import {
   BANNER_CARD_SCROLL_STYLE,
   BANNER_STRIP_BOTTOM,
   DICE_BOTTOM_RESERVE,
+  bannerStripStyle,
 } from '../lib/dice-banner-layout.js';
 import { isReactionRoll as getIsReactionRoll, resolveDualityBannerSchemeKey } from '../lib/reaction-roll-display.js';
 import { BannerSheetDisplayNameLine } from '../lib/sheet-display-label-inline.jsx';
@@ -2923,6 +2924,7 @@ export const DiceRoller = forwardRef(function DiceRoller({
   restCanEditColumn = () => true,
   restGmUid = null,
   bannerStripLeftOffset = 0,
+  bannerStripRightOffset = 0,
   diceCanvasHidden = false,
   getV2PendingMoveBlockInfo,
   sessionRole,
@@ -3376,22 +3378,14 @@ export const DiceRoller = forwardRef(function DiceRoller({
           visibility: diceCanvasHidden ? 'hidden' : 'visible',
         }}
       />
-      {/* Banner strip — left edge offset by character tokens shelf width */}
+      {/* Banner strip — oldest at map bottom-right; newer stack left. Offsets clear the trays. */}
       {activeBanners.length > 0 && (
         <div
-          style={{
-            position: 'absolute',
-            bottom: BANNER_STRIP_BOTTOM,
-            left: bannerStripLeftOffset,
-            right: 0,
-            marginLeft: '16px',
-            display: 'flex',
-            alignItems: 'flex-end',
-            gap: '0.5rem',
-            padding: '0 0.75rem',
-            overflow: 'hidden',
-            pointerEvents: 'auto',
-          }}
+          data-testid="banner-strip"
+          style={bannerStripStyle({
+            leftOffset: bannerStripLeftOffset,
+            rightOffset: bannerStripRightOffset,
+          })}
         >
           {activeBanners.map(entry => (
             entry.roll._rest ? (

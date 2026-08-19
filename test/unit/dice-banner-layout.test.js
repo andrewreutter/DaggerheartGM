@@ -3,7 +3,9 @@ import {
   BANNER_CARD_SCROLL_STYLE,
   BANNER_MAX_HEIGHT,
   BANNER_STRIP_BOTTOM,
+  BANNER_STRIP_FLEX_DIRECTION,
   DICE_BOTTOM_RESERVE,
+  bannerStripStyle,
 } from '../../src/client/lib/dice-banner-layout.js';
 
 describe('dice-banner-layout', () => {
@@ -19,5 +21,15 @@ describe('dice-banner-layout', () => {
     expect(BANNER_MAX_HEIGHT).toBe('min(25rem, 50vh)');
     expect(BANNER_CARD_SCROLL_STYLE.maxHeight).toBe(BANNER_MAX_HEIGHT);
     expect(BANNER_CARD_SCROLL_STYLE.overflowY).toBe('auto');
+  });
+
+  it('packs the oldest banner at the right and applies tray offsets', () => {
+    // Formerly flex-start (left): first pending banner sat at the map bottom-left.
+    expect(BANNER_STRIP_FLEX_DIRECTION).toBe('row-reverse');
+    const style = bannerStripStyle({ leftOffset: 52, rightOffset: 52 });
+    expect(style.flexDirection).toBe('row-reverse');
+    expect(style.left).toBe(52);
+    expect(style.right).toBe(52);
+    expect(style.alignItems).toBe('flex-end');
   });
 });

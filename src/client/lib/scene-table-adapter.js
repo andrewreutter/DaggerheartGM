@@ -22,6 +22,7 @@ import { applyTableOp } from './table-ops.js';
 import { attachDerivedMapConfig, deriveMapConfigFromState } from './map-table-state.js';
 import { dataUrlToFile, loadImageNaturalSizeFromUrl } from './map-image-data-url.js';
 import { generateId } from './helpers.js';
+import { withImageUploadBusy } from './image-upload-busy.js';
 import { PARTY_SCALE_MAX, applyMinionGroupReconcilePlan, planMinionGroupReconcile } from './party-scaled-adversaries.js';
 import { TIERS } from './constants.js';
 
@@ -182,12 +183,12 @@ function activeMapIdFromState(s) {
   );
 }
 
-export async function hostDataUrlIfNeeded(value, baseName = 'scene-image') {
+export async function hostDataUrlIfNeeded(value, baseName = 'scene-image', opts = {}) {
   if (typeof value !== 'string' || !value.startsWith('data:')) return value;
   try {
     const { postMapImageFile } = await import('./api.js');
     const file = await dataUrlToFile(value, baseName);
-    const uploaded = await postMapImageFile(file);
+    const uploaded = await postMapImageFile(file, { silent: !!opts.silent });
     return uploaded?.url || value;
   } catch (err) {
     console.warn('Scene editor image upload failed; keeping original value', err);
@@ -215,7 +216,7 @@ export async function applyOverlayThenHost(setSceneData, args) {
     : { op: 'set-map-overlay', mapId: id, overlayPng: overlayPng ?? null };
   setSceneData((prev) => applySceneTableOp(prev, applyOp));
   if (typeof overlayPng !== 'string' || !overlayPng.startsWith('data:')) return;
-  const hosted = await hostFn(overlayPng, kind === 'view' ? 'map-view-overlay' : 'map-overlay');
+  const hosted = await hostFn(overlayPng, kind === 'view' ? 'map-view-overlay' : 'map-overlay', { silent: true });
   if (!hosted || hosted === overlayPng) return;
   setSceneData((prev) => {
     const s = normalizeSceneTableData(prev);
@@ -259,7 +260,7 @@ export function buildSceneTableAdapterProps(setSceneData, opts = {}) {
       const patch = { ...(newConfig || {}) };
       const resolveMapId = (prev) => patch.mapId ?? activeMapIdFromState(normalizeSceneTableData(prev));
       if (typeof patch.mapImageUrl === 'string' && patch.mapImageUrl.startsWith('data:')) {
-        void (async () => {
+        void withImageUploadBusy(async () => {
           patch.mapImageUrl = await hostDataUrlIfNeeded(patch.mapImageUrl, 'map-image');
           setSceneData((prev) => {
             const mid = resolveMapId(prev);
@@ -270,7 +271,7 @@ export function buildSceneTableAdapterProps(setSceneData, opts = {}) {
               ...(mid ? { mapId: mid } : {}),
             });
           });
-        })();
+        });
         return;
       }
       setSceneData((prev) => {
@@ -322,7 +323,7 @@ export function buildSceneTableAdapterProps(setSceneData, opts = {}) {
     onRenameMap: (mapId, name, extras = {}) => applyOp({ op: 'rename-map', mapId, name, ...extras }),
     onMapFreeExplore: (mapId) => applyOp({ op: 'set-map-free-explore', mapId }),
 
-    onAddMapWithImage: async (img) => {
+    onAddMapWithImage: async (img) => withImageUploadBusy(async () => {
       let mapImageUrl = img.mapImageUrl;
       mapImageUrl = await hostDataUrlIfNeeded(mapImageUrl, 'map-image');
       applyOp({
@@ -334,9 +335,9 @@ export function buildSceneTableAdapterProps(setSceneData, opts = {}) {
           ? { extraCameraVisibleNorms: img.extraCameraVisibleNorms }
           : {}),
       });
-    },
+    }),
 
-    onAddMapImageObject: async (file, placement = {}) => {
+    onAddMapImageObject: async (file, placement = {}) => withImageUploadBusy(async () => {
       const { postMapImageFile } = await import('./api.js');
       const uploaded = await postMapImageFile(file);
       if (!uploaded?.url) throw new Error('Map image upload did not return a URL');
@@ -359,7 +360,7 @@ export function buildSceneTableAdapterProps(setSceneData, opts = {}) {
         heightFt: defaultWidthFt * (height / (width || 1)),
       };
       applyOp({ op: 'add-elements', elements: [el] });
-    },
+    }),
 
     onAddMapDrawShape: (shape) => {
       applyOp({ op: 'add-elements', elements: [{ ...shape, createdByUid: shape?.createdByUid ?? null }] });

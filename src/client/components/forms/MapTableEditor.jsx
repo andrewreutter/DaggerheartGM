@@ -6,6 +6,7 @@ import {
   hostDataUrlIfNeeded,
 } from '../../lib/scene-table-adapter.js';
 import { libraryMapToEditorSlice } from '../../lib/map-library.js';
+import { withImageUploadBusy } from '../../lib/image-upload-busy.js';
 
 /**
  * One-map BattleMap editor for a library Map (cameras, draw tools, overlays, placed images).
@@ -36,7 +37,7 @@ export function MapTableEditor({ value, onChange }) {
       className: 'flex-1 min-w-0 min-h-0',
       onAddMap: undefined,
       onRemoveMap: undefined,
-      onAddMapWithImage: async (img) => {
+      onAddMapWithImage: async (img) => withImageUploadBusy(async () => {
         let mapImageUrl = img.mapImageUrl;
         if (typeof mapImageUrl === 'string' && mapImageUrl.startsWith('data:')) {
           mapImageUrl = await hostDataUrlIfNeeded(mapImageUrl, 'map-image');
@@ -49,7 +50,7 @@ export function MapTableEditor({ value, onChange }) {
           mapImageNaturalWidth: img.mapImageNaturalWidth,
           mapImageNaturalHeight: img.mapImageNaturalHeight,
         }));
-      },
+      }),
     };
   }, [setSceneData]);
 

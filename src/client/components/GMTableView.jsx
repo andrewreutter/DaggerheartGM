@@ -7317,6 +7317,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
             onGetWingsD8Extra={!isPlayer ? getWingsD8Extra : undefined}
             getV2DamageBannerAckNotices={!isPlayer ? getV2DamageBannerAckNotices : undefined}
             bannerStripLeftOffset={tableCharacters.length > 0 ? CHARACTER_TRAY_WIDTH_PX : 0}
+            bannerStripRightOffset={CHARACTER_TRAY_WIDTH_PX}
             v2ReviewChipsByRollDbId={v2ReviewChipsByRollDbId}
             onV2ReviewChip={isPlayer ? handlePlayerV2ReviewChip : handleV2ReviewChip}
             resolveV2ReviewChipPicker={getV2ReviewChipPicker}

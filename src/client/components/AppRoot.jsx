@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { ErrorBoundary } from './ErrorBoundary.jsx';
 import { FatalErrorFallback } from './FatalErrorFallback.jsx';
+import { ImageUploadOverlay } from './ImageUploadOverlay.jsx';
 
 function formatReason(reason) {
   if (reason instanceof Error) return reason.message || String(reason);
@@ -50,5 +51,10 @@ export function AppRoot({ children }) {
     );
   }
 
-  return <ErrorBoundary>{children}</ErrorBoundary>;
+  return (
+    <ErrorBoundary>
+      {children}
+      <ImageUploadOverlay />
+    </ErrorBoundary>
+  );
 }

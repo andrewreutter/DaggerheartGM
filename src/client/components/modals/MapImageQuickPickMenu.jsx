@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Image, Map, RefreshCw, Import, X, Loader2, ImagePlus } from 'lucide-react';
+import { withImageUploadBusy } from '../../lib/image-upload-busy.js';
 
 /**
  * Popover menu for image paste/drop actions. Shown when the user pastes/drops an image on
@@ -56,15 +57,20 @@ export function MapImageQuickPickMenu({
     alert(`Failed to add image: ${err?.message || err}. It may be too large (10MB limit) — try a smaller image.`);
   };
 
+  const runFileAction = (key, callback, file) => {
+    if (key === 'import-tools') return callback(file);
+    return withImageUploadBusy(() => callback(file));
+  };
+
   const handleAction = async (key, callback) => {
     if (seedFile) {
       setLoading(key);
-      try { await callback(seedFile); } catch (err) { reportError(err); }
+      try { await runFileAction(key, callback, seedFile); } catch (err) { reportError(err); }
       setLoading(null);
       onClose();
     } else {
       // Toolbar mode: open file picker, run callback after file selection
-      setPendingCallback(() => callback);
+      setPendingCallback(() => ({ key, callback }));
       setTimeout(() => fileInputRef.current?.click(), 0);
     }
   };
@@ -73,10 +79,10 @@ export function MapImageQuickPickMenu({
     const file = e.target.files?.[0];
     e.target.value = '';
     if (!file || !pendingCallback) return;
-    const cb = pendingCallback;
+    const { key, callback } = pendingCallback;
     setPendingCallback(null);
     setLoading('file');
-    try { await cb(file); } catch (err) { reportError(err); }
+    try { await runFileAction(key, callback, file); } catch (err) { reportError(err); }
     setLoading(null);
     onClose();
   };

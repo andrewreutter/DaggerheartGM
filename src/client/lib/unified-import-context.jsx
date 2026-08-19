@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { UnifiedImportModal } from '../components/modals/UnifiedImportModal.jsx';
 import { MapImageQuickPickMenu } from '../components/modals/MapImageQuickPickMenu.jsx';
 import { postImageUpload } from './api.js';
+import { withImageUploadBusy } from './image-upload-busy.js';
 import { buildAddToItemTargets } from './add-to-item-targets.js';
 import { resolveImagePasteActions } from './image-paste-actions.js';
 
@@ -240,7 +241,7 @@ export function UnifiedImportProvider({
    * Uploads a file to Storage (falling back to a data URL when upload fails, e.g. local dev
    * without Supabase) and hands the resulting URL to a registered target's callback.
    */
-  const uploadAndApply = useCallback(async (onAddImageUrl, file) => {
+  const uploadAndApply = useCallback(async (onAddImageUrl, file) => withImageUploadBusy(async () => {
     try {
       const { url } = await postImageUpload(file);
       onAddImageUrl(url);
@@ -248,7 +249,7 @@ export function UnifiedImportProvider({
       const url = await fileToDataUrl(file);
       onAddImageUrl(url);
     }
-  }, [fileToDataUrl]);
+  }), [fileToDataUrl]);
 
   /** Hidden file input used when a single action is resolved but no file was supplied (toolbar). */
   const singleActionCallbackRef = useRef(/** @type {((file: File) => Promise<void>) | null} */ (null));
@@ -271,12 +272,12 @@ export function UnifiedImportProvider({
 
     const hasCurrentMap = isGameTableGm && !!onReplaceMapWithImage;
 
-    const resolvedNewMap = onAddMapWithImage ? async (f) => {
+    const resolvedNewMap = onAddMapWithImage ? async (f) => withImageUploadBusy(async () => {
       const dataUrl = await fileToDataUrl(f);
       const img = new Image();
       await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = dataUrl; });
       await onAddMapWithImage({ mapImageUrl: dataUrl, mapImageNaturalWidth: img.naturalWidth, mapImageNaturalHeight: img.naturalHeight });
-    } : null;
+    }) : null;
 
     const resolvedMapEditorReplace = mapEditorReplaceRef.current
       ? (f) => uploadAndApply(mapEditorReplaceRef.current, f)
@@ -297,7 +298,7 @@ export function UnifiedImportProvider({
     if (actions.length === 1) {
       if (file) {
         // Paste/drop path — run immediately.
-        actions[0].run(file).catch((err) => {
+        withImageUploadBusy(() => actions[0].run(file)).catch((err) => {
           console.error('[image paste]', err);
           alert(`Failed to add image: ${err?.message || err}. It may be too large (10 MB limit) — try a smaller image.`);
         });
@@ -415,7 +416,7 @@ export function UnifiedImportProvider({
           const cb = singleActionCallbackRef.current;
           singleActionCallbackRef.current = null;
           try {
-            await cb(f);
+            await withImageUploadBusy(() => cb(f));
           } catch (err) {
             console.error('[image paste single-action]', err);
             alert(`Failed to add image: ${err?.message || err}. It may be too large (10 MB limit) — try a smaller image.`);
