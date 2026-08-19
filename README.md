@@ -103,7 +103,7 @@ DaggerheartGM/
 │   ├── game-constants.js       # Single source of truth: ROLES, ROLE_BP_COST, ENV_TYPES, TIERS
 │   ├── daggerstack-sync.js     # Daggerstack.com character sync — Supabase auth, UUID resolution via SRD map + adapters
 │   ├── client/
-│   │   ├── app.jsx             # React SPA entry point; portals SessionBlockedBanner when table view + play blocked; ChooseSpotlightBanner when play is allowed and the spotlight is open
+│   │   ├── app.jsx             # React SPA entry point; portals SessionBlockedBanner when table view + play blocked; ChooseSpotlightBanner when play is allowed and the spotlight is open; NewVersionBanner when /api/config buildId changes after deploy
 │   │   ├── components/         # UI components (LibraryView, GMTableView, DiceRoller, NavBtn, ItemCard, ItemActionButtons, …)
 │   │   │   ├── AuthLanding.jsx        # Home (anonymous): email/password, forgot password, Google; Firebase account linking when needed; initialMode prop from ?authMode=
 │   │   │   ├── HomeFeatureShots.jsx   # Home (anonymous): auto-rotating title+image carousel above a screenshot series; last shot is live Public Games table cards
@@ -119,6 +119,7 @@ DaggerheartGM/
 │   │   │   ├── DiceRoller.jsx         # 3D dice visualization overlay — parallel banner strip, serial dice animation, imperative API
 │   │   │   ├── SessionBlockedBanner.jsx # Idle-pause hint — portaled from app.jsx when sessionPaused
 │   │   │   ├── ChooseSpotlightBanner.jsx # Yellow Choose Spotlight card — same slot as Play / pause banners; shown when the session is live and no one holds the spotlight
+│   │   │   ├── NewVersionBanner.jsx # Post-deploy Reload prompt (no auto-reload) when GET /api/config buildId changes
 │   │   │   ├── BugReportButton.jsx    # T13: non-blocking "Report a problem" button in the shared Characters panel (visible to GM and all invited players); clicking opens an inline optional-notes composer — Enter sends immediately (with or without text), Escape cancels; captures recent action log, active-element summary, current route, and console-error ring buffer; GM posts to POST /api/room/my/bug-report, players post to POST /api/room/:tableId/bug-report; shows a brief auto-dismiss toast (never a modal)
 │   │   │   ├── SupportTableModal.jsx  # T10: "Support this table" / Gift a Campaign Pass modal; shows billing status + 3/6/12-month picker (default 12mo/$60); also anchors T14 expired banner and T11 session-start error UI; accepts isAdmin prop — admins see "Grant (Admin)" button that calls POST /api/campaign-pass/checkout and receives { granted: true } instead of a Stripe checkoutUrl, refreshing billing status in place
 │   │   │   ├── ActionLog.jsx            # Action/roll history strip above the BattleMap (no polling)
@@ -487,7 +488,7 @@ The local Supabase Studio at `http://localhost:54323` gives you a full DB browse
 
 ### Dev Live Reload
 
-`npm run dev` starts esbuild and Tailwind in watch mode, and (when `DEV_AGENT_QUEUE_ENABLED=1` and a GitHub token is present) a background **`scripts/dev-agent-queue-worker.mjs`** that polls GitHub Issues for the optional Feature Source dev-agent queue. Set **`DEV_AGENT_WORKER=0`** to skip spawning that worker without editing the script. The server exposes `GET /livereload` — an SSE endpoint that watches `public/` for file changes and broadcasts a reload signal. In development (`NODE_ENV` not `production` or `test`), `server.js` injects a small `EventSource` client into the served SPA HTML so the page reloads when bundles change or after a dev server restart. Production (e.g. Railway) omits this unless you set `ENABLE_LIVERELOAD=1`. No browser extension or extra tooling needed.
+`npm run dev` starts esbuild and Tailwind in watch mode, and (when `DEV_AGENT_QUEUE_ENABLED=1` and a GitHub token is present) a background **`scripts/dev-agent-queue-worker.mjs`** that polls GitHub Issues for the optional Feature Source dev-agent queue. Set **`DEV_AGENT_WORKER=0`** to skip spawning that worker without editing the script. The server exposes `GET /livereload` — an SSE endpoint that watches `public/` for file changes and broadcasts a reload signal. In development (`NODE_ENV` not `production` or `test`), `server.js` injects a small `EventSource` client into the served SPA HTML so the page reloads when bundles change or after a dev server restart. Production (e.g. Railway) omits this unless you set `ENABLE_LIVERELOAD=1`. Production instead cache-busts `/app.js` and `/styles.css` with `?v=<buildId>` (`RAILWAY_GIT_COMMIT_SHA` when set) and serves the SPA HTML with `Cache-Control: no-cache`; open tabs re-check `GET /api/config` `buildId` on tab focus and SSE reconnect and show a **Reload** banner rather than forcing a refresh. No browser extension or extra tooling needed.
 
 ### Dev agent queue (optional)
 

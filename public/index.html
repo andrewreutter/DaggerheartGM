@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Daggertop</title>
   <link rel="icon" type="image/png" href="/assets/daggertop-logo.png" />
-  <link rel="stylesheet" href="/styles.css" />
+  <link rel="stylesheet" href="/styles.css?v=dev" />
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark-dimmed.min.css" />
 
   <!--
@@ -34,8 +34,8 @@
 <body class="min-h-screen bg-dh-canvas text-dh">
   <div id="root"></div>
 
-  <!-- Bump ?v= when shipping client bundle changes so browsers don’t keep a stale cached app.js -->
-  <script type="module" src="/app.js?v=library-preview-3"></script>
+  <!-- `?v=` is rewritten by sendSpaHtml() to the process build id (Railway git SHA). -->
+  <script type="module" src="/app.js?v=dev"></script>
   <!-- Dev-only /livereload client is injected by server.js (omitted when NODE_ENV=production) -->
 </body>
 </html>

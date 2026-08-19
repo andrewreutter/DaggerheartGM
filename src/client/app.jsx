@@ -67,6 +67,9 @@ import { EditChoiceDialog } from './components/modals/EditChoiceDialog.jsx';
 import { FeatureAuthoringGuideModal } from './components/FeatureAuthoringGuideModal.jsx';
 import { SessionBlockedBanner } from './components/SessionBlockedBanner.jsx';
 import { ChooseSpotlightBanner } from './components/ChooseSpotlightBanner.jsx';
+import { NewVersionBanner } from './components/NewVersionBanner.jsx';
+import { attachSseAppBuildCheck } from './lib/app-build-check.js';
+import { useAppBuildCheck } from './lib/use-app-build-check.js';
 import { AppRoot } from './components/AppRoot.jsx';
 import { UnifiedImportProvider, useUnifiedImport } from './lib/unified-import-context.jsx';
 import { AuthLanding } from './components/AuthLanding.jsx';
@@ -125,6 +128,7 @@ function App() {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const { route, navigate } = useRouter();
+  const { showNewVersion, reloadToNewVersion, dismissNewVersion } = useAppBuildCheck();
 
   const [data, setData] = useState({
     adversaries: [],
@@ -681,6 +685,7 @@ function App() {
       const token = await getAuthToken();
       if (!token || !userRef.current) return;
       es = new EventSource(`/api/home/stream?token=${encodeURIComponent(token)}`);
+      attachSseAppBuildCheck(es);
       es.addEventListener('home_owned', (e) => {
         try {
           const tables = JSON.parse(e.data);
@@ -1073,6 +1078,7 @@ function App() {
       const token = await getAuthToken();
       if (!token || !userRef.current) return;
       es = new EventSource(`/api/room/my/players?token=${encodeURIComponent(token)}&tableId=${encodeURIComponent(tableId)}`);
+      attachSseAppBuildCheck(es);
       es.addEventListener('presence', (e) => {
         const data = JSON.parse(e.data);
         setConnectedPlayers(data.players || []);
@@ -1195,6 +1201,7 @@ function App() {
       const token = await getAuthToken();
       if (!token || !userRef.current) return;
       es = new EventSource(`/api/room/${route.tableId}/stream?token=${encodeURIComponent(token)}`);
+      attachSseAppBuildCheck(es);
       es.addEventListener('presence', (e) => {
         const data = JSON.parse(e.data);
         setConnectedPlayers(data.players || []);
@@ -1321,6 +1328,7 @@ function App() {
       const token = await getAuthToken();
       const qs = token ? `?token=${encodeURIComponent(token)}` : '';
       es = new EventSource(`/api/room/${route.tableId}/public-stream${qs}`);
+      attachSseAppBuildCheck(es);
       es.addEventListener('presence', (e) => {
         const data = JSON.parse(e.data);
         setConnectedPlayers(data.players || []);
@@ -2347,6 +2355,10 @@ function App() {
           }}
           onClose={() => setMapReplaceChoice(null)}
         />
+      )}
+      {typeof document !== 'undefined' && showNewVersion && createPortal(
+        <NewVersionBanner onReload={reloadToNewVersion} onDismiss={dismissNewVersion} />,
+        document.body
       )}
       {typeof document !== 'undefined' && route.view === 'table' && user && sessionPaused && createPortal(
         <SessionBlockedBanner

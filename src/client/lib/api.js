@@ -16,6 +16,8 @@ export let imageGenEnabled = false;
 export let supabaseStorageBase = null;
 export let devAgentQueueEnabled = false;
 export let conceptAiEnabled = false;
+/** Process build id from the first `/api/config` fetch (`null` if missing / fetch failed). */
+export let appBuildId = null;
 try {
   const res = await fetch('/api/config', { headers: apiHeaders() });
   const json = await res.json();
@@ -24,8 +26,22 @@ try {
   supabaseStorageBase = json.supabaseStorageBase || null;
   devAgentQueueEnabled = !!json.devAgentQueueEnabled;
   conceptAiEnabled = !!json.conceptAiEnabled;
+  appBuildId = typeof json.buildId === 'string' && json.buildId.trim() ? json.buildId.trim() : null;
 } catch(e) {
   console.error('Failed to fetch /api/config:', e);
+}
+
+/** Later `/api/config` `buildId` for deploy detection. Returns `null` when missing or the request fails. */
+export async function fetchAppConfigBuildId() {
+  try {
+    const res = await fetch('/api/config', { headers: apiHeaders() });
+    if (!res.ok) return null;
+    const json = await res.json();
+    const id = typeof json.buildId === 'string' ? json.buildId.trim() : '';
+    return id || null;
+  } catch {
+    return null;
+  }
 }
 
 /** Re-fetch from server (e.g. after changing `.env` + restart) — module-level `devAgentQueueEnabled` only updates on full page load. */

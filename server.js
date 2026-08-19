@@ -71,6 +71,7 @@ import { safeResolveUnderFeaturesRoot } from './src/sanitize-feature-source-path
 import { registerDevAgentRoutes } from './src/server/dev-agent-routes.js';
 import { DEFAULT_CHARACTER_STARTING_HOPE, ROLES, ENV_TYPES } from './src/game-constants.js';
 import { shouldSkipActivityStamp } from './src/server/activity-stamp-throttle.js';
+import { applyAppBuildIdToSpaHtml, resolveAppBuildId, SPA_HTML_CACHE_CONTROL } from './src/server/app-build-id.js';
 import { parseHttpBooleanLoose } from './src/parse-http-bool.js';
 import { normalizeManualBugReportCreate } from './src/client/lib/bug-report-admin.js';
 import {
@@ -250,8 +251,11 @@ app.use((req, res, next) => {
   req.on('error', next);
 });
 
+const APP_BUILD_ID = resolveAppBuildId();
+
 // --- Config route (no auth required) ---
 app.get('/api/config', (req, res) => {
+  res.setHeader('Cache-Control', 'no-cache');
   res.json({
     firebaseConfig: {
       apiKey:     process.env.FIREBASE_API_KEY     || '',
@@ -265,6 +269,7 @@ app.get('/api/config', (req, res) => {
       : null,
     devAgentQueueEnabled: process.env.DEV_AGENT_QUEUE_ENABLED === '1',
     conceptAiEnabled: !AI_FEATURES_DISABLED && !!process.env.OPENAI_API_KEY,
+    buildId: APP_BUILD_ID,
   });
 });
 
@@ -5418,15 +5423,17 @@ let spaHtmlCache = null;
 function getSpaHtml() {
   if (spaHtmlCache == null) {
     const raw = readFileSync(join(__dirname, 'public', 'index.html'), 'utf8');
-    spaHtmlCache = shouldInjectLiveReloadClient()
+    const withReload = shouldInjectLiveReloadClient()
       ? raw.replace('</body>', `${LIVERELOAD_CLIENT_SNIPPET}\n</body>`)
       : raw;
+    spaHtmlCache = applyAppBuildIdToSpaHtml(withReload, APP_BUILD_ID);
   }
   return spaHtmlCache;
 }
 
 function sendSpaHtml(res) {
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.setHeader('Cache-Control', SPA_HTML_CACHE_CONTROL);
   res.send(getSpaHtml());
 }
 
