@@ -30,6 +30,7 @@ import {
   CharacterSheetHighlightSurface,
 } from './CharacterSheetSourceHighlight.jsx';
 import { MarkdownText } from '../lib/markdown.js';
+import { appendOwnPoolAdvantageToRollText } from '../lib/advantage-disadvantage-pool.js';
 import { buildActionForFeatureUse } from '../lib/feature-actions.js';
 import {
   wrapEntity,
@@ -78,22 +79,11 @@ import { WARDEN_OF_THE_ELEMENTS_SCOPE_KEY } from '../../features-v2/engine/featu
 export { formatGold };
 
 /**
- * Append "Vulnerable Target" advantage d6 to rollText, in the same keep-highest pool
- * as any existing advantage dice (last [d6] or [Nd6kh] in the string).
+ * Append "Vulnerable Target" into the own-pool advantage names (cancel + keep-highest).
+ * Does not emit a second `[d6]` / `[Nd6kh]` block.
  */
 function appendVulnerableTargetToRollText(rollText) {
-  const idxD6 = rollText.lastIndexOf(' [d6]');
-  const khMatches = [...rollText.matchAll(/ \[\d+d6kh\]/g)];
-  const idxKh = khMatches.length > 0 ? khMatches[khMatches.length - 1].index : -1;
-  const lastIdx = Math.max(idxD6, idxKh);
-  if (lastIdx === -1) {
-    return rollText + ' Vulnerable Target [d6]';
-  }
-  const bracketStart = rollText.indexOf(' [', lastIdx);
-  const label = rollText.substring(lastIdx + 1, bracketStart);
-  const bracket = rollText.substring(bracketStart);
-  const n = bracket === ' [d6]' ? 1 : parseInt(bracket.match(/\d+/)[0], 10);
-  return rollText.substring(0, lastIdx) + ' ' + label + ' and Vulnerable Target [' + (n + 1) + 'd6kh]';
+  return appendOwnPoolAdvantageToRollText(rollText, 'Vulnerable Target');
 }
 
 // ─── Collapsible JSON tree (for debug panel) ──────────────────────────────────

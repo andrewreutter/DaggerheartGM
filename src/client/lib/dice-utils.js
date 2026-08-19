@@ -120,7 +120,8 @@ export function insertDisadvantageD6(rollText, featureName = 'disadvantage') {
 }
 
 /**
- * Strip trailing " disadvantage <label> [Nd6]" blocks from roll text (inverse of insertDisadvantageD6).
+ * Strip trailing " disadvantage <label> [Nd6]" / "[Nd6kh]" blocks from roll text
+ * (inverse of insertDisadvantageD6 and the own-pool keep-highest suffix).
  * Used by removeDisadvantage() so features like Goblin Surefooted can ignore disadvantage.
  * @param {string} rollText
  * @returns {{ strippedText: string, removedLabels: string[] }}
@@ -129,8 +130,8 @@ export function stripDisadvantageFromRollText(rollText) {
   if (!rollText || typeof rollText !== 'string') return { strippedText: rollText, removedLabels: [] };
   const removedLabels = [];
   let s = rollText.trimEnd();
-  // One or more trailing " disadvantage <label> [1d6]" (label may contain spaces, e.g. "Galapa - Retract")
-  const re = /\s+disadvantage\s+([^\[]+?)\s*\[\d*d\d+\]\s*$/i;
+  // One or more trailing " disadvantage <label> [1d6]" / "[2d6kh]" (label may contain spaces)
+  const re = /\s+disadvantage\s+([^\[]+?)\s*\[\d*d\d+(?:kh|kl)?\]\s*$/i;
   let m;
   while ((m = s.match(re))) {
     removedLabels.unshift(m[1].trim() || 'Disadvantage');

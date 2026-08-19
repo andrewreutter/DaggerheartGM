@@ -2,7 +2,7 @@
  * Unit tests for dice-utils.js parsing and damage-rewriting utilities.
  */
 import { describe, it, expect } from 'vitest';
-import { parseLeadingDamageDice } from '../../src/client/lib/dice-utils.js';
+import { parseLeadingDamageDice, stripDisadvantageFromRollText, insertDisadvantageD6 } from '../../src/client/lib/dice-utils.js';
 
 describe('parseLeadingDamageDice', () => {
   it('parses simple dice expressions', () => {
@@ -83,5 +83,31 @@ describe('parseLeadingDamageDice', () => {
       modStr: '+2',
       rest: '',
     });
+  });
+});
+
+describe('stripDisadvantageFromRollText', () => {
+  it('strips a single [1d6] disadvantage block', () => {
+    const { strippedText, removedLabels } = stripDisadvantageFromRollText(
+      'Hero Agility [d12] [d12] disadvantage Retract [1d6]',
+    );
+    expect(strippedText).toBe('Hero Agility [d12] [d12]');
+    expect(removedLabels).toEqual(['Retract']);
+  });
+
+  it('strips a keep-highest [Nd6kh] disadvantage block', () => {
+    const { strippedText, removedLabels } = stripDisadvantageFromRollText(
+      'Hero Agility [d12] [d12] disadvantage Retract and Cover [2d6kh]',
+    );
+    expect(strippedText).toBe('Hero Agility [d12] [d12]');
+    expect(removedLabels).toEqual(['Retract and Cover']);
+  });
+
+  it('strips stacked insertDisadvantageD6 blocks', () => {
+    const once = insertDisadvantageD6('Hero Agility [d12] [d12]', 'Retract');
+    const twice = insertDisadvantageD6(once, 'Cover');
+    const { strippedText, removedLabels } = stripDisadvantageFromRollText(twice);
+    expect(strippedText).toBe('Hero Agility [d12] [d12]');
+    expect(removedLabels).toEqual(['Retract', 'Cover']);
   });
 });

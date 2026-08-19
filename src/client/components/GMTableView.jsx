@@ -173,7 +173,15 @@ import {
 } from '../lib/game-table-mechanics.js';
 import { buildAdvantageTriggerPrerollChips } from '../lib/advantage-trigger-preroll.js';
 import { applyRangerFocusV2IntentToPending } from '../lib/ranger-focus-v2-intent.js';
-import { extractDetailsValues } from '../lib/dice-utils.js';
+import { extractDetailsValues, insertDisadvantageD6, stripDisadvantageFromRollText } from '../lib/dice-utils.js';
+import {
+  applyOwnPoolDieMutations,
+  appendOwnPoolDisadvantageToRollText,
+  extractOwnPoolFromRollText,
+  formatOwnPoolCancelledNote,
+  formatOwnPoolDieSuffix,
+  resolveOwnPool,
+} from '../lib/advantage-disadvantage-pool.js';
 import { getCharactersWithinFarRange, getCharactersWithinCloseRangeWithMarkedHp, getAdversariesWithinMeleeRange, getAdversariesWithinRangeFt, rangeBandNameToFt, rangeFtToLabel, RANGE_BANDS_FT, tokenDistanceFtForElements, positionAtDistanceFt, getTokenFootprintFt } from '../lib/map-range.js';
 import {
   collectCompanionDamageTargets,
@@ -3952,12 +3960,13 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
           })
         : characterEl;
 
-    let textToUse = rollText;
-    if (characterEl.disadvantageSources?.length > 0) {
-      textToUse = insertDisadvantageD6(textToUse, characterEl.disadvantageSources[0]);
+    const extractedPool = extractOwnPoolFromRollText(rollText);
+    let textToUse = extractedPool.strippedText;
+    const advantageNames = [...extractedPool.advantageNames];
+    const disadvantageNames = [...extractedPool.disadvantageNames];
+    for (const src of characterEl.disadvantageSources || []) {
+      if (src) disadvantageNames.push(src);
     }
-    const advantageNames = [];
-    const disadvantageNames = [];
     const pending = { rollText: textToUse, displayName, meta, rollBonus: 0, rollBonusLabel: null };
     const rollWrapper = {
       get rollText() { return pending.rollText; },
@@ -3969,10 +3978,13 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
       isMine: true,
       isReaction: !!rollMeta._isReaction,
       addAdvantageDie(name) {
-        advantageNames.push(name);
+        if (name) advantageNames.push(name);
       },
       addDisadvantage(name) {
-        disadvantageNames.push(name);
+        if (name) disadvantageNames.push(name);
+      },
+      addDisadvantageDie(name) {
+        if (name) disadvantageNames.push(name);
       },
       /**
        * Remove all disadvantage from this roll (undo addDisadvantage, strip disadvantage from roll text,
@@ -4002,16 +4014,11 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
         if (m != null) pending.meta = { ...pending.meta, ...m };
       },
       getFinalRollText() {
+        const resolved = resolveOwnPool({ advantageNames, disadvantageNames });
         let t = pending.rollText;
-        if (advantageNames.length > 0) {
-          t += advantageNames.length === 1
-            ? ` ${advantageNames[0]} [d6]`
-            : ` ${advantageNames.join(' and ')} [${advantageNames.length}d6kh]`;
-        }
+        t += formatOwnPoolDieSuffix(resolved);
         if (pending.rollBonus) t += ` + ${pending.rollBonus}`;
-        for (const name of disadvantageNames) {
-          t = insertDisadvantageD6(t, name);
-        }
+        t += formatOwnPoolCancelledNote(resolved);
         return t;
       },
     };
@@ -4143,11 +4150,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
           mapConfig,
           tableFeatureState,
         });
-        for (const m of intentMuts) {
-          if (m?.type === 'addAdvantageDie' && m.payload?.name) {
-            rollWrapper.addAdvantageDie(m.payload.name);
-          }
-        }
+        applyOwnPoolDieMutations(intentMuts, rollWrapper);
       }
       const onRollCtx = {
         roll: rollWrapper,
@@ -4438,11 +4441,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
         mapConfig,
         tableFeatureState,
       });
-      for (const m of intentMuts) {
-        if (m?.type === 'addAdvantageDie' && m.payload?.name) {
-          rollWrapper.addAdvantageDie(m.payload.name);
-        }
-      }
+      applyOwnPoolDieMutations(intentMuts, rollWrapper);
     }
     if (pending.meta?._deferExperienceToPreRoll) {
       const m = pending.meta;
@@ -4576,6 +4575,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
               tableFeatureState,
             });
             if (!activated.error && activated.mutations?.length) {
+              applyOwnPoolDieMutations(activated.mutations, rollWrapper);
               const { updates } = applyV2BannerMutations(
                 activeElements,
                 activated.mutations,
@@ -8557,7 +8557,15 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                         const pendingRoll = {
                           get rollText() { return finalRollText; },
                           set rollText(v) { finalRollText = v; },
-                          addDisadvantage(name) { finalRollText = insertDisadvantageD6(finalRollText, name ?? feature.name); },
+                          addDisadvantage(name) {
+                            const label = name ?? feature.name;
+                            // PC own-pool cancel + keep-highest; adversary d20 attacks stay a subtracted d6.
+                            if (rollMeta?._attackerType === 'adversary') {
+                              finalRollText = insertDisadvantageD6(finalRollText, label);
+                            } else {
+                              finalRollText = appendOwnPoolDisadvantageToRollText(finalRollText, label);
+                            }
+                          },
                         };
                         feature.onTargeted({ roll: pendingRoll, character: wrappedChar, characters: wrappedPartyCharacters, system });
                       }
