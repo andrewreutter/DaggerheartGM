@@ -54,6 +54,13 @@ import { buildTraitRollText, buildPreRollPanelTitle } from '../lib/trait-roll-te
 import { buildReactionCallRoster, canViewerProceedReaction } from '../lib/reaction-call-roster.js';
 import { buildJoinedPlayerRoster, mergePresenceNamesIntoCache } from '../lib/joined-player-roster.js';
 import { requiresGmFinalizedDifficulty, resolveFinalizedIntentDifficulty } from '../lib/action-roll-difficulty.js';
+import {
+  ROLL_VISIBILITY_GM_AND_PLAYER,
+  ROLL_VISIBILITY_GM_ONLY,
+  ROLL_VISIBILITY_TABLE,
+  assignedPlayerDisplayName,
+  characterHasAssignedPlayer,
+} from '../lib/roll-visibility.js';
 import { rollBeatsDefense } from '../lib/duality-roll-outcome.js';
 import { critExtraDamageForRoll } from '../lib/crit-damage.js';
 import {
@@ -930,6 +937,8 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
   const [preRollDisadvantages, setPreRollDisadvantages] = useState([]); // string[]: optional name per disadvantage ('' = default "Disadvantage")
   /** Intent panel: review/change attack target (same list as in-sheet target menu). */
   const [preRollTargetInstanceId, setPreRollTargetInstanceId] = useState(null);
+  /** Pre-roll sheet privacy: `table` (default), `gm_and_player`, or `gm_only`. */
+  const [preRollVisibility, setPreRollVisibility] = useState(ROLL_VISIBILITY_TABLE);
   /** GM Call for Reaction modal: `{ seedInstanceIds: string[] }` or null. */
   const [reactionCallModal, setReactionCallModal] = useState(null);
 
@@ -4190,32 +4199,33 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     dismissAllHoverCards();
     setPreRollExperienceIndex(null);
     setPreRollCompanionExperienceIndex(null);
-    setPreRollBanner({ rollWrapper, chips: canvas.chips, characterEl, onProceed, getFeatureStateFor, pending, requiresGmDifficulty, intentId });
+    setPreRollVisibility(ROLL_VISIBILITY_TABLE);
+    const intentPayload = isPlayer && tableId
+      ? {
+          characterName: characterEl?.name || '',
+          characterInstanceId: characterEl?.instanceId || '',
+          rollText: pending.rollText,
+          chips: canvas.chips
+            .filter((c) => !c._difficultyChip)
+            .map((c) => ({
+              label: c.label || c.name || c._featureName || '',
+              description: c.description || '',
+              hopeCost: c.hopeCost || 0,
+              stressCost: c.stressCost || 0,
+              frequency: c.frequency || null,
+              isToggle: c.isToggle || false,
+              v2Intent: !!c._v2IntentChip,
+            })),
+          intentId,
+          needsDifficulty: requiresGmDifficulty,
+        }
+      : null;
+    setPreRollBanner({ rollWrapper, chips: canvas.chips, characterEl, onProceed, getFeatureStateFor, pending, requiresGmDifficulty, intentId, intentPayload });
     setSelectedPreRollChips(canvas.chips.map(() => false));
 
     // Broadcast the intent to the GM so they can see the pre-roll banner too.
     // Serialize chips to plain objects (strip functions) for JSON transport.
-    if (isPlayer && tableId) {
-      const serializableChips = canvas.chips
-        .filter(c => !c._difficultyChip)
-        .map(c => ({
-          label: c.label || c.name || c._featureName || '',
-          description: c.description || '',
-          hopeCost: c.hopeCost || 0,
-          stressCost: c.stressCost || 0,
-          frequency: c.frequency || null,
-          isToggle: c.isToggle || false,
-          v2Intent: !!c._v2IntentChip,
-        }));
-      postPlayerIntent(tableId, {
-        characterName: characterEl?.name || '',
-        characterInstanceId: characterEl?.instanceId || '',
-        rollText: pending.rollText,
-        chips: serializableChips,
-        intentId,
-        needsDifficulty: requiresGmDifficulty,
-      });
-    }
+    if (intentPayload) postPlayerIntent(tableId, intentPayload);
   };
 
   const handlePlayerOwnRollRef = useRef(handlePlayerOwnRoll);
@@ -4407,6 +4417,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     setPreRollAdvantages([]);
     setPreRollDisadvantages([]);
     setPreRollTargetInstanceId(null);
+    setPreRollVisibility(ROLL_VISIBILITY_TABLE);
     if (isPlayer && tableId) clearPlayerIntent(tableId);
   };
 
@@ -4637,11 +4648,14 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     }
     setPreRollAdvantages([]);
     setPreRollDisadvantages([]);
-    if (intentUsedLog.length > 0 || preRollTargetInstanceId != null) {
+    if (intentUsedLog.length > 0 || preRollTargetInstanceId != null || (preRollVisibility && preRollVisibility !== ROLL_VISIBILITY_TABLE)) {
       pending.meta = {
         ...pending.meta,
         ...(intentUsedLog.length > 0 ? { _v2IntentUsedLog: intentUsedLog } : {}),
         ...(preRollTargetInstanceId != null ? { _selectedTargetInstanceId: preRollTargetInstanceId } : {}),
+        ...(preRollVisibility && preRollVisibility !== ROLL_VISIBILITY_TABLE
+          ? { _rollVisibility: preRollVisibility }
+          : {}),
       };
     }
     await onProceed();
@@ -6718,7 +6732,52 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                 return (
                   <>
                     <div className="text-[10px] font-bold uppercase tracking-wide text-dh-muted mb-0.5">Before you roll</div>
-                    <div id="preroll-title" className="text-sm font-bold text-dh mb-2">{title}</div>
+                    <div className="flex items-center gap-2 mb-2 flex-wrap">
+                      <div id="preroll-title" className="text-sm font-bold text-dh">{title}</div>
+                      {isPlayer ? (
+                        <label className="inline-flex items-center gap-1.5 text-[11px] font-medium text-dh cursor-pointer">
+                          <input
+                            type="checkbox"
+                            data-testid="preroll-private-checkbox"
+                            checked={preRollVisibility === ROLL_VISIBILITY_GM_AND_PLAYER}
+                            onChange={(e) => {
+                              const next = e.target.checked ? ROLL_VISIBILITY_GM_AND_PLAYER : ROLL_VISIBILITY_TABLE;
+                              setPreRollVisibility(next);
+                              if (tableId && preRollBanner.intentPayload) {
+                                postPlayerIntent(tableId, {
+                                  ...preRollBanner.intentPayload,
+                                  ...(next === ROLL_VISIBILITY_GM_AND_PLAYER
+                                    ? { _rollVisibility: ROLL_VISIBILITY_GM_AND_PLAYER }
+                                    : {}),
+                                });
+                              }
+                            }}
+                          />
+                          Private to me and GM
+                        </label>
+                      ) : (
+                        <select
+                          data-testid="preroll-visibility"
+                          aria-label="Roll visibility"
+                          value={
+                            preRollVisibility === ROLL_VISIBILITY_GM_AND_PLAYER
+                            && !characterHasAssignedPlayer(preRollBanner.characterEl)
+                              ? ROLL_VISIBILITY_TABLE
+                              : preRollVisibility
+                          }
+                          onChange={(e) => setPreRollVisibility(e.target.value)}
+                          className="max-w-[16rem] rounded px-1.5 py-1 text-[11px] bg-dh-raised border border-dh-strong text-dh"
+                        >
+                          <option value={ROLL_VISIBILITY_TABLE}>Visible to table</option>
+                          <option value={ROLL_VISIBILITY_GM_ONLY}>Private to me</option>
+                          {characterHasAssignedPlayer(preRollBanner.characterEl) && (
+                            <option value={ROLL_VISIBILITY_GM_AND_PLAYER}>
+                              Private to me and {assignedPlayerDisplayName(preRollBanner.characterEl, joinedPlayers)}
+                            </option>
+                          )}
+                        </select>
+                      )}
+                    </div>
                   </>
                 );
               })()}

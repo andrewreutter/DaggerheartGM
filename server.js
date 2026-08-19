@@ -47,6 +47,11 @@ import { createClient as createSupabaseClient } from '@supabase/supabase-js';
 import { CHARACTER_RUNTIME_KEYS, applyTableOp } from './src/client/lib/table-ops.js';
 import { gateTableOpForPrepMode, isTablePlayAllowed } from './src/client/lib/table-session-gate.js';
 import { grantSpotlightToCharacter, isSpotlightGatedRollMeta, isSpotlightHolder } from './src/client/lib/spotlight.js';
+import {
+  canViewerSeeIntent,
+  filterRollsForViewer,
+  stampNormalizedRollVisibility,
+} from './src/client/lib/roll-visibility.js';
 import { v2RollDieExtrasFromActionLoopPayload } from './src/client/lib/v2-action-notification-dice.js';
 import { withActionBannerSuppression } from './src/client/lib/action-notification-banner.js';
 import { computePlayerV2CrossSheetChipApply } from './src/server/v2-player-cross-sheet-chip.js';
@@ -1151,15 +1156,66 @@ async function resolveDisplayNameForMapPing(req) {
 // chips are display-only (no functions): [{ label, description, hopeCost, stressCost, frequency, isToggle }]
 const pendingIntents = new Map();
 
-/** Broadcast a pending intent (or its finalize update) to every GM + player + spectator SSE connection for this table. */
+function writeFilteredRollHistory(res, rolls, viewer) {
+  const filtered = filterRollsForViewer(rolls, viewer);
+  if (filtered.length > 0) {
+    writeSseEvent(res, 'roll-history', { rolls: filtered });
+  }
+}
+
+async function lookupAssignedPlayerForAttacker(tableId, attackerInstanceId) {
+  if (!tableId || !attackerInstanceId) return { uid: null, email: null };
+  try {
+    const row = await getTableStateById(APP_ID, tableId);
+    const el = (row?.data?.elements || []).find((e) => e.instanceId === attackerInstanceId);
+    return {
+      uid: el?.assignedPlayerUid || null,
+      email: el?.assignedPlayerEmail || null,
+    };
+  } catch {
+    return { uid: null, email: null };
+  }
+}
+
+async function applyPostedRollVisibility(rollData, {
+  requestedVisibility,
+  isGm,
+  requesterUid,
+  requesterEmail,
+  tableId,
+  attackerInstanceId,
+}) {
+  let assignedPlayerUid = null;
+  let assignedPlayerEmail = null;
+  if (isGm && requestedVisibility === 'gm_and_player') {
+    const assigned = await lookupAssignedPlayerForAttacker(tableId, attackerInstanceId);
+    assignedPlayerUid = assigned.uid;
+    assignedPlayerEmail = assigned.email;
+  }
+  stampNormalizedRollVisibility(rollData, {
+    requestedVisibility,
+    isGm,
+    requesterUid,
+    requesterEmail,
+    assignedPlayerUid,
+    assignedPlayerEmail,
+  });
+  return rollData;
+}
+
+/** Broadcast a pending intent (or its finalize update). Public intents go room-wide; private intents go to GM + initiator only (others get null so a prior public intent is cleared). */
 function broadcastIntentToRoom(tableId, intent) {
   const room = rooms.get(tableId);
   if (!room) return;
-  const msg = `event: intent\ndata: ${JSON.stringify(intent)}\n\n`;
-  forEachRoomSseClient(room, (clientRes) => {
-    clientRes.write(msg);
-    clientRes.flush?.();
-  });
+  const writeIntent = (clientRes, payload) => writeSseEvent(clientRes, 'intent', payload);
+  for (const clientRes of room.gmClients || []) writeIntent(clientRes, intent);
+  for (const [uid, p] of room.players || []) {
+    const viewer = { role: 'player', uid, email: p?.email };
+    writeIntent(p?.res, canViewerSeeIntent(intent, viewer) ? intent : null);
+  }
+  for (const [, a] of room.audience || []) {
+    writeIntent(a?.res, canViewerSeeIntent(intent, { role: 'spectator' }) ? intent : null);
+  }
 }
 
 /** Resolve table by tableId and validate requester has access (owner or in playerEmails). Returns { tableId, gmUid, tableState } or { error, message }. */
@@ -3424,21 +3480,17 @@ app.get('/api/room/my/players', async (req, res) => {
 
   writeSseEvent(res, 'presence', buildPresencePayload(room));
 
+  const gmViewer = { role: 'gm', uid: user.uid, email: user.email };
   try {
     const rolls = await getRecentDiceRolls(APP_ID, user.uid);
-    if (rolls.length > 0) {
-      res.write(`event: roll-history\ndata: ${JSON.stringify({ rolls })}\n\n`);
-    }
+    writeFilteredRollHistory(res, rolls, gmViewer);
   } catch (err) {
     console.error('[dice] roll-history fetch failed:', err.message);
-    const fallback = gmRollLogs.get(user.uid);
-    if (fallback?.length > 0) {
-      res.write(`event: roll-history\ndata: ${JSON.stringify({ rolls: fallback })}\n\n`);
-    }
+    writeFilteredRollHistory(res, gmRollLogs.get(user.uid) || [], gmViewer);
   }
   res.flush?.();
 
-  subscriptionManager.subscribe('banners', user.uid, res);
+  subscriptionManager.subscribe('banners', user.uid, res, { bannersViewer: gmViewer });
   subscriptionManager.subscribe('table_state', tableId, res, { tableStateAudience: 'gm' });
 
   // Send any current pending player intent so GM sees it on reconnect
@@ -3486,21 +3538,17 @@ app.get('/api/room/:tableId/stream', async (req, res) => {
 
     writeSseEvent(res, 'presence', buildPresencePayload(room));
 
+    const playerViewer = { role: 'player', uid: user.uid, email: user.email };
     try {
       const rolls = await getRecentDiceRolls(APP_ID, gmUid);
-      if (rolls.length > 0) {
-        res.write(`event: roll-history\ndata: ${JSON.stringify({ rolls })}\n\n`);
-      }
+      writeFilteredRollHistory(res, rolls, playerViewer);
     } catch (err) {
       console.error('[dice] roll-history fetch failed:', err.message);
-      const fallback = gmRollLogs.get(gmUid);
-      if (fallback?.length > 0) {
-        res.write(`event: roll-history\ndata: ${JSON.stringify({ rolls: fallback })}\n\n`);
-      }
+      writeFilteredRollHistory(res, gmRollLogs.get(gmUid) || [], playerViewer);
     }
     res.flush?.();
 
-    subscriptionManager.subscribe('banners', gmUid, res);
+    subscriptionManager.subscribe('banners', gmUid, res, { bannersViewer: playerViewer });
     subscriptionManager.subscribe('table_state', tableId, res, { tableStateAudience: 'player' });
 
     broadcastPresenceToTable(tableId);
@@ -3547,29 +3595,24 @@ app.get('/api/room/:tableId/public-stream', async (req, res) => {
       audienceOnlineCount: presence.audienceOnlineCount,
     });
 
+    const spectatorViewer = { role: 'spectator', uid: user?.uid || null, email: user?.email || '' };
     try {
       const rolls = await getRecentDiceRolls(APP_ID, gmUid);
-      if (rolls.length > 0) {
-        res.write(`event: roll-history\ndata: ${JSON.stringify({ rolls })}\n\n`);
-      }
+      writeFilteredRollHistory(res, rolls, spectatorViewer);
     } catch (err) {
       console.error('[dice] roll-history fetch failed:', err.message);
-      const fallback = gmRollLogs.get(gmUid);
-      if (fallback?.length > 0) {
-        res.write(`event: roll-history\ndata: ${JSON.stringify({ rolls: fallback })}\n\n`);
-      }
+      writeFilteredRollHistory(res, gmRollLogs.get(gmUid) || [], spectatorViewer);
     }
     res.flush?.();
 
-    subscriptionManager.subscribe('banners', gmUid, res);
+    subscriptionManager.subscribe('banners', gmUid, res, { bannersViewer: spectatorViewer });
     subscriptionManager.subscribe('table_state', tableId, res, { tableStateAudience: 'spectator' });
 
     broadcastPresenceToTable(tableId);
 
     const existingIntent = pendingIntents.get(tableId);
-    if (existingIntent) {
-      res.write(`event: intent\ndata: ${JSON.stringify(existingIntent)}\n\n`);
-      res.flush?.();
+    if (existingIntent && canViewerSeeIntent(existingIntent, spectatorViewer)) {
+      writeSseEvent(res, 'intent', existingIntent);
     }
 
     const heartbeat = setInterval(() => { res.write(':heartbeat\n\n'); res.flush?.(); }, 30000);
@@ -3712,6 +3755,14 @@ app.post('/api/room/my/roll', requireAuth, async (req, res) => {
   if (!rollData) {
     return res.status(400).json({ error: 'No dice expressions found in rollText' });
   }
+  await applyPostedRollVisibility(rollData, {
+    requestedVisibility: extraMeta._rollVisibility,
+    isGm: true,
+    requesterUid: req.uid,
+    requesterEmail: req.email,
+    tableId: bodyTableId || req.uid,
+    attackerInstanceId: extraMeta._attackerInstanceId,
+  });
   if (!silent) {
     const tid = bodyTableId || req.uid;
     if (!(await assertGmTableSessionActive(tid, req.uid, res, { bypassPrepGate: bypassPrepGate === true }))) return;
@@ -4722,7 +4773,7 @@ app.post('/api/room/my/op', requireAuth, async (req, res) => {
 app.post('/api/room/:tableId/intent', requireAuth, async (req, res) => {
   const ctx = await resolveTableAccess(APP_ID, req.params.tableId, req);
   if (ctx.error) return res.status(ctx.error).json({ error: ctx.message });
-  const { characterName, characterInstanceId, rollText, chips, intentId, needsDifficulty } = req.body;
+  const { characterName, characterInstanceId, rollText, chips, intentId, needsDifficulty, _rollVisibility } = req.body;
   const intent = {
     characterName,
     characterInstanceId,
@@ -4731,7 +4782,12 @@ app.post('/api/room/:tableId/intent', requireAuth, async (req, res) => {
     intentId: intentId || null,
     needsDifficulty: !!needsDifficulty,
     timestamp: Date.now(),
+    _initiatorUid: req.uid,
+    _initiatorEmail: req.email || '',
   };
+  if (_rollVisibility === 'gm_and_player' || _rollVisibility === 'gm_only') {
+    intent._rollVisibility = 'gm_and_player';
+  }
   pendingIntents.set(req.params.tableId, intent);
   broadcastIntentToRoom(req.params.tableId, intent);
   res.json({ ok: true });
@@ -5307,6 +5363,14 @@ app.post('/api/room/:tableId/roll', requireAuth, async (req, res) => {
     }
     const rollData = buildRollData(rollText, displayName, _clientId, { _playerInitiated: true, _initiatorUid: req.uid, ...extraMeta });
     if (!rollData) return res.status(400).json({ error: 'No dice expressions found in rollText' });
+    await applyPostedRollVisibility(rollData, {
+      requestedVisibility: extraMeta._rollVisibility,
+      isGm: false,
+      requesterUid: req.uid,
+      requesterEmail: req.email,
+      tableId: req.params.tableId,
+      attackerInstanceId: extraMeta._attackerInstanceId,
+    });
     if (!silent) {
       await appendRollLog(gmUid, rollData);
       if (process.env.DATABASE_URL) {

@@ -3,6 +3,7 @@ import { Dices, ChevronUp, RotateCcw } from 'lucide-react';
 import { ManualDiceBuilder } from './ManualDiceBuilder.jsx';
 import { MANUAL_DICE_SIZES } from '../lib/manual-dice-roll-text.js';
 import { isReactionRoll } from '../lib/reaction-roll-display.js';
+import { isRestrictedRollVisibility } from '../lib/roll-visibility.js';
 import { isAdversaryNatural20 } from '../lib/duality-roll-outcome.js';
 import { critExtraDamageForRoll } from '../lib/crit-damage.js';
 import {
@@ -144,6 +145,9 @@ function LogEntry({ roll, compact, rollBuilder, onRollAgain }) {
         )}
         {!isAction && isCompound && <CompoundRoll subItems={roll.subItems} isReaction={isReactionRoll(roll)} />}
         {!isAction && !isCompound && <span className="text-dh-muted italic">roll</span>}
+        {isRestrictedRollVisibility(roll._rollVisibility) && (
+          <span data-testid="roll-private-hint" className="ml-1.5 text-[9px] font-semibold uppercase tracking-wide text-amber-300/90">Private</span>
+        )}
       </div>
       {time && <span className="text-[10px] text-dh-muted shrink-0 tabular-nums">{time}</span>}
       {/* Roll again affordance — visible on hover when the entry has a rollText */}

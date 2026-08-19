@@ -20,11 +20,19 @@
 import pg from 'pg';
 import { getPendingBanners, getResolvedTableState, invalidateCharacterLibraryCache, listTableStates, getTableStatesByPlayerEmail, listPublicTables, toTableCardDto } from './db.js';
 import { redactTableStateForPlayerAudience, redactTableStateForSpectatorAudience } from './client/lib/session-countdowns.js';
+import {
+  bannerViewerCacheKey,
+  canViewerSeeRoll,
+  filterBannersForViewer,
+} from './client/lib/roll-visibility.js';
 
 const { Client } = pg;
 
 /** @type {WeakMap<import('http').ServerResponse, 'gm' | 'player' | 'spectator'>} */
 const tableStateAudienceByResponse = new WeakMap();
+
+/** @type {WeakMap<import('http').ServerResponse, { role: 'gm' | 'player' | 'spectator', uid?: string | null, email?: string | null }>} */
+const bannersViewerByResponse = new WeakMap();
 
 const DEBOUNCE_MS = 50;
 
@@ -189,7 +197,9 @@ class SubscriptionManager {
   /**
    * Subscribe an SSE response object to a channel.
    * Immediately pushes the current snapshot so the client doesn't miss initial state.
-   * @param {{ tableStateAudience?: 'gm' | 'player' | 'spectator' }} [meta] — for `table_state`, controls GM-only redaction (countdowns + encounter notes)
+   * @param {{ tableStateAudience?: 'gm' | 'player' | 'spectator', bannersViewer?: { role: 'gm' | 'player' | 'spectator', uid?: string | null, email?: string | null } }} [meta]
+   *   `tableStateAudience` — for `table_state`, controls GM-only redaction (countdowns + encounter notes).
+   *   `bannersViewer` — for `banners`, filters private pre-roll rolls per viewer (missing → spectator).
    */
   subscribe(channelName, key, res, meta = {}) {
     if (meta.tableStateAudience === 'player') {
@@ -198,6 +208,9 @@ class SubscriptionManager {
       tableStateAudienceByResponse.set(res, 'spectator');
     } else if (meta.tableStateAudience === 'gm') {
       tableStateAudienceByResponse.set(res, 'gm');
+    }
+    if (meta.bannersViewer && typeof meta.bannersViewer === 'object') {
+      bannersViewerByResponse.set(res, meta.bannersViewer);
     }
     if (!this._subs.has(channelName)) this._subs.set(channelName, new Map());
     const keyMap = this._subs.get(channelName);
@@ -209,8 +222,10 @@ class SubscriptionManager {
   }
 
   /**
-   * Send a one-off SSE event to all subscribers of `banners` for this gmUid key
+   * Send a one-off SSE event to subscribers of `banners` for this gmUid key
    * (e.g. roll-log-append for acknowledged-only action rows that skip the pending banner queue).
+   * `roll-log-append` is filtered per viewer so private dice never leak. Other events
+   * (`spotlight-request-granted`) stay room-wide.
    * @param {string} key — gmUid (same key as banners subscription)
    * @param {string} eventName — SSE event name (not `banners`)
    * @param {unknown} data — JSON-serializable payload
@@ -227,9 +242,15 @@ class SubscriptionManager {
       return;
     }
     const msg = `event: ${eventName}\ndata: ${body}\n\n`;
+    const filterByRoll = eventName === 'roll-log-append';
+    const roll = filterByRoll && data && typeof data === 'object' ? data.roll : null;
     for (const res of resSet) {
       try {
         if (res.writableEnded) continue;
+        if (filterByRoll) {
+          const viewer = bannersViewerByResponse.get(res) || { role: 'spectator' };
+          if (!canViewerSeeRoll(roll, viewer)) continue;
+        }
         res.write(msg);
         res.flush?.();
       } catch {
@@ -322,9 +343,12 @@ class SubscriptionManager {
     // Compute serialized SSE strings lazily per audience (once per push, not once per client).
     // For non-table_state channels there is only one audience; for table_state, GM / player /
     // spectator can receive different payloads (player + spectator get countdown/note redaction).
+    // For banners, cache by gm | spectator | player:${uid} after filtering private rolls.
     let gmSseStr = null;
     let playerSseStr = null;
     let spectatorSseStr = null;
+    /** @type {Map<string, string> | null} */
+    let bannersSseByKey = null;
 
     for (const res of responses) {
       try {
@@ -343,6 +367,17 @@ class SubscriptionManager {
             if (gmSseStr === null) gmSseStr = buildSseEventString(channelName, snapshot, 'gm');
             sseStr = gmSseStr;
           }
+        } else if (channelName === 'banners') {
+          const viewer = bannersViewerByResponse.get(res) || { role: 'spectator' };
+          const cacheKey = bannerViewerCacheKey(viewer);
+          if (!bannersSseByKey) bannersSseByKey = new Map();
+          if (!bannersSseByKey.has(cacheKey)) {
+            bannersSseByKey.set(
+              cacheKey,
+              buildSseEventString(channelName, filterBannersForViewer(snapshot, viewer), undefined),
+            );
+          }
+          sseStr = bannersSseByKey.get(cacheKey);
         } else {
           if (gmSseStr === null) gmSseStr = buildSseEventString(channelName, snapshot, undefined);
           sseStr = gmSseStr;

@@ -198,6 +198,89 @@ describe('SubscriptionManager', () => {
     expect(res1.writes.some(w => w.includes(JSON.stringify(payload)))).toBe(true);
   });
 
+  it('banners: private rolls are omitted for other players and spectators', async () => {
+    const snapshot = [
+      { _rollDbId: 1, displayName: 'Public' },
+      {
+        _rollDbId: 2,
+        displayName: 'Private A',
+        _rollVisibility: 'gm_and_player',
+        _visibilityPlayerUid: 'player-a',
+        _visibilityPlayerEmail: 'a@example.com',
+      },
+      { _rollDbId: 3, displayName: 'Blind', _rollVisibility: 'gm_only' },
+    ];
+    getPendingBanners.mockResolvedValue(snapshot);
+
+    const gmRes = makeFakeRes();
+    const playerARes = makeFakeRes();
+    const playerBRes = makeFakeRes();
+    const specRes = makeFakeRes();
+    manager.subscribe('banners', 'gm-vis', gmRes, { bannersViewer: { role: 'gm', uid: 'gm-1' } });
+    manager.subscribe('banners', 'gm-vis', playerARes, {
+      bannersViewer: { role: 'player', uid: 'player-a', email: 'a@example.com' },
+    });
+    manager.subscribe('banners', 'gm-vis', playerBRes, {
+      bannersViewer: { role: 'player', uid: 'player-b', email: 'b@example.com' },
+    });
+    manager.subscribe('banners', 'gm-vis', specRes);
+    await vi.runAllTimersAsync();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const parseBanners = (res) => {
+      const line = res.writes.find((w) => w.includes('event: banners'));
+      expect(line).toBeTruthy();
+      return JSON.parse(line.replace(/^event: banners\ndata: /, '').replace(/\n\n$/, ''));
+    };
+    expect(parseBanners(gmRes).map((r) => r._rollDbId)).toEqual([1, 2, 3]);
+    expect(parseBanners(playerARes).map((r) => r._rollDbId)).toEqual([1, 2]);
+    expect(parseBanners(playerBRes).map((r) => r._rollDbId)).toEqual([1]);
+    expect(parseBanners(specRes).map((r) => r._rollDbId)).toEqual([1]);
+  });
+
+  it('roll-log-append is filtered per viewer; spotlight-request-granted stays room-wide', async () => {
+    getPendingBanners.mockResolvedValue([]);
+    const gmRes = makeFakeRes();
+    const playerARes = makeFakeRes();
+    const playerBRes = makeFakeRes();
+    manager.subscribe('banners', 'gm-rla', gmRes, { bannersViewer: { role: 'gm', uid: 'gm-1' } });
+    manager.subscribe('banners', 'gm-rla', playerARes, {
+      bannersViewer: { role: 'player', uid: 'player-a', email: 'a@example.com' },
+    });
+    manager.subscribe('banners', 'gm-rla', playerBRes, {
+      bannersViewer: { role: 'player', uid: 'player-b', email: 'b@example.com' },
+    });
+    await vi.runAllTimersAsync();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const writesBefore = {
+      gm: gmRes.writes.length,
+      a: playerARes.writes.length,
+      b: playerBRes.writes.length,
+    };
+    manager.broadcastBannersChannelEvent('gm-rla', 'roll-log-append', {
+      roll: {
+        _rollDbId: 99,
+        _action: true,
+        _rollVisibility: 'gm_and_player',
+        _visibilityPlayerUid: 'player-a',
+      },
+    });
+    expect(gmRes.writes.slice(writesBefore.gm).some((w) => w.includes('roll-log-append'))).toBe(true);
+    expect(playerARes.writes.slice(writesBefore.a).some((w) => w.includes('roll-log-append'))).toBe(true);
+    expect(playerBRes.writes.slice(writesBefore.b).some((w) => w.includes('roll-log-append'))).toBe(false);
+
+    manager.broadcastBannersChannelEvent('gm-rla', 'spotlight-request-granted', { instanceId: 'c1' });
+    expect(gmRes.writes.some((w) => w.includes('spotlight-request-granted'))).toBe(true);
+    expect(playerARes.writes.some((w) => w.includes('spotlight-request-granted'))).toBe(true);
+    expect(playerBRes.writes.some((w) => w.includes('spotlight-request-granted'))).toBe(true);
+  });
+
   it('table_state notifyChange delivers updated snapshot to all subscribers', async () => {
     const snapshot1 = { elements: [], fearCount: 0 };
     const snapshot2 = { elements: [{ instanceId: 'x', elementType: 'adversary' }], fearCount: 1 };

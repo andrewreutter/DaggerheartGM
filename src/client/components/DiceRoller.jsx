@@ -41,6 +41,7 @@ import {
 } from '../lib/dice-banner-layout.js';
 import { isReactionRoll as getIsReactionRoll, resolveDualityBannerSchemeKey } from '../lib/reaction-roll-display.js';
 import { BannerSheetDisplayNameLine } from '../lib/sheet-display-label-inline.jsx';
+import { isRestrictedRollVisibility } from '../lib/roll-visibility.js';
 import { getGmHelperBannerSuffix, getGmHelperBannerTooltip } from '../lib/v2-chip-session-view.js';
 import { sumPendingEvasionBonusFromFeatureState } from '../lib/v2-action-loop-bridge.js';
 import { computeActionAckTouchesTableState } from '../lib/action-notification-banner.js';
@@ -596,7 +597,12 @@ function ActionBanner({
         style={BANNER_CARD_SCROLL_STYLE}
       >
         {displayName && !isReactionCall && (
-          <div className={`text-[11px] uppercase tracking-widest mb-1 ${isSpotlightRequest ? 'text-yellow-100/70' : 'text-dh-muted'}`}>{displayName}</div>
+          <div className={`text-[11px] uppercase tracking-widest mb-1 ${isSpotlightRequest ? 'text-yellow-100/70' : 'text-dh-muted'}`}>
+            {displayName}
+            {isRestrictedRollVisibility(roll._rollVisibility) && (
+              <span data-testid="roll-private-hint" className="ml-1 text-[9px] font-semibold normal-case tracking-wide text-amber-300/90">Private</span>
+            )}
+          </div>
         )}
         <div className={`text-base font-bold mb-1 ${isSpotlightRequest ? 'text-yellow-50' : 'text-dh'}`}>{actionTitle}</div>
         {roll.actionText && !isReactionCall && (
@@ -1692,6 +1698,9 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
               targetSuffix={bannerTitleTargetSuffix}
             />
             {gmHelperSuffix}
+            {isRestrictedRollVisibility(roll._rollVisibility) && (
+              <span data-testid="roll-private-hint" className="ml-1 text-[9px] font-semibold normal-case tracking-wide text-amber-300/90">Private</span>
+            )}
           </div>
         )}
 
