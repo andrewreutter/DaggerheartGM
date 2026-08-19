@@ -52,6 +52,7 @@ import { withActionBannerSuppression } from './src/client/lib/action-notificatio
 import { computePlayerV2CrossSheetChipApply } from './src/server/v2-player-cross-sheet-chip.js';
 import { computePlayerV2OwnedCardChipApply } from './src/server/v2-player-owned-card-chip.js';
 import { computePlayerV2ReviewChipApply, loadSrdDataForV2Engine } from './src/server/v2-player-review-chip.js';
+import { applyBannerReviewMetaPersist } from './src/server/v2-banner-review-meta.js';
 import { buildCharacterAiFromConcept } from './src/llm-character-builder.js';
 import { buildAdversaryAiFromConcept } from './src/llm-adversary-builder.js';
 import { buildEnvironmentAiFromConcept } from './src/llm-environment-builder.js';
@@ -4358,6 +4359,47 @@ app.post('/api/room/my/banner-action-add-static', requireAuth, async (req, res) 
   }
 });
 
+// POST /api/room/my/banner-v2-review-meta — GM: persist setRollOutcome and consumed chip key onto the shared banner.
+// Mirrors the player path in POST /api/room/:tableId/v2-review-chip so GM chip activations also sync via banners SSE.
+app.post('/api/room/my/banner-v2-review-meta', requireAuth, async (req, res) => {
+  if (!process.env.DATABASE_URL) {
+    return res.status(503).json({ error: 'Requires database' });
+  }
+  const { bannerId, outcome, consumedActivationKey, tableId: bodyTableId } = req.body || {};
+  const bid = bannerId != null ? Number(bannerId) : null;
+  if (bid == null || Number.isNaN(bid)) {
+    return res.status(400).json({ error: 'bannerId required' });
+  }
+  if (!outcome && !consumedActivationKey) {
+    return res.status(400).json({ error: 'outcome or consumedActivationKey required' });
+  }
+
+  const resolvedTableId = bodyTableId || req.uid;
+  const tableRow = await getTableStateById(APP_ID, resolvedTableId);
+  if (!tableRow || tableRow.userId !== req.uid) {
+    return res.status(403).json({ error: 'Not table owner' });
+  }
+  const gmUid = req.uid;
+
+  try {
+    const diceRow = await getDiceRollById(APP_ID, gmUid, bid);
+    if (!diceRow || diceRow.status !== 'pending') {
+      return res.status(404).json({ error: 'Banner not found or already resolved' });
+    }
+    const { buildV2ReviewChipBannerPatch } = await import('./src/client/lib/v2-banner-review-meta.js');
+    const patch = buildV2ReviewChipBannerPatch(diceRow.data, { outcome, consumedActivationKey });
+    if (Object.keys(patch).length === 0) {
+      return res.json({ ok: true, noChange: true });
+    }
+    const ok = await updateDiceRollData(APP_ID, gmUid, bid, patch);
+    if (ok) subscriptionManager.notifyChange('banners', gmUid);
+    return res.json({ ok: true, updated: ok });
+  } catch (err) {
+    console.error('POST /api/room/my/banner-v2-review-meta error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 // POST /api/room/:tableId/banner-cancel — Player cancels their own pending banner (GM has not acked/cancelled yet).
 app.post('/api/room/:tableId/banner-cancel', requireAuth, async (req, res) => {
   const ctx = await resolveTableAccess(APP_ID, req.params.tableId, req);
@@ -5125,6 +5167,20 @@ app.post('/api/room/:tableId/v2-review-chip', requireAuth, async (req, res) => {
       console.warn('[V2] Player review chip skipped mutations:', skipped.map((m) => m.type));
     }
 
+    // Persist setRollOutcome + consumed key onto the pending banner so every client sees the same
+    // Hope/Fear state via the banners SSE snapshot (not just the player who clicked).
+    await applyBannerReviewMetaPersist({
+      appId: APP_ID,
+      gmUid,
+      rollDbId: currentBannerId,
+      rollData: roll,
+      engineRollDisplayOnly,
+      chip,
+      updateDiceRollData,
+      notifyChange: (ch, key) => subscriptionManager.notifyChange(ch, key),
+    });
+
+    // Keep returning hopeConvertedRollDbId for backwards-compat optimistic UI.
     let hopeConvertedRollDbId = null;
     for (const m of engineRollDisplayOnly || []) {
       if (
@@ -5132,7 +5188,7 @@ app.post('/api/room/:tableId/v2-review-chip', requireAuth, async (req, res) => {
         m.payload?.rollKey === 'action' &&
         m.payload?.outcome === 'hope'
       ) {
-        hopeConvertedRollDbId = bid;
+        hopeConvertedRollDbId = currentBannerId;
         break;
       }
     }

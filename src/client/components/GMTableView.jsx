@@ -75,6 +75,7 @@ import {
   postBannerRangerFocusRerollRequest,
   postBannerHoldThemOff,
   postBannerTargets,
+  postBannerV2ReviewMeta,
   postBannerWingsD8,
   postBannerWingsD8Toggle,
   postBannerMakeASceneTarget,
@@ -216,6 +217,11 @@ import {
   runV2OwnedCardChipTableAction,
 } from '../lib/v2-owned-card-chip-table.js';
 import {
+  resolveBannerActionDominant,
+  consumedActivationKeysFromBanner,
+  extractActionRollOutcomeFromDisplayMutations,
+} from '../lib/v2-banner-review-meta.js';
+import {
   collectV2ReviewActionChips,
   activateV2ReviewChip,
   activateV2IntentChipOnUse,
@@ -223,6 +229,7 @@ import {
   getV2ReviewChipDisableHint,
   annotateV2ReviewChipsBannerConsumed,
   v2BannerChipActivationKey,
+  shouldV2ReviewChipConsumeOneShot,
   migrateV2BannerConsumedOnUseKeys,
   recordV2BannerConsumedOnUse,
   pruneV2BannerConsumedOnUseKeys,
@@ -2489,12 +2496,17 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
         runCharacterHook(weaponFeaturesForRoll, 'onRollComplete', { attacker, roll, characters: wrappedPartyCharacters, system });
       }
     }
-    // Fearless-style hope conversion (V2 review chips set chipHopeConvertedIds).
-    let hopeConversionRequested = !!(roll._rollDbId != null && chipHopeConvertedIds.has(roll._rollDbId));
-    if (hopeConversionRequested && roll._rollDbId != null) {
+    // Fearless-style hope conversion: read canonical `_v2ActionRollOutcome` from the shared banner,
+    // with the local optimistic `chipHopeConvertedIds` as fallback while SSE is in flight.
+    const persistedDominant = resolveBannerActionDominant(roll);
+    const localHopeConverted = !!(roll._rollDbId != null && chipHopeConvertedIds.has(roll._rollDbId));
+    const effectiveDominant = persistedDominant ?? roll.dominant;
+    const hopeConversionRequested = effectiveDominant === 'hope' && roll.dominant === 'fear';
+    if (localHopeConverted && roll._rollDbId != null) {
       setChipHopeConvertedIds(prev => { const next = new Set(prev); next.delete(roll._rollDbId); return next; });
     }
     if (hopeConversionRequested) {
+      // A `setRollOutcome('hope')` chip converted Fear → Hope: grant +1 Hope to the attacker.
       const attackerId = roll._attackerInstanceId;
       if (attackerId) {
         const attackerEl = activeElements.find(e => e.instanceId === attackerId);
@@ -2506,7 +2518,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
       }
     } else if (!isReactionRoll(roll)) {
       // Reaction rolls don't generate Hope or Fear (SRD: Reaction Rolls).
-      applyRollSideEffects(roll.dominant, roll.rollUser);
+      applyRollSideEffects(effectiveDominant, roll.rollUser);
     }
     const spotlightQual = qualifiesForSpotlightRoll(roll);
     if (spotlightQual) {
@@ -2514,11 +2526,19 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
         if (!roll._selectedTargetInstanceId && Array.isArray(roll._selectedTargetInstanceIds) && roll._selectedTargetInstanceIds[0]) {
           roll._selectedTargetInstanceId = roll._selectedTargetInstanceIds[0];
         }
-        enrichRollWithIsSuccess(roll, activeElements);
+        // Pass an effective roll with the resolved dominant so spotlight gates correctly.
+        const rollForSpotlight = effectiveDominant !== roll.dominant
+          ? { ...roll, dominant: effectiveDominant }
+          : roll;
+        enrichRollWithIsSuccess(rollForSpotlight, activeElements);
+        const currentSpotlight = spotlight ?? DEFAULT_SPOTLIGHT;
+        const nextSpotlight = applySpotlightRollAck(currentSpotlight, rollForSpotlight);
+        if (nextSpotlight !== currentSpotlight) onSpotlightChange?.(nextSpotlight);
+      } else {
+        const currentSpotlight = spotlight ?? DEFAULT_SPOTLIGHT;
+        const nextSpotlight = applySpotlightRollAck(currentSpotlight, roll);
+        if (nextSpotlight !== currentSpotlight) onSpotlightChange?.(nextSpotlight);
       }
-      const currentSpotlight = spotlight ?? DEFAULT_SPOTLIGHT;
-      const nextSpotlight = applySpotlightRollAck(currentSpotlight, roll);
-      if (nextSpotlight !== currentSpotlight) onSpotlightChange?.(nextSpotlight);
     }
     const dmgPending = pendingDamageRef.current;
     pendingDamageRef.current = null;
@@ -5318,7 +5338,14 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
         viewer,
         preloaded,
       });
-      const consumed = v2BannerConsumedOnUseByRollDbId.get(id);
+      // Union local optimistic consumed keys with the persisted banner field.
+      const localConsumed = v2BannerConsumedOnUseByRollDbId.get(id);
+      const persistedConsumed = consumedActivationKeysFromBanner(roll);
+      const consumed = localConsumed?.size
+        ? new Set([...localConsumed, ...persistedConsumed])
+        : persistedConsumed.size
+          ? persistedConsumed
+          : undefined;
       const annotated = annotateV2ReviewChipsBannerConsumed(chips, consumed);
       if (annotated.length) m.set(id, annotated);
     }
@@ -5381,17 +5408,22 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
         sendOp({ op: 'update-elements', updates });
       }
 
-      // Fearless / engine: setRollOutcome('hope') — same as Phase 1 roll.setWithHope() + chipHopeConvertedIds ack path.
+      // Fearless / engine: setRollOutcome — persist onto the shared banner so GM + players both see it.
+      // Local chipHopeConvertedIds remains as an optimistic overlay until the SSE snapshot arrives.
       if (roll._rollDbId != null && Array.isArray(engineRollDisplayOnly)) {
-        for (const m of engineRollDisplayOnly) {
-          if (
-            m?.type === 'setRollOutcome' &&
-            m.payload?.rollKey === 'action' &&
-            m.payload?.outcome === 'hope'
-          ) {
-            setChipHopeConvertedIds((prev) => new Set([...prev, roll._rollDbId]));
-            break;
-          }
+        const outcome = extractActionRollOutcomeFromDisplayMutations(engineRollDisplayOnly);
+        if (outcome === 'hope') {
+          setChipHopeConvertedIds((prev) => new Set([...prev, roll._rollDbId]));
+        }
+        if (outcome != null || shouldV2ReviewChipConsumeOneShot(chip)) {
+          postBannerV2ReviewMeta({
+            bannerId: roll._rollDbId,
+            outcome: outcome ?? undefined,
+            consumedActivationKey: shouldV2ReviewChipConsumeOneShot(chip)
+              ? v2BannerChipActivationKey(chip)
+              : undefined,
+            tableId,
+          }).catch(() => {});
         }
       }
 
@@ -5665,11 +5697,21 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
   }, [pendingBanners, activeElements, wrappedPartyCharacters]);
 
   // Display overrides for banners (e.g. Fearless setWithHope via V2 review chip).
+  // Reads from the persisted `_v2ActionRollOutcome` field (synced to all clients via banners SSE)
+  // and falls back to the local optimistic `chipHopeConvertedIds` Set until SSE arrives.
   const displayOverridesByRollId = useMemo(() => {
     const store = {};
     if (!pendingBanners?.length) return store;
     for (const roll of pendingBanners) {
-      if (roll._rollDbId != null && chipHopeConvertedIds.has(roll._rollDbId)) {
+      if (roll._rollDbId == null) continue;
+      // Persisted override (canonical, shared across all clients).
+      const persisted = resolveBannerActionDominant(roll);
+      if (persisted != null && persisted !== roll.dominant) {
+        store[roll._rollDbId] = { ...(store[roll._rollDbId] || {}), dominantForDisplay: persisted };
+        continue;
+      }
+      // Optimistic local override (before SSE snapshot arrives).
+      if (chipHopeConvertedIds.has(roll._rollDbId)) {
         store[roll._rollDbId] = { ...(store[roll._rollDbId] || {}), dominantForDisplay: 'hope' };
       }
     }

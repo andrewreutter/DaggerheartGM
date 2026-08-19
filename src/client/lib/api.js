@@ -1597,6 +1597,27 @@ export const postBannerHoldThemOff = async (tableId, bannerId, active) => {
 };
 
 /**
+ * GM: persist `setRollOutcome` and/or consumed chip activation key onto the shared banner
+ * so every client sees the updated Hope/Fear state and the chip shows as consumed.
+ * Calls `POST /api/room/my/banner-v2-review-meta`.
+ *
+ * @param {{ bannerId: number, outcome?: string, consumedActivationKey?: string, tableId?: string }} opts
+ */
+export const postBannerV2ReviewMeta = async ({ bannerId, outcome, consumedActivationKey, tableId } = {}) => {
+  const token = await getAuthToken();
+  if (!token) return;
+  try {
+    const res = await fetch('/api/room/my/banner-v2-review-meta', {
+      method: 'POST',
+      headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
+      body: JSON.stringify({ bannerId, outcome, consumedActivationKey, tableId }),
+    });
+    if (!res.ok) return;
+    return res.json();
+  } catch { return undefined; }
+};
+
+/**
  * GM or player: set multi-target selection on a pending banner (synced across clients).
  * patch: { selectedTargetInstanceIds?: string[], useArmorByTargetId?: Record<string, boolean> }
  */
