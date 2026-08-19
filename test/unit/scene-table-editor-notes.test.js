@@ -69,7 +69,7 @@ describe('SceneTableEditor notes', () => {
     }
   });
 
-  it('opens the encounter note editor when a scene note is clicked and saves body edits', async () => {
+  it('opens the encounter note editor when a scene note card is clicked and applies body edits on blur', async () => {
     const onChange = vi.fn();
     await act(async () => {
       root.render(
@@ -80,12 +80,10 @@ describe('SceneTableEditor notes', () => {
       );
     });
 
-    const openBtn = [...container.querySelectorAll('button')].find((b) =>
-      b.textContent?.includes('Secret door'),
-    );
-    expect(openBtn).toBeTruthy();
+    const card = container.querySelector('[data-testid="encounter-note-card"]');
+    expect(card).toBeTruthy();
     await act(async () => {
-      openBtn.click();
+      card.click();
     });
 
     const titleInput = document.body.querySelector('input[placeholder="Short label"]');
@@ -95,17 +93,13 @@ describe('SceneTableEditor notes', () => {
     const bodyField = document.body.querySelector('textarea[placeholder="Note text…"]');
     expect(bodyField).toBeTruthy();
     await act(async () => {
+      bodyField.focus();
       const setValue = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')?.set;
       setValue.call(bodyField, 'Look behind the altar');
       bodyField.dispatchEvent(new Event('input', { bubbles: true }));
     });
-
-    const saveBtn = [...document.body.querySelectorAll('[role="dialog"] button')].find(
-      (b) => b.textContent === 'Save',
-    );
-    expect(saveBtn).toBeTruthy();
     await act(async () => {
-      saveBtn.click();
+      bodyField.blur();
     });
 
     expect(onChange).toHaveBeenCalled();

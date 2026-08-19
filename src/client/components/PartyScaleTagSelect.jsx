@@ -20,6 +20,7 @@ export function PartyScaleTagSelect({
       title={title}
       aria-label={title}
       onClick={(e) => e.stopPropagation()}
+      onMouseDown={(e) => e.stopPropagation()}
       onChange={(e) => {
         e.stopPropagation();
         onChange?.(Number(e.target.value));

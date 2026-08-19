@@ -17,8 +17,11 @@ import {
   getAdversariesWithinRangeFt,
   rangeBandNameToFt,
   RANGE_BANDS_FT,
+  RANGE_BANDS_ORDERED,
   FAR_RANGE_FT,
   CLOSE_RANGE_FT,
+  getRangeBandIndexForDistanceFt,
+  rangeBandConnectorColors,
 } from '../../src/client/lib/map-range.js';
 
 describe('tokenDistanceFt', () => {
@@ -268,11 +271,50 @@ describe('collectBullseyeAltitudeConnectors', () => {
       pointToTokenDistanceFt(2.5, 2.5, 0, 50, 0, footprint, 60),
       10,
     );
+    expect(link.rangeBandIndex).toBe(getRangeBandIndexForDistanceFt(link.distanceFt));
+  });
+
+  it('colors the connector from the target token range-band highlight', () => {
+    const other = { instanceId: 'b', tokenX: 50, tokenY: 0, altitude: 60 };
+    const [link] = collectBullseyeAltitudeConnectors(center, [
+      { element: hovered },
+      { element: other },
+    ], getFootprint);
+    const colors = rangeBandConnectorColors(link.rangeBandIndex);
+    const band = RANGE_BANDS_ORDERED[link.rangeBandIndex];
+    expect(link.rangeBandIndex).toBeGreaterThanOrEqual(0);
+    expect(colors.line).toBe(band.tokenGlow);
+    expect(colors.text).toBe(band.tokenRing);
+    expect(colors.boxStroke).toBe(band.ringColor);
   });
 
   it('skips unplaced tokens', () => {
     const unplaced = { instanceId: 'b', tokenX: null, tokenY: null, altitude: 40 };
     expect(collectBullseyeAltitudeConnectors(center, [hovered, unplaced], getFootprint)).toEqual([]);
+  });
+});
+
+describe('rangeBandConnectorColors', () => {
+  it('uses the same glow as the target token range highlight for each band', () => {
+    for (let i = 0; i < RANGE_BANDS_ORDERED.length; i++) {
+      const colors = rangeBandConnectorColors(i);
+      expect(colors.line).toBe(RANGE_BANDS_ORDERED[i].tokenGlow);
+      expect(colors.text).toBe(RANGE_BANDS_ORDERED[i].tokenRing);
+      expect(colors.boxStroke).toBe(RANGE_BANDS_ORDERED[i].ringColor);
+    }
+  });
+
+  it('does not reuse Melee green for a Far-range target', () => {
+    const melee = rangeBandConnectorColors(0);
+    const far = rangeBandConnectorColors(3);
+    expect(far.line).not.toBe(melee.line);
+    expect(far.line).toBe(RANGE_BANDS_ORDERED[3].tokenGlow);
+  });
+
+  it('falls back to a muted stroke beyond Very Far', () => {
+    const colors = rangeBandConnectorColors(-1);
+    expect(colors.line).not.toBe(RANGE_BANDS_ORDERED[0].tokenGlow);
+    expect(colors.line).toMatch(/226,\s*232,\s*240/);
   });
 });
 

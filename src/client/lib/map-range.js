@@ -17,7 +17,7 @@ function sameTokenMapPlane(a, b) {
 /**
  * Map range utilities for game mechanics that depend on token positions.
  *
- * Range bands (in feet) match the constants in BattleMap.jsx.
+ * Range bands (in feet) and highlight colors live on RANGE_BANDS_ORDERED.
  * Distance uses nearest-edge logic: center-to-center distance minus one
  * token radius (2.5'), so any overlap with a band boundary counts.
  */
@@ -277,7 +277,7 @@ export function pointNearSegmentTarget(x1, y1, x2, y2, insetOrOpts = BULLSEYE_CO
  * @param {{ x: number, y: number, altitude?: number, excludeInstanceId?: string }|null|undefined} center
  * @param {Array<{ element: object }|object>} tokens
  * @param {(element: object) => { halfWidth: number, halfLength: number }} getFootprint
- * @returns {Array<{ instanceId: string, x1: number, y1: number, x2: number, y2: number, distanceFt: number }>}
+ * @returns {Array<{ instanceId: string, x1: number, y1: number, x2: number, y2: number, distanceFt: number, rangeBandIndex: number }>}
  */
 export function collectBullseyeAltitudeConnectors(center, tokens, getFootprint) {
   if (!center || center.excludeInstanceId == null || !Array.isArray(tokens)) return [];
@@ -290,6 +290,10 @@ export function collectBullseyeAltitudeConnectors(center, tokens, getFootprint) 
     const tAlt = el.altitude ?? 0;
     if (tAlt === cAlt) continue;
     const footprint = getFootprint?.(el) || DEFAULT_TOKEN_FOOTPRINT_FT;
+    const distanceFt = pointToTokenDistanceFt(
+      center.x, center.y, cAlt,
+      el.tokenX, el.tokenY, footprint, tAlt,
+    );
     out.push({
       instanceId: el.instanceId,
       x1: center.x,
@@ -298,10 +302,8 @@ export function collectBullseyeAltitudeConnectors(center, tokens, getFootprint) 
       y2: el.tokenY + footprint.halfLength,
       targetHalfWidthFt: footprint.halfWidth,
       targetHalfLengthFt: footprint.halfLength,
-      distanceFt: pointToTokenDistanceFt(
-        center.x, center.y, cAlt,
-        el.tokenX, el.tokenY, footprint, tAlt,
-      ),
+      distanceFt,
+      rangeBandIndex: getRangeBandIndexForDistanceFt(distanceFt),
     });
   }
   return out;
@@ -413,14 +415,41 @@ export function positionAtDistanceFt(
   return { x: newCx - bFootprint.halfWidth, y: newCy - bFootprint.halfLength };
 }
 
-/** Ordered range bands (name + maxFt) for distance → band logic. Same edge rule as BattleMap token highlighting. */
+/** Ordered range bands for distance → band logic and BattleMap token/connector highlight colors. */
 export const RANGE_BANDS_ORDERED = [
-  { name: 'Melee', maxFt: RANGE_BANDS_FT.MELEE },
-  { name: 'Very Close', maxFt: RANGE_BANDS_FT.VERY_CLOSE },
-  { name: 'Close', maxFt: RANGE_BANDS_FT.CLOSE },
-  { name: 'Far', maxFt: RANGE_BANDS_FT.FAR },
-  { name: 'Very Far', maxFt: RANGE_BANDS_FT.VERY_FAR },
+  { name: 'Melee',      maxFt: RANGE_BANDS_FT.MELEE,      fillColor: 'rgba(34,197,94,0.14)',  ringColor: 'rgba(34,197,94,0.6)',   tokenGlow: 'rgba(34,197,94,0.85)',  tokenRing: 'rgba(34,197,94,0.95)'   },
+  { name: 'Very Close', maxFt: RANGE_BANDS_FT.VERY_CLOSE, fillColor: 'rgba(56,189,248,0.11)', ringColor: 'rgba(56,189,248,0.5)',  tokenGlow: 'rgba(56,189,248,0.8)',  tokenRing: 'rgba(56,189,248,0.95)'  },
+  { name: 'Close',      maxFt: RANGE_BANDS_FT.CLOSE,      fillColor: 'rgba(251,146,60,0.06)', ringColor: 'rgba(251,146,60,0.4)',  tokenGlow: 'rgba(251,146,60,0.7)',  tokenRing: 'rgba(251,146,60,0.95)'  },
+  { name: 'Far',        maxFt: RANGE_BANDS_FT.FAR,        fillColor: 'rgba(250,204,21,0.08)', ringColor: 'rgba(250,204,21,0.45)', tokenGlow: 'rgba(250,204,21,0.75)', tokenRing: 'rgba(250,204,21,0.95)'  },
+  { name: 'Very Far',   maxFt: RANGE_BANDS_FT.VERY_FAR,   fillColor: 'rgba(239,68,68,0.04)',  ringColor: 'rgba(239,68,68,0.30)',  tokenGlow: 'rgba(239,68,68,0.65)',  tokenRing: 'rgba(239,68,68,0.9)'    },
 ];
+
+const CONNECTOR_BEYOND_RANGE_COLORS = {
+  line: 'rgba(226, 232, 240, 0.55)',
+  text: 'rgb(226, 232, 240)',
+  boxFill: 'rgba(15, 23, 42, 0.9)',
+  boxStroke: 'rgba(148, 163, 184, 0.45)',
+};
+
+/**
+ * Stroke / label colors for a dotted altitude connector. Uses the same tokenGlow /
+ * tokenRing / ringColor as BattleMap range-band highlighting on the target token.
+ *
+ * @param {number} rangeBandIndex - 0–4 (Melee…Very Far), or -1 / null beyond range
+ * @returns {{ line: string, text: string, boxFill: string, boxStroke: string }}
+ */
+export function rangeBandConnectorColors(rangeBandIndex) {
+  const band = (rangeBandIndex != null && rangeBandIndex >= 0)
+    ? RANGE_BANDS_ORDERED[rangeBandIndex]
+    : null;
+  if (!band) return CONNECTOR_BEYOND_RANGE_COLORS;
+  return {
+    line: band.tokenGlow,
+    text: band.tokenRing,
+    boxFill: 'rgba(8, 12, 16, 0.88)',
+    boxStroke: band.ringColor,
+  };
+}
 
 /**
  * Given a nearest-edge distance in feet, return the range band name.

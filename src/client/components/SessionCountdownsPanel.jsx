@@ -1,4 +1,4 @@
-import { Timer, Plus, Pencil, Eye, EyeOff, Repeat } from 'lucide-react';
+import { Timer, Plus, Eye, EyeOff, Repeat } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { generateId } from '../lib/helpers.js';
 import {
@@ -10,21 +10,23 @@ import {
   isCountdownStartDice,
   normalizeSessionCountdownEntry,
 } from '../lib/session-countdowns.js';
-import { SessionCountdownEditorModal } from './modals/SessionCountdownEditorModal.jsx';
+import { COUNTDOWN_KIND_LABELS } from './CountdownRollReference.jsx';
+import {
+  ENCOUNTER_OVERLAY_FALLBACK_RECT,
+  stopEncounterOverlayFromInteractive,
+} from '../lib/encounter-overlay-interactive.js';
 
 /**
  * @param {object} props
  * @param {object} props.row
  * @param {boolean} props.isGm
  * @param {(id: string, partial: object) => void} props.patch
- * @param {(row: object) => void} props.onEdit
  * @param {string} props.className
  */
 function SessionCountdownCard({
   row,
   isGm,
   patch,
-  onEdit,
   className,
   trackerOverlay,
   onRollStart,
@@ -35,6 +37,8 @@ function SessionCountdownCard({
     .filter(Boolean)
     .join(' — ');
   const gmOnly = row.visibility === 'gm';
+  const kindLabel = COUNTDOWN_KIND_LABELS[row.kind] || COUNTDOWN_KIND_LABELS.standard;
+  const isAuto = row.kind === 'standard' ? !!row.autoStandard : !!row.autoDynamic;
   const hoverProps = trackerOverlay
     ? trackerOverlay.triggerProps((e) => ({
       kind: 'countdown',
@@ -45,16 +49,17 @@ function SessionCountdownCard({
     : {};
 
   return (
-    <div data-testid="encounter-countdown-card" className={className} {...hoverProps}>
+    <div data-testid="encounter-countdown-card" className={`${className} ${trackerOverlay ? 'cursor-pointer' : ''}`} {...hoverProps}>
       <div className="space-y-1.5">
         <div className="flex min-w-0 items-start gap-1.5">
           {isGm ? (
             <button
               type="button"
               onClick={(e) => {
-                e.stopPropagation();
+                stopEncounterOverlayFromInteractive(e);
                 patch(row.id, { visibility: gmOnly ? 'players' : 'gm' });
               }}
+              onMouseDown={stopEncounterOverlayFromInteractive}
               className="mt-0.5 shrink-0 rounded p-0.5 text-dh-muted hover:bg-dh-hover/60 hover:text-dh"
               title={gmOnly ? 'GM only — click to show players' : 'Visible to players — click for GM only'}
               aria-label={gmOnly ? 'Show to players' : 'GM only'}
@@ -70,6 +75,25 @@ function SessionCountdownCard({
           <p className="min-w-0 flex-1 text-xs font-medium text-dh break-words leading-snug" title={title}>
             {row.label?.trim() ? row.label : 'Countdown'}
           </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-1">
+          <span className="rounded bg-dh-raised/80 px-1 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-dh-muted">
+            {kindLabel}
+          </span>
+          <span className="rounded bg-dh-raised/80 px-1 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-dh-muted">
+            {isAuto ? 'Auto' : 'Manual'}
+          </span>
+          {row.looping && row.looping !== 'none' ? (
+            <span className="inline-flex items-center gap-0.5 rounded bg-dh-raised/80 px-1 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-dh-muted">
+              <Repeat size={9} aria-hidden />
+              {COUNTDOWN_LOOPING_LABELS[row.looping] || row.looping}
+            </span>
+          ) : null}
+          {row.sourceRef ? (
+            <span className="rounded bg-emerald-950/50 px-1 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-emerald-400/90">
+              Linked
+            </span>
+          ) : null}
         </div>
         <div className="flex items-center justify-between gap-2">
           <div className="inline-flex min-w-0 items-center gap-0.5">
@@ -91,9 +115,10 @@ function SessionCountdownCard({
                 <button
                   type="button"
                   onClick={(e) => {
-                    e.stopPropagation();
+                    stopEncounterOverlayFromInteractive(e);
                     patch(row.id, { current: Math.max(0, (row.current ?? 0) - 1) });
                   }}
+                  onMouseDown={stopEncounterOverlayFromInteractive}
                   className="flex h-6 w-6 shrink-0 items-center justify-center rounded bg-dh-hover text-[10px] font-bold text-dh hover:bg-red-900/50"
                   aria-label="Decrease countdown"
                 >
@@ -103,9 +128,10 @@ function SessionCountdownCard({
                 <button
                   type="button"
                   onClick={(e) => {
-                    e.stopPropagation();
+                    stopEncounterOverlayFromInteractive(e);
                     patch(row.id, { current: (row.current ?? 0) + 1 });
                   }}
+                  onMouseDown={stopEncounterOverlayFromInteractive}
                   className="flex h-6 w-6 shrink-0 items-center justify-center rounded bg-dh-hover text-[10px] font-bold text-dh hover:bg-emerald-900/40"
                   aria-label="Increase countdown"
                 >
@@ -127,9 +153,10 @@ function SessionCountdownCard({
                   disabled={rolling}
                   title="Roll starting value"
                   onClick={(e) => {
-                    e.stopPropagation();
+                    stopEncounterOverlayFromInteractive(e);
                     onRollStart(row);
                   }}
+                  onMouseDown={stopEncounterOverlayFromInteractive}
                   className="rounded px-1 py-0.5 text-[10px] font-semibold text-dh-hope hover:bg-dh-hover disabled:opacity-50"
                 >
                   Roll start
@@ -141,26 +168,15 @@ function SessionCountdownCard({
                   disabled={rolling || !countdownCanLoop(row)}
                   title={countdownCanLoop(row) ? 'Loop — restore start value' : 'Loop when the clock is at 0'}
                   onClick={(e) => {
-                    e.stopPropagation();
+                    stopEncounterOverlayFromInteractive(e);
                     onLoop?.(row);
                   }}
+                  onMouseDown={stopEncounterOverlayFromInteractive}
                   className="rounded px-1 py-0.5 text-[10px] font-semibold text-dh-muted hover:text-dh hover:bg-dh-hover disabled:opacity-40"
                 >
                   Loop
                 </button>
               ) : null}
-              <button
-                type="button"
-                title="Edit countdown"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onEdit(row);
-                }}
-                className="rounded p-1 text-dh-muted hover:text-dh hover:bg-dh-hover"
-                aria-label="Edit countdown"
-              >
-                <Pencil size={14} />
-              </button>
             </div>
           )}
         </div>
@@ -176,7 +192,7 @@ function SessionCountdownCard({
  * @param {(op: object) => void} [props.onTableOp] — GM-only; posts session countdown ops
  * @param {'panel' | 'section'} [props.variant] — `panel`: collapsible card (default). `section`: subtitle + card rows for Encounter column.
  * @param {string} [props.sectionTitle] — uppercase-friendly label when `variant="section"`
- * @param {object} [props.trackerOverlay] — shared Encounter hover overlay (left-of-aside detail panel)
+ * @param {object} [props.trackerOverlay] — shared Encounter click-to-pin overlay (left-of-aside editor panel)
  */
 export function SessionCountdownsPanel({
   sessionCountdowns = [],
@@ -188,14 +204,8 @@ export function SessionCountdownsPanel({
   onRollCountdown,
 }) {
   const [open, setOpen] = useState(true);
-  const [editorRow, setEditorRow] = useState(null);
   const [rollingId, setRollingId] = useState(null);
   const rows = useMemo(() => (Array.isArray(sessionCountdowns) ? sessionCountdowns : []), [sessionCountdowns]);
-
-  const editorTarget = useMemo(() => {
-    if (!editorRow?.id) return null;
-    return rows.find((r) => r.id === editorRow.id) ?? editorRow;
-  }, [editorRow, rows]);
 
   const addBlank = () => {
     if (!onTableOp) return;
@@ -211,15 +221,15 @@ export function SessionCountdownsPanel({
       autoDynamic: false,
     });
     onTableOp({ op: 'session-countdown-upsert', entry });
-    setEditorRow(entry);
+    trackerOverlay?.show({
+      kind: 'countdown',
+      row: entry,
+      ...ENCOUNTER_OVERLAY_FALLBACK_RECT,
+    });
   };
 
   const patch = (id, partial) => {
     onTableOp?.({ op: 'session-countdown-patch', id, patch: partial });
-  };
-
-  const remove = (id) => {
-    onTableOp?.({ op: 'session-countdown-remove', id });
   };
 
   const handleRollStart = async (row) => {
@@ -258,7 +268,6 @@ export function SessionCountdownsPanel({
     row,
     isGm,
     patch,
-    onEdit: setEditorRow,
     trackerOverlay,
     onRollStart: onRollCountdown ? handleRollStart : undefined,
     onLoop: handleLoop,
@@ -301,16 +310,6 @@ export function SessionCountdownsPanel({
             ))}
           </div>
         </div>
-        {isGm && (
-          <SessionCountdownEditorModal
-            open={!!editorTarget}
-            row={editorTarget}
-            onClose={() => setEditorRow(null)}
-            onApplyPatch={(partial) => editorTarget && patch(editorTarget.id, partial)}
-            onRemove={() => editorTarget && remove(editorTarget.id)}
-            onRollStart={onRollCountdown}
-          />
-        )}
       </>
     );
   }
@@ -333,7 +332,7 @@ export function SessionCountdownsPanel({
           <div className="border-t border-dh-border px-2.5 py-2 space-y-2 max-h-64 overflow-y-auto">
             {rows.length === 0 && isGm && (
               <p className="text-[10px] text-dh-muted leading-snug">
-                Track Progress / Consequence countdowns from GM Moves or add one manually. Use the pencil to set kind, visibility, and automation.
+                Track Progress / Consequence countdowns from GM Moves or add one manually. Click a card to edit kind, visibility, and automation.
               </p>
             )}
             {rows.map((row) => (
@@ -355,16 +354,6 @@ export function SessionCountdownsPanel({
           </div>
         )}
       </div>
-      {isGm && (
-        <SessionCountdownEditorModal
-          open={!!editorTarget}
-          row={editorTarget}
-          onClose={() => setEditorRow(null)}
-          onApplyPatch={(partial) => editorTarget && patch(editorTarget.id, partial)}
-          onRemove={() => editorTarget && remove(editorTarget.id)}
-          onRollStart={onRollCountdown}
-        />
-      )}
     </>
   );
 }

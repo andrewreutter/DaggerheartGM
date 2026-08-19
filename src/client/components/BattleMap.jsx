@@ -129,6 +129,8 @@ import {
   collectBullseyeAltitudeConnectors,
   formatRangeDistanceFt,
   pointNearSegmentTarget,
+  RANGE_BANDS_ORDERED,
+  rangeBandConnectorColors,
 } from '../lib/map-range.js';
 import { computeTokenRenderPx } from '../lib/token-size.js';
 import { collectDistinctAdversaryNames, tokenAbbrevForElement } from '../lib/token-abbrev.js';
@@ -240,13 +242,7 @@ const SPOTLIGHT_BEAM_OVERLAP_PX = 6;
 const TABLE_NAME_INSET_LEFT_PX = SPOTLIGHT_BEAM_WIDTH_PX + 12;
 
 // Daggerheart range bands — Melee (≤5') through Very Far (≤300')
-const RANGE_BANDS = [
-  { name: 'Melee',      maxFt: 5,   fillColor: 'rgba(34,197,94,0.14)',  ringColor: 'rgba(34,197,94,0.6)',   tokenGlow: 'rgba(34,197,94,0.85)',  tokenRing: 'rgba(34,197,94,0.95)'   },
-  { name: 'Very Close', maxFt: 10,  fillColor: 'rgba(56,189,248,0.11)', ringColor: 'rgba(56,189,248,0.5)',  tokenGlow: 'rgba(56,189,248,0.8)',  tokenRing: 'rgba(56,189,248,0.95)'  },
-  { name: 'Close',      maxFt: 30,  fillColor: 'rgba(251,146,60,0.06)', ringColor: 'rgba(251,146,60,0.4)',  tokenGlow: 'rgba(251,146,60,0.7)',  tokenRing: 'rgba(251,146,60,0.95)'  },
-  { name: 'Far',        maxFt: 100, fillColor: 'rgba(250,204,21,0.08)', ringColor: 'rgba(250,204,21,0.45)', tokenGlow: 'rgba(250,204,21,0.75)', tokenRing: 'rgba(250,204,21,0.95)'  },
-  { name: 'Very Far',   maxFt: 300, fillColor: 'rgba(239,68,68,0.04)',  ringColor: 'rgba(239,68,68,0.30)',  tokenGlow: 'rgba(239,68,68,0.65)',  tokenRing: 'rgba(239,68,68,0.9)'    },
-];
+const RANGE_BANDS = RANGE_BANDS_ORDERED;
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -1562,6 +1558,7 @@ function BullseyeAltitudeConnectorOverlay({ connectors, pxPerFt, originRadiusPx 
         const dy = y2 - y1;
         const planarPx = Math.hypot(dx, dy);
         const label = formatRangeDistanceFt(c.distanceFt);
+        const colors = rangeBandConnectorColors(c.rangeBandIndex);
         const fontSize = 10;
         const padX = 4;
         const padY = 2.5;
@@ -1583,7 +1580,7 @@ function BullseyeAltitudeConnectorOverlay({ connectors, pxPerFt, originRadiusPx 
                 y1={y1}
                 x2={x2}
                 y2={y2}
-                stroke="rgba(186, 230, 253, 0.8)"
+                stroke={colors.line}
                 strokeWidth={1.5}
                 strokeDasharray="5 4"
                 strokeLinecap="round"
@@ -1595,8 +1592,8 @@ function BullseyeAltitudeConnectorOverlay({ connectors, pxPerFt, originRadiusPx 
               width={w}
               height={h}
               rx={3}
-              fill="rgba(8, 47, 73, 0.9)"
-              stroke="rgba(3, 105, 161, 0.55)"
+              fill={colors.boxFill}
+              stroke={colors.boxStroke}
               strokeWidth={1}
             />
             <text
@@ -1604,7 +1601,7 @@ function BullseyeAltitudeConnectorOverlay({ connectors, pxPerFt, originRadiusPx 
               y={my}
               textAnchor="middle"
               dominantBaseline="central"
-              fill="rgb(186, 230, 253)"
+              fill={colors.text}
               fontSize={fontSize}
               fontWeight="600"
               style={{ userSelect: 'none', pointerEvents: 'none', fontVariantNumeric: 'tabular-nums' }}

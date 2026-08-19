@@ -10,6 +10,7 @@ import { normalizeConditionsToList } from '../lib/conditions-utils.js';
 import { ROLE_BP_COST } from '../lib/constants.js';
 import { CheckboxTrack } from './CheckboxTrack.jsx';
 import { ConditionsEditor } from './ConditionsEditor.jsx';
+import { stopEncounterOverlayFromInteractive } from '../lib/encounter-overlay-interactive.js';
 
 /** Difficulty + damage-threshold chips — once per adversary type (above instance rows). */
 export function EncounterAdversaryDifficultyRow({
@@ -108,7 +109,8 @@ export function EncounterAdversaryInstanceCard({
           {showInstanceRemove && (
             <button
               type="button"
-              onClick={(e) => { e.stopPropagation(); onRemoveInstance?.(inst.instanceId); }}
+              onClick={(e) => { stopEncounterOverlayFromInteractive(e); onRemoveInstance?.(inst.instanceId); }}
+              onMouseDown={stopEncounterOverlayFromInteractive}
               className="ml-auto hidden group-hover/inst:flex w-4 h-4 rounded bg-dh-raised hover:bg-red-900 text-dh-muted hover:text-red-300 items-center justify-center transition-colors leading-none shrink-0"
               title={instanceNum != null ? `Remove #${instanceNum}` : 'Remove'}
             ><Trash2 size={9} /></button>
@@ -121,7 +123,8 @@ export function EncounterAdversaryInstanceCard({
           {patch && (
             <button
               type="button"
-              onClick={() => patch({ vulnerable: false })}
+              onClick={(e) => { stopEncounterOverlayFromInteractive(e); patch({ vulnerable: false }); }}
+              onMouseDown={stopEncounterOverlayFromInteractive}
               className="p-0.5 rounded text-dh-muted hover:text-dh hover:bg-dh-hover transition-colors"
               title="Clear Vulnerable"
             >
@@ -136,7 +139,8 @@ export function EncounterAdversaryInstanceCard({
           {patch && (
             <button
               type="button"
-              onClick={() => patch({ focusedBy: null })}
+              onClick={(e) => { stopEncounterOverlayFromInteractive(e); patch({ focusedBy: null }); }}
+              onMouseDown={stopEncounterOverlayFromInteractive}
               className="p-0.5 rounded text-dh-muted hover:text-dh hover:bg-dh-hover transition-colors"
               title="Clear Focus"
             >
@@ -153,7 +157,8 @@ export function EncounterAdversaryInstanceCard({
           {patch && (
             <button
               type="button"
-              onClick={() => patch({ difficultyMod: 0 })}
+              onClick={(e) => { stopEncounterOverlayFromInteractive(e); patch({ difficultyMod: 0 }); }}
+              onMouseDown={stopEncounterOverlayFromInteractive}
               className="p-0.5 rounded text-dh-muted hover:text-dh hover:bg-dh-hover transition-colors"
               title="Clear difficulty modifier"
             >
@@ -174,11 +179,13 @@ export function EncounterAdversaryInstanceCard({
             trackKind="hp"
             label="HP"
             verbs={['Mark', 'Clear']}
+            stopSlotClickPropagation
           />
           {(displayEl.stress_max || 0) === 0 && !showConditionsEditor && (
             <button
               type="button"
-              onClick={() => setConditionsOpen(true)}
+              onClick={(e) => { stopEncounterOverlayFromInteractive(e); setConditionsOpen(true); }}
+              onMouseDown={stopEncounterOverlayFromInteractive}
               className="ml-1 text-dh-muted hover:text-dh transition-colors shrink-0"
               title="Add conditions"
             ><Tag size={10} /></button>
@@ -194,11 +201,13 @@ export function EncounterAdversaryInstanceCard({
             trackKind="stress"
             label="Stress"
             verbs={['Mark', 'Clear']}
+            stopSlotClickPropagation
           />
           {!showConditionsEditor && (
             <button
               type="button"
-              onClick={() => setConditionsOpen(true)}
+              onClick={(e) => { stopEncounterOverlayFromInteractive(e); setConditionsOpen(true); }}
+              onMouseDown={stopEncounterOverlayFromInteractive}
               className="ml-1 text-dh-muted hover:text-dh transition-colors shrink-0"
               title="Add conditions"
             ><Tag size={10} /></button>
@@ -206,21 +215,23 @@ export function EncounterAdversaryInstanceCard({
         </div>
       )}
       {showConditionsEditor && (
-        <ConditionsEditor
-          instanceId={inst.instanceId}
-          placeholder="Add condition…"
-          autoFocus={conditionsOpen && !hasConditions}
-          value={inst.conditions || ''}
-          onCommit={(v) => patch?.({ conditions: v })}
-          suggestions={conditionsHistory}
-          extraSuggestions={extraConditionSuggestions}
-          onAddSuggestion={onAddConditionsHistoryEntry}
-          onRemoveSuggestion={onRemoveConditionsHistoryEntry}
-          onBlur={() => {
-            if (!hasConditions) setConditionsOpen(false);
-          }}
-          className="w-full flex flex-wrap items-center gap-1 bg-dh-raised/50 border border-dh-strong rounded px-1.5 py-0.5 text-xs text-dh focus-within:border-blue-500"
-        />
+        <div onClick={stopEncounterOverlayFromInteractive} onMouseDown={stopEncounterOverlayFromInteractive}>
+          <ConditionsEditor
+            instanceId={inst.instanceId}
+            placeholder="Add condition…"
+            autoFocus={conditionsOpen && !hasConditions}
+            value={inst.conditions || ''}
+            onCommit={(v) => patch?.({ conditions: v })}
+            suggestions={conditionsHistory}
+            extraSuggestions={extraConditionSuggestions}
+            onAddSuggestion={onAddConditionsHistoryEntry}
+            onRemoveSuggestion={onRemoveConditionsHistoryEntry}
+            onBlur={() => {
+              if (!hasConditions) setConditionsOpen(false);
+            }}
+            className="w-full flex flex-wrap items-center gap-1 bg-dh-raised/50 border border-dh-strong rounded px-1.5 py-0.5 text-xs text-dh focus-within:border-blue-500"
+          />
+        </div>
       )}
     </div>
   );

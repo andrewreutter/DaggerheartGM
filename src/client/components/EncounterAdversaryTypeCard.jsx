@@ -1,4 +1,5 @@
 import { Trash2, Users } from 'lucide-react';
+import { stopEncounterOverlayFromInteractive } from '../lib/encounter-overlay-interactive.js';
 import {
   groupMinionInstances,
   isAdversaryPresentForParty,
@@ -33,9 +34,10 @@ function MinionGroupBlock({
           <button
             type="button"
             onClick={(e) => {
-              e.stopPropagation();
+              stopEncounterOverlayFromInteractive(e);
               onRemoveGroup?.(group.instances.map((el) => el.instanceId));
             }}
+            onMouseDown={stopEncounterOverlayFromInteractive}
             className="ml-auto hidden group-hover/mingroup:flex w-4 h-4 rounded bg-dh-raised hover:bg-red-900 text-dh-muted hover:text-red-300 items-center justify-center transition-colors leading-none shrink-0"
             title="Remove group"
           >
@@ -157,7 +159,7 @@ export function EncounterAdversaryTypeCard({
 
   return (
     <div
-      className="rounded-lg bg-dh-surface border border-dh-border overflow-hidden group/adv"
+      className="rounded-lg bg-dh-surface border border-dh-border overflow-hidden group/adv cursor-pointer"
       {...(cardProps || {})}
     >
       <div className="px-2.5 py-1.5 border-b border-dh-border flex items-center gap-1.5">
@@ -175,7 +177,11 @@ export function EncounterAdversaryTypeCard({
           <span className="text-[10px] text-dh-muted shrink-0 group-hover/adv:hidden tabular-nums">×{headerCount}</span>
         )}
         {canEdit && (
-          <div className="hidden group-hover/adv:flex items-center gap-0.5 shrink-0">
+          <div
+            className="hidden group-hover/adv:flex items-center gap-0.5 shrink-0"
+            onClick={stopEncounterOverlayFromInteractive}
+            onMouseDown={stopEncounterOverlayFromInteractive}
+          >
             <button
               type="button"
               onClick={handleAdd}

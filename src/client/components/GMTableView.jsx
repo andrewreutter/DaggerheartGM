@@ -33,7 +33,7 @@ import { EditChoiceDialog } from './modals/EditChoiceDialog.jsx';
 import { buildEmptyLibraryMap, shouldDiscardNewLibraryMap } from '../lib/map-library.js';
 import { ItemDetailModal } from './modals/ItemDetailModal.jsx';
 import { ItemPickerModal } from './modals/ItemPickerModal.jsx';
-import { EncounterNoteEditorModal } from './modals/EncounterNoteEditorModal.jsx';
+import { ENCOUNTER_OVERLAY_FALLBACK_RECT } from '../lib/encounter-overlay-interactive.js';
 import { ReactionCallModal } from './modals/ReactionCallModal.jsx';
 import { CreateSceneModal } from './modals/CreateSceneModal.jsx';
 import { TRAIT_FULL } from './CharacterDisplay.jsx';
@@ -714,7 +714,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     [postRoll, tableId]
   );
 
-  // ── Hover overlay hooks (desktop: mouseenter/leave; touch: tap-to-toggle) ──
+  // ── Encounter click-to-pin + character hover overlays ──
   const suppressCharacterOverlayOutsideDismissRef = useRef(false);
   const encounterAsideRef = useRef(null);
   const {
@@ -3277,14 +3277,13 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
       const newEls = await addToTable({ id, name: 'Note', body: '' }, 'notes');
       const el = newEls?.[0];
       if (!el) return;
-      navigate(`${gameTableBasePath}/notes/${id}`);
-      setEditState({
-        step: 'note',
-        item: { id, name: 'Note', body: '' },
-        baseElement: el,
+      trackerOverlay.show({
+        kind: 'note',
+        element: el,
+        ...ENCOUNTER_OVERLAY_FALLBACK_RECT,
       });
     })();
-  }, [addToTable, navigate, gameTableBasePath]);
+  }, [addToTable, trackerOverlay.show]);
 
   const getAddCharacterAnchorRect = useCallback(() => {
     const el = addCharacterAnchorRef.current;
@@ -3439,23 +3438,17 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
   useEffect(() => {
     if (!modalCollection || !modalItemId) return;
     if (modalCollection === 'notes') {
-      if (editState?.step === 'note' && editState?.baseElement?.id === modalItemId) return;
       const baseElement = activeElements.find(e => e.elementType === 'note' && e.id === modalItemId);
       if (!baseElement) {
         navigate(gameTableBasePath, { replace: true });
         return;
       }
-      setEditState({
-        step: 'note',
-        item: {
-          id: baseElement.id,
-          name: baseElement.name || 'Note',
-          body: baseElement.body || '',
-          imageUrl: baseElement.imageUrl || '',
-          visibility: baseElement.visibility === 'gm' ? 'gm' : 'players',
-        },
-        baseElement,
+      trackerOverlay.show({
+        kind: 'note',
+        element: baseElement,
+        ...ENCOUNTER_OVERLAY_FALLBACK_RECT,
       });
+      navigate(gameTableBasePath, { replace: true });
       return;
     }
     // Don't overwrite if user already opened via handleEditClick / openNewCharacterEditor
@@ -3538,8 +3531,8 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     if (modalCollection === 'characters') {
       characterOverlay.show({ element: baseElement, top: 100, bottom: 220 });
     }
-    // characterOverlay.show is stable; including characterOverlay in deps would re-run every render if the hook returns a new object reference.
-  }, [modalCollection, modalItemId, activeElements, data, editState?.collection, editState?.baseElement?.id, editState?.step, navigate, gameTableBasePath]);
+    // characterOverlay.show / trackerOverlay.show are stable; including the whole overlay objects would re-run every render.
+  }, [modalCollection, modalItemId, activeElements, data, editState?.collection, editState?.baseElement?.id, editState?.step, navigate, gameTableBasePath, trackerOverlay.show]);
 
   // Close modal when URL no longer has item (e.g. user pressed back).
   useEffect(() => {
@@ -7584,20 +7577,6 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                   visibility: el.visibility === 'gm' ? 'players' : 'gm',
                 })
               }
-              onOpen={(el) => {
-                navigate(`${gameTableBasePath}/notes/${el.id}`);
-                setEditState({
-                  step: 'note',
-                  item: {
-                    id: el.id,
-                    name: el.name || 'Note',
-                    body: el.body || '',
-                    imageUrl: el.imageUrl || '',
-                    visibility: el.visibility === 'gm' ? 'gm' : 'players',
-                  },
-                  baseElement: el,
-                });
-              }}
               onRemove={(el) => removeActiveElement(el.instanceId)}
             />
           ))}
@@ -8352,27 +8331,6 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
       />
     )}
 
-    {editState?.step === 'note' && editState.baseElement && (
-      <EncounterNoteEditorModal
-        open
-        name={editState.item.name}
-        body={editState.item.body}
-        imageUrl={editState.item.imageUrl || editState.baseElement.imageUrl}
-        visibility={editState.item.visibility}
-        onClose={closeEditModal}
-        onSave={({ name, body, visibility }) => {
-          const img = editState.item.imageUrl ?? editState.baseElement.imageUrl;
-          updateActiveElement(editState.baseElement.instanceId, {
-            name,
-            body,
-            visibility,
-            ...(img ? { imageUrl: img } : {}),
-          });
-          closeEditModal();
-        }}
-      />
-    )}
-
     {editState?.step === 'choice' && (
       <EditChoiceDialog
         itemName={editState.baseElement.name}
@@ -8476,6 +8434,10 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
       onAddAdversary={handleAddPotentialAdversary}
       onPotentialAdversaryHover={handlePotentialAdversaryHover}
       onPotentialAdversaryLeave={potAdvOverlay.scheduleClose}
+      onApplyNotePatch={(instanceId, updates) => updateActiveElement(instanceId, updates)}
+      onApplyCountdownPatch={(id, patch) => sendOp({ op: 'session-countdown-patch', id, patch })}
+      onRemoveCountdown={(id) => sendOp({ op: 'session-countdown-remove', id })}
+      onRollCountdownStart={rollCountdownStart}
     />
     <EncounterPotentialAdversaryOverlay
       overlay={potAdvOverlay}

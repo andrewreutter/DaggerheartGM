@@ -2,9 +2,9 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { createElement, act } from 'react';
 import { createRoot } from 'react-dom/client';
-import { EncounterNoteEditorModal } from '../../src/client/components/modals/EncounterNoteEditorModal.jsx';
+import { EncounterNoteEditorForm } from '../../src/client/components/EncounterNoteEditorForm.jsx';
 
-describe('EncounterNoteEditorModal', () => {
+describe('EncounterNoteEditorForm', () => {
   let container;
   let root;
 
@@ -41,12 +41,11 @@ describe('EncounterNoteEditorModal', () => {
     root = createRoot(container);
     await act(async () => {
       root.render(
-        createElement(EncounterNoteEditorModal, {
-          open: true,
+        createElement(EncounterNoteEditorForm, {
+          noteKey: 'n1',
           name: 'My note title',
           body: 'x',
-          onClose: () => {},
-          onSave: () => {},
+          onApplyPatch: () => {},
         }),
       );
     });
@@ -61,28 +60,30 @@ describe('EncounterNoteEditorModal', () => {
     expect(input.selectionEnd).toBe('My note title'.length);
   });
 
-  it('exposes Cancel/Save with explicit tabindex 0 (Safari tab order)', async () => {
+  it('applies visibility immediately when the toggle is clicked', async () => {
+    const onApplyPatch = vi.fn();
     container = document.createElement('div');
     document.body.appendChild(container);
     root = createRoot(container);
     await act(async () => {
       root.render(
-        createElement(EncounterNoteEditorModal, {
-          open: true,
+        createElement(EncounterNoteEditorForm, {
+          noteKey: 'n2',
           name: 'N',
           body: '',
-          onClose: () => {},
-          onSave: () => {},
+          visibility: 'gm',
+          onApplyPatch,
         }),
       );
     });
-    const buttons = [...document.body.querySelectorAll('[role="dialog"] button')].filter(
-      (b) => b.textContent === 'Cancel' || b.textContent === 'Save',
+    const visBtn = [...document.body.querySelectorAll('button')].find((b) =>
+      b.textContent?.includes('GM only (hidden from players)'),
     );
-    expect(buttons).toHaveLength(2);
-    for (const b of buttons) {
-      expect(b.getAttribute('tabindex')).toBe('0');
-    }
+    expect(visBtn).toBeTruthy();
+    await act(async () => {
+      visBtn.click();
+    });
+    expect(onApplyPatch).toHaveBeenCalledWith({ visibility: 'players' });
   });
 
   it('shows the same visibility toggle copy as session countdowns when GM-only', async () => {
@@ -91,13 +92,12 @@ describe('EncounterNoteEditorModal', () => {
     root = createRoot(container);
     await act(async () => {
       root.render(
-        createElement(EncounterNoteEditorModal, {
-          open: true,
+        createElement(EncounterNoteEditorForm, {
+          noteKey: 'n3',
           name: 'N',
           body: '',
           visibility: 'gm',
-          onClose: () => {},
-          onSave: () => {},
+          onApplyPatch: () => {},
         }),
       );
     });

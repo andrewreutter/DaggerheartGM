@@ -2,7 +2,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { createElement, act } from 'react';
 import { createRoot } from 'react-dom/client';
-import { SessionCountdownEditorModal } from '../../src/client/components/modals/SessionCountdownEditorModal.jsx';
+import { SessionCountdownEditorForm } from '../../src/client/components/SessionCountdownEditorForm.jsx';
 import { normalizeSessionCountdownEntry } from '../../src/client/lib/session-countdowns.js';
 import {
   buildTrackedSessionEntryFromFeature,
@@ -10,7 +10,7 @@ import {
 } from '../../src/client/components/SessionCountdownsPanel.jsx';
 import { parseAllCountdownValues } from '../../src/client/lib/helpers.js';
 
-describe('SessionCountdownEditorModal', () => {
+describe('SessionCountdownEditorForm', () => {
   let container;
   let root;
 
@@ -40,10 +40,9 @@ describe('SessionCountdownEditorModal', () => {
     }
   });
 
-  it('focuses the name field when opened and applies patch on Save', async () => {
+  it('focuses the name field and applies a patch when a control changes', async () => {
     vi.useFakeTimers();
     const onApplyPatch = vi.fn();
-    const onClose = vi.fn();
     const onRemove = vi.fn();
     const row = normalizeSessionCountdownEntry({
       id: 'r1',
@@ -61,10 +60,8 @@ describe('SessionCountdownEditorModal', () => {
     root = createRoot(container);
     await act(async () => {
       root.render(
-        createElement(SessionCountdownEditorModal, {
-          open: true,
+        createElement(SessionCountdownEditorForm, {
           row,
-          onClose,
           onApplyPatch,
           onRemove,
         }),
@@ -83,32 +80,18 @@ describe('SessionCountdownEditorModal', () => {
     expect(Array.from(document.body.querySelectorAll('span')).some((el) => el.textContent === 'Starting value')).toBe(false);
     expect(Array.from(document.body.querySelectorAll('span')).some((el) => el.textContent === 'Last roll')).toBe(false);
     expect(Array.from(document.body.querySelectorAll('span')).some((el) => el.textContent === 'Current value')).toBe(true);
+    expect(Array.from(document.body.querySelectorAll('button')).some((b) => b.textContent === 'Save')).toBe(false);
 
-    const saveBtn = Array.from(document.body.querySelectorAll('button')).find((b) => b.textContent === 'Save');
-    expect(saveBtn).toBeTruthy();
+    onApplyPatch.mockClear();
+    const progressBtn = Array.from(document.body.querySelectorAll('button')).find((b) => b.textContent === 'Progress');
+    expect(progressBtn).toBeTruthy();
     await act(async () => {
-      saveBtn.click();
+      progressBtn.click();
     });
-
-    expect(onApplyPatch).toHaveBeenCalledTimes(1);
-    expect(onApplyPatch).toHaveBeenCalledWith(
-      expect.objectContaining({
-        label: 'Clock',
-        kind: 'standard',
-        visibility: 'players',
-        autoStandard: true,
-        autoDynamic: false,
-        looping: 'none',
-        startFormula: '6',
-        startPending: false,
-        start: 6,
-        current: 4,
-      }),
-    );
-    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(onApplyPatch).toHaveBeenCalledWith({ kind: 'progress' });
   });
 
-  it('saves looping and startFormula from the hydrated row', async () => {
+  it('applies looping immediately from the hydrated row', async () => {
     vi.useFakeTimers();
     const onApplyPatch = vi.fn();
     const row = normalizeSessionCountdownEntry({
@@ -127,10 +110,8 @@ describe('SessionCountdownEditorModal', () => {
     root = createRoot(container);
     await act(async () => {
       root.render(
-        createElement(SessionCountdownEditorModal, {
-          open: true,
+        createElement(SessionCountdownEditorForm, {
           row,
-          onClose: vi.fn(),
           onApplyPatch,
           onRemove: vi.fn(),
         }),
@@ -142,20 +123,13 @@ describe('SessionCountdownEditorModal', () => {
 
     expect(Array.from(document.body.querySelectorAll('span')).some((el) => el.textContent === 'Last roll')).toBe(true);
 
-    const saveBtn = Array.from(document.body.querySelectorAll('button')).find((b) => b.textContent === 'Save');
+    onApplyPatch.mockClear();
+    const resetBtn = Array.from(document.body.querySelectorAll('button')).find((b) => b.textContent === 'Reset');
+    expect(resetBtn).toBeTruthy();
     await act(async () => {
-      saveBtn.click();
+      resetBtn.click();
     });
-
-    expect(onApplyPatch).toHaveBeenCalledWith(
-      expect.objectContaining({
-        looping: 'increasing',
-        startFormula: '1d4',
-        startPending: false,
-        start: 3,
-        current: 1,
-      }),
-    );
+    expect(onApplyPatch).toHaveBeenCalledWith({ looping: 'reset' });
   });
 
   it('hides last-roll and current while a dice start is pending', async () => {
@@ -174,10 +148,8 @@ describe('SessionCountdownEditorModal', () => {
     root = createRoot(container);
     await act(async () => {
       root.render(
-        createElement(SessionCountdownEditorModal, {
-          open: true,
+        createElement(SessionCountdownEditorForm, {
           row,
-          onClose: vi.fn(),
           onApplyPatch: vi.fn(),
           onRemove: vi.fn(),
         }),

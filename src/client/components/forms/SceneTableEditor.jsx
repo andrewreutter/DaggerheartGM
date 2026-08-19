@@ -3,7 +3,6 @@ import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 import { BattleMap } from '../BattleMap.jsx';
 import { ItemPickerModal } from '../modals/ItemPickerModal.jsx';
-import { EncounterNoteEditorModal } from '../modals/EncounterNoteEditorModal.jsx';
 import { SessionCountdownsPanel } from '../SessionCountdownsPanel.jsx';
 import { EncounterAdversaryDifficultyRow, EncounterAdversaryInstanceCard } from '../EncounterAdversaryInstanceCard.jsx';
 import { EncounterAdversaryTypeCard } from '../EncounterAdversaryTypeCard.jsx';
@@ -37,6 +36,7 @@ import {
   scenePartyTierOptions,
 } from '../../lib/scene-table-adapter.js';
 import { generateId } from '../../lib/helpers.js';
+import { ENCOUNTER_OVERLAY_FALLBACK_RECT } from '../../lib/encounter-overlay-interactive.js';
 
 const DIFFICULTY_KEYS = ['lessDifficult', 'slightlyMoreDangerous', 'moreDangerous'];
 const DAMAGE_BOOST_KEYS = ['damageBoostPlusOne', 'damageBoostD4', 'damageBoostStatic'];
@@ -63,7 +63,6 @@ export function SceneTableEditor({
   latestRef.current = sceneData;
   const [pickerCollection, setPickerCollection] = useState(null);
   const [lightboxUrl, setLightboxUrl] = useState(null);
-  const [editingNote, setEditingNote] = useState(null);
   const encounterAsideRef = useRef(null);
   const {
     trackerOverlay,
@@ -150,7 +149,11 @@ export function SceneTableEditor({
   const addEmptyNote = () => {
     const el = buildSceneElementFromLibraryItem({ id: generateId(), name: 'Note', body: '' }, 'notes');
     applyOp({ op: 'add-elements', elements: [el] });
-    setEditingNote(el);
+    trackerOverlay.show({
+      kind: 'note',
+      element: el,
+      ...ENCOUNTER_OVERLAY_FALLBACK_RECT,
+    });
   };
 
   const addPotentialAdversary = async (adversaryId) => {
@@ -322,7 +325,6 @@ export function SceneTableEditor({
                 instanceId: el.instanceId,
                 updates: { visibility: el.visibility === 'gm' ? 'players' : 'gm' },
               })}
-              onOpen={setEditingNote}
               onRemove={(el) => applyOp({ op: 'remove-element', instanceId: el.instanceId })}
             />
           ))}
@@ -440,6 +442,9 @@ export function SceneTableEditor({
         onPotentialAdversaryHover={handlePotentialAdversaryHover}
         onPotentialAdversaryLeave={potAdvOverlay.scheduleClose}
         removeTitle="Remove from scene"
+        onApplyNotePatch={(instanceId, updates) => applyOp({ op: 'update-element', instanceId, updates })}
+        onApplyCountdownPatch={(id, patch) => applyOp({ op: 'session-countdown-patch', id, patch })}
+        onRemoveCountdown={(id) => applyOp({ op: 'session-countdown-remove', id })}
       />
       <EncounterPotentialAdversaryOverlay
         overlay={potAdvOverlay}
@@ -460,31 +465,6 @@ export function SceneTableEditor({
           onSelectMany={(picks) => {
             addLibraryPicks(picks, pickerCollection);
             setPickerCollection(null);
-          }}
-        />
-      )}
-
-      {editingNote && (
-        <EncounterNoteEditorModal
-          open
-          name={editingNote.name}
-          body={editingNote.body}
-          imageUrl={editingNote.imageUrl}
-          visibility={editingNote.visibility}
-          onClose={() => setEditingNote(null)}
-          onSave={({ name, body, visibility }) => {
-            const img = editingNote.imageUrl;
-            applyOp({
-              op: 'update-element',
-              instanceId: editingNote.instanceId,
-              updates: {
-                name,
-                body,
-                visibility,
-                ...(img ? { imageUrl: img } : {}),
-              },
-            });
-            setEditingNote(null);
           }}
         />
       )}

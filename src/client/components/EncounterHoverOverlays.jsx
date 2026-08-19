@@ -1,9 +1,9 @@
-import { useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Edit, Eye, EyeOff, StickyNote, Trash2 } from 'lucide-react';
 import { EnvironmentCardContent, AdversaryCardContent } from './DetailCardContent.jsx';
-import { CountdownRollReferencePanel, COUNTDOWN_KIND_LABELS } from './CountdownRollReference.jsx';
-import { COUNTDOWN_LOOPING_LABELS, formatSessionCountdownValueLine } from '../lib/session-countdowns.js';
+import { EncounterNoteEditorForm } from './EncounterNoteEditorForm.jsx';
+import { SessionCountdownEditorForm } from './SessionCountdownEditorForm.jsx';
 import { MarkdownText } from '../lib/markdown.js';
 import { useHoverOverlay } from '../lib/useHoverOverlay.js';
 import { useTouchDevice } from '../lib/useTouchDevice.js';
@@ -12,6 +12,13 @@ import {
   encounterTrackerOverlayStyle,
   resolveEncounterAsideLeft,
 } from '../lib/encounter-overlay-position.js';
+import { stopEncounterOverlayFromInteractive } from '../lib/encounter-overlay-interactive.js';
+
+export {
+  ENCOUNTER_OVERLAY_FALLBACK_RECT,
+  encounterOverlayRectFromTarget,
+  stopEncounterOverlayFromInteractive,
+} from '../lib/encounter-overlay-interactive.js';
 
 /**
  * After layout, measure a fixed overlay and shift it vertically so it stays in the viewport.
@@ -50,12 +57,30 @@ export async function resolvePotentialAdversary(adversaryId, resolveItems) {
 export function useEncounterHoverOverlays({ isTouch: isTouchProp, resolveItems } = {}) {
   const isTouchHook = useTouchDevice();
   const isTouch = isTouchProp ?? isTouchHook;
-  const trackerOverlay = useHoverOverlay({ hideDelay: 120, isTouch });
+  const trackerOverlay = useHoverOverlay({
+    hideDelay: 120,
+    isTouch,
+    mode: 'click',
+    getClickToggleKey: trackerOverlayKey,
+  });
   const potAdvOverlay = useHoverOverlay({ hideDelay: 120, isTouch });
   const trackerKey = trackerOverlayKey(trackerOverlay.data);
   const trackerAdjust = useViewportClamp(trackerOverlay.overlayRef, trackerOverlay.isOpen, trackerKey);
   const potAdvKey = potAdvOverlay.data?.element?.id ?? null;
   const potAdvAdjust = useViewportClamp(potAdvOverlay.overlayRef, potAdvOverlay.isOpen, potAdvKey);
+
+  useEffect(() => {
+    if (!trackerOverlay.isOpen && !potAdvOverlay.isOpen) return undefined;
+    const onKey = (e) => {
+      if (e.key !== 'Escape') return;
+      e.preventDefault();
+      e.stopPropagation();
+      trackerOverlay.close();
+      potAdvOverlay.close();
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [trackerOverlay.isOpen, potAdvOverlay.isOpen, trackerOverlay.close, potAdvOverlay.close]);
 
   const handlePotentialAdversaryHover = async (adversaryId, rect) => {
     if (!resolveItems) return;
@@ -99,7 +124,6 @@ export function EncounterNoteCard({
   element,
   trackerOverlay,
   onToggleVisibility,
-  onOpen,
   onRemove,
 }) {
   const noteBodyTrimmed = String(element.body || '').trim();
@@ -110,15 +134,16 @@ export function EncounterNoteCard({
   return (
     <div
       data-testid="encounter-note-card"
-      className={`flex gap-1 rounded-lg border border-amber-900/50 bg-amber-950/25 px-2 transition-colors hover:border-amber-700/60 hover:bg-amber-950/40 ${noteTitleOnly ? 'py-1.5' : 'py-2'}`}
+      className={`flex cursor-pointer gap-1 rounded-lg border border-amber-900/50 bg-amber-950/25 px-2 transition-colors hover:border-amber-700/60 hover:bg-amber-950/40 ${noteTitleOnly ? 'py-1.5' : 'py-2'}`}
       {...hoverProps}
     >
       <button
         type="button"
         onClick={(e) => {
-          e.stopPropagation();
+          stopEncounterOverlayFromInteractive(e);
           onToggleVisibility?.(element);
         }}
+        onMouseDown={stopEncounterOverlayFromInteractive}
         className="shrink-0 self-start rounded p-0.5 text-dh-muted hover:bg-dh-hover/60 hover:text-dh"
         title={element.visibility === 'gm' ? 'GM only — click to show players' : 'Visible to players — click for GM only'}
         aria-label={element.visibility === 'gm' ? 'Show to players' : 'GM only'}
@@ -126,14 +151,7 @@ export function EncounterNoteCard({
       >
         {element.visibility === 'gm' ? <EyeOff size={12} /> : <Eye size={12} />}
       </button>
-      <button
-        type="button"
-        onClick={(e) => {
-          e.stopPropagation();
-          onOpen?.(element);
-        }}
-        className="flex min-w-0 flex-1 items-start gap-2 text-left"
-      >
+      <div className="flex min-w-0 flex-1 items-start gap-2 text-left">
         {element.imageUrl ? (
           <span className="mt-0.5 h-10 w-10 shrink-0 overflow-hidden rounded border border-amber-800/50 bg-dh-inset">
             <img src={element.imageUrl} alt="" className="h-full w-full object-cover" />
@@ -149,13 +167,14 @@ export function EncounterNoteCard({
             </div>
           ) : null}
         </div>
-      </button>
+      </div>
       <button
         type="button"
         onClick={(e) => {
-          e.stopPropagation();
+          stopEncounterOverlayFromInteractive(e);
           onRemove?.(element);
         }}
+        onMouseDown={stopEncounterOverlayFromInteractive}
         className="shrink-0 self-start text-dh-muted hover:text-red-400 transition-colors p-0.5"
         title="Remove note"
       >
@@ -169,7 +188,7 @@ export function EncounterEnvironmentCard({ element, trackerOverlay, onRemove, re
   return (
     <div
       data-testid="encounter-environment-card"
-      className="rounded-lg bg-emerald-950/30 border border-emerald-900/40 overflow-hidden group/env"
+      className="rounded-lg bg-emerald-950/30 border border-emerald-900/40 overflow-hidden group/env cursor-pointer"
       {...trackerOverlay.triggerProps(trackerTriggerData('environment', { element }))}
     >
       <div className="px-2.5 py-1.5 flex items-center gap-1.5">
@@ -177,7 +196,12 @@ export function EncounterEnvironmentCard({ element, trackerOverlay, onRemove, re
         {onRemove && (
           <button
             type="button"
-            onClick={() => { onRemove(element); trackerOverlay.close(); }}
+            onClick={(e) => {
+              stopEncounterOverlayFromInteractive(e);
+              onRemove(element);
+              trackerOverlay.close();
+            }}
+            onMouseDown={stopEncounterOverlayFromInteractive}
             className="hidden group-hover/env:block text-dh-muted hover:text-red-400 transition-colors shrink-0"
             title={removeTitle}
           >
@@ -253,6 +277,10 @@ export function EncounterTrackerOverlay({
   onPotentialAdversaryHover,
   onPotentialAdversaryLeave,
   removeTitle = 'Remove from table',
+  onApplyNotePatch,
+  onApplyCountdownPatch,
+  onRemoveCountdown,
+  onRollCountdownStart,
 }) {
   if (!overlay.isOpen || !overlay.data || typeof document === 'undefined') return null;
   const asideLeft = resolveEncounterAsideLeft(asideRef?.current);
@@ -269,66 +297,32 @@ export function EncounterTrackerOverlay({
     const liveNote = grouped.find(
       (g) => g.kind === 'note' && g.element.instanceId === overlay.data.element.instanceId,
     )?.element ?? overlay.data.element;
-    const noteBody = String(liveNote.body || '').trim();
     body = (
-      <OverlayChrome imageUrl={liveNote.imageUrl} imageAlt={liveNote.name || 'Note'}>
-        <h3 className={`text-xl font-bold text-dh mb-1 ${liveNote.imageUrl ? 'pr-16' : ''}`}>
-          {liveNote.name || 'Note'}
-        </h3>
-        <p className="mb-3 text-[11px] text-dh-muted">
-          {liveNote.visibility === 'gm' ? 'GM only' : 'Visible to players'}
-        </p>
-        {noteBody ? (
-          <MarkdownText text={noteBody} className="dh-md text-sm leading-relaxed text-dh" />
-        ) : (
-          <p className="text-sm italic text-dh-muted">No note text.</p>
-        )}
-      </OverlayChrome>
+      <div className="p-5">
+        <EncounterNoteEditorForm
+          key={liveNote.instanceId}
+          noteKey={liveNote.instanceId}
+          name={liveNote.name}
+          body={liveNote.body}
+          imageUrl={liveNote.imageUrl}
+          visibility={liveNote.visibility}
+          onApplyPatch={(updates) => onApplyNotePatch?.(liveNote.instanceId, updates)}
+        />
+      </div>
     );
   } else if (overlay.data.kind === 'countdown') {
     const liveRow = sessionCountdowns.find((r) => r.id === overlay.data.row.id) ?? overlay.data.row;
-    const kindLabel = COUNTDOWN_KIND_LABELS[liveRow.kind] || COUNTDOWN_KIND_LABELS.standard;
-    const autoLabel = liveRow.kind === 'standard'
-      ? (liveRow.autoStandard ? 'Auto (−1) on PC action rolls' : 'Manual')
-      : (liveRow.autoDynamic ? 'Auto (dynamic DC)' : 'Manual');
     body = (
       <div className="p-5">
-        <h3 className="text-xl font-bold text-dh mb-3">{liveRow.label?.trim() ? liveRow.label : 'Countdown'}</h3>
-        <dl className="mb-4 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 text-sm">
-          <dt className="text-dh-muted">Kind</dt>
-          <dd className="text-dh">{kindLabel}</dd>
-          <dt className="text-dh-muted">Visibility</dt>
-          <dd className="text-dh">{liveRow.visibility === 'gm' ? 'GM only' : 'Visible to players'}</dd>
-          <dt className="text-dh-muted">Value</dt>
-          <dd className="tabular-nums text-dh">{formatSessionCountdownValueLine(liveRow)}</dd>
-          {liveRow.looping && liveRow.looping !== 'none' ? (
-            <>
-              <dt className="text-dh-muted">Looping</dt>
-              <dd className="text-dh">{COUNTDOWN_LOOPING_LABELS[liveRow.looping] || liveRow.looping}</dd>
-            </>
-          ) : null}
-          {liveRow.startFormula ? (
-            <>
-              <dt className="text-dh-muted">Formula</dt>
-              <dd className="tabular-nums text-dh">
-                {liveRow.startFormula}
-                {liveRow.startPending ? ' (pending)' : ''}
-              </dd>
-            </>
-          ) : null}
-          <dt className="text-dh-muted">Automation</dt>
-          <dd className="text-dh">{autoLabel}</dd>
-          {liveRow.sourceRef ? (
-            <>
-              <dt className="text-dh-muted">Source</dt>
-              <dd className="text-emerald-400/90">Linked to feature</dd>
-            </>
-          ) : null}
-        </dl>
-        <CountdownRollReferencePanel
-          kind={liveRow.kind === 'progress' || liveRow.kind === 'consequence' ? liveRow.kind : 'standard'}
-          autoStandard={!!liveRow.autoStandard}
-          autoDynamic={!!liveRow.autoDynamic}
+        <SessionCountdownEditorForm
+          key={liveRow.id}
+          row={liveRow}
+          onApplyPatch={(patch) => onApplyCountdownPatch?.(liveRow.id, patch)}
+          onRemove={() => {
+            onRemoveCountdown?.(liveRow.id);
+            overlay.close();
+          }}
+          onRollStart={onRollCountdownStart}
         />
       </div>
     );

@@ -214,6 +214,11 @@ export function CheckboxTrack({
               }
             : undefined
         }
+        onMouseDown={
+          onSetFilled && stopSlotClickPropagation
+            ? (e) => e.stopPropagation()
+            : undefined
+        }
         onMouseEnter={onSetFilled ? () => setHoverIndex(i) : undefined}
         title={
           slotTypeTooltip
