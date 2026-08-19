@@ -1,8 +1,10 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
   CHARACTER_EDITOR_AUTOSAVE_HINT_KEY,
+  MAP_SHOW_INSTRUCTIONS_KEY,
   resetOnboardingState,
   isCharacterEditorAutosaveHintDismissed,
+  isMapShowInstructionsEnabled,
 } from '../../src/client/lib/onboarding-storage.js';
 
 describe('onboarding-storage', () => {
@@ -29,5 +31,12 @@ describe('onboarding-storage', () => {
     expect(globalThis.dispatchEvent).toHaveBeenCalledTimes(1);
     const ev = globalThis.dispatchEvent.mock.calls[0][0];
     expect(ev.type).toBe('dh-onboarding-reset');
+  });
+
+  it('clears the Game Map show-instructions flag so Enable onboarding restores the full copy', () => {
+    localStorage.setItem(MAP_SHOW_INSTRUCTIONS_KEY, '0');
+    expect(isMapShowInstructionsEnabled()).toBe(false);
+    resetOnboardingState();
+    expect(isMapShowInstructionsEnabled()).toBe(true);
   });
 });

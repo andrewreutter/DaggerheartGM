@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
-  ALTITUDE_CONTROL_GAP_PX,
+  altitudeControlExpandLeftPx,
+  ALTITUDE_CONTROL_OVERLAP_PX,
   ALTITUDE_CONTROL_WIDTH_PX,
   ALTITUDE_STEP_FT,
   altitudeDragPxPerStep,
@@ -48,6 +49,14 @@ describe('computeAltitudeStepsFromDragDeltaPx', () => {
   it('ALTITUDE_STEP_FT is 5', () => {
     expect(ALTITUDE_STEP_FT).toBe(5);
   });
+
+  it('altitude control overlaps the token and extends less than its full width to the left', () => {
+    expect(ALTITUDE_CONTROL_OVERLAP_PX).toBeGreaterThan(0);
+    expect(altitudeControlExpandLeftPx()).toBe(
+      ALTITUDE_CONTROL_WIDTH_PX - ALTITUDE_CONTROL_OVERLAP_PX,
+    );
+    expect(altitudeControlExpandLeftPx()).toBeLessThan(ALTITUDE_CONTROL_WIDTH_PX);
+  });
 });
 
 describe('altitudeStemOffsetPx', () => {
@@ -85,7 +94,7 @@ describe('isPointInExpandedHoverZone', () => {
     tokenTopPx: 50,
     tokenWidthPx: 33,
     tokenHeightPx: 33,
-    expandLeftPx: ALTITUDE_CONTROL_WIDTH_PX + ALTITUDE_CONTROL_GAP_PX,
+    expandLeftPx: altitudeControlExpandLeftPx(),
   };
 
   it('is true for a point inside the token footprint', () => {

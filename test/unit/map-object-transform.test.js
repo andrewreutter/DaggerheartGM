@@ -12,6 +12,8 @@ import {
   scaleBrushStroke,
   sortMapObjectsForStack,
   TOKEN_LAYER_Z_INDEX_MIN,
+  mapObjectContainsPointFt,
+  findTopmostMapObjectAtPointFt,
 } from '../../src/client/lib/map-object-transform.js';
 
 describe('canModifyMapObject', () => {
@@ -203,6 +205,55 @@ describe('mapObjectUsesStrokeHitTest', () => {
     expect(mapObjectUsesStrokeHitTest({ elementType: 'drawShape', shapeTool: 'rect', filled: false })).toBe(true);
     expect(mapObjectUsesStrokeHitTest({ elementType: 'drawShape', shapeTool: 'oval' })).toBe(true);
     expect(mapObjectUsesStrokeHitTest({ elementType: 'drawShape', shapeTool: 'brush' })).toBe(true);
+  });
+});
+
+describe('mapObjectContainsPointFt', () => {
+  it('hits a filled image AABB and misses outside it', () => {
+    const img = { elementType: 'mapImage', tokenX: 10, tokenY: 10, widthFt: 8, heightFt: 6 };
+    expect(mapObjectContainsPointFt(img, 10, 10)).toBe(true);
+    expect(mapObjectContainsPointFt(img, 13.9, 12.9)).toBe(true);
+    expect(mapObjectContainsPointFt(img, 15, 10)).toBe(false);
+  });
+
+  it('uses the ellipse for a filled oval and the AABB for a filled rect', () => {
+    const oval = { elementType: 'drawShape', shapeTool: 'oval', filled: true, tokenX: 0, tokenY: 0, widthFt: 10, heightFt: 6 };
+    expect(mapObjectContainsPointFt(oval, 0, 0)).toBe(true);
+    expect(mapObjectContainsPointFt(oval, 4.9, 0)).toBe(true);
+    expect(mapObjectContainsPointFt(oval, 4.9, 2.9)).toBe(false);
+    const rect = { elementType: 'drawShape', shapeTool: 'rect', filled: true, tokenX: 0, tokenY: 0, widthFt: 10, heightFt: 6 };
+    expect(mapObjectContainsPointFt(rect, 4.9, 2.9)).toBe(true);
+  });
+
+  it('hits unfilled shapes only near the stroke, not the empty interior', () => {
+    const rect = { elementType: 'drawShape', shapeTool: 'rect', filled: false, tokenX: 0, tokenY: 0, widthFt: 20, heightFt: 20 };
+    expect(mapObjectContainsPointFt(rect, 0, 0)).toBe(false);
+    expect(mapObjectContainsPointFt(rect, 10, 0)).toBe(true);
+    const oval = { elementType: 'drawShape', shapeTool: 'oval', filled: false, tokenX: 0, tokenY: 0, widthFt: 20, heightFt: 10 };
+    expect(mapObjectContainsPointFt(oval, 0, 0)).toBe(false);
+    expect(mapObjectContainsPointFt(oval, 10, 0)).toBe(true);
+  });
+
+  it('hits a brush when the point is within radiusFt of the polyline', () => {
+    const brush = {
+      elementType: 'drawShape',
+      shapeTool: 'brush',
+      tokenX: 0,
+      tokenY: 0,
+      widthFt: 10,
+      heightFt: 10,
+      radiusFt: 1,
+      pointsFt: [{ x: -2, y: 0 }, { x: 2, y: 0 }],
+    };
+    expect(mapObjectContainsPointFt(brush, 0, 0.5)).toBe(true);
+    expect(mapObjectContainsPointFt(brush, 0, 2)).toBe(false);
+  });
+
+  it('picks the topmost stacked object (last in paint order)', () => {
+    const big = { instanceId: 'big', elementType: 'mapImage', tokenX: 0, tokenY: 0, widthFt: 20, heightFt: 20 };
+    const small = { instanceId: 'small', elementType: 'mapImage', tokenX: 0, tokenY: 0, widthFt: 4, heightFt: 4 };
+    expect(findTopmostMapObjectAtPointFt([big, small], 0, 0)?.instanceId).toBe('small');
+    expect(findTopmostMapObjectAtPointFt([big, small], 8, 0)?.instanceId).toBe('big');
   });
 });
 

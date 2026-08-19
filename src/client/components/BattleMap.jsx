@@ -108,6 +108,19 @@ import {
   resolveTokenHoverHintElement,
   tokenHoverHintModel,
 } from '../lib/token-overlay-activate.js';
+import {
+  detectMapControlPlatform,
+  MAP_CHROME_TOOLTIP_GAP_PX,
+  MAP_CHROME_TOOLTIP_MIN_WIDTH_PX,
+  mapChromeTooltipLeftPx,
+  mapChromeTooltipMaxWidthPx,
+  resolveMapChromeTooltip,
+} from '../lib/map-hover-hint.js';
+import {
+  isMapShowInstructionsEnabled,
+  MAP_SHOW_INSTRUCTIONS_KEY,
+  ONBOARDING_RESET_EVENT,
+} from '../lib/onboarding-storage.js';
 import { collectTokenNameChipObstacles, placeTokenNameChip } from '../lib/token-name-chip-place.js';
 import { useHoverOverlay } from '../lib/useHoverOverlay.js';
 import { useTouchDevice } from '../lib/useTouchDevice.js';
@@ -136,7 +149,8 @@ import { computeTokenRenderPx } from '../lib/token-size.js';
 import { collectDistinctAdversaryNames, tokenAbbrevForElement } from '../lib/token-abbrev.js';
 import { pickRandomPlaceOnMapSpot, pickRandomPlaceOnMapSpots, getTokenTrayDirection } from '../lib/place-token-on-map.js';
 import {
-  ALTITUDE_CONTROL_GAP_PX,
+  altitudeControlExpandLeftPx,
+  ALTITUDE_CONTROL_OVERLAP_PX,
   ALTITUDE_CONTROL_WIDTH_PX,
   ALTITUDE_STEP_FT,
   altitudeDragPxPerStep,
@@ -185,6 +199,7 @@ import {
   canModifyMapObject,
   computeCornerAnchor,
   computeCornerResize,
+  findTopmostMapObjectAtPointFt,
   MAP_OBJECT_Z_INDEX,
   mapObjectStackZIndex,
   mapObjectUsesStrokeHitTest,
@@ -1076,27 +1091,41 @@ function TokenNameChip({ name, x, y, zIndex }) {
   );
 }
 
-/** Token hover hint hanging from the top-right of the map viewport — mirrors TableNameInset. */
-function TokenHoverHintInset({ name, lines }) {
-  if (!name) return null;
+/** Always-mounted map chrome to the right of the camera tile — Game Map idle, or token / object hover. */
+function MapChromeTooltip({ title, lines, maxWidth, left, footer }) {
+  if (!title) return null;
   return (
     <div
-      data-testid="token-hover-hint-inset"
+      data-testid="map-chrome-tooltip"
       className="pointer-events-none absolute top-0 z-20"
-      style={{ right: TABLE_NAME_INSET_LEFT_PX }}
+      style={{ left, maxWidth }}
     >
-      <div className="rounded-b-lg border border-t-0 border-dh-border bg-dh-surface/95 px-2 py-1 shadow-md text-xs text-left">
+      <div
+        className="rounded-b-lg border border-t-0 border-dh-border bg-dh-surface/95 px-2 py-1 shadow-md text-xs text-left"
+        style={{ maxWidth }}
+      >
         <div
-          className="px-1 py-0.5 text-dh font-semibold leading-tight truncate max-w-[288px]"
-          style={{ fontSize: '1.2rem' }}
+          className="px-1 py-0.5 text-dh font-semibold leading-tight break-words"
+          style={{ fontSize: '0.96rem' }}
         >
-          {name}
+          {title}
         </div>
-        <div className="px-1 pb-0.5 text-dh-muted leading-snug">
-          {lines.map((line) => (
-            <div key={line}>{line}</div>
-          ))}
-        </div>
+        {lines?.length > 0 && (
+          <div className="px-1 pb-0.5 text-dh-muted leading-snug break-words">
+            {lines.map((line) => (
+              <div key={line}>{line}</div>
+            ))}
+          </div>
+        )}
+        {footer ? (
+          <div
+            className="pointer-events-auto"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {footer}
+          </div>
+        ) : null}
       </div>
     </div>
   );
@@ -1372,7 +1401,8 @@ const placedTokenPropsAreEqual = (prev, next) => {
 /**
  * Floating altitude HUD: a map-scale stem from the token center (positive = up the
  * screen, colored to the token's ally/role fill) with a compact always-on value
- * at the tip; the interactive control sits to the left of the token and is hover-only.
+ * at the tip; the interactive control sits to the left of the token, overlapping
+ * it slightly so the pointer can reach it without crossing a gap. Hover-only.
  * Drag the hover control vertically to change altitude (5' steps, 1:1 with stem growth
  * at the current map scale × zoom — pointer capture keeps the drag even though the
  * control stays put); double-click resets to ground. Permission mirrors `canDrag`.
@@ -1515,10 +1545,9 @@ function TokenAltitudeControl({
         <div
           className="absolute flex items-center justify-end gap-0.5"
           style={{
-            left: element.tokenX * pxPerFt,
+            left: element.tokenX * pxPerFt + ALTITUDE_CONTROL_OVERLAP_PX,
             top: centerY,
             transform: 'translate(-100%, -50%)',
-            paddingRight: ALTITUDE_CONTROL_GAP_PX,
             zIndex,
             pointerEvents: 'none',
           }}
@@ -3452,6 +3481,11 @@ export function BattleMap({
   const [rightPanDragging, setRightPanDragging] = useState(false);
   const [pinnedToken, setPinnedToken] = useState(null); // { element, anchorX, anchorY }
   const [trayHoverInstanceId, setTrayHoverInstanceId] = useState(null);
+  const [hoveredMapObject, setHoveredMapObject] = useState(null);
+  const hoveredMapObjectIdRef = useRef(null);
+  const [showMapInstructions, setShowMapInstructions] = useState(isMapShowInstructionsEnabled);
+  const [chromeTooltipMaxWidth, setChromeTooltipMaxWidth] = useState(MAP_CHROME_TOOLTIP_MIN_WIDTH_PX);
+  const [chromeTooltipLeft, setChromeTooltipLeft] = useState(MAP_CHROME_TOOLTIP_GAP_PX);
 
   useEffect(() => {
     if (trayAdversaryOverlay.isOpen) gmMovesOverlay?.close();
@@ -3536,6 +3570,21 @@ export function BattleMap({
     });
     ro.observe(el);
     return () => ro.disconnect();
+  }, []);
+
+  useEffect(() => {
+    const onReset = () => setShowMapInstructions(isMapShowInstructionsEnabled());
+    window.addEventListener(ONBOARDING_RESET_EVENT, onReset);
+    return () => window.removeEventListener(ONBOARDING_RESET_EVENT, onReset);
+  }, []);
+
+  const persistShowMapInstructions = useCallback((next) => {
+    setShowMapInstructions(next);
+    try {
+      localStorage.setItem(MAP_SHOW_INSTRUCTIONS_KEY, next ? '1' : '0');
+    } catch {
+      /* ignore quota / private mode */
+    }
   }, []);
 
   useEffect(() => {
@@ -4533,6 +4582,38 @@ export function BattleMap({
     ? !!(tableId && playerViewBatches.length > 0)
     : maps.length > 0 && !!onSetActiveView && !!onMapFreeExplore;
 
+  useLayoutEffect(() => {
+    const wrap = scrollWrapperRef.current;
+    if (!wrap) return;
+    const measure = () => {
+      const wrapRect = wrap.getBoundingClientRect();
+      const trigger = wrap.querySelector('[data-testid="map-camera-picker-trigger"]');
+      let pickerLeft;
+      let pickerWidth;
+      if (trigger) {
+        const r = trigger.getBoundingClientRect();
+        if (r.width > 0) {
+          pickerLeft = r.left - wrapRect.left;
+          pickerWidth = r.width;
+        }
+      }
+      const layoutArgs = {
+        viewportWidth: wrapRect.width,
+        pickerLeft,
+        pickerWidth,
+        tooltipRightInset: TABLE_NAME_INSET_LEFT_PX,
+      };
+      setChromeTooltipMaxWidth(mapChromeTooltipMaxWidthPx(layoutArgs));
+      setChromeTooltipLeft(mapChromeTooltipLeftPx(layoutArgs));
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(wrap);
+    const trigger = wrap.querySelector('[data-testid="map-camera-picker-trigger"]');
+    if (trigger) ro.observe(trigger);
+    return () => ro.disconnect();
+  }, [showMapCameraPicker, containerWidth]);
+
   const showPlayerPlaceImageButton = isPlayer && !!onAddMapImageObject;
   const showMapArtistCredit = !!displayMapRow?.artist?.trim();
   const showMapDrawToolbar = mapConfigHasImage(mapConfig) && (
@@ -4778,6 +4859,24 @@ export function BattleMap({
     (el) => !isSpectator && canModifyMapObject(el, { isPlayer, userUid: user?.uid }),
     [isPlayer, isSpectator, user?.uid],
   );
+
+  const clearHoveredMapObject = useCallback(() => {
+    if (!hoveredMapObjectIdRef.current) return;
+    hoveredMapObjectIdRef.current = null;
+    setHoveredMapObject(null);
+  }, []);
+
+  useEffect(() => {
+    if (!dragGhost) return;
+    clearHoveredMapObject();
+  }, [dragGhost, clearHoveredMapObject]);
+
+  useEffect(() => {
+    if (!hoveredMapObject) return;
+    if (!stackedMapObjects.some((el) => el.instanceId === hoveredMapObject.instanceId)) {
+      clearHoveredMapObject();
+    }
+  }, [stackedMapObjects, hoveredMapObject, clearHoveredMapObject]);
 
   // Build adversary instance numbers (1-based per unique id)
   const instanceNumbers = useMemo(() => {
@@ -6321,7 +6420,7 @@ export function BattleMap({
             tokenTopPx: prev.tokenY * pxPerFt,
             tokenWidthPx: footprint.halfWidth * 2 * pxPerFt,
             tokenHeightPx: footprint.halfLength * 2 * pxPerFt,
-            expandLeftPx: ALTITUDE_CONTROL_WIDTH_PX + ALTITUDE_CONTROL_GAP_PX,
+            expandLeftPx: altitudeControlExpandLeftPx(),
             stemOffsetPx: altitudeStemOffsetPx(prev.altitude ?? 0, pxPerFt),
           })) {
             overToken = prev;
@@ -6330,13 +6429,21 @@ export function BattleMap({
       }
     }
     lastHoveredTokenIdRef.current = overToken?.instanceId ?? null;
+    const setHoveredObjectIfChanged = (next) => {
+      const id = next?.instanceId ?? null;
+      if (id === hoveredMapObjectIdRef.current) return;
+      hoveredMapObjectIdRef.current = id;
+      setHoveredMapObject(next);
+    };
     // During an active drag, the bullseye is frozen at the drag origin — don't update
     if (frozenBullseyeRef.current) {
+      setHoveredObjectIfChanged(null);
       scheduleBullseyeFt(frozenBullseyeRef.current);
       return;
     }
     // Snap to token center if hovering over a placed token (reuse the lookup above — same point).
     if (overToken) {
+      setHoveredObjectIfChanged(null);
       // Cancel any pending idle timer — snapped tokens show immediately via excludeInstanceId.
       clearBullseyeIdleTimer();
       const footprint = getTokenFootprintFt(resolveTokenSizeSource(overToken, parentByInstanceId));
@@ -6349,21 +6456,25 @@ export function BattleMap({
     } else {
       const ft = clientToFt(e.clientX, e.clientY);
       if (ft) {
+        setHoveredObjectIfChanged(findTopmostMapObjectAtPointFt(stackedMapObjects, ft.x, ft.y));
         scheduleBullseyeFt({ ...ft, altitude: 0 });
         // Reset visibility and restart the 1.5s rest timer on every move over empty space.
         setBullseyeIdleVisible(false);
         armBullseyeIdleTimer();
+      } else {
+        setHoveredObjectIfChanged(null);
       }
     }
-  }, [findTokenAtClient, clientToFt, scheduleBullseyeFt, parentByInstanceId, clearBullseyeIdleTimer, armBullseyeIdleTimer, allMapTokens, viewPanLeft, viewPanTop, viewZoom, pxPerFt]);
+  }, [findTokenAtClient, clientToFt, scheduleBullseyeFt, parentByInstanceId, clearBullseyeIdleTimer, armBullseyeIdleTimer, allMapTokens, viewPanLeft, viewPanTop, viewZoom, pxPerFt, stackedMapObjects]);
 
   const handleMapPointerLeave = useCallback(() => {
     setHoveringTokenBlocksDraw(false);
     lastHoveredTokenIdRef.current = null;
+    clearHoveredMapObject();
     if (!frozenBullseyeRef.current) scheduleBullseyeFt(null);
     clearBullseyeIdleTimer();
     setBullseyeIdleVisible(false);
-  }, [scheduleBullseyeFt, clearBullseyeIdleTimer]);
+  }, [scheduleBullseyeFt, clearBullseyeIdleTimer, clearHoveredMapObject]);
 
   /** Active-map tray proxies: snap bullseye / range highlights as if hovering the placed token. */
   const handleTrayProxyHoverEnter = useCallback((element) => {
@@ -7276,6 +7387,16 @@ export function BattleMap({
     dragging: !!dragGhost,
   });
   const tokenHoverHint = tokenHoverHintElement ? tokenHoverHintModel(tokenHoverHintElement) : null;
+  const mapChromeTooltip = resolveMapChromeTooltip({
+    tokenElement: tokenHoverHintElement,
+    mapObject: dragGhost ? null : hoveredMapObject,
+    canModifyMapObject: hoveredMapObject ? canModifyMapObjectFn(hoveredMapObject) : false,
+    cameraLocked: gmCameraLocked,
+    canControlMapView,
+    showInstructions: showMapInstructions,
+    platform: detectMapControlPlatform(typeof navigator !== 'undefined' ? navigator : undefined),
+    isTouch,
+  });
   let tokenNameChip = null;
   if (
     tokenHoverHint
@@ -7698,9 +7819,22 @@ export function BattleMap({
             isPublic={isPublic}
             onPublicChange={isPlayer ? undefined : onPublicChange}
           />
-          {tokenHoverHint && (
-            <TokenHoverHintInset name={tokenHoverHint.name} lines={tokenHoverHint.lines} />
-          )}
+          <MapChromeTooltip
+            title={mapChromeTooltip.title}
+            lines={mapChromeTooltip.lines}
+            left={chromeTooltipLeft}
+            maxWidth={chromeTooltipMaxWidth}
+            footer={(
+              <label className="flex items-center gap-1 px-1 pb-0.5 text-dh-muted cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={showMapInstructions}
+                  onChange={(e) => persistShowMapInstructions(e.target.checked)}
+                />
+                Show instructions
+              </label>
+            )}
+          />
           {showMapCameraPicker && pickerTriggerTile ? (
             <div className="pointer-events-none absolute top-2 left-1/2 z-20 -translate-x-1/2">
               <MapCameraPicker

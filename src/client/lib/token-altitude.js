@@ -9,8 +9,15 @@ export const ALTITUDE_STEP_FT = 5;
 /** Width of the floating altitude label/control in unzoomed map-local pixels. */
 export const ALTITUDE_CONTROL_WIDTH_PX = 40;
 
-/** Gap between the control's right edge and the token's left edge (map-local px). */
-export const ALTITUDE_CONTROL_GAP_PX = 4;
+/** How far the control's right edge sits on the token (map-local px).
+ *  Overlap keeps a continuous mouse path from token → control with no gap
+ *  another token or map object could steal. */
+export const ALTITUDE_CONTROL_OVERLAP_PX = 8;
+
+/** How far the control extends left of the token (width minus the overlap). */
+export function altitudeControlExpandLeftPx() {
+  return Math.max(0, ALTITUDE_CONTROL_WIDTH_PX - ALTITUDE_CONTROL_OVERLAP_PX);
+}
 
 /**
  * Format an altitude in feet for the map HUD (`"50'"`, `"-20'"`, `"0'"`).
@@ -70,7 +77,7 @@ export function computeAltitudeStepsFromDragDeltaPx(deltaPx, pxPerStep) {
 
 /**
  * True when `(pointX, pointY)` (map-local px) sits inside the token footprint box
- * extended left by `expandLeftPx` (the altitude control width + gap) and vertically
+ * extended left by `expandLeftPx` (the altitude control outside the token) and vertically
  * to the stem tip when `stemOffsetPx` is set. Used to keep bullseye hover-focus while
  * the pointer moves from a token onto the stem or altitude control.
  *

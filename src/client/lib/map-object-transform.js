@@ -2,9 +2,9 @@
  * Pure geometry/permission helpers shared by BattleMap's placed map objects
  * (`mapImage` and `drawShape`): the creator-or-GM modify-permission rule, the
  * corner-drag resize math (aspect-locked for images, uniform-scale for brush
- * strokes, free for rect/oval), and stack/hit-test order (smaller objects on
- * top so they stay selectable). No React, no BattleMap-specific state — safe to
- * unit test directly.
+ * strokes, free for rect/oval), stack/hit-test order (smaller objects on
+ * top so they stay selectable), and `mapObjectContainsPointFt` hover hits.
+ * No React, no BattleMap-specific state — safe to unit test directly.
  */
 
 /** Display defaults when `widthFt`/`heightFt` are missing — match MapImageObject / DrawShapeObject. */
@@ -197,4 +197,131 @@ export function scaleBrushStroke(pointsFt, radiusFt, scaleFactor) {
     pointsFt: (pointsFt || []).map((p) => ({ x: p.x * scaleFactor, y: p.y * scaleFactor })),
     radiusFt: radiusFt * scaleFactor,
   };
+}
+
+/** Hover / hit-test pad for unfilled rect/oval strokes (feet). */
+export const MAP_OBJECT_STROKE_HIT_FT = 0.5;
+
+function mapObjectSizeFt(el) {
+  const fallback = el?.elementType === 'mapImage' ? DEFAULT_MAP_IMAGE_SIZE_FT : DEFAULT_DRAW_SHAPE_SIZE_FT;
+  const w = Number(el?.widthFt);
+  const h = Number(el?.heightFt);
+  return {
+    width: Number.isFinite(w) && w > 0 ? w : fallback,
+    height: Number.isFinite(h) && h > 0 ? h : fallback,
+  };
+}
+
+function pointInAabb(px, py, cx, cy, width, height) {
+  return Math.abs(px - cx) <= width / 2 && Math.abs(py - cy) <= height / 2;
+}
+
+function pointInEllipse(px, py, cx, cy, halfW, halfH) {
+  if (halfW <= 0 || halfH <= 0) return false;
+  const dx = (px - cx) / halfW;
+  const dy = (py - cy) / halfH;
+  return dx * dx + dy * dy <= 1;
+}
+
+function distToSegment(px, py, ax, ay, bx, by) {
+  const dx = bx - ax;
+  const dy = by - ay;
+  const len2 = dx * dx + dy * dy;
+  if (len2 === 0) return Math.hypot(px - ax, py - ay);
+  let t = ((px - ax) * dx + (py - ay) * dy) / len2;
+  t = Math.max(0, Math.min(1, t));
+  return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
+}
+
+function distToRectPerimeter(px, py, left, top, right, bottom) {
+  const inside = px >= left && px <= right && py >= top && py <= bottom;
+  if (inside) {
+    return Math.min(px - left, right - px, py - top, bottom - py);
+  }
+  const cx = Math.max(left, Math.min(right, px));
+  const cy = Math.max(top, Math.min(bottom, py));
+  return Math.hypot(px - cx, py - cy);
+}
+
+/**
+ * Whether a map-feet point hits a placed `mapImage` / `drawShape`.
+ * Filled image/rect use the AABB; filled oval uses the ellipse; unfilled
+ * rect/oval use stroke proximity; brush uses distance to the polyline ≤ `radiusFt`.
+ *
+ * @param {object|null|undefined} el
+ * @param {number} xFt
+ * @param {number} yFt
+ * @param {{ strokeHitFt?: number }} [opts]
+ * @returns {boolean}
+ */
+export function mapObjectContainsPointFt(el, xFt, yFt, { strokeHitFt = MAP_OBJECT_STROKE_HIT_FT } = {}) {
+  if (!el || !Number.isFinite(xFt) || !Number.isFinite(yFt)) return false;
+  if (el.elementType !== 'mapImage' && el.elementType !== 'drawShape') return false;
+  const cx = Number(el.tokenX);
+  const cy = Number(el.tokenY);
+  if (!Number.isFinite(cx) || !Number.isFinite(cy)) return false;
+  const { width, height } = mapObjectSizeFt(el);
+  const halfW = width / 2;
+  const halfH = height / 2;
+
+  if (el.elementType === 'mapImage') {
+    return pointInAabb(xFt, yFt, cx, cy, width, height);
+  }
+
+  const tool = el.shapeTool || 'rect';
+  if (tool === 'brush') {
+    const radius = Number(el.radiusFt);
+    const r = Number.isFinite(radius) && radius > 0 ? radius : 1;
+    const points = Array.isArray(el.pointsFt) ? el.pointsFt : [];
+    if (points.length === 0) return false;
+    if (points.length === 1) {
+      return Math.hypot(xFt - (cx + Number(points[0].x || 0)), yFt - (cy + Number(points[0].y || 0))) <= r;
+    }
+    for (let i = 0; i < points.length - 1; i++) {
+      const ax = cx + Number(points[i].x || 0);
+      const ay = cy + Number(points[i].y || 0);
+      const bx = cx + Number(points[i + 1].x || 0);
+      const by = cy + Number(points[i + 1].y || 0);
+      if (distToSegment(xFt, yFt, ax, ay, bx, by) <= r) return true;
+    }
+    const last = points[points.length - 1];
+    return Math.hypot(xFt - (cx + Number(last.x || 0)), yFt - (cy + Number(last.y || 0))) <= r;
+  }
+
+  const filled = !!el.filled;
+  const isOval = tool === 'oval';
+  if (filled) {
+    return isOval
+      ? pointInEllipse(xFt, yFt, cx, cy, halfW, halfH)
+      : pointInAabb(xFt, yFt, cx, cy, width, height);
+  }
+
+  const pad = Number.isFinite(strokeHitFt) && strokeHitFt > 0 ? strokeHitFt : MAP_OBJECT_STROKE_HIT_FT;
+  if (isOval) {
+    if (!pointInEllipse(xFt, yFt, cx, cy, halfW + pad, halfH + pad)) return false;
+    const innerW = halfW - pad;
+    const innerH = halfH - pad;
+    if (innerW <= 0 || innerH <= 0) return true;
+    return !pointInEllipse(xFt, yFt, cx, cy, innerW, innerH);
+  }
+
+  return distToRectPerimeter(xFt, yFt, cx - halfW, cy - halfH, cx + halfW, cy + halfH) <= pad;
+}
+
+/**
+ * Topmost stacked object under a map-feet point. `objects` should already be
+ * in paint order (largest first / behind; last entry is on top).
+ *
+ * @param {object[]} objects
+ * @param {number} xFt
+ * @param {number} yFt
+ * @param {{ strokeHitFt?: number }} [opts]
+ * @returns {object|null}
+ */
+export function findTopmostMapObjectAtPointFt(objects, xFt, yFt, opts) {
+  const list = objects || [];
+  for (let i = list.length - 1; i >= 0; i--) {
+    if (mapObjectContainsPointFt(list[i], xFt, yFt, opts)) return list[i];
+  }
+  return null;
 }
