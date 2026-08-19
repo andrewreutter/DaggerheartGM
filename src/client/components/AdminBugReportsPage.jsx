@@ -25,10 +25,13 @@ import {
   normalizeBugReportColumns,
   otherBugReportStatuses,
   readStoredBugReportColumns,
+  readStoredBugReportTab,
   reorderBugReportColumns,
+  resolveBugReportTab,
   setBugReportVisibleSelection,
   toggleBugReportSelection,
   writeStoredBugReportColumns,
+  writeStoredBugReportTab,
 } from '../lib/bug-report-admin.js';
 
 const PAGE_SIZE = 50;
@@ -477,7 +480,7 @@ function QuickAddItemForm({ columnLabel, status, disabled, onCreated }) {
  */
 export function AdminBugReportsPage({ navigate }) {
   const [columns, setColumns] = useState(() => readStoredBugReportColumns() ?? normalizeBugReportColumns(null));
-  const [tab, setTab] = useState(() => (readStoredBugReportColumns() ?? normalizeBugReportColumns(null))[0]?.id ?? 'triage');
+  const [tab, setTab] = useState(() => readStoredBugReportTab(readStoredBugReportColumns() ?? normalizeBugReportColumns(null)));
   const [items, setItems] = useState([]);
   const [totalCount, setTotalCount] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -492,6 +495,12 @@ export function AdminBugReportsPage({ navigate }) {
   const tabRef = useRef(tab);
   tabRef.current = tab;
 
+  const selectTab = useCallback((nextTab) => {
+    const resolved = resolveBugReportTab(nextTab, columns);
+    setTab(resolved);
+    writeStoredBugReportTab(resolved);
+  }, [columns]);
+
   const persistColumns = useCallback(async (nextColumns, { selectId } = {}) => {
     const normalized = normalizeBugReportColumns(nextColumns);
     setColumns(normalized);
@@ -499,7 +508,10 @@ export function AdminBugReportsPage({ navigate }) {
     const nextTab = selectId && normalized.some(c => c.id === selectId)
       ? selectId
       : (normalized.some(c => c.id === tabRef.current) ? tabRef.current : normalized[0]?.id);
-    if (nextTab && nextTab !== tabRef.current) setTab(nextTab);
+    if (nextTab && nextTab !== tabRef.current) {
+      setTab(nextTab);
+      writeStoredBugReportTab(nextTab);
+    }
     try {
       await putUserPreferences({ bugReportColumns: normalized });
     } catch {
@@ -516,7 +528,9 @@ export function AdminBugReportsPage({ navigate }) {
         setColumns(next);
         writeStoredBugReportColumns(next);
         if (!next.some(c => c.id === tabRef.current)) {
-          setTab(next[0]?.id ?? 'triage');
+          const fallback = next[0]?.id ?? 'triage';
+          setTab(fallback);
+          writeStoredBugReportTab(fallback);
         }
       })
       .catch(() => {});
@@ -720,7 +734,7 @@ export function AdminBugReportsPage({ navigate }) {
         <ColumnTabs
           columns={columns}
           tab={tab}
-          onSelect={setTab}
+          onSelect={selectTab}
           onReorder={(fromIndex, toIndex) => {
             void persistColumns(reorderBugReportColumns(columns, fromIndex, toIndex));
           }}

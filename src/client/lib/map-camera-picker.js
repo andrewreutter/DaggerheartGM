@@ -1,5 +1,5 @@
 /**
- * On-map camera picker (current-camera chip aligned with the Zoom title + hover overlay).
+ * On-map camera picker (current-camera chip centered at the top of the map + hover overlay).
  * Pure helpers — no DOM.
  */
 
@@ -22,9 +22,9 @@ export const MAP_CAMERA_PICKER_ROW_RULE_PX = 1;
 /** Space between the rule and the row title. */
 export const MAP_CAMERA_PICKER_ROW_RULE_PAD_PX = 8;
 /** Per-row map/camera name title above the tiles. */
-export const MAP_CAMERA_PICKER_ROW_TITLE_PX = 16;
-/** Gap between a row’s title and its tiles (`gap-0.5`). */
-export const MAP_CAMERA_PICKER_ROW_TITLE_GAP_PX = 2;
+export const MAP_CAMERA_PICKER_ROW_TITLE_PX = 20;
+/** Gap between a row’s title and its tiles. */
+export const MAP_CAMERA_PICKER_ROW_TITLE_GAP_PX = 8;
 /** Space above the first tile: rule + pad + title + gap. */
 export const MAP_CAMERA_PICKER_ROW_CHROME_PX =
   MAP_CAMERA_PICKER_ROW_RULE_PX
@@ -35,6 +35,8 @@ export const MAP_CAMERA_PICKER_ROW_CHROME_PX =
 export const MAP_CAMERA_PICKER_TILE_WIDTH_REM = 4.75;
 /** Row gap between tiles (`gap-1.5`). */
 export const MAP_CAMERA_PICKER_TILE_GAP_REM = 0.375;
+/** Cameras wrap onto a taller row after this many tiles. */
+export const MAP_CAMERA_PICKER_RIBBON_WRAP_COUNT = 4;
 /** Size/artist/URL column beside the map tile (`w-[8.5rem]`). */
 export const MAP_CAMERA_PICKER_META_WIDTH_REM = 8.5;
 /** Space between the Maps column and the Cameras ribbon, as a fraction of tile width. */
@@ -47,6 +49,18 @@ export const MAP_CAMERA_PICKER_HOVER_PREVIEW_MS = 220;
 export const MAP_CAMERA_PICKER_HOVER_PREVIEW_CLEAR_MS = 120;
 /** `right-2` / `top-2` on the map viewport. */
 export const MAP_CAMERA_PICKER_TRIGGER_BASE_INSET_REM = 0.5;
+/** Thumbnail box used to pin the overlay tile onto the floating chip. */
+export const MAP_CAMERA_PICKER_THUMB_ATTR = 'data-map-camera-thumb';
+
+/**
+ * The visible thumb inside a trigger/overlay tile, or `root` if none is marked.
+ * @param {Element | null | undefined} root
+ * @returns {Element | null}
+ */
+export function mapCameraPickerThumbEl(root) {
+  if (root == null || typeof root.querySelector !== 'function') return root ?? null;
+  return root.querySelector(`[${MAP_CAMERA_PICKER_THUMB_ATTR}]`) || root;
+}
 
 /**
  * Left offset of the idle camera chip inside the map viewport so its left edge
@@ -81,6 +95,7 @@ export function mapCameraPickerTriggerInsetRem(
 
 /**
  * CSS width of a right-justified camera ribbon (`count` tiles + gaps).
+ * Caps at {@link MAP_CAMERA_PICKER_RIBBON_WRAP_COUNT} so extra cameras wrap.
  * This is the tile strip only — the Cameras heading (+ Add) may be wider
  * and should use this as a `minWidth`, not a fixed `width`.
  * @param {number} count
@@ -88,7 +103,8 @@ export function mapCameraPickerTriggerInsetRem(
  */
 export function mapCameraPickerRibbonWidthRem(count) {
   const n = Math.max(1, Number(count) || 0);
-  const width = n * MAP_CAMERA_PICKER_TILE_WIDTH_REM + (n - 1) * MAP_CAMERA_PICKER_TILE_GAP_REM;
+  const capped = Math.min(n, MAP_CAMERA_PICKER_RIBBON_WRAP_COUNT);
+  const width = capped * MAP_CAMERA_PICKER_TILE_WIDTH_REM + (capped - 1) * MAP_CAMERA_PICKER_TILE_GAP_REM;
   return `${Number(width.toFixed(4))}rem`;
 }
 
@@ -134,12 +150,14 @@ export function orderMapGroupsCurrentFirst(groups, currentMapId) {
 }
 
 /**
- * Put the current camera last in a ribbon; keep relative order of the rest.
+ * Put the current camera last on the first wrap row (under the trigger chip).
+ * Extra cameras wrap below. Relative order of the rest is kept.
  * @param {Array<{ id?: string }>} cameras
  * @param {string | null | undefined} currentViewId
+ * @param {number} [wrapCount]
  * @returns {Array<{ id?: string }>}
  */
-export function orderCamerasCurrentLast(cameras, currentViewId) {
+export function orderCamerasCurrentLast(cameras, currentViewId, wrapCount = MAP_CAMERA_PICKER_RIBBON_WRAP_COUNT) {
   if (!Array.isArray(cameras) || cameras.length === 0) return [];
   if (!currentViewId) return [...cameras];
   const current = [];
@@ -148,7 +166,25 @@ export function orderCamerasCurrentLast(cameras, currentViewId) {
     if (camera?.id === currentViewId) current.push(camera);
     else rest.push(camera);
   }
-  return current.length ? [...rest, ...current] : [...cameras];
+  if (current.length === 0) return [...cameras];
+  const wrap = Math.max(1, Number(wrapCount) || MAP_CAMERA_PICKER_RIBBON_WRAP_COUNT);
+  const firstRowOthers = rest.slice(0, Math.max(0, wrap - current.length));
+  const overflow = rest.slice(firstRowOthers.length);
+  return [...firstRowOthers, ...current, ...overflow];
+}
+
+/**
+ * Ribbon index of the current camera after {@link orderCamerasCurrentLast}
+ * (last slot on the first wrap row).
+ * @param {number} count
+ * @param {number} [wrapCount]
+ * @returns {number}
+ */
+export function mapCameraPickerRibbonAlignIndex(count, wrapCount = MAP_CAMERA_PICKER_RIBBON_WRAP_COUNT) {
+  const n = Math.max(0, Number(count) || 0);
+  if (n === 0) return -1;
+  const wrap = Math.max(1, Number(wrapCount) || MAP_CAMERA_PICKER_RIBBON_WRAP_COUNT);
+  return Math.min(n, wrap) - 1;
 }
 
 /**

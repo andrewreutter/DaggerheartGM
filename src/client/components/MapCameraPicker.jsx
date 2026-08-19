@@ -17,11 +17,15 @@ import {
   MAP_CAMERA_PICKER_ROW_RULE_PAD_PX,
   MAP_CAMERA_PICKER_ROW_TITLE_GAP_PX,
   MAP_CAMERA_PICKER_ROW_TITLE_PX,
+  MAP_CAMERA_PICKER_TILE_GAP_REM,
+  MAP_CAMERA_PICKER_TILE_WIDTH_REM,
   mapCameraPickerAlignDelta,
   mapCameraPickerMapsColumnWidthRem,
   mapCameraPickerOverlayStyle,
+  mapCameraPickerRibbonAlignIndex,
   mapCameraPickerRibbonWidthRem,
   mapCameraPickerSectionGapRem,
+  mapCameraPickerThumbEl,
 } from '../lib/map-camera-picker.js';
 
 function HeaderTitle({ Icon, label, fontSizePx, onAdd }) {
@@ -80,7 +84,7 @@ export function MapCameraViewTitle({
   const sizeClass = size === 'md' ? 'text-xs leading-tight font-medium' : 'text-[10px] leading-tight';
   if (disabled) {
     return (
-      <span className={`block truncate text-dh-muted ${sizeClass} ${alignClass} ${className}`} title={value}>
+      <span className={`block h-full truncate text-dh-muted ${sizeClass} ${alignClass} ${className}`} title={value}>
         {value}
       </span>
     );
@@ -106,7 +110,7 @@ export function MapCameraViewTitle({
       }}
       onClick={(e) => e.stopPropagation()}
       onPointerDown={(e) => e.stopPropagation()}
-      className={`w-full bg-transparent text-dh outline-none border-b border-transparent focus:border-sky-500/60 ${sizeClass} ${alignClass} ${className}`}
+      className={`h-full min-h-0 min-w-0 w-full p-0 bg-transparent text-dh outline-none border-b border-transparent focus:border-sky-500/60 ${sizeClass} ${alignClass} ${className}`}
     />
   );
 }
@@ -280,7 +284,7 @@ function MapPickerMetaFields({ map, canEdit, onCommitArtist, onSizeChange, onFoc
 }
 
 /**
- * Current-camera chip (aligned with the Zoom title) + hover overlay of every map row.
+ * Current-camera chip (centered at the top of the map) + hover overlay of every map row.
  * Overlay is portaled so `position: fixed` stays viewport-relative.
  * Stack at `z-[92]` — above `ItemDetailModal` (`z-[80]`) and Scene encounter
  * hovers (`z-[90]`/`z-[91]`) so the panel is hittable in Scene/Map editors.
@@ -379,14 +383,15 @@ export const MapCameraPicker = forwardRef(function MapCameraPicker(
     measureTrigger();
     const align = () => {
       measureTrigger();
-      const triggerEl = triggerWrapRef.current;
-      const firstEl = firstTileRef.current;
+      const triggerEl = mapCameraPickerThumbEl(triggerWrapRef.current);
+      const firstEl = mapCameraPickerThumbEl(firstTileRef.current);
       if (!triggerEl || !firstEl) return;
       const next = mapCameraPickerAlignDelta(triggerEl.getBoundingClientRect(), firstEl.getBoundingClientRect());
       if (next.x === 0 && next.y === 0) return;
       setAlignDelta((prev) => ({ x: prev.x + next.x, y: prev.y + next.y }));
     };
     align();
+    const raf = requestAnimationFrame(align);
     const onWin = () => {
       setAlignDelta({ x: 0, y: 0 });
       measureTrigger();
@@ -394,10 +399,11 @@ export const MapCameraPicker = forwardRef(function MapCameraPicker(
     window.addEventListener('resize', onWin);
     window.addEventListener('scroll', onWin, true);
     return () => {
+      cancelAnimationFrame(raf);
       window.removeEventListener('resize', onWin);
       window.removeEventListener('scroll', onWin, true);
     };
-  }, [open, measureTrigger, triggerRect?.left, triggerRect?.top]);
+  }, [open, measureTrigger, triggerRect?.left, triggerRect?.top, alignDelta.x, alignDelta.y]);
 
   useEffect(() => () => {
     if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
@@ -450,7 +456,7 @@ export const MapCameraPicker = forwardRef(function MapCameraPicker(
           role="dialog"
           aria-label="Maps and cameras"
           data-testid="map-camera-picker-overlay"
-          className="fixed z-[92] max-h-[min(70vh,calc(100dvh-1rem))] max-w-[calc(100vw-1rem)] overflow-auto rounded-lg border border-dh-border bg-dh-canvas/95 shadow-xl"
+          className="fixed z-[92] max-h-[min(70vh,calc(100dvh-1rem))] max-w-[calc(100vw-1rem)] overflow-x-visible overflow-y-auto rounded-lg border border-dh-border bg-dh-canvas/95 shadow-xl"
           style={{
             ...overlayStyle,
             padding: MAP_CAMERA_PICKER_OVERLAY_PADDING_PX,
@@ -482,7 +488,8 @@ export const MapCameraPicker = forwardRef(function MapCameraPicker(
             <div className="flex flex-col gap-2">
               {rows.map((row, idx) => {
                 const cameras = row.cameras || [];
-                const alignLastCamera = idx === 0 && alignTo !== 'map' && cameras.length > 0;
+                const alignCameraIdx = mapCameraPickerRibbonAlignIndex(cameras.length);
+                const alignLastCamera = idx === 0 && alignTo !== 'map' && alignCameraIdx >= 0;
                 const alignMapTile = idx === 0 && !alignLastCamera;
                 const mapName = row.map?.name || 'Map';
                 return (
@@ -491,82 +498,95 @@ export const MapCameraPicker = forwardRef(function MapCameraPicker(
                     className="flex min-w-0 flex-col border-t border-dh-border"
                     style={{ paddingTop: MAP_CAMERA_PICKER_ROW_RULE_PAD_PX }}
                   >
-                    <div
-                      className="flex items-end min-w-0"
-                      style={{
-                        height: MAP_CAMERA_PICKER_ROW_TITLE_PX,
-                        marginBottom: MAP_CAMERA_PICKER_ROW_TITLE_GAP_PX,
-                        gap: mapCameraPickerSectionGapRem(),
-                      }}
-                    >
-                      <div className="shrink-0 min-w-0" style={{ width: mapCameraPickerMapsColumnWidthRem() }}>
-                        <MapCameraViewTitle
-                          value={mapName}
-                          align="left"
-                          ariaLabel="Map name"
-                          size="md"
-                          disabled={!canEdit || typeof onRenameMap !== 'function'}
-                          onCommit={(name) => {
-                            const next = normalizeMapName(name);
-                            if (!next) return;
-                            onRenameMap?.(row.map.id, next, {
-                              artist: row.map.artist,
-                              artistUrl: row.map.artistUrl,
-                            });
-                          }}
-                        />
-                      </div>
-                      <div className="flex min-w-0 flex-1 items-end justify-end gap-1.5">
-                        {cameras.map((cam) => (
-                          <div
-                            key={`${cam.key}-title`}
-                            className="w-[4.75rem] shrink-0"
-                            onFocusCapture={() => onFocusChange(1)}
-                            onBlurCapture={() => onFocusChange(-1)}
-                          >
-                            <MapCameraViewTitle
-                              value={cam.view?.name || 'View'}
-                              disabled={!canEdit || typeof onRenameMapView !== 'function'}
-                              onCommit={(name) => onRenameMapView?.(cam.view.id, name)}
-                            />
-                          </div>
-                        ))}
-                      </div>
-                    </div>
                     <div className="flex items-start min-w-0" style={{ gap: mapCameraPickerSectionGapRem() }}>
                       <div
-                        className="flex shrink-0 items-start gap-1.5"
+                        className="flex shrink-0 flex-col min-w-0"
                         style={{ width: mapCameraPickerMapsColumnWidthRem() }}
                       >
-                        <div ref={alignMapTile ? firstTileRef : undefined} className="shrink-0">
-                          {row.mapTile}
+                        <div
+                          className="flex min-w-0 items-center gap-1"
+                          style={{
+                            height: MAP_CAMERA_PICKER_ROW_TITLE_PX,
+                            marginBottom: MAP_CAMERA_PICKER_ROW_TITLE_GAP_PX,
+                          }}
+                        >
+                          <div className="min-w-0 flex-1">
+                            <MapCameraViewTitle
+                              value={mapName}
+                              align="left"
+                              ariaLabel="Map name"
+                              size="md"
+                              disabled={!canEdit || typeof onRenameMap !== 'function'}
+                              onCommit={(name) => {
+                                const next = normalizeMapName(name);
+                                if (!next) return;
+                                onRenameMap?.(row.map.id, next, {
+                                  artist: row.map.artist,
+                                  artistUrl: row.map.artistUrl,
+                                });
+                              }}
+                            />
+                          </div>
+                          {canEdit && typeof onEditMap === 'function' && row.map?.libraryMapId && (
+                            <button
+                              type="button"
+                              title="Edit map"
+                              aria-label="Edit map"
+                              className="shrink-0 p-1 rounded text-dh-muted hover:text-dh hover:bg-dh-hover"
+                              onClick={() => onEditMap(row.map)}
+                            >
+                              <Pencil size={12} />
+                            </button>
+                          )}
                         </div>
-                        <MapPickerMetaFields
-                          map={row.map}
-                          canEdit={canEdit && typeof onRenameMap === 'function'}
-                          onCommitArtist={(fields) => onRenameMap?.(row.map.id, row.map.name, fields)}
-                          onSizeChange={(patch) => onMapSizeChange?.(row.map, patch)}
-                          onFocusChange={onFocusChange}
-                        />
-                        {canEdit && typeof onEditMap === 'function' && row.map?.libraryMapId && (
-                          <button
-                            type="button"
-                            title="Edit map"
-                            aria-label="Edit map"
-                            className="shrink-0 p-1 rounded text-dh-muted hover:text-dh hover:bg-dh-hover"
-                            onClick={() => onEditMap(row.map)}
-                          >
-                            <Pencil size={12} />
-                          </button>
-                        )}
+                        <div className="flex items-start gap-1.5">
+                          <div ref={alignMapTile ? firstTileRef : undefined} className="shrink-0">
+                            {row.mapTile}
+                          </div>
+                          <MapPickerMetaFields
+                            map={row.map}
+                            canEdit={canEdit && typeof onRenameMap === 'function'}
+                            onCommitArtist={(fields) => onRenameMap?.(row.map.id, row.map.name, fields)}
+                            onSizeChange={(patch) => onMapSizeChange?.(row.map, patch)}
+                            onFocusChange={onFocusChange}
+                          />
+                        </div>
                       </div>
-                      <div className="flex min-w-0 flex-1 items-start justify-end gap-1.5">
+                      <div
+                        className="flex flex-wrap items-start justify-end content-start overflow-visible"
+                        style={{
+                          width: mapCameraPickerRibbonWidthRem(cameras.length),
+                          columnGap: `${MAP_CAMERA_PICKER_TILE_GAP_REM}rem`,
+                          rowGap: '0.5rem',
+                        }}
+                      >
                         {cameras.map((cam, camIdx) => (
                           <div
                             key={cam.key}
-                            ref={alignLastCamera && camIdx === cameras.length - 1 ? firstTileRef : undefined}
+                            className="flex min-w-0 shrink-0 flex-col overflow-visible"
+                            style={{
+                              width: `${MAP_CAMERA_PICKER_TILE_WIDTH_REM}rem`,
+                              gap: MAP_CAMERA_PICKER_ROW_TITLE_GAP_PX,
+                            }}
                           >
-                            {cam.tile}
+                            <div
+                              className="min-w-0"
+                              style={{ height: MAP_CAMERA_PICKER_ROW_TITLE_PX }}
+                              onFocusCapture={() => onFocusChange(1)}
+                              onBlurCapture={() => onFocusChange(-1)}
+                            >
+                              <MapCameraViewTitle
+                                value={cam.view?.name || 'View'}
+                                disabled={!canEdit || typeof onRenameMapView !== 'function'}
+                                onCommit={(name) => onRenameMapView?.(cam.view.id, name)}
+                              />
+                            </div>
+                            <div
+                              ref={alignLastCamera && camIdx === alignCameraIdx ? firstTileRef : undefined}
+                              className="min-w-0"
+                            >
+                              {cam.tile}
+                            </div>
                           </div>
                         ))}
                       </div>

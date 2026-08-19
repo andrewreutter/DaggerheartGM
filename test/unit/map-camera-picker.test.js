@@ -8,8 +8,10 @@ import {
   mapCameraPickerOverlayStyle,
   MAP_CAMERA_PICKER_ROW_CHROME_PX,
   mapCameraPickerMapsColumnWidthRem,
+  mapCameraPickerRibbonAlignIndex,
   mapCameraPickerRibbonWidthRem,
   mapCameraPickerSectionGapRem,
+  mapCameraPickerThumbEl,
   mapCameraPickerTriggerInsetRem,
   mapCameraPickerTriggerLeftPx,
   mapCameraTileActiveDuringHover,
@@ -67,6 +69,29 @@ describe('orderCamerasCurrentLast', () => {
   it('returns an empty array for invalid cameras', () => {
     expect(orderCamerasCurrentLast(null, 'v-a1')).toEqual([]);
     expect(orderCamerasCurrentLast([], 'v-a1')).toEqual([]);
+  });
+
+  it('keeps the current camera last on the first wrap row when there are more than four', () => {
+    const many = [
+      { id: 'v-1' },
+      { id: 'v-2' },
+      { id: 'v-3' },
+      { id: 'v-4' },
+      { id: 'v-5' },
+      { id: 'v-6' },
+    ];
+    expect(orderCamerasCurrentLast(many, 'v-2').map((c) => c.id)).toEqual([
+      'v-1', 'v-3', 'v-4', 'v-2', 'v-5', 'v-6',
+    ]);
+  });
+});
+
+describe('mapCameraPickerRibbonAlignIndex', () => {
+  it('is the last slot on the first wrap row', () => {
+    expect(mapCameraPickerRibbonAlignIndex(0)).toBe(-1);
+    expect(mapCameraPickerRibbonAlignIndex(3)).toBe(2);
+    expect(mapCameraPickerRibbonAlignIndex(4)).toBe(3);
+    expect(mapCameraPickerRibbonAlignIndex(8)).toBe(3);
   });
 });
 
@@ -166,6 +191,22 @@ describe('mapCameraPickerAlignDelta', () => {
   });
 });
 
+describe('mapCameraPickerThumbEl', () => {
+  it('prefers the marked thumb over the wrapper', () => {
+    const thumb = { id: 'thumb' };
+    const root = {
+      querySelector: (sel) => (String(sel).includes('data-map-camera-thumb') ? thumb : null),
+    };
+    expect(mapCameraPickerThumbEl(root)).toBe(thumb);
+  });
+
+  it('falls back to the root when no thumb is marked', () => {
+    const root = { querySelector: () => null };
+    expect(mapCameraPickerThumbEl(root)).toBe(root);
+    expect(mapCameraPickerThumbEl(null)).toBeNull();
+  });
+});
+
 describe('mapCameraPickerTriggerLeftPx', () => {
   it('is the title left minus the viewport left', () => {
     expect(mapCameraPickerTriggerLeftPx({ left: 420 }, { left: 80 })).toBe(340);
@@ -191,6 +232,11 @@ describe('mapCameraPickerRibbonWidthRem', () => {
 
   it('includes gaps between cameras', () => {
     expect(mapCameraPickerRibbonWidthRem(3)).toBe('15rem');
+  });
+
+  it('caps at four tiles so extra cameras wrap', () => {
+    expect(mapCameraPickerRibbonWidthRem(4)).toBe('20.125rem');
+    expect(mapCameraPickerRibbonWidthRem(8)).toBe('20.125rem');
   });
 });
 

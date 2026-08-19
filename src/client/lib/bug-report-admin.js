@@ -23,6 +23,7 @@ export const BUG_REPORT_STATUS_SLUG_RE = /^[a-z][a-z0-9_-]{0,31}$/;
 export const BUG_REPORT_COLUMN_LABEL_MAX = 32;
 export const BUG_REPORT_COLUMNS_MAX = 20;
 export const BUG_REPORT_COLUMNS_STORAGE_KEY = 'dh_bugReportColumns_v1';
+export const BUG_REPORT_TAB_STORAGE_KEY = 'dh_bugReportTab_v1';
 
 /**
  * @param {unknown} status
@@ -179,6 +180,43 @@ export function writeStoredBugReportColumns(columns) {
       BUG_REPORT_COLUMNS_STORAGE_KEY,
       JSON.stringify(normalizeBugReportColumns(columns))
     );
+  } catch {
+    // quota / private mode
+  }
+}
+
+/**
+ * Pick a valid Problem reports tab: stored slug if it still exists, else the first column.
+ * @param {unknown} storedTab
+ * @param {unknown} [columns]
+ * @returns {string}
+ */
+export function resolveBugReportTab(storedTab, columns) {
+  const normalized = normalizeBugReportColumns(columns);
+  if (typeof storedTab === 'string' && normalized.some(c => c.id === storedTab)) {
+    return storedTab;
+  }
+  return normalized[0]?.id ?? 'triage';
+}
+
+/**
+ * @param {unknown} [columns]
+ * @returns {string}
+ */
+export function readStoredBugReportTab(columns) {
+  try {
+    return resolveBugReportTab(localStorage.getItem(BUG_REPORT_TAB_STORAGE_KEY), columns);
+  } catch {
+    return resolveBugReportTab(null, columns);
+  }
+}
+
+/** Persist the last-selected Problem reports tab (survives reload). */
+export function writeStoredBugReportTab(tab) {
+  try {
+    if (typeof tab === 'string' && isValidBugReportStatus(tab)) {
+      localStorage.setItem(BUG_REPORT_TAB_STORAGE_KEY, tab);
+    }
   } catch {
     // quota / private mode
   }

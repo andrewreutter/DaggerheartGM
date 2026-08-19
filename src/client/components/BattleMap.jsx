@@ -34,8 +34,6 @@ import {
   MAP_CAMERA_PICKER_HOVER_PREVIEW_CLEAR_MS,
   MAP_CAMERA_PICKER_HOVER_PREVIEW_MS,
   isSameMapCameraHoverTarget,
-  mapCameraPickerTriggerInsetRem,
-  mapCameraPickerTriggerLeftPx,
   mapCameraTileActiveDuringHover,
   orderCamerasCurrentLast,
   orderMapGroupsCurrentFirst,
@@ -227,6 +225,8 @@ export const SPOTLIGHT_BEAM_WIDTH_PX = 35;
 const SPOTLIGHT_BEAM_HEIGHT_PX = 56;
 /** How far the beam pulls back over the token so the cone kisses the circle. */
 const SPOTLIGHT_BEAM_OVERLAP_PX = 6;
+/** Table-name inset: left of the map viewport, just past the spotlight cones. */
+const TABLE_NAME_INSET_LEFT_PX = SPOTLIGHT_BEAM_WIDTH_PX + 12;
 
 // Daggerheart range bands — Melee (≤5') through Very Far (≤300')
 const RANGE_BANDS = [
@@ -783,11 +783,12 @@ const MapViewStripTile = memo(function MapViewStripTileRaw({
             onDoubleClick={onDoubleClick}
             className={`${thumbClass} relative z-[1]`}
             title={titleAttr}
+            data-map-camera-thumb=""
           >
             {thumbInner}
           </button>
         ) : (
-          <div className={`${thumbClass} relative z-[1]`} title={titleAttr}>
+          <div className={`${thumbClass} relative z-[1]`} title={titleAttr} data-map-camera-thumb="">
             {thumbInner}
           </div>
         )}
@@ -900,7 +901,7 @@ function TokenDotRing({ sizeW, sizeH, groups }) {
 
 // ─── TableNameInset ──────────────────────────────────────────────────────────
 
-/** Gear + table title hanging from the top-center of the map viewport. */
+/** Table title hanging from the top-left of the map viewport, just right of the spotlights. GM gets gear + edit; players/spectators see the name only. */
 function TableNameInset({
   tableName = '',
   tableStateReady = false,
@@ -917,8 +918,8 @@ function TableNameInset({
   useEffect(() => { setNameInput(tableName || 'New Table'); }, [tableName]);
 
   useEffect(() => {
-    if (tableStateReady) setIsEditingName(isNewTable);
-  }, [tableStateReady, isNewTable]);
+    if (tableStateReady && onTableNameChange) setIsEditingName(isNewTable);
+  }, [tableStateReady, isNewTable, onTableNameChange]);
 
   useEffect(() => {
     if (!isEditingName) return;
@@ -931,6 +932,8 @@ function TableNameInset({
     return () => cancelAnimationFrame(id);
   }, [isEditingName]);
 
+  const skipBlurCommitRef = useRef(false);
+
   const commitName = () => {
     const trimmed = (nameInput || '').trim() || 'New Table';
     setNameInput(trimmed);
@@ -938,9 +941,15 @@ function TableNameInset({
     setIsEditingName(false);
   };
 
+  const cancelEdit = () => {
+    setNameInput(tableName || 'New Table');
+    skipBlurCommitRef.current = true;
+    setIsEditingName(false);
+  };
+
   return (
-    <div className="pointer-events-none absolute top-0 left-1/2 z-20 -translate-x-1/2">
-      <div className={`pointer-events-auto rounded-b-lg border border-t-0 border-dh-border bg-dh-surface/95 px-2 py-1 shadow-md text-xs ${isEditingName && onTableNameChange ? 'flex flex-col gap-1.5 min-w-[16rem]' : 'flex items-center gap-1.5'}`}>
+    <div className="pointer-events-none absolute top-0 z-20" style={{ left: TABLE_NAME_INSET_LEFT_PX }}>
+      <div className={`rounded-b-lg border border-t-0 border-dh-border bg-dh-surface/95 px-2 py-1 shadow-md text-xs ${onTableNameChange ? 'pointer-events-auto' : 'pointer-events-none'} ${isEditingName && onTableNameChange ? 'flex flex-col gap-1.5 min-w-[16rem]' : 'flex items-center gap-1.5'}`}>
         {onTableNameChange ? (
           isEditingName ? (
             <>
@@ -956,16 +965,33 @@ function TableNameInset({
                   title="Table settings"
                   aria-label="Table settings"
                 >
-                  <Settings size={12} className="shrink-0" />
+                  <Settings size={17} className="shrink-0" />
                 </button>
                 <input
                   ref={nameInputRef}
                   type="text"
                   value={nameInput}
                   onChange={e => setNameInput(e.target.value)}
-                  onBlur={commitName}
-                  onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); commitName(); } }}
-                  className="min-w-[120px] flex-1 px-2 py-0.5 rounded bg-dh-raised border border-dh-strong text-dh font-semibold text-sm focus:outline-none focus:border-sky-500"
+                  onBlur={() => {
+                    if (skipBlurCommitRef.current) {
+                      skipBlurCommitRef.current = false;
+                      return;
+                    }
+                    commitName();
+                  }}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      commitName();
+                    }
+                    if (e.key === 'Escape') {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      cancelEdit();
+                    }
+                  }}
+                  className="min-w-[144px] flex-1 px-2 py-0.5 rounded bg-dh-raised border border-dh-strong text-dh font-semibold leading-tight focus:outline-none focus:border-sky-500"
+                  style={{ fontSize: '1.2rem' }}
                   placeholder="Table name"
                 />
               </div>
@@ -979,9 +1005,9 @@ function TableNameInset({
                   onClick={() => onPublicChange(!isPublic)}
                   className="flex items-start gap-2 px-1 py-0.5 rounded text-left hover:bg-dh-hover/60"
                 >
-                  <span className={`mt-0.5 h-3.5 w-3.5 shrink-0 rounded border ${isPublic ? 'bg-sky-600 border-sky-500' : 'border-dh-strong bg-dh-raised'}`} aria-hidden />
+                  <span className={`mt-0.5 h-3 w-3 shrink-0 rounded border ${isPublic ? 'bg-sky-600 border-sky-500' : 'border-dh-strong bg-dh-raised'}`} aria-hidden />
                   <span>
-                    <span className="block text-dh font-medium">Public table</span>
+                    <span className="block text-dh font-medium text-sm">Public table</span>
                     <span className="block text-[10px] text-dh-muted leading-snug">Anyone with this link can watch. They cannot join or edit.</span>
                   </span>
                 </button>
@@ -994,8 +1020,8 @@ function TableNameInset({
                   className="flex items-center gap-1.5 px-1 py-0.5 rounded text-dh-muted hover:text-red-400 hover:bg-dh-raised/80 transition-colors self-start"
                   title="Delete table"
                 >
-                  <Trash2 size={12} />
-                  <span>Delete table</span>
+                  <Trash2 size={13} />
+                  <span className="text-sm">Delete table</span>
                 </button>
               )}
             </>
@@ -1003,16 +1029,17 @@ function TableNameInset({
             <button
               type="button"
               onClick={() => setIsEditingName(true)}
-              className="flex items-center gap-1 px-1 py-0.5 rounded hover:bg-dh-hover/80 text-dh font-semibold text-sm transition-colors"
+              className="flex items-center gap-1.5 px-1 py-0.5 rounded hover:bg-dh-hover/80 text-dh font-semibold leading-tight transition-colors"
+              style={{ fontSize: '1.2rem' }}
               title="Table settings"
               aria-label="Table settings"
             >
-              <Settings size={12} className="shrink-0 text-dh-muted" />
-              <span className="truncate max-w-[200px]">{tableName || 'Untitled'}</span>
+              <Settings size={17} className="shrink-0 text-dh-muted" />
+              <span className="truncate max-w-[288px]">{tableName || 'Untitled'}</span>
             </button>
           )
         ) : (
-          <span className="px-1 py-0.5 text-dh font-semibold text-sm truncate max-w-[200px]">{tableName || 'Untitled'}</span>
+          <span className="px-1 py-0.5 text-dh font-semibold leading-tight truncate max-w-[288px]" style={{ fontSize: '1.2rem' }}>{tableName || 'Untitled'}</span>
         )}
       </div>
     </div>
@@ -3374,9 +3401,6 @@ export function BattleMap({
   const [followBullseyeFt, setFollowBullseyeFt] = useState(null);
   /** AI map editor: show selected generation on the table map before Save (data URL or hosted URL). */
   const [mapAiGenPreviewUrl] = useState(null);
-  const zoomBankRef = useRef(null);
-  const zoomTitleRef = useRef(null);
-  const [pickerAlignLeftPx, setPickerAlignLeftPx] = useState(null);
   const mapAiGenPreviewUrlRef = useRef(null);
   mapAiGenPreviewUrlRef.current = mapAiGenPreviewUrl;
   const gmCameraLockedRef = useRef(false);
@@ -4410,31 +4434,6 @@ export function BattleMap({
       ? !playerFreeMapExplore && !!playerSelectedViewId
       : !!gmActiveViewId;
   const zoomBankLabel = zoomBankIsCamera ? 'Camera Zoom' : 'Map Zoom';
-
-  useLayoutEffect(() => {
-    const title = zoomTitleRef.current;
-    const viewport = scrollWrapperRef.current;
-    if (!showMapDrawToolbar || !title || !viewport) {
-      setPickerAlignLeftPx(null);
-      return undefined;
-    }
-    const update = () => {
-      setPickerAlignLeftPx(mapCameraPickerTriggerLeftPx(
-        title.getBoundingClientRect(),
-        viewport.getBoundingClientRect(),
-      ));
-    };
-    update();
-    const ro = new ResizeObserver(update);
-    ro.observe(title);
-    ro.observe(viewport);
-    if (zoomBankRef.current) ro.observe(zoomBankRef.current);
-    window.addEventListener('resize', update);
-    return () => {
-      ro.disconnect();
-      window.removeEventListener('resize', update);
-    };
-  }, [showMapDrawToolbar, zoomBankLabel, gmCameraLocked]);
 
   useEffect(() => {
     if (!isPlayer) return;
@@ -7443,8 +7442,8 @@ export function BattleMap({
                     <span className="tabular-nums text-dh">{drawBrushRadiusClampedFt.toFixed(1)}′</span>
                   </label>
                 </div>
-                <div ref={zoomBankRef} className="ml-auto flex shrink-0 items-center gap-2">
-                  <span ref={zoomTitleRef} className="text-dh-muted font-semibold tracking-wide">{zoomBankLabel}</span>
+                <div className="ml-auto flex shrink-0 items-center gap-2">
+                  <span className="text-dh-muted font-semibold tracking-wide">{zoomBankLabel}</span>
                   <div className="flex items-center gap-1">
                     {!isPlayer && onSetViewLocked && activeGmMapView ? (
                       <Tooltip
@@ -7484,25 +7483,16 @@ export function BattleMap({
               </div>
             )}
           <div ref={scrollWrapperRef} className="flex-1 min-h-0 min-w-0 overflow-hidden relative">
-          {(!isPlayer || isSpectator) ? (
-            <TableNameInset
-              tableName={tableName}
-              tableStateReady={tableStateReady}
-              onTableNameChange={onTableNameChange}
-              onDeleteTable={onDeleteTable}
-              isPublic={isPublic}
-              onPublicChange={onPublicChange}
-            />
-          ) : null}
+          <TableNameInset
+            tableName={tableName}
+            tableStateReady={tableStateReady}
+            onTableNameChange={isPlayer ? undefined : onTableNameChange}
+            onDeleteTable={isPlayer ? undefined : onDeleteTable}
+            isPublic={isPublic}
+            onPublicChange={isPlayer ? undefined : onPublicChange}
+          />
           {showMapCameraPicker && pickerTriggerTile ? (
-            <div
-              className="pointer-events-none absolute top-2 z-20"
-              style={
-                pickerAlignLeftPx != null
-                  ? { left: pickerAlignLeftPx }
-                  : { right: mapCameraPickerTriggerInsetRem() }
-              }
-            >
+            <div className="pointer-events-none absolute top-2 left-1/2 z-20 -translate-x-1/2">
               <MapCameraPicker
                 ref={mapCameraPickerRef}
                 show

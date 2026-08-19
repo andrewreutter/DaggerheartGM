@@ -11,6 +11,7 @@ import {
   reorderBugReportColumns,
   setBugReportVisibleSelection,
   normalizeManualBugReportCreate,
+  resolveBugReportTab,
   slugifyBugReportColumnId,
   toggleBugReportSelection,
 } from '../../src/client/lib/bug-report-admin.js';
@@ -168,6 +169,27 @@ describe('bug-report-admin selection', () => {
     expect(cleared.has(1)).toBe(false);
     expect(cleared.has(2)).toBe(false);
     expect(cleared.has(9)).toBe(true);
+  });
+});
+
+describe('resolveBugReportTab', () => {
+  it('keeps a stored slug that still exists in the column list', () => {
+    expect(resolveBugReportTab('bug')).toBe('bug');
+    expect(resolveBugReportTab('shipped')).toBe('shipped');
+    expect(resolveBugReportTab('blocked', [
+      { id: 'triage', label: 'Triage' },
+      { id: 'blocked', label: 'Blocked' },
+    ])).toBe('blocked');
+  });
+
+  it('falls back to the first column when the stored tab is missing or unknown', () => {
+    expect(resolveBugReportTab(null)).toBe('triage');
+    expect(resolveBugReportTab('')).toBe('triage');
+    expect(resolveBugReportTab('no-such-column')).toBe('triage');
+    expect(resolveBugReportTab('bug', [
+      { id: 'feature', label: 'Feature' },
+      { id: 'triage', label: 'Triage' },
+    ])).toBe('feature');
   });
 });
 
