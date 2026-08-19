@@ -44,6 +44,10 @@ const BANNER_STRIP_TRAY_GAP_PX = 16;
  * Absolute layout for the pending-banner strip. `leftOffset` / `rightOffset`
  * keep the strip off the character / adversary trays so the oldest banner sits
  * on the map, not over a tray.
+ *
+ * `pointerEvents: 'none'` so empty flex space (row-reverse leftover to the left
+ * of the cards) does not steal map hover. Each RestBanner / ActionBanner /
+ * ResultBanner re-enables `pointer-events: auto` on the card itself.
  */
 export function bannerStripStyle({ leftOffset = 0, rightOffset = 0 } = {}) {
   return {
@@ -59,6 +63,6 @@ export function bannerStripStyle({ leftOffset = 0, rightOffset = 0 } = {}) {
     gap: '0.5rem',
     padding: '0 0.75rem',
     overflow: 'hidden',
-    pointerEvents: 'auto',
+    pointerEvents: 'none',
   };
 }

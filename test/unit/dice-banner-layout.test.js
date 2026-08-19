@@ -31,5 +31,8 @@ describe('dice-banner-layout', () => {
     expect(style.left).toBe(52);
     expect(style.right).toBe(52);
     expect(style.alignItems).toBe('flex-end');
+    // Empty strip chrome must not capture map pointermove (token hover).
+    // Banner cards re-enable pointer-events: auto on themselves.
+    expect(style.pointerEvents).toBe('none');
   });
 });

@@ -41,6 +41,15 @@ describe('GM adversary token pin uses Encounter card + attack/feature actions', 
   it('tray adversaries hover-open a left-of-tray overlay instead of click-to-pin', () => {
     const src = readFileSync(join(dir, '../../src/client/components/BattleMap.jsx'), 'utf8');
     expect(src).toContain('shouldPinTokenOnClick');
+    expect(src).toContain('isTokenOverlayActivateEvent');
+    expect(src).toContain('TokenHoverHintInset');
+    expect(src).toContain('token-hover-hint-inset');
+    expect(src).toContain('TokenNameChip');
+    expect(src).toContain('token-name-chip');
+    expect(src).toContain('placeTokenNameChip');
+    expect(src).toContain("style={{ right: TABLE_NAME_INSET_LEFT_PX }}");
+    expect(src).toMatch(/function TokenHoverHintInset[\s\S]*text-left/);
+    expect(src).toMatch(/function TokenHoverHintInset[\s\S]*fontSize: '1\.2rem'/);
     expect(src).toContain('trayAdversaryOverlay');
     expect(src).toContain('data-testid="tray-adversary-overlay"');
     expect(src).toContain('overlayLeftOfEdgeStyle');

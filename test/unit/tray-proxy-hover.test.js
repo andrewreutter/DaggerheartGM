@@ -48,7 +48,7 @@ describe('shouldPinTokenOnClick', () => {
     expect(shouldPinTokenOnClick({ fromTray: true, elementType: 'adversary' })).toBe(false);
   });
 
-  it('still pins map tokens and non-adversary tray tokens', () => {
+  it('still allows pin for map tokens and non-adversary tray tokens', () => {
     expect(shouldPinTokenOnClick({ fromTray: false, elementType: 'adversary' })).toBe(true);
     expect(shouldPinTokenOnClick({ fromTray: true, elementType: 'character' })).toBe(true);
     expect(shouldPinTokenOnClick({ fromTray: true, elementType: 'boardToken' })).toBe(true);

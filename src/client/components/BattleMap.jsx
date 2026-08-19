@@ -103,6 +103,12 @@ import {
   bullseyeFtForPlacedTokenHover,
   shouldPinTokenOnClick,
 } from '../lib/tray-proxy-hover.js';
+import {
+  isTokenOverlayActivateEvent,
+  resolveTokenHoverHintElement,
+  tokenHoverHintModel,
+} from '../lib/token-overlay-activate.js';
+import { collectTokenNameChipObstacles, placeTokenNameChip } from '../lib/token-name-chip-place.js';
 import { useHoverOverlay } from '../lib/useHoverOverlay.js';
 import { useTouchDevice } from '../lib/useTouchDevice.js';
 import { useViewportClamp } from './EncounterHoverOverlays.jsx';
@@ -1060,6 +1066,46 @@ function TableNameInset({
   );
 }
 
+/** Compact name chip parked next to a hovered map token. */
+function TokenNameChip({ name, x, y, zIndex }) {
+  if (!name) return null;
+  return (
+    <div
+      data-testid="token-name-chip"
+      className="absolute pointer-events-none rounded-sm border border-dh-border bg-dh-canvas/90 px-0.5 py-px text-[7px] font-semibold leading-none text-dh shadow-sm whitespace-nowrap"
+      style={{ left: x, top: y, zIndex }}
+    >
+      {name}
+    </div>
+  );
+}
+
+/** Token hover hint hanging from the top-right of the map viewport — mirrors TableNameInset. */
+function TokenHoverHintInset({ name, lines }) {
+  if (!name) return null;
+  return (
+    <div
+      data-testid="token-hover-hint-inset"
+      className="pointer-events-none absolute top-0 z-20"
+      style={{ right: TABLE_NAME_INSET_LEFT_PX }}
+    >
+      <div className="rounded-b-lg border border-t-0 border-dh-border bg-dh-surface/95 px-2 py-1 shadow-md text-xs text-left">
+        <div
+          className="px-1 py-0.5 text-dh font-semibold leading-tight truncate max-w-[288px]"
+          style={{ fontSize: '1.2rem' }}
+        >
+          {name}
+        </div>
+        <div className="px-1 pb-0.5 text-dh-muted leading-snug">
+          {lines.map((line) => (
+            <div key={line}>{line}</div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Token color classes (bg + border) ───────────────────────────────────────
 // Both strings must be full literal class names so Tailwind's scanner picks them up.
 
@@ -1224,7 +1270,6 @@ function TokenCircle({
         userSelect: 'none',
         ...glowStyle,
       }}
-      title={isBoard ? (element.label || element.name || 'Token') : element.name}
     >
       {hasImage && (
         <img
@@ -1612,6 +1657,10 @@ const PlacedToken = memo(function PlacedTokenRaw({
       onPointerDown={(e) => onPointerDown(e, element, false)}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+      }}
     >
       <div className="relative" style={{ width: tokenSizeWpx, height: tokenSizeHpx }}>
         <TokenCircle
@@ -1676,6 +1725,8 @@ const trayTokenPropsAreEqual = (prev, next) => {
     prev.onPointerUp !== next.onPointerUp ||
     prev.onProxyHoverEnter !== next.onProxyHoverEnter ||
     prev.onProxyHoverLeave !== next.onProxyHoverLeave ||
+    prev.onHoverEnter !== next.onHoverEnter ||
+    prev.onHoverLeave !== next.onHoverLeave ||
     prev.onToggleVisibility !== next.onToggleVisibility
   ) {
     return false;
@@ -1700,6 +1751,8 @@ const TrayToken = memo(function TrayTokenRaw({
   onPointerUp,
   onProxyHoverEnter,
   onProxyHoverLeave,
+  onHoverEnter,
+  onHoverLeave,
   onToggleVisibility,
 }) {
   const snapBullseyeOnHover = trayProxyShouldSnapBullseye({ isProxy, isOtherMapShelf });
@@ -1712,8 +1765,18 @@ const TrayToken = memo(function TrayTokenRaw({
       onPointerDown={(e) => onPointerDown(e, element, true)}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
-      onPointerEnter={snapBullseyeOnHover && onProxyHoverEnter ? () => onProxyHoverEnter(element) : undefined}
-      onPointerLeave={snapBullseyeOnHover && onProxyHoverLeave ? () => onProxyHoverLeave(element) : undefined}
+      onPointerEnter={() => {
+        onHoverEnter?.(element);
+        if (snapBullseyeOnHover) onProxyHoverEnter?.(element);
+      }}
+      onPointerLeave={() => {
+        onHoverLeave?.(element);
+        if (snapBullseyeOnHover) onProxyHoverLeave?.(element);
+      }}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+      }}
     >
       <TokenCircle
         element={element}
@@ -2355,6 +2418,8 @@ function TrayColumn({
   onPointerUp,
   onProxyHoverEnter,
   onProxyHoverLeave,
+  onHoverEnter,
+  onHoverLeave,
   pinnedInstanceId,
   allyColorsByInstanceId = null,
   showSpotlight = false,
@@ -2415,6 +2480,8 @@ function TrayColumn({
                 onPointerUp={onPointerUp}
                 onProxyHoverEnter={onProxyHoverEnter}
                 onProxyHoverLeave={onProxyHoverLeave}
+                onHoverEnter={onHoverEnter}
+                onHoverLeave={onHoverLeave}
                 onToggleVisibility={onToggleAdversaryVisibility}
               />
               {showBeam && (
@@ -3335,6 +3402,8 @@ export function BattleMap({
     handlePointerUp: null,
     handleTrayProxyHoverEnter: null,
     handleTrayProxyHoverLeave: null,
+    handleTrayHintHoverEnter: null,
+    handleTrayHintHoverLeave: null,
     handleToggleAdversaryVisibility: null,
     handleRevealAdversary: null,
   });
@@ -3352,6 +3421,12 @@ export function BattleMap({
   }, []);
   const stableOnProxyHoverLeave = useCallback((element) => {
     handlersRef.current.handleTrayProxyHoverLeave?.(element);
+  }, []);
+  const stableOnHoverEnter = useCallback((element) => {
+    handlersRef.current.handleTrayHintHoverEnter?.(element);
+  }, []);
+  const stableOnHoverLeave = useCallback((element) => {
+    handlersRef.current.handleTrayHintHoverLeave?.(element);
   }, []);
   const stableOnToggleAdversaryVisibility = useCallback((element) => {
     handlersRef.current.handleToggleAdversaryVisibility?.(element);
@@ -3379,6 +3454,7 @@ export function BattleMap({
   const [highlightRightTray, setHighlightRightTray] = useState(false);
   const [rightPanDragging, setRightPanDragging] = useState(false);
   const [pinnedToken, setPinnedToken] = useState(null); // { element, anchorX, anchorY }
+  const [trayHoverInstanceId, setTrayHoverInstanceId] = useState(null);
 
   useEffect(() => {
     if (trayAdversaryOverlay.isOpen) gmMovesOverlay?.close();
@@ -6314,6 +6390,13 @@ export function BattleMap({
     setBullseyeIdleVisible(false);
   }, [scheduleBullseyeFt, clearBullseyeIdleTimer]);
 
+  const handleTrayHintHoverEnter = useCallback((element) => {
+    setTrayHoverInstanceId(element.instanceId);
+  }, []);
+  const handleTrayHintHoverLeave = useCallback((element) => {
+    setTrayHoverInstanceId((prev) => (prev === element?.instanceId ? null : prev));
+  }, []);
+
   const handleMapPingPointerDown = useCallback((e) => {
     if (isSpectator) return;
     if (e.button !== 0) return;
@@ -6430,8 +6513,32 @@ export function BattleMap({
   // ─── Drag handlers ──────────────────────────────────────────────────────
 
   const handlePointerDown = useCallback((e, element, fromTray) => {
+    if (isTokenOverlayActivateEvent(e)) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (fromTray && element.elementType === 'adversary') {
+        if (trayAdversaryOverlay.data?.instanceId === element.instanceId) {
+          trayAdversaryOverlay.close();
+        } else {
+          trayAdversaryOverlay.show({
+            instanceId: element.instanceId,
+            top: e.clientY - 20,
+            bottom: e.clientY + 20,
+          });
+        }
+        return;
+      }
+      if (shouldPinTokenOnClick({ fromTray, elementType: element.elementType })) {
+        trayAdversaryOverlay.close();
+        setPinnedToken((prev) => {
+          if (prev?.element.instanceId === element.instanceId) return null;
+          return { element, anchorX: e.clientX, anchorY: e.clientY };
+        });
+      }
+      return;
+    }
     if (e.button !== 0) return;
-    /** Players can't drag adversaries, but they should still click-to-pin the token detail panel. */
+    /** Players can't drag adversaries, but they should still tap-to-pin on touch. */
     const pinOnly =
       !fromTray &&
       isPlayer &&
@@ -6494,7 +6601,7 @@ export function BattleMap({
           ? { tokenX: element.tokenX, tokenY: element.tokenY, altitude: element.altitude ?? 0 }
           : null,
     };
-  }, [canDrag, instanceNumbers, isMyCharacter, isPlayer, tokenSizePx, pxPerFt, parentByInstanceId]);
+  }, [canDrag, instanceNumbers, isMyCharacter, isPlayer, tokenSizePx, pxPerFt, parentByInstanceId, trayAdversaryOverlay]);
 
   const handlePointerMove = useCallback((e) => {
     const ds = dragRef.current;
@@ -6585,7 +6692,7 @@ export function BattleMap({
           centerMapOnPlacedActor(ds.element);
         }
       }
-      // Click: toggle pin (tray adversaries use hover overlays instead)
+      // Touch tap still pins (no right-click). Mouse overlay is right-click / modifier-click.
       if (ds.fromTray && ds.element.elementType === 'adversary') {
         if (isTouch) {
           if (trayAdversaryOverlay.data?.instanceId === ds.element.instanceId) {
@@ -6600,7 +6707,10 @@ export function BattleMap({
         }
         return;
       }
-      if (shouldPinTokenOnClick({ fromTray: ds.fromTray, elementType: ds.element.elementType })) {
+      if (
+        isTouch &&
+        shouldPinTokenOnClick({ fromTray: ds.fromTray, elementType: ds.element.elementType })
+      ) {
         trayAdversaryOverlay.close();
         setPinnedToken(prev => {
           if (prev?.element.instanceId === ds.element.instanceId) return null;
@@ -6689,6 +6799,8 @@ export function BattleMap({
     handlePointerUp,
     handleTrayProxyHoverEnter,
     handleTrayProxyHoverLeave,
+    handleTrayHintHoverEnter,
+    handleTrayHintHoverLeave,
     handleToggleAdversaryVisibility,
     handleRevealAdversary,
   };
@@ -7160,6 +7272,49 @@ export function BattleMap({
     })),
   }));
 
+  const tokenHoverHintElement = resolveTokenHoverHintElement({
+    trayHoverInstanceId,
+    snappedInstanceId: bullseyeFt?.excludeInstanceId ?? null,
+    elements: activeElements,
+    dragging: !!dragGhost,
+  });
+  const tokenHoverHint = tokenHoverHintElement ? tokenHoverHintModel(tokenHoverHintElement) : null;
+  let tokenNameChip = null;
+  if (
+    tokenHoverHint
+    && tokenHoverHintElement?.tokenX != null
+    && tokenHoverHintElement?.tokenY != null
+    && layerPxPerFt > 0
+  ) {
+    const chipRenderPx = computeTokenRenderPx(
+      layerTokenSizePx,
+      resolveTokenSizeSource(tokenHoverHintElement, parentByInstanceId),
+    );
+    const { obstacles, segments } = collectTokenNameChipObstacles({
+      hoveredInstanceId: tokenHoverHintElement.instanceId,
+      tokens: allMapTokens.map(({ element }) => {
+        const px = computeTokenRenderPx(layerTokenSizePx, resolveTokenSizeSource(element, parentByInstanceId));
+        return { element, widthPx: px.widthPx, heightPx: px.heightPx };
+      }),
+      pxPerFt: layerPxPerFt,
+      connectors: bullseyeAltitudeConnectors,
+      hoverFocused: true,
+    });
+    const placed = placeTokenNameChip({
+      tokenRect: {
+        x: tokenHoverHintElement.tokenX * layerPxPerFt,
+        y: tokenHoverHintElement.tokenY * layerPxPerFt,
+        w: chipRenderPx.widthPx,
+        h: chipRenderPx.heightPx,
+      },
+      name: tokenHoverHint.name,
+      obstacles,
+      mapBounds: { x: 0, y: 0, w: layerRenderedWidthPx, h: layerRenderedHeightPx },
+      segments,
+    });
+    tokenNameChip = { name: tokenHoverHint.name, ...placed };
+  }
+
   return (
     <div className={`flex flex-col ${className}`}>
       {/* Map area */}
@@ -7196,6 +7351,8 @@ export function BattleMap({
                 onPointerUp={stableOnPointerUp}
                 onProxyHoverEnter={stableOnProxyHoverEnter}
                 onProxyHoverLeave={stableOnProxyHoverLeave}
+                onHoverEnter={stableOnHoverEnter}
+                onHoverLeave={stableOnHoverLeave}
                 pinnedInstanceId={pinnedToken?.element.instanceId}
                 allyColorsByInstanceId={allyColorsByInstanceId}
                 showSpotlight={showSpotlight}
@@ -7544,6 +7701,9 @@ export function BattleMap({
             isPublic={isPublic}
             onPublicChange={isPlayer ? undefined : onPublicChange}
           />
+          {tokenHoverHint && (
+            <TokenHoverHintInset name={tokenHoverHint.name} lines={tokenHoverHint.lines} />
+          )}
           {showMapCameraPicker && pickerTriggerTile ? (
             <div className="pointer-events-none absolute top-2 left-1/2 z-20 -translate-x-1/2">
               <MapCameraPicker
@@ -7973,6 +8133,15 @@ export function BattleMap({
                 );
               })}
 
+              {tokenNameChip && (
+                <TokenNameChip
+                  name={tokenNameChip.name}
+                  x={tokenNameChip.x}
+                  y={tokenNameChip.y}
+                  zIndex={SNAPPED_TOKEN_Z_INDEX + 1}
+                />
+              )}
+
               {visibleMapPings.map(p => (
                 <MapPingNameLabel
                   key={p.id}
@@ -8110,6 +8279,8 @@ export function BattleMap({
                   onPointerUp={stableOnPointerUp}
                   onProxyHoverEnter={stableOnProxyHoverEnter}
                   onProxyHoverLeave={stableOnProxyHoverLeave}
+                  onHoverEnter={stableOnHoverEnter}
+                  onHoverLeave={stableOnHoverLeave}
                   pinnedInstanceId={pinnedToken?.element.instanceId ?? trayOverlayKey}
                   onToggleAdversaryVisibility={stableOnToggleAdversaryVisibility}
                   hoverOverlay={trayAdversaryOverlay}
@@ -8150,7 +8321,7 @@ export function BattleMap({
         )}
       </div>
 
-      {/* Click-to-pin detail panel */}
+      {/* Right-click / modifier-click detail panel (touch: tap) */}
       {pinnedToken && (() => {
         const elRaw = activeElements.find(e => e.instanceId === pinnedToken.element.instanceId);
         if (!elRaw) return null;

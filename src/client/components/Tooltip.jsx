@@ -15,8 +15,9 @@ import { useTouchDevice } from '../lib/useTouchDevice.js';
  * @param {React.ReactNode} [props.content] - Rich content (e.g. Markdown); when set, tooltip is wider and wraps
  * @param {'top'|'bottom'|'bottom-right'|'bottom-left'|'right'} [props.placement='bottom-right']
  * @param {string} [props.className] - Wrapper around children (default `relative inline-flex`). Use `relative block w-full min-w-0` for full-width controls so width matches the non-tooltip state.
+ * @param {boolean} [props.showOnTouch=true] - When false, skip tap-to-toggle on touch (hover-only).
  */
-export function Tooltip({ children, label, content, placement = 'bottom-right', className = 'relative inline-flex' }) {
+export function Tooltip({ children, label, content, placement = 'bottom-right', className = 'relative inline-flex', showOnTouch = true }) {
   const [tooltipStyle, setTooltipStyle] = useState(null);
   const isTouch = useTouchDevice();
   const wrapperRef = useRef(null);
@@ -82,7 +83,7 @@ export function Tooltip({ children, label, content, placement = 'bottom-right', 
       className={className}
       onMouseEnter={() => { if (!isTouch) show(); }}
       onMouseLeave={() => { if (!isTouch) hide(); }}
-      onClick={() => { if (isTouch) (tooltipStyle ? hide() : show()); }}
+      onClick={() => { if (isTouch && showOnTouch) (tooltipStyle ? hide() : show()); }}
     >
       {children}
       {tooltip}
