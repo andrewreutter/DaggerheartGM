@@ -93,6 +93,24 @@ test('Library Maps tab: New opens Map editor with Make Public', async ({ page })
   await expect(page.getByTestId('map-form-public')).toBeVisible();
 });
 
+test('floating map-tile caption has its own background over the map', async ({ page }) => {
+  const snapshot = tableSnapshot();
+  await authenticate(page);
+  await mockTableStateRest(page, snapshot);
+  await mockGmStream(page, snapshot);
+  await page.goto('/table/test-user-uid');
+  const trigger = page.getByTestId('map-camera-picker-trigger');
+  await expect(trigger).toBeVisible({ timeout: 10000 });
+  const caption = trigger.getByTestId('map-camera-tile-caption');
+  await expect(caption).toBeVisible();
+  await expect(caption).toContainText('View 1');
+  const bg = await caption.evaluate((el) => getComputedStyle(el).backgroundColor);
+  expect(bg).not.toBe('transparent');
+  const alpha = bg.match(/(?:rgba?|oklab|oklch|color)\([^/]*\/\s*([\d.]+)\s*\)|rgba\(\s*[\d.]+\s*,\s*[\d.]+\s*,\s*[\d.]+\s*,\s*([\d.]+)\s*\)/);
+  const opacity = alpha ? Number(alpha[1] ?? alpha[2]) : 1;
+  expect(opacity).toBeGreaterThan(0.5);
+});
+
 test('GM Add Map from map-tile overlay opens picker; Create new map opens editor', async ({ page }) => {
   const snapshot = tableSnapshot();
   await authenticate(page);

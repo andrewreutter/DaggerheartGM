@@ -219,6 +219,11 @@ const MAP_TOKEN_HIT_PADDING_PX = 12;
 
 /** Width in px of the character tokens shelf (left tray). Used by DiceRoller to offset the banner strip. */
 export const CHARACTER_TRAY_WIDTH_PX = 36 + 16;
+/** Shared height for the map-draw/scribble strip and tray place/return headers so they align.
+ *  Inline px (not a Tailwind arbitrary class) so compact 14px chevrons cannot shrink the row.
+ *  Matches one draw-strip row (`py-1.5` + bordered `p-1.5` / 15px tool button + `border-b`). */
+const MAP_CHROME_STRIP_MIN_HEIGHT_PX = 42;
+const MAP_CHROME_STRIP_ROW_CLASS = 'box-border border-b border-dh-border shrink-0';
 /** Extra tray width for the spotlight beam beside each character / the GM token. */
 export const SPOTLIGHT_BEAM_WIDTH_PX = 35;
 /** Tall enough that neighboring cones almost meet; width/left edge stay unchanged. */
@@ -749,6 +754,15 @@ const MapViewStripTile = memo(function MapViewStripTileRaw({
       {label}
     </span>
   );
+  // Caption sits outside the thumb (often over a light map). Own surface so `text-dh` stays readable.
+  const captionChip = captionSpan ? (
+    <div
+      data-testid="map-camera-tile-caption"
+      className="mx-auto max-w-full rounded px-1 py-0.5 border border-dh-border bg-dh-surface/95 shadow-sm"
+    >
+      {captionSpan}
+    </div>
+  ) : null;
 
   return (
     <div
@@ -760,8 +774,8 @@ const MapViewStripTile = memo(function MapViewStripTileRaw({
         hoverPreviewKey && onHoverPreviewKey ? () => onHoverPreviewKey(null) : undefined
       }
     >
-      {captionAbove && captionSpan ? (
-        <div className="min-h-[1rem] flex items-end justify-center px-0.5">{captionSpan}</div>
+      {captionAbove && captionChip ? (
+        <div className="min-h-[1rem] flex items-end justify-center px-0.5">{captionChip}</div>
       ) : null}
       <div className="relative">
         {broadcastHighlight ? (
@@ -793,9 +807,9 @@ const MapViewStripTile = memo(function MapViewStripTileRaw({
           </div>
         )}
       </div>
-      {!captionAbove && (!hideCaption || actions) ? (
+      {!captionAbove && (captionChip || actions) ? (
         <div className="flex min-w-0 flex-col gap-0.5">
-          {!hideCaption ? captionSpan : null}
+          {captionChip}
           {actions}
         </div>
       ) : captionAbove && actions ? (
@@ -2443,22 +2457,42 @@ function TrayColumn({
  * the map) for "place all", toward the tray for "return all" — using double chevrons so the
  * bulk action is visually distinct from the single-token `ArrowLeftToLine`/`ArrowRightToLine`
  * buttons. Each button disables itself when it would have no effect.
+ *
+ * The row is always mounted with the same button layout so GM and player trays share height.
+ * `showIcons={false}` keeps the icons `invisible` (space reserved, not clickable) — players
+ * never see Place all / Return all. Row height is locked to `MAP_CHROME_STRIP_MIN_HEIGHT_PX`
+ * (same as the map-draw / scribble strip) whether or not the compact 14px chevrons are visible.
  */
-function TrayBulkActionsHeader({ trayDirection, onPlaceAll, canPlaceAll, onReturnAll, canReturnAll, testId }) {
+function TrayBulkActionsHeader({
+  trayDirection,
+  onPlaceAll,
+  canPlaceAll,
+  onReturnAll,
+  canReturnAll,
+  testId,
+  showIcons = true,
+}) {
   const PlaceIcon = trayDirection === 'right' ? ChevronsLeft : ChevronsRight;
   const ReturnIcon = trayDirection === 'right' ? ChevronsRight : ChevronsLeft;
   return (
     <div
       data-testid={testId}
-      className="flex items-center justify-center gap-1 p-1 border-b border-dh-border shrink-0"
+      aria-hidden={!showIcons}
+      style={{ minHeight: MAP_CHROME_STRIP_MIN_HEIGHT_PX, height: MAP_CHROME_STRIP_MIN_HEIGHT_PX }}
+      className={`flex items-center justify-center gap-1 px-1 ${MAP_CHROME_STRIP_ROW_CLASS} ${
+        showIcons ? '' : 'pointer-events-none'
+      }`}
     >
       <Tooltip label="Place all on map" className="flex-1 min-w-0">
         <button
           type="button"
-          onClick={onPlaceAll}
-          disabled={!canPlaceAll}
+          onClick={showIcons ? onPlaceAll : undefined}
+          disabled={!showIcons || !canPlaceAll}
+          tabIndex={showIcons ? undefined : -1}
           aria-label="Place all on map"
-          className="w-full flex items-center justify-center py-1 rounded text-dh-muted hover:text-emerald-400 hover:bg-dh-hover transition-colors disabled:opacity-30 disabled:pointer-events-none"
+          className={`w-full flex items-center justify-center py-1 rounded text-dh-muted hover:text-emerald-400 hover:bg-dh-hover transition-colors disabled:opacity-30 disabled:pointer-events-none ${
+            showIcons ? '' : 'invisible'
+          }`}
         >
           <PlaceIcon size={14} />
         </button>
@@ -2466,10 +2500,13 @@ function TrayBulkActionsHeader({ trayDirection, onPlaceAll, canPlaceAll, onRetur
       <Tooltip label="Return all to tray" className="flex-1 min-w-0">
         <button
           type="button"
-          onClick={onReturnAll}
-          disabled={!canReturnAll}
+          onClick={showIcons ? onReturnAll : undefined}
+          disabled={!showIcons || !canReturnAll}
+          tabIndex={showIcons ? undefined : -1}
           aria-label="Return all to tray"
-          className="w-full flex items-center justify-center py-1 rounded text-dh-muted hover:text-amber-400 hover:bg-dh-hover transition-colors disabled:opacity-30 disabled:pointer-events-none"
+          className={`w-full flex items-center justify-center py-1 rounded text-dh-muted hover:text-amber-400 hover:bg-dh-hover transition-colors disabled:opacity-30 disabled:pointer-events-none ${
+            showIcons ? '' : 'invisible'
+          }`}
         >
           <ReturnIcon size={14} />
         </button>
@@ -4929,8 +4966,8 @@ export function BattleMap({
   const canHideAllAdversaries = canHideAnyAdversaries(adversaries);
 
   // Left tray (characters + companion board tokens) bulk-action eligibility — mirrors the
-  // per-token `canMoveToken` permission check used by the pinned detail panel (players may
-  // only bulk-move their own characters/companions).
+  // per-token `canMoveToken` permission check used by the pinned detail panel. Icons are
+  // GM-only; the filter still keeps the handlers scoped to tokens the viewer can drag.
   const leftTrayMovableElements = useMemo(
     () => [...characters, ...boardTokens].filter((el) => canDrag(el)),
     [characters, boardTokens, canDrag],
@@ -7134,15 +7171,14 @@ export function BattleMap({
             className={`relative z-20 flex flex-col shrink-0 border-r border-dh-border overflow-visible ${highlightLeftTray ? 'bg-amber-900/30' : 'bg-dh-surface/60'}`}
             style={{ width: CHARACTER_TRAY_WIDTH_PX, minWidth: CHARACTER_TRAY_WIDTH_PX, maxWidth: CHARACTER_TRAY_WIDTH_PX, minHeight: 0 }}
           >
-            {charTrayTokensMerged.length > 0 && (
-              <TrayBulkActionsHeader
-                trayDirection="left"
-                onPlaceAll={() => handlePlaceAllOnMap(leftTrayUnplacedElements)}
-                canPlaceAll={leftTrayUnplacedElements.length > 0}
-                onReturnAll={() => handleReturnAllToTray(leftTrayPlacedOnActiveMapElements)}
-                canReturnAll={leftTrayPlacedOnActiveMapElements.length > 0}
-              />
-            )}
+            <TrayBulkActionsHeader
+              trayDirection="left"
+              showIcons={!isPlayer}
+              onPlaceAll={() => handlePlaceAllOnMap(leftTrayUnplacedElements)}
+              canPlaceAll={leftTrayUnplacedElements.length > 0}
+              onReturnAll={() => handleReturnAllToTray(leftTrayPlacedOnActiveMapElements)}
+              canReturnAll={leftTrayPlacedOnActiveMapElements.length > 0}
+            />
             <div
               className={`flex-1 min-h-0 overflow-y-auto ${showSpotlight ? 'pointer-events-none' : ''}`}
               style={showSpotlight ? { width: CHARACTER_TRAY_WIDTH_PX + SPOTLIGHT_BEAM_WIDTH_PX } : undefined}
@@ -7222,7 +7258,10 @@ export function BattleMap({
         {/* Map column: draw toolbar (optional) + viewport (measured via scrollWrapperRef) */}
         <div className="flex-1 min-w-0 min-h-0 flex flex-col overflow-hidden relative">
           {showMapDrawToolbar && (
-              <div className="flex flex-wrap items-center gap-2 px-3 py-1.5 border-b border-dh-border bg-dh-canvas/40 text-[11px] shrink-0">
+              <div
+                style={{ minHeight: MAP_CHROME_STRIP_MIN_HEIGHT_PX }}
+                className={`flex flex-wrap items-center gap-2 px-3 py-1.5 bg-dh-canvas/40 text-[11px] ${MAP_CHROME_STRIP_ROW_CLASS}`}
+              >
                 {!isPlayer ? (
                   <Tooltip label="Clear this layer only">
                     <button
@@ -8003,17 +8042,16 @@ export function BattleMap({
             className={`relative z-20 flex flex-col shrink-0 border-l border-dh-border overflow-visible ${highlightRightTray ? 'bg-amber-900/30' : 'bg-dh-surface/60'}`}
             style={{ width: trayTokenSizePx + 16, minWidth: trayTokenSizePx + 16, maxWidth: trayTokenSizePx + 16, minHeight: 0 }}
           >
-            {/* Always reserve this row on the GM right tray so the GM token does not jump when the first adversary is added. */}
-            {!isPlayer && (
-              <TrayBulkActionsHeader
-                testId="adversary-tray-bulk-actions"
-                trayDirection="right"
-                onPlaceAll={() => handlePlaceAllOnMap(rightTrayUnplacedElements)}
-                canPlaceAll={rightTrayUnplacedElements.length > 0}
-                onReturnAll={() => handleReturnAllToTray(rightTrayPlacedOnActiveMapElements)}
-                canReturnAll={rightTrayPlacedOnActiveMapElements.length > 0}
-              />
-            )}
+            {/* Always reserve this row so the GM token does not jump when the first adversary is added, and so player/GM trays share the same height. Icons are GM-only. */}
+            <TrayBulkActionsHeader
+              testId="adversary-tray-bulk-actions"
+              trayDirection="right"
+              showIcons={!isPlayer}
+              onPlaceAll={() => handlePlaceAllOnMap(rightTrayUnplacedElements)}
+              canPlaceAll={rightTrayUnplacedElements.length > 0}
+              onReturnAll={() => handleReturnAllToTray(rightTrayPlacedOnActiveMapElements)}
+              canReturnAll={rightTrayPlacedOnActiveMapElements.length > 0}
+            />
             {showSpotlight && (
               <div className="px-1.5 pt-2 pb-1.5 shrink-0">
                 <div
