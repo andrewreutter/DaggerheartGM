@@ -74,6 +74,7 @@ import { shouldSkipActivityStamp } from './src/server/activity-stamp-throttle.js
 import { applyAppBuildIdToSpaHtml, resolveAppBuildId, SPA_HTML_CACHE_CONTROL } from './src/server/app-build-id.js';
 import { parseHttpBooleanLoose } from './src/parse-http-bool.js';
 import { normalizeManualBugReportCreate } from './src/client/lib/bug-report-admin.js';
+import { isCharacterAssignedToPlayer } from './src/client/lib/character-assignment.js';
 import {
   MIME_TO_EXT,
   uploadBufferToMapStorage as uploadBufferToMapStorageImpl,
@@ -1169,16 +1170,18 @@ function writeFilteredRollHistory(res, rolls, viewer) {
 }
 
 async function lookupAssignedPlayerForAttacker(tableId, attackerInstanceId) {
-  if (!tableId || !attackerInstanceId) return { uid: null, email: null };
+  if (!tableId || !attackerInstanceId) return { uid: null, email: null, emails: [] };
   try {
     const row = await getTableStateById(APP_ID, tableId);
     const el = (row?.data?.elements || []).find((e) => e.instanceId === attackerInstanceId);
-    return {
-      uid: el?.assignedPlayerUid || null,
-      email: el?.assignedPlayerEmail || null,
-    };
+    const uid = el?.assignedPlayerUid || null;
+    const email = el?.assignedPlayerEmail || null;
+    const emails = Array.isArray(el?.assignedPlayerEmails)
+      ? el.assignedPlayerEmails
+      : email ? [email] : [];
+    return { uid, email, emails };
   } catch {
-    return { uid: null, email: null };
+    return { uid: null, email: null, emails: [] };
   }
 }
 
@@ -1192,10 +1195,12 @@ async function applyPostedRollVisibility(rollData, {
 }) {
   let assignedPlayerUid = null;
   let assignedPlayerEmail = null;
+  let assignedPlayerEmails = [];
   if (isGm && requestedVisibility === 'gm_and_player') {
     const assigned = await lookupAssignedPlayerForAttacker(tableId, attackerInstanceId);
     assignedPlayerUid = assigned.uid;
     assignedPlayerEmail = assigned.email;
+    assignedPlayerEmails = assigned.emails || [];
   }
   stampNormalizedRollVisibility(rollData, {
     requestedVisibility,
@@ -1204,6 +1209,7 @@ async function applyPostedRollVisibility(rollData, {
     requesterEmail,
     assignedPlayerUid,
     assignedPlayerEmail,
+    assignedPlayerEmails,
   });
   return rollData;
 }
@@ -4646,9 +4652,7 @@ app.post('/api/room/:tableId/rest-move-select', requireAuth, async (req, res) =>
       const elements = tableState.elements || [];
       const character = elements.find(e => e.elementType === 'character' && e.instanceId === instanceId);
       if (!character) return res.status(404).json({ error: 'Character not found' });
-      const assignedByUid = character.assignedPlayerUid === req.uid;
-      const assignedByEmail = !!req.email && (character.assignedPlayerEmail || '').toLowerCase() === req.email.toLowerCase();
-      if (!assignedByUid && !assignedByEmail) {
+      if (!isCharacterAssignedToPlayer(character, { uid: req.uid, email: req.email })) {
         return res.status(403).json({ error: 'Not assigned to this character' });
       }
     }
@@ -4838,10 +4842,10 @@ app.post('/api/room/:tableId/character-update', requireAuth, async (req, res) =>
     if (req.uid !== gmUid) {
       if (el.elementType === 'boardToken') {
         const parent = (tableState.elements || []).find((e) => e.instanceId === el.parentInstanceId);
-        if (!parent || parent.assignedPlayerEmail !== req.email) {
+        if (!parent || !isCharacterAssignedToPlayer(parent, { uid: req.uid, email: req.email })) {
           return res.status(403).json({ error: 'Not assigned to this character' });
         }
-      } else if (el.assignedPlayerEmail !== req.email) {
+      } else if (!isCharacterAssignedToPlayer(el, { uid: req.uid, email: req.email })) {
         return res.status(403).json({ error: 'Not assigned to this character' });
       }
     }
@@ -4875,11 +4879,7 @@ app.post('/api/room/:tableId/v2-cross-sheet-chip', requireAuth, async (req, res)
       (e) => e.elementType === 'character' && e.instanceId === viewerInstanceId
     );
     if (!viewerEl) return res.status(404).json({ error: 'Character not found' });
-    const assignedByUid = viewerEl.assignedPlayerUid === req.uid;
-    const assignedByEmail =
-      !!req.email &&
-      (viewerEl.assignedPlayerEmail || '').toLowerCase() === req.email.toLowerCase();
-    if (!assignedByUid && !assignedByEmail) {
+    if (!isCharacterAssignedToPlayer(viewerEl, { uid: req.uid, email: req.email })) {
       return res.status(403).json({ error: 'Not assigned to this character' });
     }
 
@@ -4942,11 +4942,7 @@ app.post('/api/room/:tableId/v2-owned-card-chip', requireAuth, async (req, res) 
       (e) => e.elementType === 'character' && e.instanceId === ownerInstanceId
     );
     if (!ownerEl) return res.status(404).json({ error: 'Character not found' });
-    const assignedByUid = ownerEl.assignedPlayerUid === req.uid;
-    const assignedByEmail =
-      !!req.email &&
-      (ownerEl.assignedPlayerEmail || '').toLowerCase() === req.email.toLowerCase();
-    if (!assignedByUid && !assignedByEmail) {
+    if (!isCharacterAssignedToPlayer(ownerEl, { uid: req.uid, email: req.email })) {
       return res.status(403).json({ error: 'Not assigned to this character' });
     }
 
@@ -5019,11 +5015,7 @@ app.post('/api/room/:tableId/v2-review-chip', requireAuth, async (req, res) => {
       (e) => e.elementType === 'character' && e.instanceId === viewerInstanceId
     );
     if (!viewerEl) return res.status(404).json({ error: 'Character not found' });
-    const assignedByUid = viewerEl.assignedPlayerUid === req.uid;
-    const assignedByEmail =
-      !!req.email &&
-      (viewerEl.assignedPlayerEmail || '').toLowerCase() === req.email.toLowerCase();
-    if (!assignedByUid && !assignedByEmail) {
+    if (!isCharacterAssignedToPlayer(viewerEl, { uid: req.uid, email: req.email })) {
       return res.status(403).json({ error: 'Not assigned to this character' });
     }
 
@@ -5285,6 +5277,7 @@ app.post('/api/room/:tableId/add-character', requireAuth, async (req, res) => {
       instanceId,
       elementType: 'character',
       assignedPlayerEmail: req.email,
+      assignedPlayerEmails: req.email ? [req.email.toLowerCase()] : [],
       assignedPlayerUid: assignedPlayerUid || req.uid,
       playerName: playerName || req.email,
       hope: hope != null ? hope : Math.min(DEFAULT_CHARACTER_STARTING_HOPE, maxH),

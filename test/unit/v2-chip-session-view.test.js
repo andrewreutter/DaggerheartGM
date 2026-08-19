@@ -11,6 +11,11 @@ describe('v2-chip-session-view', () => {
     { instanceId: 'pc-a', assignedPlayerUid: 'uid-1', assignedPlayerEmail: 'a@x.com' },
     { instanceId: 'pc-b', assignedPlayerEmail: 'player@y.com' },
     { instanceId: 'pc-un', assignedPlayerEmail: '' },
+    {
+      instanceId: 'pc-multi',
+      assignedPlayerEmail: 'a@x.com',
+      assignedPlayerEmails: ['a@x.com', 'shared@x.com'],
+    },
   ];
 
   describe('getPrimaryCharacterInstanceId', () => {
@@ -42,6 +47,16 @@ describe('v2-chip-session-view', () => {
           playerEmailOrPreview: '',
         })
       ).toBe(null);
+    });
+
+    it('resolves by assignedPlayerEmails array when email is in the list', () => {
+      expect(
+        getPrimaryCharacterInstanceId({
+          tableCharacters,
+          userUid: 'uid-none',
+          playerEmailOrPreview: 'shared@x.com',
+        })
+      ).toBe('pc-multi');
     });
   });
 

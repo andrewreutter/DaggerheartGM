@@ -74,6 +74,12 @@ describe('formatReactionCallResultBadge', () => {
 
 describe('canViewerProceedReaction', () => {
   const el = { instanceId: 'c1', assignedPlayerEmail: 'a@x.com', assignedPlayerUid: 'uid-a' };
+  const elMulti = {
+    instanceId: 'c2',
+    assignedPlayerEmail: 'a@x.com',
+    assignedPlayerEmails: ['a@x.com', 'b@x.com'],
+    assignedPlayerUid: 'uid-a',
+  };
 
   it('allows the GM for any character', () => {
     expect(canViewerProceedReaction({ isPlayer: false, characterEl: el })).toBe(true);
@@ -87,5 +93,10 @@ describe('canViewerProceedReaction', () => {
   it('denies an unassigned player', () => {
     expect(canViewerProceedReaction({ isPlayer: true, characterEl: el, playerEmail: 'b@x.com', playerUid: 'other' })).toBe(false);
     expect(canViewerProceedReaction({ isPlayer: true, characterEl: null, playerEmail: 'a@x.com' })).toBe(false);
+  });
+
+  it('allows any player in assignedPlayerEmails array', () => {
+    expect(canViewerProceedReaction({ isPlayer: true, characterEl: elMulti, playerEmail: 'b@x.com' })).toBe(true);
+    expect(canViewerProceedReaction({ isPlayer: true, characterEl: elMulti, playerEmail: 'c@x.com' })).toBe(false);
   });
 });

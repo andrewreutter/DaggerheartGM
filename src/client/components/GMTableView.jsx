@@ -53,6 +53,7 @@ import { isReactionRoll } from '../lib/reaction-roll-display.js';
 import { buildTraitRollText, buildPreRollPanelTitle } from '../lib/trait-roll-text.js';
 import { buildReactionCallRoster, canViewerProceedReaction } from '../lib/reaction-call-roster.js';
 import { buildJoinedPlayerRoster, mergePresenceNamesIntoCache } from '../lib/joined-player-roster.js';
+import { toggleAssignedPlayerEmail, isCharacterAssignedToPlayer } from '../lib/character-assignment.js';
 import { requiresGmFinalizedDifficulty, resolveFinalizedIntentDifficulty } from '../lib/action-roll-difficulty.js';
 import {
   ROLL_VISIBILITY_GM_AND_PLAYER,
@@ -875,6 +876,18 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [playerEmails, connectedPlayers, playerNames],
   );
+  const [assignPanelInstanceId, setAssignPanelInstanceId] = useState(null);
+  const handleToggleAssignPanel = useCallback((instanceId) => {
+    characterOverlay.close();
+    setAssignPanelInstanceId((prev) => (prev === instanceId ? null : instanceId));
+  }, [characterOverlay]);
+  const handleToggleAssignEmail = useCallback((instanceId, email) => {
+    const el = activeElements.find((e) => e.instanceId === instanceId);
+    if (!el) return;
+    const patch = toggleAssignedPlayerEmail(el, email, joinedPlayers);
+    updateActiveElement(instanceId, patch);
+  }, [activeElements, joinedPlayers, updateActiveElement]);
+
   const [audienceOpen, setAudienceOpen] = useState(false);
   const [audienceAttendees, setAudienceAttendees] = useState(null);
   useEffect(() => {
@@ -4286,10 +4299,9 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
       if (!tableId || !v2Registry) return;
       const isOwner =
         !isPlayer ||
-        (playerEmail != null && characterEl?.assignedPlayerEmail === playerEmail) ||
-        (user?.uid != null && characterEl?.assignedPlayerUid === user.uid);
+        isCharacterAssignedToPlayer(characterEl, { email: playerEmail, uid: user?.uid });
       if (!isOwner) return;
-      const isMyCharacter = playerEmail != null && characterEl?.assignedPlayerEmail === playerEmail;
+      const isMyCharacter = isCharacterAssignedToPlayer(characterEl, { email: playerEmail, uid: user?.uid });
       const { sheetOwner, allowPlayMechanics } = characterSheetTableInteractionFlags(
         sessionPlayAllowed,
         isPlayer,
@@ -5141,7 +5153,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     const el = characterOverlay.data?.element;
     if (!el || el.elementType !== 'character') return;
     const viewerCanEditSheet =
-      !isPlayer || (playerEmail != null && el.assignedPlayerEmail === playerEmail);
+      !isPlayer || isCharacterAssignedToPlayer(el, { email: playerEmail, uid: user?.uid });
     const live = activeElements.find((e) => e.instanceId === el.instanceId) || el;
     const displayChar = characterDisplayByInstanceId.get(live.instanceId) ?? live;
     const { complete } = isCharacterComplete(
@@ -5250,7 +5262,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
       const el = activeElements.find((e) => e.instanceId === element.instanceId) || element;
       if (el.elementType !== 'character') return null;
       const isOnMap = el.tokenX != null && el.tokenY != null;
-      const isMyChar = isPlayer && playerEmail != null && el.assignedPlayerEmail === playerEmail;
+      const isMyChar = isPlayer && isCharacterAssignedToPlayer(el, { email: playerEmail, uid: user?.uid });
       const { sheetOwner, allowPlayMechanics } = characterSheetTableInteractionFlags(
         sessionPlayAllowed,
         isPlayer,
@@ -5288,9 +5300,11 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
             cardTrackUpdateFn={cardTrackUpdateFn}
             cardQueueManualTracks={cardQueueManualTracks}
             consumePendingStressForManualMark={consumePendingStressForManualMark}
-            playerEmails={playerEmails}
-            connectedPlayers={connectedPlayers}
-            onAssignPlayerEmail={(instanceId, email) => updateActiveElement(instanceId, { assignedPlayerEmail: email })}
+            joinedRoster={joinedPlayers}
+            onToggleAssignEmail={!isPlayer ? handleToggleAssignEmail : undefined}
+            assignPanelOpen={assignPanelInstanceId === el.instanceId}
+            onToggleAssignPanel={(!isPlayer || isMyChar) ? handleToggleAssignPanel : undefined}
+            onDismissAssignPanel={() => setAssignPanelInstanceId(null)}
             onRemoveFromTable={
               !isPlayer
                 ? (instanceId) => {
@@ -5859,7 +5873,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
   // We use the adversary's focusedBy field as the source of truth rather than focusTargetId on the
   // character, because the "Use on next attack" weapon path only sets focusedBy on the adversary.
   const rangerFocusRerollChars = tableCharacters
-    .filter(c => (c.class || '').toLowerCase() === 'ranger' && (!isPlayer || c.assignedPlayerEmail === playerEmail))
+    .filter(c => (c.class || '').toLowerCase() === 'ranger' && (!isPlayer || isCharacterAssignedToPlayer(c, { email: playerEmail, uid: user?.uid })))
     .map(c => {
       const focusedAdv = activeElements.find(el => el.elementType === 'adversary' && el.focusedBy === c.name);
       return { instanceId: c.instanceId, name: c.name, focusedAdversaryInstanceId: focusedAdv?.instanceId ?? null };
@@ -5872,7 +5886,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     .filter(c =>
       (c.class || '').toLowerCase() === 'ranger' &&
       (c.hope ?? (c.maxHope ?? 6)) >= 3 &&
-      (!isPlayer || c.assignedPlayerEmail === playerEmail)
+      (!isPlayer || isCharacterAssignedToPlayer(c, { email: playerEmail, uid: user?.uid }))
     )
     .map(c => ({ instanceId: c.instanceId, name: c.name }));
 
@@ -5899,7 +5913,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
       if (!isWingsOfLightFlying(c)) continue;
       const hasWings = (c.subclass === 'Winged Sentinel') ||
         (c.subclassFeatures || []).some(f => f.name === 'Wings of Light');
-      if (hasWings && (!isPlayer || c.assignedPlayerEmail === playerEmail)) set.add(c.instanceId);
+      if (hasWings && (!isPlayer || isCharacterAssignedToPlayer(c, { email: playerEmail, uid: user?.uid }))) set.add(c.instanceId);
     }
     return set;
   }, [tableCharacters, isPlayer, playerEmail]);
@@ -6456,7 +6470,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
           )}
 
           {consolidatedElements.filter(item => item.kind === 'character').map(({ element: el }) => {
-            const isMyCharacter = isPlayer && playerEmail != null && el.assignedPlayerEmail === playerEmail;
+            const isMyCharacter = isPlayer && isCharacterAssignedToPlayer(el, { email: playerEmail, uid: user?.uid });
             const { sheetOwner, allowPlayMechanics } = characterSheetTableInteractionFlags(
               sessionPlayAllowed,
               isPlayer,
@@ -6477,11 +6491,14 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                 displayChar={displayChar}
                 isMyCharacter={isMyCharacter}
                 isPlayer={isPlayer}
-                sheetTriggerProps={characterOverlay.triggerProps((e) => ({
-                  element: el,
-                  top: e.currentTarget.getBoundingClientRect().top,
-                  bottom: e.currentTarget.getBoundingClientRect().bottom,
-                }))}
+                sheetTriggerProps={characterOverlay.triggerProps((e) => {
+                    setAssignPanelInstanceId(null);
+                    return {
+                      element: el,
+                      top: e.currentTarget.getBoundingClientRect().top,
+                      bottom: e.currentTarget.getBoundingClientRect().bottom,
+                    };
+                  })}
                 charComplete={charComplete}
                 pendingResourceCosts={pendingResourceCosts}
                 manualAck={manualAck}
@@ -6489,9 +6506,11 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                 cardTrackUpdateFn={cardTrackUpdateFn}
                 cardQueueManualTracks={cardQueueManualTracks}
                 consumePendingStressForManualMark={consumePendingStressForManualMark}
-                playerEmails={playerEmails}
-                connectedPlayers={connectedPlayers}
-                onAssignPlayerEmail={(instanceId, email) => updateActiveElement(instanceId, { assignedPlayerEmail: email })}
+                joinedRoster={joinedPlayers}
+                onToggleAssignEmail={!isPlayer ? handleToggleAssignEmail : undefined}
+                assignPanelOpen={assignPanelInstanceId === el.instanceId}
+                onToggleAssignPanel={(!isPlayer || isMyCharacter) ? handleToggleAssignPanel : undefined}
+                onDismissAssignPanel={() => setAssignPanelInstanceId(null)}
                 onRemoveFromTable={
                   !isPlayer
                     ? (instanceId) => {
@@ -7260,9 +7279,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
             onRestBannerV2Chip={handleRestBannerV2Chip}
             restCanEditColumn={isPlayer ? (instanceId) => {
               const el = activeElements.find(e => e.instanceId === instanceId);
-              const byUid = el?.assignedPlayerUid === user?.uid;
-              const byEmail = !!playerEmail && el?.assignedPlayerEmail === playerEmail;
-              return byUid || byEmail;
+              return isCharacterAssignedToPlayer(el, { email: playerEmail, uid: user?.uid });
             } : () => true}
             restGmUid={tableId}
             onReactionProceed={handleReactionProceed}
@@ -8150,7 +8167,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     )}
     {characterOverlay.isOpen && characterOverlay.data?.type !== 'party' && characterOverlay.data?.element && (() => {
       const liveEl = activeElements.find(e => e.instanceId === characterOverlay.data.element.instanceId) || characterOverlay.data.element;
-      const isMyCharacter = playerEmail != null && liveEl.assignedPlayerEmail === playerEmail;
+      const isMyCharacter = isCharacterAssignedToPlayer(liveEl, { email: playerEmail, uid: user?.uid });
       const editDrawerOpen = editState?.step === 'form' && editState?.presentation === 'rightDrawer';
       const effectiveEditDrawerOpen = editDrawerOpen && !characterDrawerEditMismatch;
       const mergedForTitle =

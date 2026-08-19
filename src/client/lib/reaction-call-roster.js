@@ -3,6 +3,7 @@
  */
 
 import { isDualityCritical, rollBeatsDefense } from './duality-roll-outcome.js';
+import { isCharacterAssignedToPlayer } from './character-assignment.js';
 
 /**
  * @param {object} [opts]
@@ -66,7 +67,5 @@ export function formatReactionCallResultBadge(subRoll, fallbackDifficulty) {
 export function canViewerProceedReaction({ isPlayer, characterEl, playerEmail, playerUid } = {}) {
   if (!isPlayer) return true;
   if (!characterEl) return false;
-  const byUid = playerUid != null && characterEl.assignedPlayerUid === playerUid;
-  const byEmail = !!playerEmail && characterEl.assignedPlayerEmail === playerEmail;
-  return !!(byUid || byEmail);
+  return isCharacterAssignedToPlayer(characterEl, { email: playerEmail, uid: playerUid });
 }

@@ -18,13 +18,21 @@
  */
 export function getPrimaryCharacterInstanceId({ tableCharacters, userUid, playerEmailOrPreview }) {
   const email = (playerEmailOrPreview || '').toLowerCase();
-  const uid = userUid;
+  const uid = userUid || null;
   const list = Array.isArray(tableCharacters) ? tableCharacters : [];
-  const el = list.find(
-    (c) =>
-      (uid && c.assignedPlayerUid === uid) ||
-      (email && (c.assignedPlayerEmail || '').toLowerCase() === email)
-  );
+  const el = list.find((c) => {
+    if (uid && c.assignedPlayerUid === uid) return true;
+    if (email) {
+      // Check assignedPlayerEmails array first, then fall back to scalar
+      const emails = Array.isArray(c.assignedPlayerEmails)
+        ? c.assignedPlayerEmails.map((e) => String(e).toLowerCase())
+        : typeof c.assignedPlayerEmail === 'string'
+          ? [c.assignedPlayerEmail.toLowerCase()]
+          : [];
+      if (emails.includes(email)) return true;
+    }
+    return false;
+  });
   return el?.instanceId ?? null;
 }
 
@@ -80,6 +88,7 @@ export function getGmHelperBannerSuffix({ sessionRole, roll, attackerElement }) 
   if (!attackerElement) return '';
   const hasAssignee =
     !!attackerElement.assignedPlayerUid ||
+    (Array.isArray(attackerElement.assignedPlayerEmails) && attackerElement.assignedPlayerEmails.length > 0) ||
     !!(attackerElement.assignedPlayerEmail && String(attackerElement.assignedPlayerEmail).trim());
   if (!hasAssignee) return '';
   return ' · GM';

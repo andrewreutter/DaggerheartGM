@@ -50,7 +50,7 @@ export const CHARACTER_RUNTIME_KEYS = [
   'altitude',
   /** Which parallel map this token is on when placed (`null` = tray / unassigned). */
   'mapId',
-  'assignedPlayerEmail', 'assignedPlayerUid', 'playerName',
+  'assignedPlayerEmail', 'assignedPlayerEmails', 'assignedPlayerUid', 'playerName',
   'reinforcedActive',
   'selectedExperienceIndex',  // which experience is selected for the next roll (+2)
   // Feature interaction state
@@ -418,11 +418,24 @@ export function applyTableOp(op, state) {
       const playerEmails = existing.filter((e) => String(e).trim().toLowerCase() !== email);
       const nextEls = activeElements.map((el) => {
         if (el.elementType !== 'character') return el;
-        const assigned = el.assignedPlayerEmail;
-        if (typeof assigned !== 'string' || assigned.trim().toLowerCase() !== email) return el;
+        const scalarMatch = typeof el.assignedPlayerEmail === 'string' &&
+          el.assignedPlayerEmail.trim().toLowerCase() === email;
+        const arrayEmails = Array.isArray(el.assignedPlayerEmails) ? el.assignedPlayerEmails : [];
+        const arrayMatch = arrayEmails.some((e) => String(e).trim().toLowerCase() === email);
+        if (!scalarMatch && !arrayMatch) return el;
         const next = { ...el };
-        delete next.assignedPlayerEmail;
-        delete next.assignedPlayerUid;
+        if (scalarMatch) {
+          delete next.assignedPlayerEmail;
+          delete next.assignedPlayerUid;
+        }
+        if (arrayMatch) {
+          const remaining = arrayEmails.filter((e) => String(e).trim().toLowerCase() !== email);
+          next.assignedPlayerEmails = remaining;
+          // If the scalar email was removed but there are still others, promote the first remaining
+          if (scalarMatch && remaining.length > 0) {
+            next.assignedPlayerEmail = remaining[0];
+          }
+        }
         return next;
       });
       return { playerEmails, activeElements: nextEls };

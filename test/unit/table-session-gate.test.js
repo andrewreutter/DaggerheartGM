@@ -106,6 +106,16 @@ describe('table-session-gate', () => {
     expect(g.ok).toBe(true);
   });
 
+  it('allows assignedPlayerEmails updates during prep (multi-assign roster bookkeeping)', () => {
+    expect(isPrepModeElementUpdateBlocked({ assignedPlayerEmails: ['player@example.com'] })).toBe(false);
+    const g = gateTableOpForPrepMode(prepState, {
+      op: 'update-element',
+      instanceId: 'a',
+      updates: { assignedPlayerEmails: ['player@example.com'] },
+    });
+    expect(g.ok).toBe(true);
+  });
+
   it('allows note name/body/visibility updates during prep (note type is exempt)', () => {
     expect(isPrepModeElementUpdateBlocked({ name: 'My Note', body: 'text', visibility: 'gm' }, 'note')).toBe(false);
     const stateWithNote = {

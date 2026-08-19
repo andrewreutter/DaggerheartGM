@@ -60,6 +60,17 @@ describe('canViewerSeeRoll', () => {
     expect(canViewerSeeRoll(roll, PLAYER_A)).toBe(true);
     expect(canViewerSeeRoll(roll, PLAYER_B)).toBe(false);
   });
+
+  it('gm_and_player with _visibilityPlayerEmails array allows any listed player', () => {
+    const roll = {
+      _rollVisibility: ROLL_VISIBILITY_GM_AND_PLAYER,
+      _visibilityPlayerEmail: 'a@example.com',
+      _visibilityPlayerEmails: ['a@example.com', 'b@example.com'],
+    };
+    expect(canViewerSeeRoll(roll, PLAYER_A)).toBe(true);
+    expect(canViewerSeeRoll(roll, PLAYER_B)).toBe(true);
+    expect(canViewerSeeRoll(roll, { role: 'player', uid: 'other', email: 'c@example.com' })).toBe(false);
+  });
 });
 
 describe('canViewerSeeIntent', () => {
@@ -166,6 +177,19 @@ describe('normalizePostedRollVisibility', () => {
       _visibilityPlayerUid: 'player-a',
       _visibilityPlayerEmail: 'a@example.com',
     });
+  });
+
+  it('GM gm_and_player with multiple assignees stamps _visibilityPlayerEmails', () => {
+    const result = normalizePostedRollVisibility({
+      requestedVisibility: 'gm_and_player',
+      isGm: true,
+      assignedPlayerUid: 'player-a',
+      assignedPlayerEmail: 'a@example.com',
+      assignedPlayerEmails: ['a@example.com', 'b@example.com'],
+    });
+    expect(result._rollVisibility).toBe(ROLL_VISIBILITY_GM_AND_PLAYER);
+    expect(result._visibilityPlayerEmail).toBe('a@example.com');
+    expect(result._visibilityPlayerEmails).toEqual(['a@example.com', 'b@example.com']);
   });
 });
 

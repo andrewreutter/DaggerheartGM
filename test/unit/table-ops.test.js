@@ -541,6 +541,46 @@ describe('applyTableOp', () => {
     expect(result.activeElements[2].assignedPlayerEmail).toBe('alice@example.com');
   });
 
+  it('remove-player-email clears from assignedPlayerEmails array; promotes remaining when scalar also removed', () => {
+    const state = {
+      playerEmails: ['alice@example.com', 'carol@example.com', 'bob@example.com'],
+      activeElements: [
+        {
+          instanceId: 'c1',
+          elementType: 'character',
+          assignedPlayerEmail: 'alice@example.com',
+          assignedPlayerEmails: ['alice@example.com', 'carol@example.com'],
+          assignedPlayerUid: 'uid-1',
+          name: 'Multi',
+        },
+        {
+          instanceId: 'c2',
+          elementType: 'character',
+          assignedPlayerEmail: 'bob@example.com',
+          assignedPlayerEmails: ['bob@example.com'],
+          assignedPlayerUid: 'uid-2',
+          name: 'Bob',
+        },
+        {
+          instanceId: 'c3',
+          elementType: 'character',
+          // carol is only in the array, not the scalar
+          assignedPlayerEmail: 'alice@example.com',
+          assignedPlayerEmails: ['alice@example.com', 'carol@example.com'],
+          name: 'MultiSplit',
+        },
+      ],
+    };
+    const result = applyTableOp({ op: 'remove-player-email', email: 'carol@example.com' }, state);
+    // c1: carol removed from array; scalar unchanged (alice is still there)
+    expect(result.activeElements[0].assignedPlayerEmails).toEqual(['alice@example.com']);
+    expect(result.activeElements[0].assignedPlayerEmail).toBe('alice@example.com');
+    // c2: carol not assigned, untouched
+    expect(result.activeElements[1].assignedPlayerEmails).toEqual(['bob@example.com']);
+    // c3: carol removed from array; scalar (alice) stays since alice is still assigned
+    expect(result.activeElements[2].assignedPlayerEmails).toEqual(['alice@example.com']);
+  });
+
   it('set-player-name persists a display name keyed by lowercase email', () => {
     const result = applyTableOp(
       { op: 'set-player-name', email: 'Alice@Example.com', name: 'Alice Ranger' },
@@ -1606,6 +1646,7 @@ describe('CHARACTER_RUNTIME_KEYS', () => {
     expect(CHARACTER_RUNTIME_KEYS).toContain('altitude');
     expect(CHARACTER_RUNTIME_KEYS).toContain('mapId');
     expect(CHARACTER_RUNTIME_KEYS).toContain('assignedPlayerEmail');
+    expect(CHARACTER_RUNTIME_KEYS).toContain('assignedPlayerEmails');
     expect(CHARACTER_RUNTIME_KEYS).toContain('assignedPlayerUid');
     expect(CHARACTER_RUNTIME_KEYS).toContain('playerName');
     expect(CHARACTER_RUNTIME_KEYS).toContain('prayerDice');

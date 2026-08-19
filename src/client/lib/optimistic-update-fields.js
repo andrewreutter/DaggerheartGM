@@ -28,6 +28,11 @@ export const OPTIMISTIC_ELEMENT_UPDATE_FIELDS = new Set([
   'visibleToPlayers',
   // Game Table gold / inventory (runtime, not library)
   'gold',
+  // Assignment fields — checkbox panel must flip immediately
+  'assignedPlayerEmail',
+  'assignedPlayerEmails',
+  'assignedPlayerUid',
+  'playerName',
   'inventory',
 ]);
 

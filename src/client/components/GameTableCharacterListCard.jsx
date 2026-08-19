@@ -1,5 +1,7 @@
-import { useState } from 'react';
-import { User, AlertTriangle, X, Trash2, Tag, Zap } from 'lucide-react';
+import { useState, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
+import { User, AlertTriangle, X, Trash2, Tag, Zap, Users } from 'lucide-react';
+import { getAssignedPlayerEmails, assignedPlayerLabel } from '../lib/character-assignment.js';
 import { CheckboxTrack } from './DetailCardContent.jsx';
 import { ConditionsEditor } from './ConditionsEditor.jsx';
 import { Tooltip } from './Tooltip.jsx';
@@ -29,9 +31,11 @@ import { WARDEN_OF_THE_ELEMENTS_SCOPE_KEY } from '../../features-v2/engine/featu
  * @param {(instanceId: string, patch: object) => void} [props.cardTrackUpdateFn]
  * @param {(el: object, patch: object) => void} [props.cardQueueManualTracks]
  * @param {(instanceId: string, delta: number) => void} [props.consumePendingStressForManualMark]
- * @param {string[]} [props.playerEmails]
- * @param {{ uid?: string, email?: string, name?: string }[]} [props.connectedPlayers]
- * @param {(instanceId: string, email: string | undefined) => void} [props.onAssignPlayerEmail]
+ * @param {{ email: string, name: string, online: boolean, uid?: string }[]} [props.joinedRoster] — from buildJoinedPlayerRoster
+ * @param {(instanceId: string, email: string) => void} [props.onToggleAssignEmail] — GM: toggle one player assignment
+ * @param {boolean} [props.assignPanelOpen] — controlled: whether the player-assign panel is open for this card
+ * @param {(instanceId: string) => void} [props.onToggleAssignPanel] — called when the Users icon is clicked
+ * @param {() => void} [props.onDismissAssignPanel] — called to close the panel from within the card
  * @param {(instanceId: string) => void} [props.onRemoveFromTable] — GM sidebar remove from table
  * @param {(instanceId: string) => void} [props.onCallReaction] — GM: open Call for Reaction seeded with this character
  * @param {object} [props.cardRootProps] — spread on outer card (e.g. `characterOverlay.triggerProps` on sidebar)
@@ -59,9 +63,11 @@ export function GameTableCharacterListCard({
   cardTrackUpdateFn,
   cardQueueManualTracks,
   consumePendingStressForManualMark,
-  playerEmails = [],
-  connectedPlayers = [],
-  onAssignPlayerEmail,
+  joinedRoster = [],
+  onToggleAssignEmail,
+  assignPanelOpen = false,
+  onToggleAssignPanel,
+  onDismissAssignPanel,
   onRemoveFromTable,
   onCallReaction,
   cardRootProps = {},
@@ -84,6 +90,48 @@ export function GameTableCharacterListCard({
   const companionConditions = el.companion?.conditions || '';
   const companionHasConditions = normalizeConditionsToList(companionConditions).length > 0;
   const canEditConditions = typeof cardTrackUpdateFn === 'function';
+
+  const assignBtnRef = useRef(null);
+  const assignPanelRef = useRef(null);
+  const [assignPanelRect, setAssignPanelRect] = useState(null);
+
+  // Recompute panel position whenever it opens or the window resizes
+  useEffect(() => {
+    if (!assignPanelOpen) return;
+    const update = () => {
+      if (assignBtnRef.current) setAssignPanelRect(assignBtnRef.current.getBoundingClientRect());
+    };
+    update();
+    window.addEventListener('resize', update);
+    window.addEventListener('scroll', update, true);
+    return () => {
+      window.removeEventListener('resize', update);
+      window.removeEventListener('scroll', update, true);
+    };
+  }, [assignPanelOpen]);
+
+  // Close on outside click
+  useEffect(() => {
+    if (!assignPanelOpen) return;
+    const handler = (e) => {
+      if (
+        assignPanelRef.current && !assignPanelRef.current.contains(e.target) &&
+        assignBtnRef.current && !assignBtnRef.current.contains(e.target)
+      ) {
+        onDismissAssignPanel?.();
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [assignPanelOpen, onDismissAssignPanel]);
+
+  // Close on Escape
+  useEffect(() => {
+    if (!assignPanelOpen) return;
+    const handler = (e) => { if (e.key === 'Escape') onDismissAssignPanel?.(); };
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
+  }, [assignPanelOpen, onDismissAssignPanel]);
 
   const stopSheetOpenFromInteractive = (e) => {
     e.stopPropagation();
@@ -123,11 +171,22 @@ export function GameTableCharacterListCard({
           T{el.tier ?? 1}
         </span>
         {el.playerName && (
-          <span className="text-[10px] text-dh-muted truncate max-w-[5rem] group-hover/char:hidden">{el.playerName}</span>
+          <span className="text-[10px] text-dh-muted truncate max-w-[5rem] group-hover/char:hidden">{assignedPlayerLabel(el, joinedRoster) || el.playerName}</span>
         )}
-        {!isPlayer && (onRemoveFromTable || onCallReaction) && (
+        {((!isPlayer && (onRemoveFromTable || onCallReaction || onToggleAssignPanel)) || (isMyCharacter && onToggleAssignPanel)) && (
           <div className="hidden group-hover/char:flex items-center gap-1 shrink-0" onClick={stopSheetOpenFromInteractive} onMouseDown={stopSheetOpenFromInteractive}>
-            {onCallReaction && (
+            {onToggleAssignPanel && (
+              <button
+                ref={assignBtnRef}
+                type="button"
+                onClick={() => onToggleAssignPanel(el.instanceId)}
+                className={`transition-colors ${assignPanelOpen ? 'text-sky-400' : 'text-dh-muted hover:text-sky-300'}`}
+                title={isPlayer ? 'View assigned players' : 'Assign players'}
+              >
+                <Users size={11} />
+              </button>
+            )}
+            {!isPlayer && onCallReaction && (
               <button
                 type="button"
                 onClick={() => onCallReaction(el.instanceId)}
@@ -137,7 +196,7 @@ export function GameTableCharacterListCard({
                 <Zap size={11} />
               </button>
             )}
-            {onRemoveFromTable && (
+            {!isPlayer && onRemoveFromTable && (
               <button
                 type="button"
                 onClick={() => onRemoveFromTable(el.instanceId)}
@@ -151,26 +210,16 @@ export function GameTableCharacterListCard({
         )}
       </div>
       <div className="flex flex-col min-w-0 flex-1 min-h-0">
-          {!isPlayer && playerEmails.length > 0 && onAssignPlayerEmail && (
-            <div className="px-2 pt-1 pb-0.5 border-b border-dh-border cursor-default" onClick={stopSheetOpenFromInteractive} onMouseDown={stopSheetOpenFromInteractive}>
-              <select
-                value={el.assignedPlayerEmail || ''}
-                onChange={(e) => onAssignPlayerEmail(el.instanceId, e.target.value || undefined)}
-                className="w-full bg-dh-surface border border-dh-strong rounded px-1.5 py-0.5 text-[10px] text-dh outline-none focus:border-sky-500"
-              >
-                <option value="">Unassigned</option>
-                {playerEmails.map((email) => {
-                  const connected = connectedPlayers.find((p) => p.email === email);
-                  return (
-                    <option key={email} value={email}>
-                      {connected?.name || email}
-                    </option>
-                  );
-                })}
-              </select>
-            </div>
+          {assignPanelOpen && assignPanelRect && createPortal(
+            <AssignPlayerPanel
+              el={el}
+              joinedRoster={joinedRoster}
+              onToggleEmail={onToggleAssignEmail ? (email) => onToggleAssignEmail(el.instanceId, email) : null}
+              anchorRect={assignPanelRect}
+              panelRef={assignPanelRef}
+            />,
+            document.body
           )}
-
           <div className="p-2 flex flex-col gap-1.5 rounded-b-lg flex-1 min-h-0">
             {(() => {
               const maxHope = el.maxHope ?? 6;
@@ -480,6 +529,99 @@ export function GameTableCharacterListCard({
                 );
               })()}
           </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Portaled player-assignment checkbox panel.
+ * Appears to the right of the character card's Users button.
+ */
+function AssignPlayerPanel({ el, joinedRoster, onToggleEmail, anchorRect, panelRef }) {
+  const assignedEmails = getAssignedPlayerEmails(el);
+  const readOnly = !onToggleEmail;
+
+  const PANEL_WIDTH = 200;
+  const GAP = 8;
+  const viewportW = window.innerWidth;
+  const viewportH = window.innerHeight;
+
+  let left = anchorRect.right + GAP;
+  if (left + PANEL_WIDTH > viewportW - 8) {
+    left = anchorRect.left - PANEL_WIDTH - GAP;
+  }
+  let top = anchorRect.top;
+  const maxH = viewportH - top - 12;
+
+  return (
+    <div
+      ref={panelRef}
+      className="fixed z-[60] rounded-lg border border-dh-strong bg-dh-surface shadow-2xl overflow-hidden flex flex-col"
+      style={{ left, top, width: PANEL_WIDTH, maxHeight: maxH }}
+    >
+      <div className="px-2.5 py-1.5 border-b border-dh-border flex items-center gap-1.5">
+        <Users size={11} className="text-sky-400 shrink-0" />
+        <span className="text-[11px] font-semibold text-dh truncate flex-1">
+          {readOnly ? 'Assigned players' : 'Assign players'}
+        </span>
+      </div>
+      <div className="overflow-y-auto flex-1">
+        {joinedRoster.length === 0 ? (
+          <p className="px-2.5 py-2 text-[10px] text-dh-muted italic">
+            {readOnly ? 'No players have been assigned.' : 'Invite players to assign this character.'}
+          </p>
+        ) : (
+          joinedRoster.map((p) => {
+            const checked = assignedEmails.includes(p.email.toLowerCase());
+            if (readOnly) {
+              return (
+                <div
+                  key={p.email}
+                  className="w-full flex items-center gap-2 px-2.5 py-1.5"
+                >
+                  <span
+                    className={`w-3 h-3 shrink-0 rounded-sm border flex items-center justify-center ${
+                      checked ? 'bg-sky-500 border-sky-500' : 'bg-transparent border-dh-strong opacity-40'
+                    }`}
+                  >
+                    {checked && (
+                      <svg viewBox="0 0 10 10" className="w-2 h-2 text-white" fill="currentColor">
+                        <path d="M1.5 5l2.5 2.5L8.5 2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+                      </svg>
+                    )}
+                  </span>
+                  <span className={`text-[11px] flex-1 truncate ${checked ? 'text-dh' : 'text-dh-muted'}`}>{p.name}</span>
+                  {p.online && <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0" title="Online" />}
+                </div>
+              );
+            }
+            return (
+              <button
+                key={p.email}
+                type="button"
+                className="w-full flex items-center gap-2 px-2.5 py-1.5 text-left hover:bg-dh-hover transition-colors"
+                onClick={() => onToggleEmail(p.email)}
+              >
+                <span
+                  className={`w-3 h-3 shrink-0 rounded-sm border flex items-center justify-center transition-colors ${
+                    checked
+                      ? 'bg-sky-500 border-sky-500'
+                      : 'bg-transparent border-dh-strong'
+                  }`}
+                >
+                  {checked && (
+                    <svg viewBox="0 0 10 10" className="w-2 h-2 text-white" fill="currentColor">
+                      <path d="M1.5 5l2.5 2.5L8.5 2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+                    </svg>
+                  )}
+                </span>
+                <span className="text-[11px] text-dh flex-1 truncate">{p.name}</span>
+                {p.online && <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0" title="Online" />}
+              </button>
+            );
+          })
+        )}
       </div>
     </div>
   );

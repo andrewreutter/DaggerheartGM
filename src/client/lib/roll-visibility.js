@@ -118,6 +118,7 @@ export function normalizePostedRollVisibility({
   requesterEmail = null,
   assignedPlayerUid = null,
   assignedPlayerEmail = null,
+  assignedPlayerEmails = [],
 } = {}) {
   const requested = normalizeRollVisibility(requestedVisibility);
   if (!isGm) {
@@ -137,11 +138,15 @@ export function normalizePostedRollVisibility({
     return { _rollVisibility: ROLL_VISIBILITY_GM_ONLY };
   }
   if (assignedPlayerUid || assignedPlayerEmail) {
-    return {
+    const result = {
       _rollVisibility: ROLL_VISIBILITY_GM_AND_PLAYER,
       _visibilityPlayerUid: assignedPlayerUid || null,
       _visibilityPlayerEmail: assignedPlayerEmail || null,
     };
+    if (Array.isArray(assignedPlayerEmails) && assignedPlayerEmails.length > 1) {
+      result._visibilityPlayerEmails = assignedPlayerEmails;
+    }
+    return result;
   }
   return { _rollVisibility: ROLL_VISIBILITY_GM_ONLY };
 }
@@ -159,6 +164,7 @@ export function stampNormalizedRollVisibility(rollData, opts = {}) {
   delete rollData._rollVisibility;
   delete rollData._visibilityPlayerUid;
   delete rollData._visibilityPlayerEmail;
+  delete rollData._visibilityPlayerEmails;
   if (opts.requestedVisibility == null || opts.requestedVisibility === '') return rollData;
   const stamped = normalizePostedRollVisibility(opts);
   if (stamped._rollVisibility === ROLL_VISIBILITY_TABLE) return rollData;
@@ -208,5 +214,10 @@ function viewerMatchesIncludedPlayer(roll, viewer) {
   const includedEmail = normalizeViewerEmail(roll?._visibilityPlayerEmail);
   if (uid && includedUid && uid === String(includedUid)) return true;
   if (email && includedEmail && email === includedEmail) return true;
+  // Multi-assignee: check _visibilityPlayerEmails / _visibilityPlayerUids arrays
+  const extraEmails = Array.isArray(roll?._visibilityPlayerEmails) ? roll._visibilityPlayerEmails : [];
+  if (email && extraEmails.some((e) => normalizeViewerEmail(e) === email)) return true;
+  const extraUids = Array.isArray(roll?._visibilityPlayerUids) ? roll._visibilityPlayerUids : [];
+  if (uid && extraUids.some((u) => u != null && String(u) === uid)) return true;
   return false;
 }

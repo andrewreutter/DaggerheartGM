@@ -146,6 +146,7 @@ import {
   rangeBandConnectorColors,
 } from '../lib/map-range.js';
 import { computeTokenRenderPx } from '../lib/token-size.js';
+import { isCharacterAssignedToPlayer } from '../lib/character-assignment.js';
 import { collectDistinctAdversaryNames, tokenAbbrevForElement } from '../lib/token-abbrev.js';
 import { pickRandomPlaceOnMapSpot, pickRandomPlaceOnMapSpots, getTokenTrayDirection } from '../lib/place-token-on-map.js';
 import {
@@ -4897,7 +4898,7 @@ export function BattleMap({
 
   const isMyCharacter = useCallback((el) => {
     if (!user) return false;
-    return el.assignedPlayerUid === user.uid || el.assignedPlayerEmail === user.email;
+    return isCharacterAssignedToPlayer(el, { email: user.email, uid: user.uid });
   }, [user?.uid, user?.email]);
 
   const canDrag = useCallback(
