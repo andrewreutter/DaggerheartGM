@@ -21,11 +21,7 @@ export function CountdownRollReferencePanel({ kind, autoStandard, autoDynamic })
   return (
     <div className="space-y-4 text-dh">
       <div>
-        <h3 className="text-xs font-bold uppercase tracking-wide text-dh-muted">When automation runs</h3>
-        <p className="mt-1.5 text-[11px] leading-relaxed text-dh-muted">
-          Only <span className="font-semibold text-dh">PC action rolls</span> count: the roller is a character on the table,
-          not an action notification or rest roll, and the result includes Hope and Fear dice.
-        </p>
+        <h3 className="text-xs font-bold uppercase tracking-wide text-dh-muted">Auto-advancement on PC action rolls</h3>
       </div>
 
       <section

@@ -12,7 +12,12 @@ import { PartyLootCard, PartyLootSheet } from './PartyLootCard.jsx';
 import { AnchoredFloatingPanel } from './AnchoredFloatingPanel.jsx';
 import { ActionLog } from './ActionLog.jsx';
 import { parseAllCountdownValues, generateId, effectiveThresholds, effectiveEvasion, computeHpLoss, isAdversaryDefeated, getDifficultyLabel, parseBeastformBonus, isWingsOfLightFlying, extractGmFeatureWhenClause } from '../lib/helpers.js';
-import { findSessionCountdownBySource } from '../lib/session-countdowns.js';
+import {
+  buildCountdownStartRollText,
+  findSessionCountdownBySource,
+  isCountdownStartDice,
+  normalizeSessionCountdownEntry,
+} from '../lib/session-countdowns.js';
 import { SessionCountdownsPanel, buildTrackedSessionEntryFromFeature, buildLinkedPairFromFeatureCountdowns } from './SessionCountdownsPanel.jsx';
 import { FeatureDescription } from './FeatureDescription.jsx';
 import { EnvironmentCardContent, AdversaryCardContent, AdversaryCardAttackAndFeatures, CheckboxTrack } from './DetailCardContent.jsx';
@@ -577,30 +582,6 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     [tableId, playBlockedAllowAllEdits, sessionPlayAllowed, tableStateForGate]
   );
 
-  const trackSessionCountdownFromGmMove = useCallback(
-    (feature, cd, cdIdx) => {
-      if (findSessionCountdownBySource(sessionCountdowns, feature.cardKey, feature.featureKey, cdIdx)) return;
-      const entry = buildTrackedSessionEntryFromFeature({
-        feature,
-        cd,
-        cdIdx,
-        sourceName: feature.sourceName,
-      });
-      sendOp({ op: 'session-countdown-upsert', entry });
-    },
-    [sessionCountdowns, sendOp]
-  );
-
-  const trackLinkedPairFromGmMove = useCallback(
-    (feature, cds) => {
-      const entries = buildLinkedPairFromFeatureCountdowns({ feature, cds, sourceName: feature.sourceName });
-      for (const entry of entries) {
-        sendOp({ op: 'session-countdown-upsert', entry });
-      }
-    },
-    [sendOp]
-  );
-
   const updateActiveElement = useCallback((instanceId, updates) => {
     const el = activeElements.find((e) => e.instanceId === instanceId);
     if (!sessionPlayAllowed && isPrepModeElementUpdateBlocked(updates, el?.elementType)) {
@@ -655,6 +636,68 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
         : parseInt(rollData.subItems?.[0]?.result, 10) || 0;
     return { ...rollData, value };
   }, [postRoll]);
+
+  const elaborateCountdownEntry = useCallback(
+    async (entry) => {
+      if (!isCountdownStartDice(entry.startFormula)) return entry;
+      try {
+        const roll = await postRoll(
+          buildCountdownStartRollText(entry.startFormula),
+          `${entry.label || 'Countdown'} start`,
+          tableId,
+          { _suppressActionBanner: true },
+        );
+        const total = typeof roll.total === 'number' ? roll.total : 0;
+        return normalizeSessionCountdownEntry({
+          ...entry,
+          start: total,
+          current: total,
+          startPending: false,
+        });
+      } catch (err) {
+        handleRollTransportError(err, 'Countdown start roll failed:');
+        return entry;
+      }
+    },
+    [postRoll, tableId, handleRollTransportError]
+  );
+
+  const trackSessionCountdownFromGmMove = useCallback(
+    async (feature, cd, cdIdx) => {
+      if (findSessionCountdownBySource(sessionCountdowns, feature.cardKey, feature.featureKey, cdIdx)) return;
+      const entry = buildTrackedSessionEntryFromFeature({
+        feature,
+        cd,
+        cdIdx,
+        sourceName: feature.sourceName,
+      });
+      sendOp({ op: 'session-countdown-upsert', entry: await elaborateCountdownEntry(entry) });
+    },
+    [sessionCountdowns, sendOp, elaborateCountdownEntry]
+  );
+
+  const trackLinkedPairFromGmMove = useCallback(
+    async (feature, cds) => {
+      const entries = buildLinkedPairFromFeatureCountdowns({ feature, cds, sourceName: feature.sourceName });
+      for (const entry of entries) {
+        sendOp({ op: 'session-countdown-upsert', entry: await elaborateCountdownEntry(entry) });
+      }
+    },
+    [sendOp, elaborateCountdownEntry]
+  );
+
+  const rollCountdownStart = useCallback(
+    async (formula, displayName) => {
+      const roll = await postRoll(
+        buildCountdownStartRollText(formula),
+        displayName,
+        tableId,
+        { _suppressActionBanner: true },
+      );
+      return typeof roll.total === 'number' ? roll.total : 0;
+    },
+    [postRoll, tableId]
+  );
 
   // ── Hover overlay hooks (desktop: mouseenter/leave; touch: tap-to-toggle) ──
   const suppressCharacterOverlayOutsideDismissRef = useRef(false);
@@ -5911,9 +5954,14 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     const rowItem = consolidatedByCardKey.get(feature.cardKey);
     const allCds = parseAllCountdownValues(feature.description);
     const cdKey = `${feature.cardKey}|${feature.featureKey}`;
-    const cdVals = allCds.map((cd, cdIdx) =>
-      featureCountdowns[`${cdKey}|${cdIdx}`] ?? cd.value
-    );
+    const cdVals = allCds.map((cd, cdIdx) => {
+      const tracked = findSessionCountdownBySource(sessionCountdowns, feature.cardKey, feature.featureKey, cdIdx);
+      if (tracked?.startPending) return null;
+      if (tracked && !tracked.startPending) {
+        return featureCountdowns[`${cdKey}|${cdIdx}`] ?? tracked.current ?? cd.value;
+      }
+      return featureCountdowns[`${cdKey}|${cdIdx}`] ?? cd.value;
+    });
     const canRoll = !!(feature._rollData || feature._diceRoll);
     const justRolled = rolledKey === cdKey;
     return (
@@ -5959,24 +6007,32 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
           )}
           {allCds.length > 0 && (
             <div className="mt-1.5 flex flex-wrap items-center gap-2 border-t border-dh-strong pt-1.5" onClick={(e) => e.stopPropagation()}>
-              {allCds.map((cd, cdIdx) => (
+              {allCds.map((cd, cdIdx) => {
+                const pending = cdVals[cdIdx] == null;
+                const formula = cd.startFormula;
+                return (
                 <div key={cdIdx} className="flex items-center gap-1">
                   <span className="text-[10px] text-dh-muted">{allCds.length > 1 ? cd.label : 'Countdown'}</span>
                   <div className="inline-flex items-center gap-0.5">
                     <button
                       type="button"
-                      onClick={() => updateCountdown(feature.cardKey, feature.featureKey, cdIdx, Math.max(0, cdVals[cdIdx] - 1))}
-                      className="flex h-4 w-4 items-center justify-center rounded bg-dh-hover text-[10px] font-bold leading-none text-dh transition-colors hover:bg-red-800"
+                      disabled={pending}
+                      onClick={() => updateCountdown(feature.cardKey, feature.featureKey, cdIdx, Math.max(0, (cdVals[cdIdx] ?? 0) - 1))}
+                      className="flex h-4 w-4 items-center justify-center rounded bg-dh-hover text-[10px] font-bold leading-none text-dh transition-colors hover:bg-red-800 disabled:opacity-40"
                     >−</button>
-                    <span className="min-w-[1.25rem] text-center text-xs font-bold tabular-nums text-dh-hope">{cdVals[cdIdx]}</span>
+                    <span className="min-w-[1.25rem] text-center text-xs font-bold tabular-nums text-dh-hope">
+                      {pending ? formula : cdVals[cdIdx]}
+                    </span>
                     <button
                       type="button"
-                      onClick={() => updateCountdown(feature.cardKey, feature.featureKey, cdIdx, cdVals[cdIdx] + 1)}
-                      className="flex h-4 w-4 items-center justify-center rounded bg-dh-hover text-[10px] font-bold leading-none text-dh transition-colors hover:bg-green-800"
+                      disabled={pending}
+                      onClick={() => updateCountdown(feature.cardKey, feature.featureKey, cdIdx, (cdVals[cdIdx] ?? 0) + 1)}
+                      className="flex h-4 w-4 items-center justify-center rounded bg-dh-hover text-[10px] font-bold leading-none text-dh transition-colors hover:bg-green-800 disabled:opacity-40"
                     >+</button>
                   </div>
                 </div>
-              ))}
+                );
+              })}
               {!isPlayer && (
                 <div className="w-full flex flex-wrap items-center gap-1 mt-1">
                   {allCds.map((cd, cdIdx) => {
@@ -7493,6 +7549,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
             sessionCountdowns={sessionCountdowns}
             isGm
             onTableOp={sendOp}
+            onRollCountdown={rollCountdownStart}
             trackerOverlay={trackerOverlay}
           />
 

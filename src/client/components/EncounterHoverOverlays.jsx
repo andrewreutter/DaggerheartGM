@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { Edit, Eye, EyeOff, StickyNote, Trash2 } from 'lucide-react';
 import { EnvironmentCardContent, AdversaryCardContent } from './DetailCardContent.jsx';
 import { CountdownRollReferencePanel, COUNTDOWN_KIND_LABELS } from './CountdownRollReference.jsx';
+import { COUNTDOWN_LOOPING_LABELS, formatSessionCountdownValueLine } from '../lib/session-countdowns.js';
 import { MarkdownText } from '../lib/markdown.js';
 import { useHoverOverlay } from '../lib/useHoverOverlay.js';
 import { useTouchDevice } from '../lib/useTouchDevice.js';
@@ -299,7 +300,22 @@ export function EncounterTrackerOverlay({
           <dt className="text-dh-muted">Visibility</dt>
           <dd className="text-dh">{liveRow.visibility === 'gm' ? 'GM only' : 'Visible to players'}</dd>
           <dt className="text-dh-muted">Value</dt>
-          <dd className="tabular-nums text-dh">{liveRow.current ?? 0} / {liveRow.start ?? 0}</dd>
+          <dd className="tabular-nums text-dh">{formatSessionCountdownValueLine(liveRow)}</dd>
+          {liveRow.looping && liveRow.looping !== 'none' ? (
+            <>
+              <dt className="text-dh-muted">Looping</dt>
+              <dd className="text-dh">{COUNTDOWN_LOOPING_LABELS[liveRow.looping] || liveRow.looping}</dd>
+            </>
+          ) : null}
+          {liveRow.startFormula ? (
+            <>
+              <dt className="text-dh-muted">Formula</dt>
+              <dd className="tabular-nums text-dh">
+                {liveRow.startFormula}
+                {liveRow.startPending ? ' (pending)' : ''}
+              </dd>
+            </>
+          ) : null}
           <dt className="text-dh-muted">Automation</dt>
           <dd className="text-dh">{autoLabel}</dd>
           {liveRow.sourceRef ? (

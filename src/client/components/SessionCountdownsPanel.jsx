@@ -1,7 +1,15 @@
-import { Timer, Plus, Pencil, Eye, EyeOff } from 'lucide-react';
+import { Timer, Plus, Pencil, Eye, EyeOff, Repeat } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { generateId } from '../lib/helpers.js';
-import { deriveKindFromCountdownLabel, normalizeSessionCountdownEntry } from '../lib/session-countdowns.js';
+import {
+  applyCountdownLoop,
+  countdownCanLoop,
+  countdownFieldsFromParsedCd,
+  COUNTDOWN_LOOPING_LABELS,
+  deriveKindFromCountdownLabel,
+  isCountdownStartDice,
+  normalizeSessionCountdownEntry,
+} from '../lib/session-countdowns.js';
 import { SessionCountdownEditorModal } from './modals/SessionCountdownEditorModal.jsx';
 
 /**
@@ -12,7 +20,17 @@ import { SessionCountdownEditorModal } from './modals/SessionCountdownEditorModa
  * @param {(row: object) => void} props.onEdit
  * @param {string} props.className
  */
-function SessionCountdownCard({ row, isGm, patch, onEdit, className, trackerOverlay }) {
+function SessionCountdownCard({
+  row,
+  isGm,
+  patch,
+  onEdit,
+  className,
+  trackerOverlay,
+  onRollStart,
+  onLoop,
+  rolling,
+}) {
   const title = [row.label?.trim() ? row.label : 'Countdown', row.sourceRef ? 'Linked to feature' : '']
     .filter(Boolean)
     .join(' — ');
@@ -55,7 +73,20 @@ function SessionCountdownCard({ row, isGm, patch, onEdit, className, trackerOver
         </div>
         <div className="flex items-center justify-between gap-2">
           <div className="inline-flex min-w-0 items-center gap-0.5">
-            {isGm ? (
+            {row.looping && row.looping !== 'none' ? (
+              <span
+                className="mr-0.5 text-dh-muted"
+                title={COUNTDOWN_LOOPING_LABELS[row.looping] || 'Loop'}
+                aria-label={COUNTDOWN_LOOPING_LABELS[row.looping] || 'Loop'}
+              >
+                <Repeat size={11} />
+              </span>
+            ) : null}
+            {row.startPending && row.startFormula ? (
+              <span className="min-w-[2rem] text-center text-sm font-bold tabular-nums text-dh-hope">
+                {row.startFormula}
+              </span>
+            ) : isGm ? (
               <>
                 <button
                   type="button"
@@ -84,21 +115,53 @@ function SessionCountdownCard({ row, isGm, patch, onEdit, className, trackerOver
             ) : (
               <span className="text-sm font-bold tabular-nums text-dh-hope">{row.current ?? 0}</span>
             )}
-            <span className="text-[10px] text-dh-muted whitespace-nowrap">/ {row.start ?? 0}</span>
+            {!(row.startPending && row.startFormula) ? (
+              <span className="text-[10px] text-dh-muted whitespace-nowrap">/ {row.start ?? 0}</span>
+            ) : null}
           </div>
           {isGm && (
-            <button
-              type="button"
-              title="Edit countdown"
-              onClick={(e) => {
-                e.stopPropagation();
-                onEdit(row);
-              }}
-              className="shrink-0 rounded p-1 text-dh-muted hover:text-dh hover:bg-dh-hover"
-              aria-label="Edit countdown"
-            >
-              <Pencil size={14} />
-            </button>
+            <div className="flex shrink-0 items-center gap-0.5">
+              {row.startPending && row.startFormula && onRollStart ? (
+                <button
+                  type="button"
+                  disabled={rolling}
+                  title="Roll starting value"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onRollStart(row);
+                  }}
+                  className="rounded px-1 py-0.5 text-[10px] font-semibold text-dh-hope hover:bg-dh-hover disabled:opacity-50"
+                >
+                  Roll start
+                </button>
+              ) : null}
+              {row.looping && row.looping !== 'none' ? (
+                <button
+                  type="button"
+                  disabled={rolling || !countdownCanLoop(row)}
+                  title={countdownCanLoop(row) ? 'Loop — restore start value' : 'Loop when the clock is at 0'}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onLoop?.(row);
+                  }}
+                  className="rounded px-1 py-0.5 text-[10px] font-semibold text-dh-muted hover:text-dh hover:bg-dh-hover disabled:opacity-40"
+                >
+                  Loop
+                </button>
+              ) : null}
+              <button
+                type="button"
+                title="Edit countdown"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onEdit(row);
+                }}
+                className="rounded p-1 text-dh-muted hover:text-dh hover:bg-dh-hover"
+                aria-label="Edit countdown"
+              >
+                <Pencil size={14} />
+              </button>
+            </div>
           )}
         </div>
       </div>
@@ -122,9 +185,11 @@ export function SessionCountdownsPanel({
   variant = 'panel',
   sectionTitle = 'Countdowns',
   trackerOverlay,
+  onRollCountdown,
 }) {
   const [open, setOpen] = useState(true);
   const [editorRow, setEditorRow] = useState(null);
+  const [rollingId, setRollingId] = useState(null);
   const rows = useMemo(() => (Array.isArray(sessionCountdowns) ? sessionCountdowns : []), [sessionCountdowns]);
 
   const editorTarget = useMemo(() => {
@@ -157,6 +222,49 @@ export function SessionCountdownsPanel({
     onTableOp?.({ op: 'session-countdown-remove', id });
   };
 
+  const handleRollStart = async (row) => {
+    if (!row?.id || !isCountdownStartDice(row.startFormula) || !onRollCountdown) return;
+    setRollingId(row.id);
+    try {
+      const total = await onRollCountdown(row.startFormula, `${row.label || 'Countdown'} start`);
+      patch(row.id, { start: total, current: total, startPending: false });
+    } finally {
+      setRollingId(null);
+    }
+  };
+
+  const handleLoop = async (row) => {
+    if (!row?.id || !countdownCanLoop(row)) return;
+    let startFormulaTotal;
+    if (isCountdownStartDice(row.startFormula) && onRollCountdown) {
+      setRollingId(row.id);
+      try {
+        startFormulaTotal = await onRollCountdown(row.startFormula, `${row.label || 'Countdown'} loop`);
+      } catch {
+        setRollingId(null);
+        return;
+      }
+      setRollingId(null);
+    }
+    const next = applyCountdownLoop({
+      start: row.start,
+      startFormulaTotal,
+      looping: row.looping,
+    });
+    patch(row.id, { ...next, startPending: false });
+  };
+
+  const cardProps = (row) => ({
+    row,
+    isGm,
+    patch,
+    onEdit: setEditorRow,
+    trackerOverlay,
+    onRollStart: onRollCountdown ? handleRollStart : undefined,
+    onLoop: handleLoop,
+    rolling: rollingId === row.id,
+  });
+
   if (!isGm && rows.length === 0) return null;
 
   if (variant === 'section') {
@@ -187,11 +295,7 @@ export function SessionCountdownsPanel({
             {rows.map((row) => (
               <SessionCountdownCard
                 key={row.id}
-                row={row}
-                isGm={isGm}
-                patch={patch}
-                onEdit={setEditorRow}
-                trackerOverlay={trackerOverlay}
+                {...cardProps(row)}
                 className="rounded-lg border border-dh-strong bg-dh-surface px-2.5 py-2"
               />
             ))}
@@ -204,6 +308,7 @@ export function SessionCountdownsPanel({
             onClose={() => setEditorRow(null)}
             onApplyPatch={(partial) => editorTarget && patch(editorTarget.id, partial)}
             onRemove={() => editorTarget && remove(editorTarget.id)}
+            onRollStart={onRollCountdown}
           />
         )}
       </>
@@ -234,11 +339,7 @@ export function SessionCountdownsPanel({
             {rows.map((row) => (
               <SessionCountdownCard
                 key={row.id}
-                row={row}
-                isGm={isGm}
-                patch={patch}
-                onEdit={setEditorRow}
-                trackerOverlay={trackerOverlay}
+                {...cardProps(row)}
                 className="rounded border border-dh-border bg-dh-raised/40 px-2 py-1.5"
               />
             ))}
@@ -261,6 +362,7 @@ export function SessionCountdownsPanel({
           onClose={() => setEditorRow(null)}
           onApplyPatch={(partial) => editorTarget && patch(editorTarget.id, partial)}
           onRemove={() => editorTarget && remove(editorTarget.id)}
+          onRollStart={onRollCountdown}
         />
       )}
     </>
@@ -275,8 +377,7 @@ export function buildTrackedSessionEntryFromFeature({ feature, cd, cdIdx, source
     id,
     label,
     kind,
-    start: cd.value,
-    current: cd.value,
+    ...countdownFieldsFromParsedCd(cd),
     visibility: 'players',
     sourceRef: {
       cardKey: feature.cardKey,
@@ -300,8 +401,7 @@ export function buildLinkedPairFromFeatureCountdowns({ feature, cds, sourceName,
         id: generateId(),
         label: `${(sourceName || '').trim()} ${(feature?.name || '').trim()} (${cd.label || `slot ${i + 1}`})`.slice(0, 120),
         kind,
-        start: cd.value,
-        current: cd.value,
+        ...countdownFieldsFromParsedCd(cd),
         visibility: 'players',
         linkedGroupId: gid,
         sourceRef: {

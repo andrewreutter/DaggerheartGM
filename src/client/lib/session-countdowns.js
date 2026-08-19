@@ -4,9 +4,101 @@
  */
 
 import { redactHiddenAdversariesForAudience } from './adversary-player-visibility.js';
+import { parseDiceExpr } from './dice-utils.js';
 
 /** @typedef {'standard' | 'progress' | 'consequence'} SessionCountdownKind */
 /** @typedef {'gm' | 'players'} SessionCountdownVisibility */
+/** @typedef {'none' | 'reset' | 'increasing' | 'decreasing'} SessionCountdownLooping */
+
+export const COUNTDOWN_LOOPING_MODES = /** @type {const} */ (['none', 'reset', 'increasing', 'decreasing']);
+
+export const COUNTDOWN_LOOPING_LABELS = {
+  none: 'None',
+  reset: 'Reset',
+  increasing: 'Increasing',
+  decreasing: 'Decreasing',
+};
+
+/** True when `formula` is dice notation (`1d4`, `2d6+1`), not a bare integer. */
+export function isCountdownStartDice(formula) {
+  return parseDiceExpr(formula) != null;
+}
+
+/** @param {string | null | undefined} formula */
+export function parseCountdownStartNumber(formula) {
+  if (formula == null || isCountdownStartDice(formula)) return null;
+  const n = parseInt(String(formula).trim(), 10);
+  return Number.isFinite(n) && n >= 0 && String(n) === String(formula).trim() ? n : null;
+}
+
+/** Bracket roll text for `postRoll` (same shape as rest ` [1d4]`). */
+export function buildCountdownStartRollText(formula) {
+  return ` [${String(formula || '').trim()}]`;
+}
+
+/**
+ * Fields copied onto a new session row from {@link parseAllCountdownValues} output.
+ * Dice formulas stay pending (start/current 0) until elaborated on a live table.
+ * @param {{ value?: number | null, looping?: string, startFormula?: string }} cd
+ */
+export function countdownFieldsFromParsedCd(cd) {
+  const startFormula = cd?.startFormula != null
+    ? String(cd.startFormula).trim()
+    : (cd?.value != null ? String(cd.value) : '');
+  const looping = COUNTDOWN_LOOPING_MODES.includes(cd?.looping) ? cd.looping : 'none';
+  const dice = isCountdownStartDice(startFormula);
+  const n = dice ? 0 : (cd?.value ?? parseCountdownStartNumber(startFormula) ?? 0);
+  return {
+    looping,
+    startFormula: startFormula || undefined,
+    startPending: dice,
+    start: n,
+    current: n,
+  };
+}
+
+/**
+ * After the effect triggers (`current === 0`), Loop restores start (optionally from a re-roll) then applies ±1.
+ * @param {{ start: number, startFormulaTotal?: number, looping: SessionCountdownLooping }} args
+ * @returns {{ start: number, current: number }}
+ */
+export function applyCountdownLoop({ start, startFormulaTotal, looping }) {
+  const prevStart = Math.max(0, Number(start) || 0);
+  const base = startFormulaTotal != null ? Math.max(0, Number(startFormulaTotal) || 0) : prevStart;
+  let nextStart = base;
+  if (looping === 'increasing') nextStart = base + 1;
+  else if (looping === 'decreasing') nextStart = Math.max(0, base - 1);
+  return { start: nextStart, current: nextStart };
+}
+
+/** Loop is a GM click after the clock hits 0 — never auto-fired by roll ticks. */
+export function countdownCanLoop(row) {
+  if (!row) return false;
+  const looping = COUNTDOWN_LOOPING_MODES.includes(row.looping) ? row.looping : 'none';
+  if (looping === 'none') return false;
+  if (row.startPending) return false;
+  if ((row.current ?? 0) !== 0) return false;
+  if (looping === 'decreasing' && (row.start ?? 0) === 0) return false;
+  return true;
+}
+
+/** Pending dice clocks show the formula (`1d4`) instead of `0 / 0`. */
+export function formatSessionCountdownValueLine(row) {
+  if (row?.startPending && row.startFormula) return String(row.startFormula);
+  return `${row?.current ?? 0} / ${row?.start ?? 0}`;
+}
+
+/**
+ * Editor shows a separate numeric start only when it is not the typed formula:
+ * dice after a roll, or a vanilla number that increasing/decreasing has moved.
+ */
+export function countdownShowsElaboratedStart({ startFormula, start, startPending }) {
+  const formula = String(startFormula || '').trim();
+  if (isCountdownStartDice(formula)) return !startPending;
+  const n = parseCountdownStartNumber(formula);
+  if (n == null) return false;
+  return Math.max(0, Number(start) || 0) !== n;
+}
 
 /** @param {string} cardKey @param {string} featureKey @param {number} cdIdx */
 export function buildLegacyFeatureCountdownKey(cardKey, featureKey, cdIdx) {
@@ -262,7 +354,19 @@ const DEFAULT_ENTRY = {
   start: 0,
   autoStandard: false,
   autoDynamic: false,
+  looping: 'none',
+  startPending: false,
 };
+
+function normalizeLooping(value) {
+  return COUNTDOWN_LOOPING_MODES.includes(value) ? value : 'none';
+}
+
+function normalizeStartFormula(value) {
+  if (value == null) return undefined;
+  const s = String(value).trim().slice(0, 40);
+  return s || undefined;
+}
 
 /**
  * @param {object} raw
@@ -272,6 +376,8 @@ export function normalizeSessionCountdownEntry(raw) {
   if (!raw || typeof raw !== 'object') return { ...DEFAULT_ENTRY, id: '', label: '' };
   const src = raw.sourceRef && typeof raw.sourceRef === 'object' ? { ...raw.sourceRef } : undefined;
   const flags = raw.flags && typeof raw.flags === 'object' ? { ...raw.flags } : undefined;
+  const startFormula = normalizeStartFormula(raw.startFormula);
+  const dice = !!(startFormula && isCountdownStartDice(startFormula));
   return {
     ...DEFAULT_ENTRY,
     ...raw,
@@ -283,6 +389,9 @@ export function normalizeSessionCountdownEntry(raw) {
     start: Math.max(0, Number(raw.start) || 0),
     autoStandard: !!raw.autoStandard,
     autoDynamic: !!raw.autoDynamic,
+    looping: normalizeLooping(raw.looping),
+    startFormula,
+    startPending: dice ? !!raw.startPending : false,
     sourceRef: src,
     linkedGroupId: raw.linkedGroupId != null ? String(raw.linkedGroupId).slice(0, 120) : undefined,
     flags,

@@ -12,7 +12,15 @@ import {
   getSessionCountdownDynamicChartRows,
   computeSessionCountdownUpdatesFromRoll,
   rollIsPcActionRoll,
+  normalizeSessionCountdownEntry,
+  isCountdownStartDice,
+  applyCountdownLoop,
+  countdownCanLoop,
+  countdownFieldsFromParsedCd,
+  formatSessionCountdownValueLine,
+  countdownShowsElaboratedStart,
 } from '../../src/client/lib/session-countdowns.js';
+import { parseAllCountdownValues } from '../../src/client/lib/helpers.js';
 
 describe('redactSessionCountdownsForAudience', () => {
   it('returns state unchanged for gm audience', () => {
@@ -270,5 +278,147 @@ describe('computeSessionCountdownUpdatesFromRoll', () => {
     const list = [{ id: 'p1', kind: 'progress', autoDynamic: true, current: 5 }];
     const out = computeSessionCountdownUpdatesFromRoll(list, roll, els);
     expect(out).toBeNull();
+  });
+
+  it('does not auto-loop when a tick reaches 0 — only current changes', () => {
+    const list = [
+      { id: 's1', kind: 'standard', autoStandard: true, current: 1, start: 4, looping: 'reset' },
+    ];
+    const out = computeSessionCountdownUpdatesFromRoll(list, baseRoll, els);
+    expect(out.updates).toEqual([{ id: 's1', current: 0 }]);
+    expect(out.updates[0].start).toBeUndefined();
+    expect(out.updates[0].looping).toBeUndefined();
+  });
+});
+
+describe('normalizeSessionCountdownEntry looping + formula', () => {
+  it('defaults looping to none and startPending to false', () => {
+    const row = normalizeSessionCountdownEntry({ id: 'a', label: 'Clock', start: 4, current: 3 });
+    expect(row.looping).toBe('none');
+    expect(row.startPending).toBe(false);
+    expect(row.startFormula).toBeUndefined();
+  });
+
+  it('keeps startFormula and startPending for dice until elaborated', () => {
+    const row = normalizeSessionCountdownEntry({
+      id: 'a',
+      startFormula: '1d4',
+      startPending: true,
+      looping: 'reset',
+    });
+    expect(row.startFormula).toBe('1d4');
+    expect(row.startPending).toBe(true);
+    expect(row.looping).toBe('reset');
+    expect(row.start).toBe(0);
+    expect(row.current).toBe(0);
+  });
+
+  it('clears startPending when formula is not dice', () => {
+    const row = normalizeSessionCountdownEntry({
+      id: 'a',
+      startFormula: '8',
+      startPending: true,
+    });
+    expect(row.startPending).toBe(false);
+    expect(row.startFormula).toBe('8');
+  });
+});
+
+describe('isCountdownStartDice', () => {
+  it('detects dice vs integer formulas', () => {
+    expect(isCountdownStartDice('1d4')).toBe(true);
+    expect(isCountdownStartDice('2d6+1')).toBe(true);
+    expect(isCountdownStartDice('4')).toBe(false);
+    expect(isCountdownStartDice('8')).toBe(false);
+    expect(isCountdownStartDice('')).toBe(false);
+  });
+});
+
+describe('applyCountdownLoop', () => {
+  it('reset restores start to current', () => {
+    expect(applyCountdownLoop({ start: 6, looping: 'reset' })).toEqual({ start: 6, current: 6 });
+  });
+
+  it('increasing adds 1 to start', () => {
+    expect(applyCountdownLoop({ start: 4, looping: 'increasing' })).toEqual({ start: 5, current: 5 });
+  });
+
+  it('decreasing subtracts 1 with floor 0', () => {
+    expect(applyCountdownLoop({ start: 1, looping: 'decreasing' })).toEqual({ start: 0, current: 0 });
+    expect(applyCountdownLoop({ start: 0, looping: 'decreasing' })).toEqual({ start: 0, current: 0 });
+  });
+
+  it('re-roll total is the new base, then increasing/decreasing apply', () => {
+    expect(applyCountdownLoop({ start: 4, startFormulaTotal: 2, looping: 'reset' })).toEqual({
+      start: 2,
+      current: 2,
+    });
+    expect(applyCountdownLoop({ start: 4, startFormulaTotal: 3, looping: 'increasing' })).toEqual({
+      start: 4,
+      current: 4,
+    });
+    expect(applyCountdownLoop({ start: 4, startFormulaTotal: 1, looping: 'decreasing' })).toEqual({
+      start: 0,
+      current: 0,
+    });
+  });
+});
+
+describe('countdownCanLoop', () => {
+  it('requires looping mode, current 0, and not pending', () => {
+    expect(countdownCanLoop({ looping: 'reset', current: 0, start: 4, startPending: false })).toBe(true);
+    expect(countdownCanLoop({ looping: 'none', current: 0, start: 4 })).toBe(false);
+    expect(countdownCanLoop({ looping: 'reset', current: 2, start: 4 })).toBe(false);
+    expect(countdownCanLoop({ looping: 'reset', current: 0, start: 4, startPending: true })).toBe(false);
+  });
+
+  it('disables decreasing when start is already 0', () => {
+    expect(countdownCanLoop({ looping: 'decreasing', current: 0, start: 0 })).toBe(false);
+    expect(countdownCanLoop({ looping: 'decreasing', current: 0, start: 1 })).toBe(true);
+  });
+});
+
+describe('countdownShowsElaboratedStart', () => {
+  it('hides numeric start when it matches a vanilla formula', () => {
+    expect(countdownShowsElaboratedStart({ startFormula: '8', start: 8, startPending: false })).toBe(false);
+  });
+
+  it('shows numeric start after a dice roll, not while pending', () => {
+    expect(countdownShowsElaboratedStart({ startFormula: '1d4', start: 0, startPending: true })).toBe(false);
+    expect(countdownShowsElaboratedStart({ startFormula: '1d4', start: 3, startPending: false })).toBe(true);
+  });
+
+  it('shows numeric start when increasing/decreasing moved it off the typed number', () => {
+    expect(countdownShowsElaboratedStart({ startFormula: '4', start: 5, startPending: false })).toBe(true);
+  });
+});
+
+describe('formatSessionCountdownValueLine', () => {
+  it('shows formula while pending', () => {
+    expect(formatSessionCountdownValueLine({ startPending: true, startFormula: '1d4', current: 0, start: 0 })).toBe('1d4');
+    expect(formatSessionCountdownValueLine({ startPending: false, start: 6, current: 4 })).toBe('4 / 6');
+  });
+});
+
+describe('countdownFieldsFromParsedCd', () => {
+  it('copies looping and startFormula; dice stays pending', () => {
+    const parsed = parseAllCountdownValues('Countdown (Loop 1d4)')[0];
+    expect(countdownFieldsFromParsedCd(parsed)).toEqual({
+      looping: 'reset',
+      startFormula: '1d4',
+      startPending: true,
+      start: 0,
+      current: 0,
+    });
+  });
+
+  it('sets numeric start for Countdown (8)', () => {
+    expect(countdownFieldsFromParsedCd(parseAllCountdownValues('Fear Countdown (8)')[0])).toEqual({
+      looping: 'none',
+      startFormula: '8',
+      startPending: false,
+      start: 8,
+      current: 8,
+    });
   });
 });

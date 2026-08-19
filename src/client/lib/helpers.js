@@ -8,24 +8,32 @@ export { generateId } from './generate-id.js';
 
 // Returns the initial countdown value from feature description text like "Fear Countdown (8)", or null if none.
 export const parseCountdownValue = (text) => {
-  if (!text) return null;
-  const match = text.match(/\bCountdown\s*\((\d+)\)/i);
-  return match ? parseInt(match[1], 10) : null;
+  const all = parseAllCountdownValues(text);
+  if (!all.length) return null;
+  return all[0].value;
 };
 
-// Returns all countdown occurrences in text: array of { value, label, index, length }.
-// label is the word immediately before "Countdown" (e.g. "Progress"), or "Countdown" if none.
+/**
+ * All countdown occurrences in text: `{ value, label, index, length, looping, startFormula }`.
+ * label is the word immediately before "Countdown" (e.g. "Progress"), or "Countdown" if none.
+ * `Countdown (Loop 1d4)` → looping `'reset'`, startFormula `'1d4'`, value `null`.
+ * Deterministic `(8)` / `(Loop 4)` set `value` to that integer.
+ */
 export const parseAllCountdownValues = (text) => {
   if (!text) return [];
-  const re = /(?:(\w+)\s+)?Countdown\s*\((\d+)\)/gi;
+  const re = /(?:(\w+)\s+)?Countdown\s*\(\s*(?:(Loop)\s+)?((?:\d*d\d+(?:[+-]\d+)?)|\d+)\s*\)/gi;
   const results = [];
   let m;
   while ((m = re.exec(text)) !== null) {
+    const startFormula = m[3];
+    const numeric = /^\d+$/.test(startFormula) ? parseInt(startFormula, 10) : null;
     results.push({
-      value: parseInt(m[2], 10),
+      value: numeric,
       label: m[1] ? `${m[1]} Countdown` : 'Countdown',
       index: m.index,
       length: m[0].length,
+      looping: m[2] ? 'reset' : 'none',
+      startFormula,
     });
   }
   return results;

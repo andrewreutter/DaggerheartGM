@@ -9,6 +9,7 @@ import {
   extractGmFeatureWhenClause,
   dedupeAbilitiesById,
   formatTargetSummary,
+  parseAllCountdownValues,
 } from '../../src/client/lib/helpers.js';
 
 describe('isAdversaryDefeated', () => {
@@ -179,6 +180,32 @@ describe('dedupeAbilitiesById', () => {
 
   it('skips entries without id', () => {
     expect(dedupeAbilitiesById([{ name: 'No id' }, { id: 'z', name: 'Z' }])).toEqual([{ id: 'z', name: 'Z' }]);
+  });
+});
+
+describe('parseAllCountdownValues', () => {
+  it('parses integer, Loop integer, Loop dice, and bare dice', () => {
+    expect(parseAllCountdownValues('Countdown (8)')).toMatchObject([
+      { value: 8, label: 'Countdown', looping: 'none', startFormula: '8' },
+    ]);
+    expect(parseAllCountdownValues('Progress Countdown (4)')).toMatchObject([
+      { value: 4, label: 'Progress Countdown', looping: 'none', startFormula: '4' },
+    ]);
+    expect(parseAllCountdownValues('Countdown (Loop 4)')).toMatchObject([
+      { value: 4, label: 'Countdown', looping: 'reset', startFormula: '4' },
+    ]);
+    expect(parseAllCountdownValues('Countdown (Loop 1d4)')).toMatchObject([
+      { value: null, label: 'Countdown', looping: 'reset', startFormula: '1d4' },
+    ]);
+    expect(parseAllCountdownValues('Countdown (1d6)')).toMatchObject([
+      { value: null, label: 'Countdown', looping: 'none', startFormula: '1d6' },
+    ]);
+  });
+
+  it('keeps the word before Countdown as the label', () => {
+    expect(parseAllCountdownValues('Fear Countdown (Loop 2d6+1)')).toMatchObject([
+      { value: null, label: 'Fear Countdown', looping: 'reset', startFormula: '2d6+1' },
+    ]);
   });
 });
 

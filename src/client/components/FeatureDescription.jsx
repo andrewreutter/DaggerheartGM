@@ -3,7 +3,7 @@
  *  1. Markdown rendering (bold, italic, lists, etc.)
  *  2. GM trigger patterns (spend…fear, mark…fear, mark…stress) and dice patterns (XdY+Z) bolded.
  *  3. Trailing questions moved to a new line and italicized.
- *  4. Optional inline countdown widgets placed right after each "Countdown (N)" occurrence.
+ *  4. Optional inline countdown widgets placed right after each "Countdown (N)" / "Countdown (Loop 1d4)" occurrence.
  *
  * For the common (no-countdown) case, description is rendered as markdown HTML with
  * trigger/dice bolding and question italicizing applied as post-processing steps.
@@ -123,17 +123,22 @@ function applyBolding(text) {
 // Countdown counter widget
 // ---------------------------------------------------------------------------
 
-export function CountdownCounter({ value, onChange }) {
+export function CountdownCounter({ value, formula, onChange }) {
+  const pending = value == null && formula;
   return (
     <span className="inline-flex items-center gap-1 mx-1 align-middle" onClick={e => e.stopPropagation()}>
       <button
-        onClick={() => onChange(Math.max(0, value - 1))}
-        className="w-5 h-5 rounded bg-dh-hover hover:bg-red-800 text-dh flex items-center justify-center text-xs font-bold transition-colors leading-none"
+        type="button"
+        disabled={!!pending}
+        onClick={() => onChange(Math.max(0, (value ?? 0) - 1))}
+        className="w-5 h-5 rounded bg-dh-hover hover:bg-red-800 text-dh flex items-center justify-center text-xs font-bold transition-colors leading-none disabled:opacity-40"
       >−</button>
-      <span className="min-w-[1.5rem] text-center font-bold text-dh text-sm tabular-nums">{value}</span>
+      <span className="min-w-[1.5rem] text-center font-bold text-dh text-sm tabular-nums">{pending ? formula : value}</span>
       <button
-        onClick={() => onChange(value + 1)}
-        className="w-5 h-5 rounded bg-dh-hover hover:bg-green-800 text-dh flex items-center justify-center text-xs font-bold transition-colors leading-none"
+        type="button"
+        disabled={!!pending}
+        onClick={() => onChange((value ?? 0) + 1)}
+        className="w-5 h-5 rounded bg-dh-hover hover:bg-green-800 text-dh flex items-center justify-center text-xs font-bold transition-colors leading-none disabled:opacity-40"
       >+</button>
     </span>
   );
@@ -149,7 +154,8 @@ export function CountdownCounter({ value, onChange }) {
  * Props:
  *   description       – the raw description text (plain text or markdown)
  *   countdownValues   – optional number[]; when provided, a CountdownCounter is rendered
- *                       inline immediately after each "Countdown (N)" match in the text.
+ *                       inline immediately after each countdown match in the text.
+ *                       Use `null` for an unelaborated dice formula so the widget shows `startFormula`.
  *                       Index i corresponds to the i-th Countdown occurrence in order.
  *   onCountdownChange – optional (cdIdx, newValue) => void; required when countdownValues
  *                       is provided. If null, no countdown widgets are rendered.
@@ -196,6 +202,7 @@ export function FeatureDescription({ description: rawDescription, countdownValue
             <CountdownCounter
               key={seg.key}
               value={countdownValues[seg.cdIdx]}
+              formula={allCds[seg.cdIdx]?.startFormula}
               onChange={v => onCountdownChange(seg.cdIdx, v)}
             />
           );
