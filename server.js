@@ -62,8 +62,10 @@ import {
 } from './src/client/lib/group-roll.js';
 import {
   applyTagTeamAction,
+  applyTagTeamInitiatorResult,
   applyTagTeamPartnerResult,
   combineTagTeamDamage,
+  tagTeamSessionComplete,
   validateTagTeamRequest,
 } from './src/client/lib/tag-team.js';
 import { sessionNeedsDifficulty } from './src/client/lib/action-roll-difficulty.js';
@@ -73,7 +75,7 @@ import { computePlayerV2CrossSheetChipApply } from './src/server/v2-player-cross
 import { computePlayerV2OwnedCardChipApply } from './src/server/v2-player-owned-card-chip.js';
 import { computePlayerV2ReviewChipApply, loadSrdDataForV2Engine } from './src/server/v2-player-review-chip.js';
 import { applyBannerReviewMetaPersist } from './src/server/v2-banner-review-meta.js';
-import { collectBannerIdsByIntentField, collectReactionCallChildBannerIds } from './src/client/lib/owned-roll-banner.js';
+import { collectBannerIdsByIntentField, collectReactionCallChildBannerIds, readKeepTagTeamBannersFlag } from './src/client/lib/owned-roll-banner.js';
 import { setLivePendingIntentsGetter, sweepOrphanedOwnedBanners } from './src/server/owned-banner-sweep.js';
 import { buildCharacterAiFromConcept } from './src/llm-character-builder.js';
 import { buildAdversaryAiFromConcept } from './src/llm-adversary-builder.js';
@@ -1284,22 +1286,61 @@ function stampGroupRollResultOnIntent(tableId, rollData) {
   broadcastIntentToRoom(tableId, updated);
 }
 
-/** Stamp a Tag Team partner Duality onto the initiator's pending intent after the roll persists. */
-function stampTagTeamPartnerResultOnIntent(tableId, rollData) {
+/** Stamp a Tag Team Duality onto the pending session. Either side may roll first; clear when both have. */
+function stampTagTeamResultOnIntent(tableId, rollData) {
   const intentId = rollData?._tagTeamIntentId;
-  if (!tableId || intentId == null || intentId === '') return;
-  if (rollData._tagTeamRole !== 'partner') return;
-  const existing = pendingIntents.get(tableId);
-  if (!existing || existing.intentId !== intentId) return;
-  const instanceId = rollData._attackerInstanceId;
-  if (!instanceId) return;
-  const updated = applyTagTeamPartnerResult(existing, {
-    instanceId,
-    total: Number(rollData.total) || 0,
-    success: rollData.isSuccess === true,
-    critical: rollData.dominant === 'critical',
-    rollDbId: rollData._rollDbId,
-  });
+  const existing = tableId ? pendingIntents.get(tableId) : null;
+  let skip = null;
+  if (!tableId || intentId == null || intentId === '') skip = 'no-table-or-intent';
+  else if (!existing) skip = 'no-intent-for-table';
+  else if (existing.intentId !== intentId) skip = 'intent-mismatch';
+  else if (rollData._tagTeamRole === 'partner' && !rollData._attackerInstanceId) skip = 'partner-no-attacker';
+  else if (rollData._tagTeamRole !== 'partner' && rollData._tagTeamRole !== 'initiator') skip = `bad-role:${rollData._tagTeamRole ?? 'none'}`;
+  // #region agent log
+  fetch('http://127.0.0.1:7803/ingest/b8b9e013-5af1-438e-8ea4-5198e805186a', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': 'fd8dd5' },
+    body: JSON.stringify({
+      sessionId: 'fd8dd5',
+      hypothesisId: 'H-B',
+      location: 'server.js:stampTagTeamResultOnIntent',
+      message: 'stamp tag team result',
+      data: {
+        tableId: tableId ?? null,
+        intentId: intentId ?? null,
+        role: rollData?._tagTeamRole ?? null,
+        rollDbId: rollData?._rollDbId ?? null,
+        attacker: rollData?._attackerInstanceId ?? null,
+        skip,
+        existingIntentId: existing?.intentId ?? null,
+        existingTagTeam: !!existing?._tagTeam,
+        initiatorRolled: existing?.tagTeamInitiatorRolled === true,
+        partnerStatus: existing?.tagTeamPartner?.status ?? null,
+        pendingTableIds: [...pendingIntents.keys()],
+      },
+      timestamp: Date.now(),
+    }),
+  }).catch(() => {});
+  // #endregion
+  if (skip) return;
+  let updated = existing;
+  if (rollData._tagTeamRole === 'partner') {
+    const instanceId = rollData._attackerInstanceId;
+    updated = applyTagTeamPartnerResult(existing, {
+      instanceId,
+      total: Number(rollData.total) || 0,
+      success: rollData.isSuccess === true,
+      critical: rollData.dominant === 'critical',
+      rollDbId: rollData._rollDbId,
+    });
+  } else {
+    updated = applyTagTeamInitiatorResult(existing, { rollDbId: rollData._rollDbId });
+  }
+  if (tagTeamSessionComplete(updated)) {
+    pendingIntents.delete(tableId);
+    broadcastIntentToRoom(tableId, null);
+    return;
+  }
   pendingIntents.set(tableId, updated);
   broadcastIntentToRoom(tableId, updated);
 }
@@ -3878,7 +3919,7 @@ app.post('/api/room/my/roll', requireAuth, async (req, res) => {
       if (!(await assertGmTableSessionActive(tid, req.uid, res, { bypassPrepGate: bypassPrepGate === true }))) return;
       await appendRollLog(req.uid, rollData);
       stampGroupRollResultOnIntent(tid, rollData);
-      stampTagTeamPartnerResultOnIntent(tid, rollData);
+      stampTagTeamResultOnIntent(tid, rollData);
     if (process.env.DATABASE_URL && bypassPrepGate !== true) {
       try {
         await applyOpToTableState(tid, { op: 'touch-session-activity' });
@@ -4940,6 +4981,7 @@ app.post('/api/room/:tableId/intent', requireAuth, async (req, res) => {
     _tagTeam: false,
     tagTeamPartner: null,
     tagTeamPartnerInstanceId: null,
+    tagTeamInitiatorRolled: false,
   };
   if (!intent._groupRoll && !intent._tagTeam && (body._rollVisibility === 'gm_and_player' || body._rollVisibility === 'gm_only')) {
     intent._rollVisibility = body._rollVisibility;
@@ -5001,7 +5043,7 @@ app.delete('/api/room/:tableId/intent', requireAuth, async (req, res) => {
   if (existing._groupRoll) {
     await ackGroupRollCollaboratorBanners(ctx.gmUid, existing.intentId);
   }
-  if (existing._tagTeam && req.body?.keepTagTeamBanners !== true) {
+  if (existing._tagTeam && !readKeepTagTeamBannersFlag(req.body, req.query)) {
     await ackTagTeamBanners(ctx.gmUid, existing.intentId);
   }
   pendingIntents.delete(req.params.tableId);
@@ -5760,7 +5802,7 @@ app.post('/api/room/:tableId/roll', requireAuth, async (req, res) => {
     if (!silent) {
       await appendRollLog(gmUid, rollData);
       stampGroupRollResultOnIntent(req.params.tableId, rollData);
-      stampTagTeamPartnerResultOnIntent(req.params.tableId, rollData);
+      stampTagTeamResultOnIntent(req.params.tableId, rollData);
       if (process.env.DATABASE_URL) {
         try {
           await applyOpToTableState(req.params.tableId, { op: 'touch-session-activity' });

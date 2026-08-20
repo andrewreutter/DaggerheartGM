@@ -1140,9 +1140,10 @@ export const clearTableIntent = async (tableId, intentId, { keepTagTeamBanners =
   const token = await getAuthToken();
   if (!token || !tableId) return { ok: false };
   try {
-    const qs = intentId != null && intentId !== ''
-      ? `?intentId=${encodeURIComponent(intentId)}`
-      : '';
+    const params = new URLSearchParams();
+    if (intentId != null && intentId !== '') params.set('intentId', String(intentId));
+    if (keepTagTeamBanners === true) params.set('keepTagTeamBanners', '1');
+    const qs = params.toString() ? `?${params}` : '';
     const res = await fetch(`/api/room/${tableId}/intent${qs}`, {
       method: 'DELETE',
       headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),

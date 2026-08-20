@@ -5,10 +5,12 @@
  * takes a full distinct attack (same target) from their sheet; that opens a
  * Duality pre-roll that does not replace the leader session. A wait banner
  * shows until that partner pre-roll opens. Both pre-roll banners stay visible
- * to the table. Both result banners stay pending until someone chooses which
- * Duality applies; each pending banner previews the other’s damage on its
- * total. Mixed phy/mag types pick beside Use this roll. The discarded banner
- * is cancelled. Hope/Fear and the initiator’s 3 Hope + session slot are
+ * to the table. Either side may Proceed first. The initiator pre-roll hides
+ * once that Duality is posted; the session stays until both results exist.
+ * Both result banners stay pending until someone chooses which Duality
+ * applies; each pending banner previews the other’s damage on its total.
+ * Mixed phy/mag types pick beside Use this roll. The discarded banner is
+ * cancelled. Hope/Fear and the initiator’s 3 Hope + session slot are
  * resolved on Apply of the chosen roll.
  */
 
@@ -372,6 +374,64 @@ export function tagTeamPartnerReady(partner) {
 }
 
 /**
+ * Hide the shared initiator pre-roll after that Duality is posted (partner
+ * overlay can stay). Either Proceed order is valid.
+ * @param {object | null | undefined} intent
+ * @returns {boolean}
+ */
+export function shouldHideTagTeamInitiatorPreRoll(intent) {
+  return !!(intent?._tagTeam && intent.tagTeamInitiatorRolled === true);
+}
+
+/**
+ * @param {object | null | undefined} intent
+ * @returns {boolean}
+ */
+export function tagTeamSessionComplete(intent) {
+  return !!(
+    intent?._tagTeam
+    && intent.tagTeamInitiatorRolled === true
+    && tagTeamPartnerReady(intent.tagTeamPartner)
+  );
+}
+
+/**
+ * @param {object} intent
+ * @param {{ rollDbId?: number|string|null }} [result]
+ * @returns {object}
+ */
+export function applyTagTeamInitiatorResult(intent, { rollDbId } = {}) {
+  if (!intent || typeof intent !== 'object' || !intent._tagTeam) return intent;
+  if (intent.tagTeamInitiatorRolled === true) return intent;
+  return {
+    ...intent,
+    tagTeamInitiatorRolled: true,
+    tagTeamInitiatorRollDbId: rollDbId ?? null,
+    timestamp: Date.now(),
+  };
+}
+
+/**
+ * Other pending Tag Team result for the same session (order-independent).
+ * @param {object | null | undefined} roll
+ * @param {object[]} [banners]
+ * @returns {object | null}
+ */
+export function findTagTeamPeerRoll(roll, banners = []) {
+  if (!isTagTeamOwnedBanner(roll)) return null;
+  const id = String(roll._tagTeamIntentId);
+  const self = roll._rollDbId;
+  const list = Array.isArray(banners) ? banners : [];
+  return list.find((b) => (
+    b
+    && b !== roll
+    && b._tagTeamIntentId != null
+    && String(b._tagTeamIntentId) === id
+    && (self == null || b._rollDbId == null || String(b._rollDbId) !== String(self))
+  )) || null;
+}
+
+/**
  * Dice-only damage on a banner (crit extra stays on the chosen Duality).
  *
  * @param {object | null | undefined} roll
@@ -542,6 +602,8 @@ export function applyTagTeamAction(intent, body = {}, ctx = {}) {
       };
       delete next._rollVisibility;
       delete next.tagTeamPartnerPending;
+      delete next.tagTeamInitiatorRolled;
+      delete next.tagTeamInitiatorRollDbId;
       return next;
     }
     const off = {
@@ -552,6 +614,8 @@ export function applyTagTeamAction(intent, body = {}, ctx = {}) {
       timestamp: Date.now(),
     };
     delete off.tagTeamPartnerPending;
+    delete off.tagTeamInitiatorRolled;
+    delete off.tagTeamInitiatorRollDbId;
     return off;
   }
   if (action === 'setPartnerPending') {

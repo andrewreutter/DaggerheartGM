@@ -10,6 +10,7 @@ import {
   isOwnedBannerParentLive,
   isParentOwnedResultBanner,
   planOrphanedOwnedBannerSweep,
+  readKeepTagTeamBannersFlag,
   shouldHideOwnedBannerDismiss,
 } from '../../src/client/lib/owned-roll-banner.js';
 
@@ -124,18 +125,21 @@ describe('planOrphanedOwnedBannerSweep', () => {
     expect(plan.tagTeamCancelIds).toEqual([]);
   });
 
-  it('cancels an incomplete Tag Team leftover and keeps a proceeded pair', () => {
+  it('does not auto-cancel a lone Tag Team leftover (initiator Proceed race)', () => {
     const incomplete = planOrphanedOwnedBannerSweep([tagPartner], []);
-    expect(incomplete.tagTeamCancelIds).toEqual([31]);
+    expect(incomplete.tagTeamCancelIds).toEqual([]);
+    expect(incomplete.groupAckIds).toEqual([]);
 
     const pair = planOrphanedOwnedBannerSweep([tagPartner, tagInitiator], []);
     expect(pair.tagTeamCancelIds).toEqual([]);
+  });
+});
 
-    const chosen = planOrphanedOwnedBannerSweep(
-      [{ ...tagPartner, _tagTeamChosen: true, _rollDbId: 40 }],
-      [],
-    );
-    expect(chosen.tagTeamCancelIds).toEqual([]);
+describe('readKeepTagTeamBannersFlag', () => {
+  it('accepts body or query so DELETE still keeps banners if the body is dropped', () => {
+    expect(readKeepTagTeamBannersFlag({ keepTagTeamBanners: true }, {})).toBe(true);
+    expect(readKeepTagTeamBannersFlag({}, { keepTagTeamBanners: '1' })).toBe(true);
+    expect(readKeepTagTeamBannersFlag({}, {})).toBe(false);
   });
 });
 
@@ -151,12 +155,16 @@ describe('owned-banner wiring', () => {
     const src = readFileSync(join(dir, '../../src/client/components/GMTableView.jsx'), 'utf8');
     expect(src).toMatch(/shouldLockOwnedBannerDismiss=\{\(roll\) => shouldHideOwnedBannerDismiss\(roll/);
     expect(src).toMatch(/pendingIntent\?\.intentId/);
+    expect(src).toMatch(/shouldHideTagTeamInitiatorPreRoll/);
+    expect(src).not.toMatch(/clearTableIntent\(tableId, banner\.intentId, \{ keepTagTeamBanners: true \}\)/);
   });
 
   it('banner-ack cascades reaction-call children and DELETE /intent 409 sweeps leftovers', () => {
     const src = readFileSync(join(dir, '../../server.js'), 'utf8');
     expect(src).toMatch(/collectReactionCallChildBannerIds\(pending, row\.id/);
     expect(src).toMatch(/sweepOrphanedOwnedBanners\(APP_ID, ctx\.gmUid\)/);
+    expect(src).toMatch(/function stampTagTeamResultOnIntent/);
+    expect(src).toMatch(/tagTeamSessionComplete\(updated\)/);
   });
 });
 

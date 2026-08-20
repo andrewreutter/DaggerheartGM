@@ -143,8 +143,7 @@ test.describe('Tag Team — partner Duality then choose', () => {
     await expect(playerBPage.getByTestId('preroll-tag-team-wait')).toContainText('Tag Team Action');
 
     const proceedBtn = playerAPage.getByRole('button', { name: 'Proceed' });
-    await expect(proceedBtn).toBeDisabled();
-    await expect(proceedBtn).toHaveAttribute('title', 'Waiting for Tag Team partner action');
+    await expect(proceedBtn).toBeEnabled();
 
     await playerBPage.locator('text=Partner PC').first().click();
     const partnerSword = playerBPage.getByRole('button', { name: /^Shortsword\b/i }).first();

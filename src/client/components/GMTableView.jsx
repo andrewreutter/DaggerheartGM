@@ -234,15 +234,16 @@ import {
   shouldHydrateSharedIntentOverLocalTagTeam,
   shouldShowTagTeamWaitBanner,
   shouldWriteSharedPreRollIntentForTagTeam,
+  shouldHideTagTeamInitiatorPreRoll,
   stampTagTeamPartnerActionMeta,
   tagTeamInitiationsRemaining,
   tagTeamInitiatorHopeCost,
   tagTeamPartnerLabel,
-  tagTeamPartnerReady,
   tagTeamSharedTargetId,
 } from '../lib/tag-team.js';
 import { applyPreRollMode } from '../lib/pre-roll-mode.js';
 import { shouldHideOwnedBannerDismiss } from '../lib/owned-roll-banner.js';
+import { postDebugLog } from '../lib/debug-log.js';
 import { getCharactersWithinFarRange, getCharactersWithinCloseRangeWithMarkedHp, getAdversariesWithinMeleeRange, getAdversariesWithinRangeFt, rangeBandNameToFt, RANGE_BANDS_FT, tokenDistanceFtForElements, positionAtDistanceFt, getTokenFootprintFt } from '../lib/map-range.js';
 import {
   collectCompanionDamageTargets,
@@ -1015,6 +1016,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
   const lastSentClientWriteSeqRef = useRef(0);
   const applyingRemoteRef = useRef(false);
   const remoteAckedIntentIdRef = useRef(null);
+  const tagTeamInitiatorConsumedRef = useRef(null);
   const lastAppliedRemoteDifficultyRef = useRef(null);
   const preRollBannerRef = useRef(null);
   const pendingIntentRef = useRef(null);
@@ -4042,7 +4044,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     setTagTeamPartnerDisadvantages([]);
   };
 
-  const resetPreRollLocalState = () => {
+  const clearInitiatorPreRollLocalState = () => {
     setPreRollBanner(null);
     setSelectedPreRollChips([]);
     setPreRollExperienceIndex(null);
@@ -4050,6 +4052,10 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     setPreRollAdvantages([]);
     setPreRollDisadvantages([]);
     setPreRollHelps([]);
+  };
+
+  const resetPreRollLocalState = () => {
+    clearInitiatorPreRollLocalState();
     setPreRollGroupOn(false);
     setPreRollGroupMembers([]);
     setPreRollTagTeamOn(false);
@@ -4252,13 +4258,23 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
       return;
     }
     const onProceed = async () => {
+      const livePending = preRollBannerRef.current?.pending || pending;
       const finalText = rollWrapper.getFinalRollText()
-        + formatHelpAllyRollSuffix(pending.meta?._helpAlly)
-        + formatGroupRollBonus(pending.meta?._groupRoll?.modifier);
-      const metaWithLabel = { ...pending.meta, ...(pending.rollBonusLabel ? { _staticModifierLabel: pending.rollBonusLabel } : {}) };
+        + formatHelpAllyRollSuffix(livePending.meta?._helpAlly)
+        + formatGroupRollBonus(livePending.meta?._groupRoll?.modifier);
+      const metaWithLabel = {
+        ...livePending.meta,
+        ...(livePending.rollBonusLabel ? { _staticModifierLabel: livePending.rollBonusLabel } : {}),
+        ...(!isPlayer && tableId ? { tableId } : {}),
+      };
       try {
-        await postRoll(finalText, pending.displayName || pending.rollText, targetTableId, metaWithLabel);
-        if (isLocalOverlay) {
+        await postRoll(finalText, livePending.displayName || livePending.rollText, targetTableId, metaWithLabel);
+        if (livePending.meta?._tagTeamRole === 'initiator' || (livePending.meta?._tagTeamIntentId && livePending.meta?._tagTeamRole !== 'partner')) {
+          if (livePending.meta?._tagTeamIntentId) {
+            tagTeamInitiatorConsumedRef.current = livePending.meta._tagTeamIntentId;
+          }
+          clearInitiatorPreRollLocalState();
+        } else if (isLocalOverlay) {
           const shared = pendingIntentRef.current;
           if (shared && hydrateSharedPreRollRef.current) {
             hydrateSharedPreRollRef.current(shared);
@@ -4672,16 +4688,43 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     const { rollWrapper, chips, getFeatureStateFor, needsDifficulty } = session;
     const targetTableId = isPlayer ? tableId : null;
     const onProceed = async () => {
+      const livePending = preRollBannerRef.current?.pending || session.pending;
       const finalText = rollWrapper.getFinalRollText()
-        + formatHelpAllyRollSuffix(session.pending.meta?._helpAlly)
-        + formatGroupRollBonus(session.pending.meta?._groupRoll?.modifier);
+        + formatHelpAllyRollSuffix(livePending.meta?._helpAlly)
+        + formatGroupRollBonus(livePending.meta?._groupRoll?.modifier);
       const metaWithLabel = {
-        ...session.pending.meta,
-        ...(session.pending.rollBonusLabel ? { _staticModifierLabel: session.pending.rollBonusLabel } : {}),
+        ...livePending.meta,
+        ...(livePending.rollBonusLabel ? { _staticModifierLabel: livePending.rollBonusLabel } : {}),
+        ...(!isPlayer && tableId ? { tableId } : {}),
       };
+      // #region agent log
+      postDebugLog({
+        _debugUrl: 'http://127.0.0.1:7803/ingest/b8b9e013-5af1-438e-8ea4-5198e805186a',
+        _debugSessionId: 'fd8dd5',
+        sessionId: 'fd8dd5',
+        hypothesisId: 'H-D',
+        location: 'GMTableView.jsx:hydrateOnProceed',
+        message: 'initiator hydrate postRoll meta',
+        data: {
+          isPlayer,
+          targetTableId,
+          tableIdInMeta: metaWithLabel.tableId ?? null,
+          _tagTeamIntentId: metaWithLabel._tagTeamIntentId ?? null,
+          _tagTeamRole: metaWithLabel._tagTeamRole ?? null,
+          _tagTeamPartnerInstanceId: metaWithLabel._tagTeamPartnerInstanceId ?? null,
+          sessionIntentId: intent.intentId ?? null,
+        },
+        timestamp: Date.now(),
+      });
+      // #endregion
       try {
-        await postRoll(finalText, session.pending.displayName || session.pending.rollText, targetTableId, metaWithLabel);
-        resetPreRollLocalState();
+        await postRoll(finalText, livePending.displayName || livePending.rollText, targetTableId, metaWithLabel);
+        if (livePending.meta?._tagTeamRole === 'initiator' || livePending.meta?._tagTeamIntentId) {
+          if (intent.intentId) tagTeamInitiatorConsumedRef.current = intent.intentId;
+          clearInitiatorPreRollLocalState();
+        } else {
+          resetPreRollLocalState();
+        }
       } catch (err) {
         handleRollTransportError(err, '[GMTableView] hydrate onProceed postRoll failed:');
       }
@@ -4759,6 +4802,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
       const metaWithLabel = {
         ...session.pending.meta,
         ...(session.pending.rollBonusLabel ? { _staticModifierLabel: session.pending.rollBonusLabel } : {}),
+        ...(!isPlayer && tableId ? { tableId } : {}),
       };
       try {
         await postRoll(finalText, session.pending.displayName || session.pending.rollText, targetTableId, metaWithLabel);
@@ -4785,6 +4829,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
 
   useEffect(() => {
     if (!pendingIntent) {
+      tagTeamInitiatorConsumedRef.current = null;
       if (
         isLocalGroupReactionPreRoll(preRollBannerRef.current)
         || isLocalTagTeamPartnerPreRoll(preRollBannerRef.current)
@@ -4803,6 +4848,21 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
         remoteAckedIntentIdRef.current = null;
       }
       return;
+    }
+    if (
+      pendingIntent._tagTeam
+      && (
+        tagTeamInitiatorConsumedRef.current === pendingIntent.intentId
+        || shouldHideTagTeamInitiatorPreRoll(pendingIntent)
+      )
+    ) {
+      if (preRollBannerRef.current && !isLocalTagTeamPartnerPreRoll(preRollBannerRef.current)) {
+        clearInitiatorPreRollLocalState();
+      }
+      return;
+    }
+    if (tagTeamInitiatorConsumedRef.current === pendingIntent.intentId && !pendingIntent._tagTeam) {
+      tagTeamInitiatorConsumedRef.current = null;
     }
     if (!shouldShowPreRollBanner(pendingIntent, intentViewer)) {
       if (preRollBannerRef.current) {
@@ -4963,7 +5023,6 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     if (groupOn && !groupRollsComplete(membersSnapshot)) return;
     const tagTeamPartnerSnapshot = preRollTagTeamPartnerRef.current || pendingIntent?.tagTeamPartner || null;
     const tagTeamOn = !localOverlay && !!(pendingIntent?._tagTeam || preRollTagTeamOn);
-    if (tagTeamOn && !tagTeamPartnerReady(tagTeamPartnerSnapshot)) return;
     const intentUsedLog = [];
     const { rollWrapper, chips = [], characterEl, onProceed, getFeatureStateFor, pending } = banner;
     if (!pending || !rollWrapper || !characterEl || typeof onProceed !== 'function') return;
@@ -4992,11 +5051,13 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
           _tagTeamPartnerInstanceId: tagTeamPartnerSnapshot?.instanceId ?? null,
           _tagTeamHopeCost: tagTeamHopeCost,
         } : {}),
+        ...(!isPlayer && tableId ? { tableId } : {}),
       };
-      if (tableId && banner.intentId) {
-        const cas = await clearTableIntent(tableId, banner.intentId, {
-          keepTagTeamBanners: tagTeamOn,
-        });
+      if (tagTeamOn && banner.intentId) {
+        tagTeamInitiatorConsumedRef.current = banner.intentId;
+      }
+      if (tableId && banner.intentId && !tagTeamOn) {
+        const cas = await clearTableIntent(tableId, banner.intentId);
         if (cas?.conflict) {
           resetPreRollLocalState();
           return;
@@ -5239,6 +5300,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
           _tagTeamPartnerInstanceId: tagTeamPartnerSnapshot?.instanceId ?? null,
           _tagTeamHopeCost: tagTeamHopeCost,
         } : {}),
+        ...(!isPlayer && tableId ? { tableId } : {}),
       };
     }
     if (intentUsedLog.length > 0 || (!isPartnerSource && (
@@ -5254,6 +5316,31 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
           : {}),
       };
     }
+    // #region agent log
+    postDebugLog({
+      _debugUrl: 'http://127.0.0.1:7803/ingest/b8b9e013-5af1-438e-8ea4-5198e805186a',
+      _debugSessionId: 'fd8dd5',
+      sessionId: 'fd8dd5',
+      hypothesisId: 'H-A',
+      location: 'GMTableView.jsx:handlePreRollProceed',
+      message: 'pre-roll proceed before onProceed',
+      data: {
+        isPartnerSource,
+        localOverlay,
+        tagTeamOn,
+        isPlayer,
+        bannerIntentId: banner.intentId ?? null,
+        pendingIntentId: pendingIntent?.intentId ?? null,
+        pendingIntentTagTeam: !!pendingIntent?._tagTeam,
+        pendingMeta: {
+          _tagTeamIntentId: pending.meta?._tagTeamIntentId ?? null,
+          _tagTeamRole: pending.meta?._tagTeamRole ?? null,
+          _tagTeamPartnerInstanceId: pending.meta?._tagTeamPartnerInstanceId ?? null,
+        },
+      },
+      timestamp: Date.now(),
+    });
+    // #endregion
     await onProceed();
   };
 
@@ -7544,17 +7631,12 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                       setPreRollTagTeamPartner(partner);
                       setPreRollBanner((prev) => {
                         if (!prev?.pending) return prev;
-                        return {
-                          ...prev,
-                          pending: {
-                            ...prev.pending,
-                            meta: {
-                              ...prev.pending.meta,
-                              _tagTeamIntentId: prev.intentId,
-                              _tagTeamPartnerInstanceId: partner?.instanceId ?? null,
-                            },
-                          },
+                        prev.pending.meta = {
+                          ...prev.pending.meta,
+                          _tagTeamIntentId: prev.intentId,
+                          _tagTeamPartnerInstanceId: partner?.instanceId ?? null,
                         };
+                        return { ...prev };
                       });
                     } else {
                       setPreRollTagTeamPartner(null);
@@ -7563,7 +7645,8 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                         const nextMeta = { ...prev.pending.meta };
                         delete nextMeta._tagTeamIntentId;
                         delete nextMeta._tagTeamPartnerInstanceId;
-                        return { ...prev, pending: { ...prev.pending, meta: nextMeta } };
+                        prev.pending.meta = nextMeta;
+                        return { ...prev };
                       });
                     }
                     if (tableId && preRollBanner.intentId) {
@@ -7622,9 +7705,6 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                 onCancel={clearPreRollBanner}
                 proceedDisabled={(isLocalGroupReactionPreRoll(preRollBanner) || isLocalTagTeamPartnerPreRoll(preRollBanner)) ? false : (
                   (isPlayer && !!preRollBanner.needsDifficulty && !preRollDifficultyFinalized && preRollFinalizedGmDifficulty == null)
-                  || (!!(pendingIntent?._tagTeam || preRollTagTeamOn) && !tagTeamPartnerReady(
-                    preRollTagTeamPartner || pendingIntent?.tagTeamPartner
-                  ))
                   || (!!(pendingIntent?._groupRoll || preRollGroupOn) && !groupRollsComplete(
                     preRollGroupMembers.length ? preRollGroupMembers : (pendingIntent?.groupMembers || [])
                   ))
@@ -7633,11 +7713,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                   isPlayer && !!preRollBanner.needsDifficulty && !preRollDifficultyFinalized && preRollFinalizedGmDifficulty == null
                 )
                   ? 'Waiting for the GM to approve the difficulty'
-                  : (!!(pendingIntent?._tagTeam || preRollTagTeamOn) && !tagTeamPartnerReady(
-                    preRollTagTeamPartner || pendingIntent?.tagTeamPartner
-                  ))
-                    ? 'Waiting for Tag Team partner action'
-                    : 'Waiting for group reaction rolls'}
+                  : 'Waiting for group reaction rolls'}
                 getTargetsForRoll={getTargetsForRoll}
                 getV2ReviewChipDisableHint={getV2ReviewChipDisableHintCb}
                 activeElements={activeElements}
@@ -7694,17 +7770,12 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                     setPreRollTagTeamPartner(partner);
                     setPreRollBanner((prev) => {
                       if (!prev?.pending) return prev;
-                      return {
-                        ...prev,
-                        pending: {
-                          ...prev.pending,
-                          meta: {
-                            ...prev.pending.meta,
-                            _tagTeamIntentId: prev.intentId,
-                            _tagTeamPartnerInstanceId: partner?.instanceId ?? null,
-                          },
-                        },
+                      prev.pending.meta = {
+                        ...prev.pending.meta,
+                        _tagTeamIntentId: prev.intentId,
+                        _tagTeamPartnerInstanceId: partner?.instanceId ?? null,
                       };
+                      return { ...prev };
                     });
                   } else {
                     setPreRollTagTeamPartner(null);
@@ -7713,7 +7784,8 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                       const meta = { ...prev.pending.meta };
                       delete meta._tagTeamIntentId;
                       delete meta._tagTeamPartnerInstanceId;
-                      return { ...prev, pending: { ...prev.pending, meta } };
+                      prev.pending.meta = meta;
+                      return { ...prev };
                     });
                   }
                   if (tableId && preRollBanner.intentId) {
@@ -7735,16 +7807,11 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                     } : null);
                     setPreRollBanner((prev) => {
                       if (!prev?.pending) return prev;
-                      return {
-                        ...prev,
-                        pending: {
-                          ...prev.pending,
-                          meta: {
-                            ...prev.pending.meta,
-                            _tagTeamPartnerInstanceId: instanceId,
-                          },
-                        },
+                      prev.pending.meta = {
+                        ...prev.pending.meta,
+                        _tagTeamPartnerInstanceId: instanceId,
                       };
+                      return { ...prev };
                     });
                   } else if (action === 'setTrait') {
                     setPreRollTagTeamPartner((prev) => (

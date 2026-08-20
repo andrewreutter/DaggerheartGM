@@ -1,6 +1,8 @@
 /**
- * Auto-clear Group / incomplete Tag Team result banners whose parent
- * in-memory intent is gone (server restart, 409 DELETE, etc.).
+ * Auto-ack Group result banners whose parent in-memory intent is gone
+ * (server restart, 409 DELETE, etc.). Tag Team leftovers are left for
+ * explicit Cancel / toggle-off — sweeping a lone partner banner races
+ * with initiator Proceed.
  */
 
 import { getPendingBanners, setBannerStatus } from '../db.js';

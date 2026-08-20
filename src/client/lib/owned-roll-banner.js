@@ -1,7 +1,8 @@
 /**
  * Result banners owned by a parent session (GM-called reaction, Group roll
  * collaborator, Tag Team pending choice). Apply/Cancel stay hidden only while
- * that parent is still live; leftovers must be dismissable or swept.
+ * that parent is still live; leftovers must be dismissable (Tag Team) or
+ * swept (Group).
  */
 
 import { isTagTeamPendingChoice } from './tag-team.js';
@@ -120,8 +121,9 @@ export function isOrphanedOwnedBanner(roll, ctx = {}) {
 
 /**
  * Group leftovers → acknowledge (same as DELETE /intent leftover helper).
- * Incomplete Tag Team leftovers (no live intent, fewer than two banners) → cancel.
- * A Tag Team pair after Proceed is kept even though the intent is gone.
+ * Tag Team leftovers are not swept: Cancel / toggle-off already cancel them
+ * via ackTagTeamBanners. Auto-cancelling a lone partner banner races with
+ * initiator Proceed (intent is gone for a beat before the second roll lands).
  *
  * @param {object[]} pending
  * @param {unknown[]} liveIntentIds
@@ -130,29 +132,26 @@ export function isOrphanedOwnedBanner(roll, ctx = {}) {
 export function planOrphanedOwnedBannerSweep(pending, liveIntentIds = []) {
   const live = new Set((Array.isArray(liveIntentIds) ? liveIntentIds : []).map(String));
   const list = Array.isArray(pending) ? pending : [];
-  const tagTeamCounts = new Map();
-  for (const b of list) {
-    if (b?._tagTeamIntentId == null || b._tagTeamIntentId === '') continue;
-    const key = String(b._tagTeamIntentId);
-    tagTeamCounts.set(key, (tagTeamCounts.get(key) || 0) + 1);
-  }
   const groupAckIds = [];
   const tagTeamCancelIds = [];
   for (const b of list) {
     if (b?._rollDbId == null) continue;
     if (b._groupRollIntentId != null && b._groupRollIntentId !== '' && !live.has(String(b._groupRollIntentId))) {
       groupAckIds.push(b._rollDbId);
-      continue;
-    }
-    if (
-      b._tagTeamIntentId != null
-      && b._tagTeamIntentId !== ''
-      && b._tagTeamChosen !== true
-      && !live.has(String(b._tagTeamIntentId))
-      && (tagTeamCounts.get(String(b._tagTeamIntentId)) || 0) < 2
-    ) {
-      tagTeamCancelIds.push(b._rollDbId);
     }
   }
   return { groupAckIds, tagTeamCancelIds };
+}
+
+/**
+ * DELETE /intent keep-flag from JSON body or query (DELETE bodies are not
+ * reliable in every client / proxy).
+ *
+ * @param {object | null | undefined} body
+ * @param {object | null | undefined} query
+ * @returns {boolean}
+ */
+export function readKeepTagTeamBannersFlag(body, query) {
+  const val = body?.keepTagTeamBanners ?? query?.keepTagTeamBanners;
+  return val === true || val === 'true' || val === '1';
 }

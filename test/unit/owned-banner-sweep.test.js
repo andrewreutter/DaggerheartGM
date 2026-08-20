@@ -47,13 +47,12 @@ describe('sweepOrphanedOwnedBanners', () => {
     expect(setBannerStatus).toHaveBeenCalledWith(3595, 'acknowledged');
   });
 
-  it('cancels a lone Tag Team leftover and keeps a proceeded pair', async () => {
+  it('leaves a lone Tag Team leftover (initiator Proceed may still be in flight)', async () => {
     getPendingBanners.mockResolvedValueOnce([tagLone]);
     const incomplete = await sweepOrphanedOwnedBanners('app', 'gm-1');
-    expect(incomplete.tagTeamCancelIds).toEqual([31]);
-    expect(setBannerStatus).toHaveBeenCalledWith(31, 'cancelled');
+    expect(incomplete.tagTeamCancelIds).toEqual([]);
+    expect(setBannerStatus).not.toHaveBeenCalled();
 
-    setBannerStatus.mockClear();
     getPendingBanners.mockResolvedValueOnce([tagLone, tagPeer]);
     const pair = await sweepOrphanedOwnedBanners('app', 'gm-1');
     expect(pair.changed).toBe(false);

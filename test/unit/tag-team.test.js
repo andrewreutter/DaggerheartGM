@@ -1,8 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import {
   applyTagTeamAction,
+  applyTagTeamInitiatorResult,
   applyTagTeamPartnerResult,
   canChooseTagTeamRoll,
+  findTagTeamPeerRoll,
   canEditTagTeamPartner,
   canToggleTagTeam,
   combineTagTeamDamage,
@@ -21,8 +23,10 @@ import {
   stampTagTeamPartnerActionMeta,
   tagTeamSharedTargetId,
   seedTagTeamPartner,
+  shouldHideTagTeamInitiatorPreRoll,
   shouldHydrateSharedIntentOverLocalTagTeam,
   shouldWriteSharedPreRollIntentForTagTeam,
+  tagTeamSessionComplete,
   tagTeamInitiationsBudget,
   tagTeamInitiationsRemaining,
   tagTeamInitiatorHopeCost,
@@ -211,6 +215,42 @@ describe('applyTagTeamAction / result', () => {
     });
     expect(tagTeamPartnerReady(rolled.tagTeamPartner)).toBe(true);
     expect(rolled.tagTeamPartner.rollDbId).toBe(44);
+  });
+
+  it('initiator and partner results complete the session in either order', () => {
+    const on = applyTagTeamAction(tableIntent, { action: 'toggle', active: true }, {
+      activeElements: elements,
+    });
+    const initiatorFirst = applyTagTeamInitiatorResult(on, { rollDbId: 10 });
+    expect(shouldHideTagTeamInitiatorPreRoll(initiatorFirst)).toBe(true);
+    expect(tagTeamSessionComplete(initiatorFirst)).toBe(false);
+    const bothAfterInitiator = applyTagTeamPartnerResult(initiatorFirst, {
+      instanceId: 'beau',
+      total: 12,
+      success: true,
+      rollDbId: 11,
+    });
+    expect(tagTeamSessionComplete(bothAfterInitiator)).toBe(true);
+
+    const partnerFirst = applyTagTeamPartnerResult(on, {
+      instanceId: 'beau',
+      total: 12,
+      success: true,
+      rollDbId: 11,
+    });
+    expect(shouldHideTagTeamInitiatorPreRoll(partnerFirst)).toBe(false);
+    expect(tagTeamSessionComplete(partnerFirst)).toBe(false);
+    const bothAfterPartner = applyTagTeamInitiatorResult(partnerFirst, { rollDbId: 10 });
+    expect(shouldHideTagTeamInitiatorPreRoll(bothAfterPartner)).toBe(true);
+    expect(tagTeamSessionComplete(bothAfterPartner)).toBe(true);
+  });
+
+  it('findTagTeamPeerRoll matches the other pending result', () => {
+    const leader = { _tagTeamIntentId: 'int-1', _rollDbId: 10, _tagTeamRole: 'initiator' };
+    const partner = { _tagTeamIntentId: 'int-1', _rollDbId: 11, _tagTeamRole: 'partner' };
+    expect(findTagTeamPeerRoll(leader, [leader, partner])).toEqual(partner);
+    expect(findTagTeamPeerRoll(partner, [leader, partner])).toEqual(leader);
+    expect(findTagTeamPeerRoll(leader, [leader])).toBeNull();
   });
 });
 

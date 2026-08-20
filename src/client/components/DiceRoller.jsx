@@ -59,7 +59,8 @@ import {
   prefersBannerStripExitReducedMotion,
 } from '../lib/banner-strip-exit.js';
 import { isReactionRoll as getIsReactionRoll, resolveDualityBannerSchemeKey } from '../lib/reaction-roll-display.js';
-import { canChooseTagTeamRoll, isTagTeamPendingChoice, resolveTagTeamBannerDamage } from '../lib/tag-team.js';
+import { canChooseTagTeamRoll, findTagTeamPeerRoll, isTagTeamPendingChoice, resolveTagTeamBannerDamage } from '../lib/tag-team.js';
+import { postDebugLog } from '../lib/debug-log.js';
 import { shouldHideOwnedBannerDismiss } from '../lib/owned-roll-banner.js';
 import { BannerSheetDisplayNameLine } from '../lib/sheet-display-label-inline.jsx';
 import { isRestrictedRollVisibility } from '../lib/roll-visibility.js';
@@ -2869,7 +2870,8 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
         )}
         {tagTeamPending && (
           <div className="mt-2.5 pt-2 border-t border-white/10 flex flex-wrap items-center justify-center gap-1.5">
-            {tagTeamPeerRoll && tagTeamCanChoose ? (
+            {tagTeamPeerRoll ? (
+              tagTeamCanChoose ? (
               <>
                 {tagTeamResolved.needsTypePick && (
                   <div className="flex flex-wrap gap-1" data-testid="tag-team-damage-type">
@@ -2902,6 +2904,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                   Use this roll
                 </button>
               </>
+              ) : null
             ) : (
               <span className="text-[10px] text-dh-muted">Waiting for the other Tag Team roll…</span>
             )}
@@ -3754,11 +3757,37 @@ export const DiceRoller = forwardRef(function DiceRoller({
                 onApplyVulnerable={onApplyVulnerable}
                 onConcussiveKnock={onConcussiveKnock}
                 disableDismiss={isPlayer || ownedDismissLocked}
-                tagTeamPeerRoll={activeBanners.find((e) => (
-                  e.roll._tagTeamIntentId
-                  && e.roll._tagTeamIntentId === entry.roll._tagTeamIntentId
-                  && e.roll._rollDbId !== entry.roll._rollDbId
-                ))?.roll || null}
+                tagTeamPeerRoll={(() => {
+                  const peer = findTagTeamPeerRoll(entry.roll, activeBanners.map((e) => e.roll));
+                  // #region agent log
+                  if (isTagTeamPendingChoice(entry.roll)) {
+                    postDebugLog({
+                      _debugUrl: 'http://127.0.0.1:7803/ingest/b8b9e013-5af1-438e-8ea4-5198e805186a',
+                      _debugSessionId: 'fd8dd5',
+                      sessionId: 'fd8dd5',
+                      hypothesisId: 'H-C',
+                      location: 'DiceRoller.jsx:tagTeamPeerRoll',
+                      message: 'result banner peer lookup',
+                      data: {
+                        self: {
+                          dbId: entry.roll._rollDbId ?? null,
+                          intent: entry.roll._tagTeamIntentId ?? null,
+                          role: entry.roll._tagTeamRole ?? null,
+                        },
+                        banners: activeBanners.map((e) => ({
+                          dbId: e.roll._rollDbId ?? null,
+                          intent: e.roll._tagTeamIntentId ?? null,
+                          role: e.roll._tagTeamRole ?? null,
+                        })),
+                        peerFound: !!peer,
+                        peerDbId: peer?._rollDbId ?? null,
+                      },
+                      timestamp: Date.now(),
+                    });
+                  }
+                  // #endregion
+                  return peer;
+                })()}
                 tagTeamViewer={tagTeamViewer}
                 onTagTeamChoose={onTagTeamChoose}
                 canApplyDamage={canApplyDamage}
