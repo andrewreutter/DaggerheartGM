@@ -64,15 +64,62 @@ export function extractGmFeatureWhenClause(description) {
 
 export const hideImgOnError = (e) => { e.target.parentElement.style.display = 'none'; };
 
+/** SRD Difficulty Benchmarks (README § DIFFICULTY BENCHMARKS): roll totals 5–30. */
+export const DIFFICULTY_SLIDER_MIN = 5;
+export const DIFFICULTY_SLIDER_MAX = 30;
+
 /** Reference bands for action roll difficulty (5–30). */
-const DIFFICULTY_BANDS = [
-  { value: 5, label: 'Very Easy' },
-  { value: 10, label: 'Easy' },
-  { value: 15, label: 'Average' },
-  { value: 20, label: 'Hard' },
-  { value: 25, label: 'Very Hard' },
-  { value: 30, label: 'Nearly Impossible' },
+export const DIFFICULTY_BANDS = [
+  { value: 5, label: 'Very Easy', shortLabel: 'Very E.' },
+  { value: 10, label: 'Easy', shortLabel: 'Easy' },
+  { value: 15, label: 'Average', shortLabel: 'Avg' },
+  { value: 20, label: 'Hard', shortLabel: 'Hard' },
+  { value: 25, label: 'Very Hard', shortLabel: 'Very H.' },
+  { value: 30, label: 'Nearly Impossible', shortLabel: 'N.Imp' },
 ];
+
+/** Widest second-line word in a two-word difficulty label — used to reserve DC-column width. */
+export const DIFFICULTY_LABEL_WIDTH_WORD = 'Impossible';
+
+/** Split a two-word difficulty label so it can wrap under the DC number. */
+export function difficultyLabelLines(value) {
+  const label = getDifficultyLabel(value);
+  const parts = String(label).split(/\s+/).filter(Boolean);
+  return parts.length > 1 ? parts : [label];
+}
+
+/** True when the DC sits exactly on an SRD difficulty-band marker. */
+export function isDifficultyOnBandMarker(value) {
+  const n = Number(value);
+  return DIFFICULTY_BANDS.some((b) => b.value === n);
+}
+
+export const DIFFICULTY_BAND_GRID_GAP_REM = 0.125;
+
+/**
+ * Horizontal padding so a 0–100% range thumb lines up with 6-col band-button centers
+ * (`grid-cols-6 gap-0.5`). Equals half of one column width.
+ */
+export function difficultySliderTrackInsetCss(
+  bandCount = DIFFICULTY_BANDS.length,
+  gapRem = DIFFICULTY_BAND_GRID_GAP_REM,
+) {
+  const n = Math.max(1, Number(bandCount) || 1);
+  const gapTotal = Math.max(0, n - 1) * Number(gapRem);
+  return `calc((100% - ${gapTotal}rem) / ${n * 2})`;
+}
+
+export const DIFFICULTY_SLIDER_NAMED_TICKS = DIFFICULTY_BANDS.filter((b) => (
+  b.value === 10 || b.value === 15 || b.value === 20
+));
+
+/** Thumb-center position along a min–max range slider (0–100). */
+export function difficultySliderTickPercent(value, min = DIFFICULTY_SLIDER_MIN, max = DIFFICULTY_SLIDER_MAX) {
+  const n = Number(value);
+  const span = max - min;
+  if (!Number.isFinite(n) || span <= 0) return 0;
+  return Math.max(0, Math.min(100, ((n - min) / span) * 100));
+}
 
 /**
  * Returns the qualitative difficulty label for a numeric DC (5–30).
@@ -81,7 +128,7 @@ const DIFFICULTY_BANDS = [
 export function getDifficultyLabel(value) {
   const n = Number(value);
   if (isNaN(n) || n <= 5) return DIFFICULTY_BANDS[0].label;
-  if (n >= 30) return DIFFICULTY_BANDS[5].label;
+  if (n >= DIFFICULTY_SLIDER_MAX) return DIFFICULTY_BANDS[DIFFICULTY_BANDS.length - 1].label;
   let best = DIFFICULTY_BANDS[0];
   for (const band of DIFFICULTY_BANDS) {
     if (Math.abs(band.value - n) < Math.abs(best.value - n)) best = band;

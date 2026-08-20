@@ -37,8 +37,8 @@ import { WARDEN_OF_THE_ELEMENTS_SCOPE_KEY } from '../../features-v2/engine/featu
  * @param {(instanceId: string) => void} [props.onToggleAssignPanel] — called when the Users icon is clicked
  * @param {() => void} [props.onDismissAssignPanel] — called to close the panel from within the card
  * @param {(instanceId: string) => void} [props.onRemoveFromTable] — GM sidebar remove from table
- * @param {(instanceId: string) => void} [props.onCallReaction] — GM: open Call for Reaction seeded with this character
- * @param {object} [props.cardRootProps] — spread on outer card (e.g. `characterOverlay.triggerProps` on sidebar)
+ * @param {(instanceId: string) => void} [props.onCallReaction] — GM: pin Call for Reaction panel seeded with this character
+ * @param {object} [props.cardRootProps] — spread on outer card (e.g. sidebar map-chrome hover props)
  * @param {import('react').ReactNode} [props.trailingHeaderActions] — e.g. map pin close + remove from map
  * @param {object | null} [props.v2Registry]
  * @param {object} [props.v2TableContext]

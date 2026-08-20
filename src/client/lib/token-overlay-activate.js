@@ -102,9 +102,9 @@ export function tokenHoverTooltipName(element) {
 }
 
 export const TOKEN_HOVER_HINT_LINES = [
-  'Click and drag to move.',
-  'To adjust altitude, click and drag the distance display to the left of the token.',
-  'Right-click for action card.',
+  { text: 'Click and drag to move.', role: 'lead' },
+  { text: 'To adjust altitude, click and drag the distance display to the left of the token.' },
+  { text: 'Right-click for action card.' },
 ];
 
 /** Sentinel used as `trayHoverInstanceId` while the right-tray GM crown is hovered. */
@@ -125,12 +125,12 @@ export const GM_TOKEN_HOVER_HINT_CONTENT_LINES = [
 ];
 
 export const GM_TOKEN_HOVER_HINT_LINES = [
-  'Click or right-click to show or hide.',
+  { text: 'Click or right-click to show or hide.', role: 'lead' },
   ...GM_TOKEN_HOVER_HINT_CONTENT_LINES,
 ];
 
 export const GM_TOKEN_HOVER_HINT_LINES_TOUCH = [
-  'Tap to show or hide.',
+  { text: 'Tap to show or hide.', role: 'lead' },
   ...GM_TOKEN_HOVER_HINT_CONTENT_LINES,
 ];
 
@@ -168,7 +168,7 @@ export function tokenHoverHintModel(nameOrElement, { isTouch = false, isPlayer =
  */
 export function tokenHoverTooltipText(nameOrElement, opts) {
   const { name, lines } = tokenHoverHintModel(nameOrElement, opts);
-  return [name, ...lines].join('\n');
+  return [name, ...lines.map((line) => (typeof line === 'string' ? line : line?.text ?? ''))].join('\n');
 }
 
 /**

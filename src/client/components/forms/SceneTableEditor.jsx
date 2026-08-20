@@ -37,6 +37,8 @@ import {
 } from '../../lib/scene-table-adapter.js';
 import { generateId } from '../../lib/helpers.js';
 import { ENCOUNTER_OVERLAY_FALLBACK_RECT } from '../../lib/encounter-overlay-interactive.js';
+import { tablePanelChromeHoverProps, tablePanelHoverHintModel } from '../../lib/table-panel-hover-hint.js';
+import { useTouchDevice } from '../../lib/useTouchDevice.js';
 
 const DIFFICULTY_KEYS = ['lessDifficult', 'slightlyMoreDangerous', 'moreDangerous'];
 const DAMAGE_BOOST_KEYS = ['damageBoostPlusOne', 'damageBoostD4', 'damageBoostStatic'];
@@ -63,6 +65,14 @@ export function SceneTableEditor({
   latestRef.current = sceneData;
   const [pickerCollection, setPickerCollection] = useState(null);
   const [lightboxUrl, setLightboxUrl] = useState(null);
+  const [panelChromeHint, setPanelChromeHint] = useState(null);
+  const isTouch = useTouchDevice();
+  const panelChromeHover = useCallback((kind, payload, extra) => (
+    tablePanelChromeHoverProps(
+      setPanelChromeHint,
+      tablePanelHoverHintModel(kind, payload, { isPlayer: false, isTouch, ...extra }),
+    )
+  ), [isTouch]);
   const encounterAsideRef = useRef(null);
   const {
     trackerOverlay,
@@ -184,6 +194,7 @@ export function SceneTableEditor({
         conditionsHistory={sceneData.conditionsHistory}
         onOpenImageLightbox={setLightboxUrl}
         adversaryPartyScaleCount={partySize}
+        chromeTooltipHint={panelChromeHint}
         className="flex-1 min-w-0 min-h-0"
       />
 
@@ -193,12 +204,13 @@ export function SceneTableEditor({
             overlay={gmMovesOverlay}
             activeElements={sceneData.activeElements}
             characterCount={partySize}
+            chromeHoverProps={panelChromeHover('gm-moves')}
           />
         </div>
         <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-2">
           {/* Battle budget + mods */}
           <div className="rounded-lg border border-dh-border bg-dh-surface overflow-hidden">
-            <div className="px-2.5 py-2 flex items-center gap-2">
+            <div className="px-2.5 py-2 flex items-center gap-2" {...panelChromeHover('bp-budget')}>
               {tier != null && (
                 <span className="text-[10px] font-bold text-blue-300 border border-blue-700/50 bg-blue-900/30 rounded px-1.5 py-0.5">
                   T{tier}
@@ -304,12 +316,13 @@ export function SceneTableEditor({
           </div>
 
           <div className="border-t border-dh-border" role="separator" />
+          <div className="space-y-2" {...panelChromeHover('notes-section')}>
           <div className="flex items-center justify-between gap-2">
             <p className="text-[10px] font-semibold uppercase tracking-wide text-dh-muted">Notes</p>
             <button
               type="button"
               onClick={addEmptyNote}
-              title="Add note"
+              data-testid="encounter-add-note"
               className="shrink-0 rounded px-1 py-0.5 text-[10px] font-semibold text-dh-muted hover:text-dh hover:bg-dh-hover/60 transition-colors"
             >
               + Add
@@ -328,6 +341,7 @@ export function SceneTableEditor({
               onRemove={(el) => applyOp({ op: 'remove-element', instanceId: el.instanceId })}
             />
           ))}
+          </div>
 
           <div className="border-t border-dh-border" role="separator" />
           <SessionCountdownsPanel
@@ -337,15 +351,16 @@ export function SceneTableEditor({
             isGm
             onTableOp={applyOp}
             trackerOverlay={trackerOverlay}
+            chromeHoverProps={panelChromeHover('countdowns-section')}
           />
 
           <div className="border-t border-dh-border" role="separator" />
+          <div className="space-y-2" {...panelChromeHover('environments-section', { removeFromScene: true })}>
           <div className="flex items-center justify-between gap-2">
             <p className="text-[10px] font-semibold uppercase tracking-wide text-dh-muted">Environments</p>
             <button
               type="button"
               onClick={() => setPickerCollection('environments')}
-              title="Add environment"
               className="shrink-0 rounded px-1 py-0.5 text-[10px] font-semibold text-dh-muted hover:text-dh hover:bg-dh-hover/60 transition-colors"
             >
               + Add
@@ -360,14 +375,15 @@ export function SceneTableEditor({
               onRemove={(el) => applyOp({ op: 'remove-element', instanceId: el.instanceId })}
             />
           ))}
+          </div>
 
           <div className="border-t border-dh-border" role="separator" />
+          <div className="space-y-2" {...panelChromeHover('adversaries-section', { removeFromScene: true })}>
           <div className="flex items-center justify-between gap-2">
             <p className="text-[10px] font-semibold uppercase tracking-wide text-dh-muted">Adversaries</p>
             <button
               type="button"
               onClick={() => setPickerCollection('adversaries')}
-              title="Add adversary"
               className="shrink-0 rounded px-1 py-0.5 text-[10px] font-semibold text-dh-muted hover:text-dh hover:bg-dh-hover/60 transition-colors"
             >
               + Add
@@ -413,6 +429,7 @@ export function SceneTableEditor({
               />
             );
           })}
+          </div>
         </div>
       </aside>
 

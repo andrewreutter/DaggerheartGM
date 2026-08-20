@@ -1,8 +1,18 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 
 /**
  * Shared full-viewport fallback when the app hits an uncaught error.
  */
+export function formatFatalErrorDetail({ error, errorInfo, message } = {}) {
+  if (error instanceof Error) {
+    return `${error.message}${error.stack ? `\n\n${error.stack}` : ''}`;
+  }
+  if (errorInfo?.componentStack) {
+    return `${message || ''}\n\n${errorInfo.componentStack}`;
+  }
+  return message || String(error ?? '');
+}
+
 export function FatalErrorFallback({
   title = 'Something went wrong',
   message,
@@ -13,12 +23,28 @@ export function FatalErrorFallback({
   tryAgainLabel = 'Try again',
 }) {
   const [showDetails, setShowDetails] = useState(false);
-  const detail =
-    error instanceof Error
-      ? `${error.message}${error.stack ? `\n\n${error.stack}` : ''}`
-      : errorInfo?.componentStack
-        ? `${message || ''}\n\n${errorInfo.componentStack}`
-        : message || String(error ?? '');
+  const [copied, setCopied] = useState(false);
+  const copiedTimerRef = useRef(null);
+  const detail = formatFatalErrorDetail({ error, errorInfo, message });
+
+  useEffect(() => () => clearTimeout(copiedTimerRef.current), []);
+
+  const copyDetails = async () => {
+    if (!detail) return;
+    try {
+      await navigator.clipboard.writeText(detail);
+      setCopied(true);
+      clearTimeout(copiedTimerRef.current);
+      copiedTimerRef.current = setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // clipboard denied — details stay visible after toggle
+    }
+  };
+
+  const handleDetailsClick = () => {
+    setShowDetails((v) => !v);
+    void copyDetails();
+  };
 
   return (
     <div
@@ -56,13 +82,26 @@ export function FatalErrorFallback({
           <div className="mt-4">
             <button
               type="button"
-              onClick={() => setShowDetails((v) => !v)}
+              onClick={handleDetailsClick}
+              title={copied ? 'Copied!' : 'Copy technical details'}
               className="text-xs text-dh-muted hover:text-dh underline"
             >
-              {showDetails ? 'Hide' : 'Show'} technical details
+              {copied ? 'Copied!' : `${showDetails ? 'Hide' : 'Show'} technical details`}
             </button>
             {showDetails ? (
-              <pre className="mt-2 max-h-48 overflow-auto rounded border border-dh-border bg-dh-inset p-3 text-xs text-dh-muted whitespace-pre-wrap break-words">
+              <pre
+                role="button"
+                tabIndex={0}
+                title={copied ? 'Copied!' : 'Click to copy'}
+                onClick={() => void copyDetails()}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    void copyDetails();
+                  }
+                }}
+                className="mt-2 max-h-48 overflow-auto rounded border border-dh-border bg-dh-inset p-3 text-xs text-dh-muted whitespace-pre-wrap break-words cursor-pointer"
+              >
                 {detail}
               </pre>
             ) : null}

@@ -52,7 +52,7 @@ export function layoutTokenDotRing(sizeW, sizeH, groups) {
         filled: i < (group.filled ?? 0),
         key: `${gi}-${i}`,
         kind: isCondition ? 'condition' : 'resource',
-        name: mark?.name,
+        name: isCondition ? mark?.name : (group.name || null),
         symbol: mark?.symbol,
       });
     }

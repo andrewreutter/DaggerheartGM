@@ -105,11 +105,14 @@ test('new table settings editor stacks Public table checkbox and Delete under th
   await page.goto('/table/test-user-uid');
   await expect(page.getByPlaceholder('Table name')).toBeVisible({ timeout: 10000 });
   await expect(page.getByRole('checkbox', { name: /Public table/i })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Copy Link' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Delete table' })).toBeVisible();
   const nameBox = page.getByPlaceholder('Table name').boundingBox();
   const publicBox = page.getByRole('checkbox', { name: /Public table/i }).boundingBox();
+  const copyBox = page.getByRole('link', { name: 'Copy Link' }).boundingBox();
   const deleteBox = page.getByRole('button', { name: 'Delete table' }).boundingBox();
-  const [name, pub, del] = await Promise.all([nameBox, publicBox, deleteBox]);
+  const [name, pub, copy, del] = await Promise.all([nameBox, publicBox, copyBox, deleteBox]);
   expect(pub.y).toBeGreaterThan(name.y);
+  expect(copy.x).toBeGreaterThan(pub.x);
   expect(del.y).toBeGreaterThan(pub.y);
 });

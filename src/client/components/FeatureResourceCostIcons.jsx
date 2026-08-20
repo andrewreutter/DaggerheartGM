@@ -1,4 +1,5 @@
 import { Sparkles, Zap, Shield, ShieldCheck } from 'lucide-react';
+import { Tooltip } from './Tooltip.jsx';
 
 /**
  * Renders repeated stat icons for Hope, Stress, and armor slot costs (mark / clear),
@@ -18,23 +19,21 @@ export function FeatureResourceCostIcons({ action, iconSize = 10, className = ''
   if (ac) parts.push(`Clear ${ac} Armor`);
   const label = parts.join(', ');
   return (
-    <span
-      className={`inline-flex items-center gap-0.5 shrink-0 ${className}`}
-      title={label}
-      aria-label={label}
-    >
-      {Array.from({ length: hc }, (_, i) => (
-        <Sparkles key={`h-${i}`} size={iconSize} className="text-amber-400" />
-      ))}
-      {Array.from({ length: sc }, (_, i) => (
-        <Zap key={`s-${i}`} size={iconSize} className="text-orange-400" />
-      ))}
-      {Array.from({ length: am }, (_, i) => (
-        <Shield key={`am-${i}`} size={iconSize} className="text-cyan-400" />
-      ))}
-      {Array.from({ length: ac }, (_, i) => (
-        <ShieldCheck key={`ac-${i}`} size={iconSize} className="text-emerald-400" />
-      ))}
-    </span>
+    <Tooltip label={label} placement="top" className={`relative inline-flex shrink-0 ${className}`}>
+      <span className="inline-flex items-center gap-0.5" aria-label={label}>
+        {Array.from({ length: hc }, (_, i) => (
+          <Sparkles key={`h-${i}`} size={iconSize} className="text-amber-400" />
+        ))}
+        {Array.from({ length: sc }, (_, i) => (
+          <Zap key={`s-${i}`} size={iconSize} className="text-orange-400" />
+        ))}
+        {Array.from({ length: am }, (_, i) => (
+          <Shield key={`am-${i}`} size={iconSize} className="text-cyan-400" />
+        ))}
+        {Array.from({ length: ac }, (_, i) => (
+          <ShieldCheck key={`ac-${i}`} size={iconSize} className="text-emerald-400" />
+        ))}
+      </span>
+    </Tooltip>
   );
 }

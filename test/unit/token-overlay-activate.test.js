@@ -13,10 +13,12 @@ import {
   resolveTokenHoverHintElement,
   suppressBrowserContextMenu,
   swallowNextContextMenu,
+  TOKEN_HOVER_HINT_LINES,
   tokenHoverHintModel,
   tokenHoverTooltipName,
   tokenHoverTooltipText,
 } from '../../src/client/lib/token-overlay-activate.js';
+import { chromeTooltipLineText } from '../../src/client/lib/map-hover-hint.js';
 
 describe('isModifierKeyDown', () => {
   it('is true for shift, ctrl, meta, or alt', () => {
@@ -151,11 +153,7 @@ describe('tokenHoverTooltipText', () => {
   it('splits the name from smaller hint lines for the static inset', () => {
     expect(tokenHoverHintModel('Vivius')).toEqual({
       name: 'Vivius',
-      lines: [
-        'Click and drag to move.',
-        'To adjust altitude, click and drag the distance display to the left of the token.',
-        'Right-click for action card.',
-      ],
+      lines: TOKEN_HOVER_HINT_LINES,
     });
   });
 
@@ -181,8 +179,8 @@ describe('tokenHoverTooltipText', () => {
     expect(body).not.toMatch(/Encounter order/i);
     expect(body).toMatch(/off-camera adversaries and environments/i);
     expect(body).toMatch(/roll/i);
-    expect(GM_TOKEN_HOVER_HINT_LINES[0]).toMatch(/Click or right-click/);
-    expect(GM_TOKEN_HOVER_HINT_LINES_TOUCH[0]).toMatch(/^Tap /);
+    expect(chromeTooltipLineText(GM_TOKEN_HOVER_HINT_LINES[0])).toMatch(/Click or right-click/);
+    expect(chromeTooltipLineText(GM_TOKEN_HOVER_HINT_LINES_TOUCH[0])).toMatch(/^Tap /);
     expect(GM_TOKEN_HOVER_HINT_LINES.slice(1)).toEqual(GM_TOKEN_HOVER_HINT_CONTENT_LINES);
     expect(GM_TOKEN_HOVER_HINT_LINES_TOUCH.slice(1)).toEqual(GM_TOKEN_HOVER_HINT_CONTENT_LINES);
   });

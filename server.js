@@ -52,7 +52,7 @@ import {
   filterRollsForViewer,
   stampNormalizedRollVisibility,
 } from './src/client/lib/roll-visibility.js';
-import { mergeIntentPatch, resolveDeleteIntentCas } from './src/client/lib/pre-roll-intent.js';
+import { applyIntentDifficultyLock, isPreRollBannerInteractive, mergeIntentPatch, resolveDeleteIntentCas } from './src/client/lib/pre-roll-intent.js';
 import { sessionNeedsDifficulty } from './src/client/lib/action-roll-difficulty.js';
 import { v2RollDieExtrasFromActionLoopPayload } from './src/client/lib/v2-action-notification-dice.js';
 import { withActionBannerSuppression } from './src/client/lib/action-notification-banner.js';
@@ -1158,7 +1158,7 @@ async function resolveDisplayNameForMapPing(req) {
   }
 }
 
-// In-memory pending pre-roll sessions: tableId → intent object (GM + initiator + assigned player).
+// In-memory pending pre-roll sessions: tableId → intent object (delivery filtered by _rollVisibility).
 // Shape: { intentId, characterName, characterInstanceId, pending: { rollText, displayName, meta },
 //   chips, selectedChips, experienceIndex, companionExperienceIndex, advantages, disadvantages,
 //   targetInstanceId, _rollVisibility, needsDifficulty, difficulty, difficultyFinalized,
@@ -1218,7 +1218,7 @@ async function applyPostedRollVisibility(rollData, {
   return rollData;
 }
 
-/** Broadcast a pending intent (or its finalize update). GM + initiator + assigned player receive the payload; everyone else gets null so a prior card clears. */
+/** Broadcast a pending intent (or its finalize update). Filtered by canViewerSeeIntent (_rollVisibility); others get null so a prior card clears. */
 function broadcastIntentToRoom(tableId, intent) {
   const room = rooms.get(tableId);
   if (!room) return;
@@ -3567,9 +3567,11 @@ app.get('/api/room/:tableId/stream', async (req, res) => {
     subscriptionManager.subscribe('table_state', tableId, res, { tableStateAudience: 'player' });
 
     const existingIntent = pendingIntents.get(tableId);
-    if (existingIntent && canViewerSeeIntent(existingIntent, playerViewer)) {
-      writeSseEvent(res, 'intent', existingIntent);
-    }
+    writeSseEvent(
+      res,
+      'intent',
+      existingIntent && canViewerSeeIntent(existingIntent, playerViewer) ? existingIntent : null,
+    );
 
     broadcastPresenceToTable(tableId);
 
@@ -3631,9 +3633,11 @@ app.get('/api/room/:tableId/public-stream', async (req, res) => {
     broadcastPresenceToTable(tableId);
 
     const existingIntent = pendingIntents.get(tableId);
-    if (existingIntent && canViewerSeeIntent(existingIntent, spectatorViewer)) {
-      writeSseEvent(res, 'intent', existingIntent);
-    }
+    writeSseEvent(
+      res,
+      'intent',
+      existingIntent && canViewerSeeIntent(existingIntent, spectatorViewer) ? existingIntent : null,
+    );
 
     const heartbeat = setInterval(() => { res.write(':heartbeat\n\n'); res.flush?.(); }, 30000);
     req.on('close', () => {
@@ -4845,6 +4849,10 @@ app.patch('/api/room/:tableId/intent', requireAuth, async (req, res) => {
     return res.status(409).json({ error: 'Intent no longer pending' });
   }
   const isGm = req.uid === ctx.gmUid;
+  const viewer = { role: isGm ? 'gm' : 'player', uid: req.uid, email: req.email };
+  if (!isPreRollBannerInteractive(existing, viewer)) {
+    return res.status(403).json({ error: 'Read-only observer' });
+  }
   const updated = mergeIntentPatch(existing, body, { isGm });
   pendingIntents.set(req.params.tableId, updated);
   broadcastIntentToRoom(req.params.tableId, updated);
@@ -4857,6 +4865,11 @@ app.delete('/api/room/:tableId/intent', requireAuth, async (req, res) => {
   if (ctx.error) return res.status(ctx.error).json({ error: ctx.message });
   const intentId = req.body?.intentId || req.query?.intentId;
   const existing = pendingIntents.get(req.params.tableId);
+  const isGm = req.uid === ctx.gmUid;
+  const viewer = { role: isGm ? 'gm' : 'player', uid: req.uid, email: req.email };
+  if (existing && !isPreRollBannerInteractive(existing, viewer)) {
+    return res.status(403).json({ error: 'Read-only observer' });
+  }
   const cas = resolveDeleteIntentCas(existing, intentId);
   if (!cas.ok) return res.status(cas.status).json({ error: cas.error });
   pendingIntents.delete(req.params.tableId);
@@ -4864,19 +4877,19 @@ app.delete('/api/room/:tableId/intent', requireAuth, async (req, res) => {
   res.json({ ok: true });
 });
 
-// POST /api/room/:tableId/intent/difficulty — GM finalizes the difficulty for the pending player intent.
-// Body: { intentId, difficulty }. GM-only (403 if requester isn't the table owner).
+// POST /api/room/:tableId/intent/difficulty — GM locks or unlocks the pending intent DC.
+// Body: { intentId, difficulty?, finalized? }. `finalized` defaults true (lock); false unlocks.
+// GM-only (403 if requester isn't the table owner).
 app.post('/api/room/:tableId/intent/difficulty', requireAuth, async (req, res) => {
   const ctx = await resolveTableAccess(APP_ID, req.params.tableId, req);
   if (ctx.error) return res.status(ctx.error).json({ error: ctx.message });
   if (req.uid !== ctx.gmUid) return res.status(403).json({ error: 'Only the GM can finalize difficulty' });
-  const { intentId, difficulty } = req.body;
+  const { intentId, difficulty, finalized } = req.body;
   const existing = pendingIntents.get(req.params.tableId);
   if (!existing || existing.intentId !== intentId) {
     return res.status(409).json({ error: 'Intent no longer pending' });
   }
-  const clamped = Math.max(5, Math.min(30, Number(difficulty) || 15));
-  const updated = { ...existing, difficulty: clamped, difficultyFinalized: true };
+  const updated = applyIntentDifficultyLock(existing, { difficulty, finalized });
   pendingIntents.set(req.params.tableId, updated);
   broadcastIntentToRoom(req.params.tableId, updated);
   res.json({ ok: true });

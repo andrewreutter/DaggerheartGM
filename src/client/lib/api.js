@@ -1159,14 +1159,14 @@ export const clearTableIntent = async (tableId, intentId) => {
 /** @deprecated use clearTableIntent */
 export const clearPlayerIntent = clearTableIntent;
 
-/** GM: finalize the difficulty for a pending player intent so their pre-roll sheet can Proceed. */
-export const postFinalizeIntentDifficulty = async (tableId, { intentId, difficulty }) => {
+/** GM: lock or unlock the difficulty for a pending intent (`finalized` defaults true). */
+export const postFinalizeIntentDifficulty = async (tableId, { intentId, difficulty, finalized = true }) => {
   const token = await getAuthToken();
   if (!token) return;
   fetch(`/api/room/${tableId}/intent/difficulty`, {
     method: 'POST',
     headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
-    body: JSON.stringify({ intentId, difficulty }),
+    body: JSON.stringify({ intentId, difficulty, finalized }),
   }).catch(() => {});
 };
 

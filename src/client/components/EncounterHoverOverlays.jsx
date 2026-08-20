@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { Edit, Eye, EyeOff, StickyNote, Trash2 } from 'lucide-react';
 import { EnvironmentCardContent, AdversaryCardContent } from './DetailCardContent.jsx';
 import { EncounterNoteEditorForm } from './EncounterNoteEditorForm.jsx';
+import { EncounterReactionCallForm } from './EncounterReactionCallForm.jsx';
 import { SessionCountdownEditorForm } from './SessionCountdownEditorForm.jsx';
 import { MarkdownText } from '../lib/markdown.js';
 import { useHoverOverlay } from '../lib/useHoverOverlay.js';
@@ -106,12 +107,13 @@ export function useEncounterHoverOverlays({ isTouch: isTouchProp, resolveItems }
 
 function trackerOverlayKey(data) {
   if (!data) return null;
+  if (data.kind === 'reaction') return 'reaction';
   if (data.kind === 'environment' || data.kind === 'note') return data.element?.instanceId ?? null;
   if (data.kind === 'countdown') return data.row?.id ?? null;
   return data.baseElement?.id ?? null;
 }
 
-function trackerTriggerData(kind, payload) {
+export function trackerTriggerData(kind, payload) {
   return (e) => ({
     kind,
     ...payload,
@@ -125,6 +127,7 @@ export function EncounterNoteCard({
   trackerOverlay,
   onToggleVisibility,
   onRemove,
+  chromeHoverProps = {},
 }) {
   const noteBodyTrimmed = String(element.body || '').trim();
   const noteTitleOnly = !noteBodyTrimmed && !element.imageUrl;
@@ -136,6 +139,7 @@ export function EncounterNoteCard({
       data-testid="encounter-note-card"
       className={`group/note flex cursor-pointer gap-1 rounded-lg border border-amber-900/50 bg-amber-950/25 px-2 transition-colors hover:border-amber-700/60 hover:bg-amber-950/40 ${noteTitleOnly ? 'py-1.5' : 'py-2'}`}
       {...hoverProps}
+      {...chromeHoverProps}
     >
       <button
         type="button"
@@ -184,12 +188,19 @@ export function EncounterNoteCard({
   );
 }
 
-export function EncounterEnvironmentCard({ element, trackerOverlay, onRemove, removeTitle = 'Remove from table' }) {
+export function EncounterEnvironmentCard({
+  element,
+  trackerOverlay,
+  onRemove,
+  removeTitle = 'Remove from table',
+  chromeHoverProps = {},
+}) {
   return (
     <div
       data-testid="encounter-environment-card"
       className="rounded-lg bg-emerald-950/30 border border-emerald-900/40 overflow-hidden group/env cursor-pointer"
       {...trackerOverlay.triggerProps(trackerTriggerData('environment', { element }))}
+      {...chromeHoverProps}
     >
       <div className="px-2.5 py-1.5 flex items-center gap-1.5">
         <span className="text-xs font-semibold text-emerald-300/80 truncate flex-1">{element.name || 'Environment'}</span>
@@ -281,6 +292,9 @@ export function EncounterTrackerOverlay({
   onApplyCountdownPatch,
   onRemoveCountdown,
   onRollCountdownStart,
+  /** Live Game Table only — Scene omits these so kind `reaction` never opens there. */
+  characters = [],
+  onCallReaction,
 }) {
   if (!overlay.isOpen || !overlay.data || typeof document === 'undefined') return null;
   const asideLeft = resolveEncounterAsideLeft(asideRef?.current);
@@ -326,6 +340,20 @@ export function EncounterTrackerOverlay({
         />
       </div>
     );
+  } else if (overlay.data.kind === 'reaction') {
+    body = onCallReaction ? (
+      <div className="p-5">
+        <EncounterReactionCallForm
+          key={(overlay.data.seedInstanceIds || []).join('\0')}
+          characters={characters}
+          seedInstanceIds={overlay.data.seedInstanceIds}
+          onCall={(payload) => {
+            onCallReaction(payload);
+            overlay.close();
+          }}
+        />
+      </div>
+    ) : null;
   } else if (overlay.data.kind === 'environment') {
     const el = overlay.data.element;
     body = (

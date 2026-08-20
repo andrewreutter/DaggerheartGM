@@ -162,7 +162,7 @@ doubt (the webServer command runs `node server.js` directly, it does **not** reb
    banner appears.
 9. **Reaction rolls are GM-called, not sheet buttons.** The Defense card no longer has a
    "Reaction Rolls" trait grid. The GM opens **Call for Reaction** (Encounter panel or a Zap on a
-   character card) → `ReactionCallModal` → pending marquee; **Proceed** on a target posts
+   character card) → left-of-aside `EncounterReactionCallForm` → pending marquee; **Proceed** on a target posts
    `_isReaction: true` via `handlePlayerOwnRoll`. Trait chips on the sheet are ordinary action
    rolls (`getByRole('button', { name: /Agility.*Sprint/i })` still works via `TRAIT_VERBS`).
 10. **Cross-sheet `isSelect` chips cannot be activated (known gap).**

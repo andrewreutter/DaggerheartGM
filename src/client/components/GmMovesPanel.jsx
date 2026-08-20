@@ -85,13 +85,14 @@ export function useGmMovesOverlay() {
   return useHoverOverlay({ hideDelay: 150, isTouch, mode: 'click', getClickToggleKey: () => 'gm-moves' });
 }
 
-export function GmMovesTrigger({ overlay, activeElements = [], characterCount = 1 }) {
+export function GmMovesTrigger({ overlay, activeElements = [], characterCount = 1, chromeHoverProps = {} }) {
   const count = gmMovesMenuCount(buildConsolidatedGmMovesMenu(activeElements, characterCount));
   return (
     <div
       data-testid="gm-moves-trigger"
       className={`rounded-lg border px-2.5 py-2 flex items-center gap-2 transition-colors cursor-pointer ${overlay.isOpen ? 'border-dh-hope/60 bg-dh-inset' : 'border-dh-strong bg-dh-surface hover:border-dh-hope/40'}`}
       {...overlay.triggerProps(true)}
+      {...chromeHoverProps}
     >
       <Zap size={14} className="text-dh-hope shrink-0" />
       <span className="text-xs font-semibold text-dh uppercase tracking-wider flex-1">GM Moves</span>

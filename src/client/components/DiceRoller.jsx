@@ -747,6 +747,8 @@ function ActionBanner({
                 const canProceed = typeof canReactionProceed === 'function'
                   ? canReactionProceed(row.instanceId)
                   : !disableDismiss;
+                const traitLabel = row.trait ? (TRAIT_FULL[row.trait] || row.trait) : null;
+                const nameLine = traitLabel ? `${row.name} · ${traitLabel}` : row.name;
                 if (badge) {
                   const resultCls = badge.success === true
                     ? 'text-emerald-400'
@@ -758,7 +760,7 @@ function ActionBanner({
                       key={row.instanceId}
                       className="flex items-center justify-between gap-2 rounded border border-dh-strong bg-dh-raised/50 px-2 py-1"
                     >
-                      <span className="text-[11px] font-semibold text-dh truncate">{row.name}</span>
+                      <span className="text-[11px] font-semibold text-dh truncate">{nameLine}</span>
                       <span className={`text-[11px] font-semibold tabular-nums shrink-0 ${resultCls}`}>
                         {row.subRoll.total} — {badge.label}
                       </span>
@@ -771,7 +773,7 @@ function ActionBanner({
                       key={row.instanceId}
                       className="flex items-center justify-between gap-2 rounded border border-dh-strong bg-dh-raised/50 px-2 py-1"
                     >
-                      <span className="text-[11px] font-semibold text-dh truncate">{row.name}</span>
+                      <span className="text-[11px] font-semibold text-dh truncate">{nameLine}</span>
                       <span className="text-[10px] text-sky-300 shrink-0">Preparing…</span>
                     </div>
                   );
@@ -784,7 +786,7 @@ function ActionBanner({
                       onClick={() => onReactionProceed(row.instanceId)}
                       className="flex items-center justify-between gap-2 rounded border border-sky-700/60 bg-sky-950/40 px-2 py-1 text-left hover:bg-sky-900/50 transition-colors"
                     >
-                      <span className="text-[11px] font-semibold text-dh truncate">{row.name}</span>
+                      <span className="text-[11px] font-semibold text-dh truncate">{nameLine}</span>
                       <span className="text-[10px] font-semibold text-sky-300 shrink-0">Proceed</span>
                     </button>
                   );
@@ -794,7 +796,7 @@ function ActionBanner({
                     key={row.instanceId}
                     className="flex items-center justify-between gap-2 rounded border border-dh-strong bg-dh-raised/30 px-2 py-1"
                   >
-                    <span className="text-[11px] font-semibold text-dh-muted truncate">{row.name}</span>
+                    <span className="text-[11px] font-semibold text-dh-muted truncate">{nameLine}</span>
                     <span className="text-[10px] text-dh-muted shrink-0">Awaiting</span>
                   </div>
                 );

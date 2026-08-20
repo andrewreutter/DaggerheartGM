@@ -246,7 +246,7 @@ function App() {
   const [mapPings, setMapPings] = useState([]);
   /** Ephemeral scribble segments (SSE `map_scribble`); not persisted */
   const [mapScribbles, setMapScribbles] = useState([]);
-  // pendingIntent: shared pre-roll session (GM + initiator + assigned player)
+  // pendingIntent: shared pre-roll session (filtered by _rollVisibility; observers read-only)
   const [pendingIntent, setPendingIntent] = useState(null);
   const [spotlightRequestGrant, setSpotlightRequestGrant] = useState(null);
   // Player-only: banner IDs for which a feature reroll was requested, keyed by reaction stateKey (optimistic feedback)
@@ -1406,6 +1406,11 @@ function App() {
           if (!id || seenLogDbIdsRef.current.has(id)) return;
           seenLogDbIdsRef.current.add(id);
           setActionLog(prev => [...prev.slice(-49), { ...normalizeRoll(roll), _logId: `log-${id}` }]);
+        } catch { /* ignore */ }
+      });
+      es.addEventListener('intent', (e) => {
+        try {
+          setPendingIntent(JSON.parse(e.data));
         } catch { /* ignore */ }
       });
       es.addEventListener('map_ping', (e) => {

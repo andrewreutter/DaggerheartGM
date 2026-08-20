@@ -13,6 +13,9 @@ import {
   mapObjectHoverHintModel,
   mapZoomChordLabel,
   resolveMapChromeTooltip,
+  chromeTooltipLineText,
+  chromeTooltipLineTexts,
+  groupChromeTooltipLines,
 } from '../../src/client/lib/map-hover-hint.js';
 import {
   GM_TOKEN_HOVER_HINT_ELEMENT,
@@ -102,6 +105,30 @@ describe('resolveMapChromeTooltip', () => {
   const token = { instanceId: 'c1', elementType: 'character', name: 'Vivius' };
   const image = { instanceId: 'img1', elementType: 'mapImage' };
 
+  it('prefers a sidebar panel hint over a hovered token', () => {
+    const tip = resolveMapChromeTooltip({
+      panelHint: { id: 'c1', title: 'Vivius', lines: ['Click to open the character sheet.'] },
+      tokenElement: token,
+      mapObject: image,
+    });
+    expect(tip).toEqual({
+      id: 'c1',
+      title: 'Vivius',
+      lines: ['Click to open the character sheet.'],
+      showInstructionsToggle: true,
+    });
+  });
+
+  it('hides panel-hint title and instruction lines when showInstructions is false', () => {
+    const tip = resolveMapChromeTooltip({
+      panelHint: { id: 'party-loot', title: 'Party Loot', lines: ['Click to open shared gold and items.'] },
+      showInstructions: false,
+    });
+    expect(tip.title).toBe('');
+    expect(tip.lines).toEqual([]);
+    expect(tip.showInstructionsToggle).toBe(true);
+  });
+
   it('prefers a hovered token over a map object', () => {
     const tip = resolveMapChromeTooltip({ tokenElement: token, mapObject: image });
     expect(tip).toEqual({
@@ -133,7 +160,7 @@ describe('resolveMapChromeTooltip', () => {
     const tip = resolveMapChromeTooltip({ mapObject: image, canModifyMapObject: true });
     expect(tip.id).toBe('img1');
     expect(tip.title).toBe('Map Image');
-    expect(tip.lines).toContain('Double-click to open.');
+    expect(chromeTooltipLineTexts(tip.lines)).toContain('Double-click to open.');
     expect(tip.showInstructionsToggle).toBe(true);
   });
 
@@ -166,13 +193,13 @@ describe('resolveMapChromeTooltip', () => {
     expect(tip.lines.join('\n')).not.toContain('Zoom to Actors');
   });
 
-  it('hides instruction lines on every tooltip when showInstructions is false', () => {
+  it('hides the title and instruction lines on every tooltip when showInstructions is false', () => {
     const mapTip = resolveMapChromeTooltip({
       cameraLocked: true,
       showInstructions: false,
       platform: 'windows',
     });
-    expect(mapTip.title).toBe(GAME_MAP_TITLE);
+    expect(mapTip.title).toBe('');
     expect(mapTip.lines).toEqual([]);
     expect(mapTip.showInstructionsToggle).toBe(true);
 
@@ -180,7 +207,7 @@ describe('resolveMapChromeTooltip', () => {
       tokenElement: token,
       showInstructions: false,
     });
-    expect(tokenTip.title).toBe('Vivius');
+    expect(tokenTip.title).toBe('');
     expect(tokenTip.lines).toEqual([]);
     expect(tokenTip.showInstructionsToggle).toBe(true);
 
@@ -188,16 +215,16 @@ describe('resolveMapChromeTooltip', () => {
       mapObject: image,
       showInstructions: false,
     });
-    expect(objectTip.title).toBe('Map Image');
+    expect(objectTip.title).toBe('');
     expect(objectTip.lines).toEqual([]);
     expect(objectTip.showInstructionsToggle).toBe(true);
   });
 
   it('leads with the locked-camera note then still lists gestures', () => {
     const tip = resolveMapChromeTooltip({ cameraLocked: true, platform: 'windows' });
-    expect(tip.lines[0]).toBe(GAME_MAP_LOCKED_LEAD);
+    expect(chromeTooltipLineText(tip.lines[0])).toBe(GAME_MAP_LOCKED_LEAD);
     expect(tip.lines.slice(1)).toEqual(gameMapGestureLines('windows'));
-    expect(tip.lines.join('\n')).toContain('Zoom toward the pointer: Ctrl-scroll');
+    expect(chromeTooltipLineTexts(tip.lines).join('\n')).toContain('Zoom toward the pointer: Ctrl-scroll');
   });
 
   it('hides the gesture list when the camera follows the GM', () => {
@@ -212,11 +239,61 @@ describe('mapObjectHoverHintModel', () => {
     expect(mapObjectHoverHintModel({ elementType: 'drawShape', shapeTool: 'rect' }).title).toBe('Rectangle');
     expect(mapObjectHoverHintModel({ elementType: 'drawShape', shapeTool: 'oval' }).title).toBe('Oval');
     expect(mapObjectHoverHintModel({ elementType: 'drawShape', shapeTool: 'brush' }).title).toBe('Brush stroke');
-    expect(mapObjectHoverHintModel({ elementType: 'drawShape', shapeTool: 'brush' }).lines.join(' '))
+    expect(chromeTooltipLineTexts(mapObjectHoverHintModel({ elementType: 'drawShape', shapeTool: 'brush' }).lines).join(' '))
       .toContain('scales the stroke uniformly');
     expect(mapObjectHoverHintModel({ elementType: 'mapImage' }, { canModify: false })).toEqual({
       title: 'Map Image',
       lines: [MAP_OBJECT_VIEW_ONLY_LINE],
     });
+  });
+});
+
+describe('groupChromeTooltipLines', () => {
+  it('splits an explicit lead from body and icon rows', () => {
+    expect(groupChromeTooltipLines([
+      { text: 'Click to open.', role: 'lead' },
+      'Click a track to mark Hope.',
+      { text: 'Assign players', icon: 'users' },
+      { text: 'Remove', icon: 'trash' },
+    ])).toEqual({
+      lead: [{ text: 'Click to open.', role: 'lead' }],
+      body: [{ text: 'Click a track to mark Hope.' }],
+      actions: [
+        { text: 'Assign players', icon: 'users' },
+        { text: 'Remove', icon: 'trash' },
+      ],
+      legends: [[
+        { text: 'Assign players', icon: 'users' },
+        { text: 'Remove', icon: 'trash' },
+      ]],
+    });
+  });
+
+  it('does not treat a plain first string as a lead', () => {
+    expect(groupChromeTooltipLines(['Pan: scroll', 'Zoom: pinch'])).toEqual({
+      lead: [],
+      body: [{ text: 'Pan: scroll' }, { text: 'Zoom: pinch' }],
+      actions: [],
+      legends: [],
+    });
+  });
+
+  it('keeps distinct icon legends as separate side-by-side groups', () => {
+    const grouped = groupChromeTooltipLines([
+      { text: 'Hope', icon: 'hope', legend: 'resources' },
+      { text: 'HP', icon: 'hp', legend: 'resources' },
+      { text: 'Assign players', icon: 'users', legend: 'functions' },
+      { text: 'Remove', icon: 'trash', legend: 'functions' },
+    ]);
+    expect(grouped.legends).toEqual([
+      [
+        { text: 'Hope', icon: 'hope', legend: 'resources' },
+        { text: 'HP', icon: 'hp', legend: 'resources' },
+      ],
+      [
+        { text: 'Assign players', icon: 'users', legend: 'functions' },
+        { text: 'Remove', icon: 'trash', legend: 'functions' },
+      ],
+    ]);
   });
 });

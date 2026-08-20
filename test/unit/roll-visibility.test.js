@@ -78,21 +78,27 @@ describe('canViewerSeeIntent', () => {
     expect(canViewerSeeIntent(null, PLAYER_B)).toBe(true);
   });
 
-  it('private intent is GM + initiator only', () => {
+  it('table-visible intent is delivered to GM, invited players, and audience', () => {
     const intent = {
-      _rollVisibility: ROLL_VISIBILITY_GM_AND_PLAYER,
+      _rollVisibility: ROLL_VISIBILITY_TABLE,
       _initiatorUid: 'player-a',
       _initiatorEmail: 'a@example.com',
     };
     expect(canViewerSeeIntent(intent, GM)).toBe(true);
     expect(canViewerSeeIntent(intent, PLAYER_A)).toBe(true);
-    expect(canViewerSeeIntent(intent, PLAYER_B)).toBe(false);
-    expect(canViewerSeeIntent(intent, SPECTATOR)).toBe(false);
+    expect(canViewerSeeIntent(intent, PLAYER_B)).toBe(true);
+    expect(canViewerSeeIntent(intent, SPECTATOR)).toBe(true);
   });
 
-  it('public intent is still GM + initiator + assigned player, not other players', () => {
+  it('omitted visibility defaults to table (audience included)', () => {
+    const intent = { _initiatorUid: 'player-a', _initiatorEmail: 'a@example.com' };
+    expect(canViewerSeeIntent(intent, PLAYER_B)).toBe(true);
+    expect(canViewerSeeIntent(intent, SPECTATOR)).toBe(true);
+  });
+
+  it('private-to-player intent is GM + initiator / assigned only', () => {
     const intent = {
-      _rollVisibility: ROLL_VISIBILITY_TABLE,
+      _rollVisibility: ROLL_VISIBILITY_GM_AND_PLAYER,
       _initiatorUid: 'player-a',
       _initiatorEmail: 'a@example.com',
       _assignedPlayerEmails: ['a@example.com'],
@@ -104,8 +110,23 @@ describe('canViewerSeeIntent', () => {
     expect(canViewerSeeIntent(intent, SPECTATOR)).toBe(false);
   });
 
-  it('shows a GM-opened session to the assigned player', () => {
+  it('gm-only intent is GM only', () => {
     const intent = {
+      _rollVisibility: ROLL_VISIBILITY_GM_ONLY,
+      _initiatorUid: 'player-a',
+      _initiatorEmail: 'a@example.com',
+      _assignedPlayerEmails: ['a@example.com'],
+      _assignedPlayerUid: 'player-a',
+    };
+    expect(canViewerSeeIntent(intent, GM)).toBe(true);
+    expect(canViewerSeeIntent(intent, PLAYER_A)).toBe(false);
+    expect(canViewerSeeIntent(intent, PLAYER_B)).toBe(false);
+    expect(canViewerSeeIntent(intent, SPECTATOR)).toBe(false);
+  });
+
+  it('shows a GM-opened private session to the assigned player', () => {
+    const intent = {
+      _rollVisibility: ROLL_VISIBILITY_GM_AND_PLAYER,
       _initiatorUid: 'gm-uid',
       _initiatorEmail: 'gm@example.com',
       _assignedPlayerEmails: ['a@example.com'],
@@ -113,6 +134,7 @@ describe('canViewerSeeIntent', () => {
     };
     expect(canViewerSeeIntent(intent, PLAYER_A)).toBe(true);
     expect(canViewerSeeIntent(intent, PLAYER_B)).toBe(false);
+    expect(canViewerSeeIntent(intent, SPECTATOR)).toBe(false);
   });
 });
 

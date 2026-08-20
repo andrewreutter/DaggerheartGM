@@ -40,4 +40,12 @@ describe('layoutTokenDotRing', () => {
     expect(withMarks.dots[6].x).not.toBeCloseTo(without.dots[6].x, 5);
     expect(withMarks.dots[6].y).not.toBeCloseTo(without.dots[6].y, 5);
   });
+
+  it('copies a resource group name onto every pip in that group', () => {
+    const layout = layoutTokenDotRing(40, 40, [
+      { color: '#ef4444', total: 2, filled: 1, name: 'HP' },
+      { color: '#f97316', total: 1, filled: 1, name: 'Stress' },
+    ]);
+    expect(layout.dots.map((d) => d.name)).toEqual(['HP', 'HP', 'Stress']);
+  });
 });

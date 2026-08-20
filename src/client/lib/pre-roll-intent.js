@@ -3,7 +3,7 @@
  * Used by the Game Table client and by `server.js` pendingIntents routes.
  */
 
-import { normalizeViewerEmail, ROLL_VISIBILITY_TABLE } from './roll-visibility.js';
+import { canViewerSeeIntent, normalizeViewerEmail, ROLL_VISIBILITY_TABLE } from './roll-visibility.js';
 
 export const PRE_ROLL_SELECTION_KEYS = [
   'selectedChips',
@@ -16,6 +16,23 @@ export const PRE_ROLL_SELECTION_KEYS = [
 ];
 
 export const PRE_ROLL_PATCH_DEBOUNCE_MS = 100;
+
+/** Pool-name inputs (advantage / disadvantage) stay local this long before PATCH, like countdown names. */
+export const PRE_ROLL_POOL_TEXT_DEBOUNCE_MS = 400;
+
+/**
+ * Next displayed pool-name draft. While the field is dirty (user typing), ignore
+ * the parent/SSE value so echoes cannot revert in-progress text — same idea as
+ * ConditionsEditor local `draft`.
+ * @param {unknown} remoteName
+ * @param {string} localDraft
+ * @param {{ dirty?: boolean }} [opts]
+ * @returns {string}
+ */
+export function nextPoolNameDraft(remoteName, localDraft, { dirty = false } = {}) {
+  if (dirty) return typeof localDraft === 'string' ? localDraft : '';
+  return typeof remoteName === 'string' ? remoteName : '';
+}
 
 /**
  * Align a selectedChips snapshot to the current chip list length (pad false / truncate).
@@ -45,6 +62,7 @@ export function serializeDisplayChips(chips) {
       frequency: c.frequency || c.resetsOn || null,
       isToggle: !!c.isToggle,
       v2Intent: !!c._v2IntentChip,
+      _advantageTriggerChip: !!c._advantageTriggerChip,
     }));
 }
 
@@ -103,7 +121,22 @@ function clampDifficulty(value) {
 }
 
 /**
- * Merge a PATCH into the in-memory intent. Players cannot overwrite DC / Finalize.
+ * GM Finalize / Unlock for POST /intent/difficulty.
+ * `finalized` defaults to true (lock). Pass false to unlock and keep editing.
+ */
+export function applyIntentDifficultyLock(existing, { difficulty, finalized = true } = {}) {
+  if (!existing || typeof existing !== 'object') return existing ?? null;
+  const clamped = clampDifficulty(difficulty) ?? clampDifficulty(existing.difficulty) ?? 15;
+  return {
+    ...existing,
+    difficulty: clamped,
+    difficultyFinalized: finalized === true,
+  };
+}
+
+/**
+ * Merge a PATCH into the in-memory intent. Players cannot overwrite DC / Approve.
+ * GM DC writes do not touch `difficultyFinalized` (Approve stays on after a live DC edit).
  * @param {object | null | undefined} existing
  * @param {object} patch
  * @param {{ isGm?: boolean }} [opts]
@@ -173,18 +206,78 @@ function viewerIsAssignedPlayer(intent, viewer) {
 }
 
 /**
- * Who may render the shared pre-roll strip: GM + initiator + assigned player(s).
- * `intent == null` is a clear — deliver to everyone so a prior card goes away.
- * Roll privacy (`_rollVisibility`) is not used here.
+ * Who may render the shared pre-roll strip. Same `_rollVisibility` as the looming roll
+ * (table includes audience). `intent == null` is a clear — deliver to everyone so a
+ * prior card goes away.
  * @param {object | null | undefined} intent
  * @param {{ role?: string, uid?: string | null, email?: string | null }} viewer
  */
 export function shouldShowPreRollBanner(intent, viewer = {}) {
-  if (intent == null) return true;
-  if (viewer.role === 'gm') return true;
+  return canViewerSeeIntent(intent, viewer);
+}
+
+/**
+ * Who may toggle chips, edit pools, Proceed / Cancel, or PATCH / DELETE the session.
+ * Other invited players see a read-only card.
+ * @param {object | null | undefined} intent
+ * @param {{ role?: string, uid?: string | null, email?: string | null }} viewer
+ */
+export function isPreRollBannerInteractive(intent, viewer = {}) {
+  if (intent == null) return false;
+  if (viewer?.role === 'gm') return true;
   if (viewerIsInitiator(intent, viewer)) return true;
   if (viewerIsAssignedPlayer(intent, viewer)) return true;
   return false;
+}
+
+/**
+ * Trimmed non-empty advantage / disadvantage names.
+ * @param {unknown} names
+ * @returns {string[]}
+ */
+export function namedPoolEntries(names) {
+  return (Array.isArray(names) ? names : [])
+    .map((n) => (typeof n === 'string' ? n.trim() : ''))
+    .filter(Boolean);
+}
+
+/**
+ * Observer (other-player) view: only selections that are on. Empty sections stay hidden.
+ * @param {object} [args]
+ */
+export function preRollObserverVisibleModel({
+  chips = [],
+  selectedChips = [],
+  experienceIndex = null,
+  companionExperienceIndex = null,
+  advantages = [],
+  disadvantages = [],
+  targetInstanceId = null,
+  deferExperience = false,
+} = {}) {
+  const featureChipIndices = [];
+  const advantageTriggerIndices = [];
+  (Array.isArray(chips) ? chips : []).forEach((chip, i) => {
+    if (!selectedChips?.[i] || chip?._difficultyChip) return;
+    if (chip._advantageTriggerChip) advantageTriggerIndices.push(i);
+    else featureChipIndices.push(i);
+  });
+  const namedAdvantages = namedPoolEntries(advantages);
+  const namedDisadvantages = namedPoolEntries(disadvantages);
+  const hasExperienceIndex = experienceIndex != null || companionExperienceIndex != null;
+  return {
+    featureChipIndices,
+    advantageTriggerIndices,
+    namedAdvantages,
+    namedDisadvantages,
+    showExperience: !!deferExperience && hasExperienceIndex,
+    showTarget: targetInstanceId != null && targetInstanceId !== '',
+    showFeatureChips: featureChipIndices.length > 0,
+    showAdvantageSection:
+      advantageTriggerIndices.length > 0
+      || namedAdvantages.length > 0
+      || namedDisadvantages.length > 0,
+  };
 }
 
 /**
@@ -195,11 +288,15 @@ export function shouldShowPreRollBanner(intent, viewer = {}) {
  */
 export function shouldApplyRemoteIntentSnapshot(remote, { lastSentClientWriteSeq = null } = {}) {
   if (!remote) return { apply: false, reason: 'null' };
-  if (
-    lastSentClientWriteSeq != null
-    && Number(remote.clientWriteSeq) === Number(lastSentClientWriteSeq)
-  ) {
+  if (lastSentClientWriteSeq == null) return { apply: true };
+  const remoteSeq = Number(remote.clientWriteSeq);
+  const lastSent = Number(lastSentClientWriteSeq);
+  if (!Number.isFinite(remoteSeq) || !Number.isFinite(lastSent)) return { apply: true };
+  if (remoteSeq === lastSent) {
     return { apply: false, reason: 'own-echo' };
+  }
+  if (remoteSeq < lastSent) {
+    return { apply: false, reason: 'stale' };
   }
   return { apply: true };
 }

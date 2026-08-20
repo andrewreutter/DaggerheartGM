@@ -8,12 +8,15 @@ import { InventoryItemPickerModal } from './modals/InventoryItemPickerModal.jsx'
 /**
  * Characters-panel card for table-scoped party gold / inventory.
  * Same chrome as {@link GameTableCharacterListCard} (`w-56` sidebar).
+ *
+ * @param {object} [props.chromeHoverProps] — sidebar hover → map chrome tooltip
  */
-export function PartyLootCard({ gold = 0, itemCount = 0, sheetTriggerProps = {} }) {
+export function PartyLootCard({ gold = 0, itemCount = 0, sheetTriggerProps = {}, chromeHoverProps = {} }) {
   const n = Math.max(0, Math.floor(Number(itemCount) || 0));
   return (
     <div
       className="rounded-lg border overflow-hidden bg-dh-surface cursor-pointer flex flex-col min-h-0 min-w-0 border-dh-border"
+      {...chromeHoverProps}
       {...sheetTriggerProps}
     >
       <div className="px-2.5 py-1.5 border-b border-dh-border flex items-center gap-1.5 hover:bg-dh-hover transition-colors">

@@ -138,7 +138,7 @@ describe('SceneTableEditor notes', () => {
       );
     });
 
-    const addBtn = [...container.querySelectorAll('button')].find((b) => b.getAttribute('title') === 'Add note');
+    const addBtn = container.querySelector('[data-testid="encounter-add-note"]');
     expect(addBtn).toBeTruthy();
     await act(async () => {
       addBtn.click();

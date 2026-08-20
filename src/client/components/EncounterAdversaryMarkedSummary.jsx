@@ -3,24 +3,29 @@
  */
 
 import { getCheckboxTrackPreset } from './DetailCardContent.jsx';
+import { Tooltip } from './Tooltip.jsx';
 import { isAdversaryDefeated } from '../lib/helpers.js';
 
 export { playerEncounterInstanceRowVisible } from '../lib/encounter-adversary-player-summary.js';
 
 /** Renders N filled (marked) slots with preset icon-in-border — player Encounter panel summary. */
+const MARKED_BOX_LABEL = { hp: 'HP', stress: 'Stress', armor: 'Armor', hope: 'Hope' };
+
 export function MarkedBoxes({ count, trackKind }) {
   if (!count || count <= 0) return null;
   const preset = getCheckboxTrackPreset(trackKind);
   const { Icon } = preset;
+  const label = MARKED_BOX_LABEL[trackKind] || trackKind;
   return (
     <div className="flex items-center gap-0.5">
       {Array.from({ length: count }, (_, i) => (
-        <div
-          key={i}
-          className="w-3 h-3 rounded-sm flex-shrink-0 inline-flex items-center justify-center bg-transparent border-0"
-        >
-          <Icon className={`w-2 h-2 ${preset.icon}`} strokeWidth={2.5} aria-hidden />
-        </div>
+        <Tooltip key={i} label={label} placement="top" className="relative inline-flex">
+          <div
+            className="w-3 h-3 rounded-sm flex-shrink-0 inline-flex items-center justify-center bg-transparent border-0"
+          >
+            <Icon className={`w-2 h-2 ${preset.icon}`} strokeWidth={2.5} aria-hidden />
+          </div>
+        </Tooltip>
       ))}
     </div>
   );

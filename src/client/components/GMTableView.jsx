@@ -34,7 +34,6 @@ import { buildEmptyLibraryMap, shouldDiscardNewLibraryMap } from '../lib/map-lib
 import { ItemDetailModal } from './modals/ItemDetailModal.jsx';
 import { ItemPickerModal } from './modals/ItemPickerModal.jsx';
 import { ENCOUNTER_OVERLAY_FALLBACK_RECT } from '../lib/encounter-overlay-interactive.js';
-import { ReactionCallModal } from './modals/ReactionCallModal.jsx';
 import { CreateSceneModal } from './modals/CreateSceneModal.jsx';
 import { TRAIT_FULL } from './CharacterDisplay.jsx';
 import {
@@ -44,6 +43,7 @@ import {
   listInventoryMoveDestinations,
   normalizePartyLoot,
 } from '../lib/party-loot.js';
+import { tablePanelChromeHoverProps, tablePanelHoverHintModel } from '../lib/table-panel-hover-hint.js';
 import { MarkdownText } from '../lib/markdown.js';
 import { handleAiConceptTextareaKeyDown } from '../lib/ai-concept-textarea.js';
 import { indexResolvedItemsByRequestId } from '../lib/resolve-items-index.js';
@@ -51,7 +51,7 @@ import { buildSystemContext } from '../lib/feature-context.js';
 import { withActionBannerSuppression } from '../lib/action-notification-banner.js';
 import { isReactionRoll } from '../lib/reaction-roll-display.js';
 import { buildTraitRollText } from '../lib/trait-roll-text.js';
-import { buildReactionCallRoster, canViewerProceedReaction } from '../lib/reaction-call-roster.js';
+import { buildReactionCallRoster, canViewerProceedReaction, resolveReactionCallTrait } from '../lib/reaction-call-roster.js';
 import { buildJoinedPlayerRoster, mergePresenceNamesIntoCache } from '../lib/joined-player-roster.js';
 import { toggleAssignedPlayerEmail, isCharacterAssignedToPlayer } from '../lib/character-assignment.js';
 import { resolveFinalizedIntentDifficulty } from '../lib/action-roll-difficulty.js';
@@ -169,6 +169,7 @@ import {
   serializePreRollIntent,
   shouldApplyRemoteIntentSnapshot,
   shouldShowPreRollBanner,
+  isPreRollBannerInteractive,
 } from '../lib/pre-roll-intent.js';
 import { ConditionsEditor } from './ConditionsEditor.jsx';
 import { normalizeConditionsToList } from '../lib/conditions-utils.js';
@@ -226,6 +227,7 @@ import {
   EncounterPotentialAdversaryOverlay,
   EncounterTrackerOverlay,
   encounterAdversaryCardProps,
+  trackerTriggerData,
   useEncounterHoverOverlays,
 } from './EncounterHoverOverlays.jsx';
 import { useCharacterSrdData } from '../lib/useCharacterSrdData.js';
@@ -866,6 +868,13 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
   // Collapsed by default once table state arrives, unless there are no players yet and no invite link.
   // We can't use a lazy initializer because playerEmails / inviteLink arrive via SSE after mount.
   const [playersOpen, setPlayersOpen] = useState(true);
+  const [panelChromeHint, setPanelChromeHint] = useState(null);
+  const panelChromeHover = useCallback((kind, payload, extra) => (
+    tablePanelChromeHoverProps(
+      setPanelChromeHint,
+      tablePanelHoverHintModel(kind, payload, { isPlayer, isTouch, ...extra }),
+    )
+  ), [isPlayer, isTouch]);
   const playersOpenDefaultAppliedRef = useRef(false);
   useEffect(() => {
     if (tableStateReady && !playersOpenDefaultAppliedRef.current) {
@@ -955,15 +964,22 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
   const remoteAckedIntentIdRef = useRef(null);
   const lastAppliedRemoteDifficultyRef = useRef(null);
   const preRollBannerRef = useRef(null);
-  const [preRollAdvantages, setPreRollAdvantages] = useState([]); // string[]: optional name per advantage ('' = default "Advantage")
-  const [preRollDisadvantages, setPreRollDisadvantages] = useState([]); // string[]: optional name per disadvantage ('' = default "Disadvantage")
+  const [preRollAdvantages, setPreRollAdvantagesState] = useState([]); // string[]: optional name per advantage ('' = default "Advantage")
+  const [preRollDisadvantages, setPreRollDisadvantagesState] = useState([]); // string[]: optional name per disadvantage ('' = default "Disadvantage")
+  const preRollAdvantagesRef = useRef(preRollAdvantages);
+  const preRollDisadvantagesRef = useRef(preRollDisadvantages);
+  const setPreRollAdvantages = (next) => {
+    preRollAdvantagesRef.current = next;
+    setPreRollAdvantagesState(next);
+  };
+  const setPreRollDisadvantages = (next) => {
+    preRollDisadvantagesRef.current = next;
+    setPreRollDisadvantagesState(next);
+  };
   /** Intent panel: review/change attack target (same list as in-sheet target menu). */
   const [preRollTargetInstanceId, setPreRollTargetInstanceId] = useState(null);
   /** Pre-roll sheet privacy: `table` (default), `gm_and_player`, or `gm_only`. */
   const [preRollVisibility, setPreRollVisibility] = useState(ROLL_VISIBILITY_TABLE);
-  /** GM Call for Reaction modal: `{ seedInstanceIds: string[] }` or null. */
-  const [reactionCallModal, setReactionCallModal] = useState(null);
-
   const handleResyncCharacter = async (el) => {
     if (!el.daggerstackUrl || !el.daggerstackEmail || !el.daggerstackPassword) return;
     setResyncingCharId(el.instanceId);
@@ -3114,13 +3130,19 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     handleActionNotification(cycleNotification);
   };
 
-  const openReactionCallModal = (seedInstanceIds = []) => {
-    setReactionCallModal({ seedInstanceIds: seedInstanceIds.filter(Boolean) });
-  };
+  const openReactionCallPanel = useCallback((seedInstanceIds = []) => {
+    trackerOverlay.show({
+      kind: 'reaction',
+      seedInstanceIds: seedInstanceIds.filter(Boolean),
+      ...ENCOUNTER_OVERLAY_FALLBACK_RECT,
+    });
+  }, [trackerOverlay.show]);
 
-  const handleCallReaction = ({ targetInstanceIds, trait, difficulty }) => {
+  const handleCallReaction = ({ targetInstanceIds, trait, difficulty, traitOverrides }) => {
     const ids = (targetInstanceIds || []).filter(Boolean);
     if (ids.length === 0) return;
+    const byId = traitOverrides && typeof traitOverrides === 'object' ? traitOverrides : {};
+    const hasOverrides = Object.keys(byId).length > 0;
     handleActionNotification({
       _action: true,
       _reactionCall: true,
@@ -3130,8 +3152,9 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
       _reactionTargetInstanceIds: ids,
       _reactionTrait: trait,
       _reactionDifficulty: difficulty,
+      ...(hasOverrides ? { _reactionTraitByInstanceId: byId } : {}),
     });
-    setReactionCallModal(null);
+    trackerOverlay.close();
   };
 
   // Run the same character clear as session cycle (used when rest banner is acknowledged).
@@ -4136,7 +4159,8 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     if (alreadyRolled) return;
     if (preRollBanner?.characterEl?.instanceId === instanceId) return;
 
-    const trait = marqueeRoll._reactionTrait;
+    const trait = resolveReactionCallTrait(marqueeRoll, instanceId);
+    if (!trait) return;
     const displayChar = characterDisplayByInstanceId.get(instanceId) || characterEl;
     const traits = displayChar?.traits || {};
     const baseScore = traits[trait] ?? 0;
@@ -4296,9 +4320,16 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     if (preRollTargetInstanceId == null && id != null) setPreRollTargetInstanceId(id);
   }, [preRollBanner]);
 
-  const intentViewer = isPlayer
-    ? { role: 'player', uid: user?.uid, email: playerEmail }
-    : { role: 'gm', uid: user?.uid, email: user?.email };
+  const intentViewer = isSpectator
+    ? { role: 'spectator', uid: user?.uid, email: user?.email }
+    : isPlayer
+      ? { role: 'player', uid: user?.uid, email: playerEmail }
+      : { role: 'gm', uid: user?.uid, email: user?.email };
+  const preRollReadOnly = !!(
+    pendingIntent
+    && shouldShowPreRollBanner(pendingIntent, intentViewer)
+    && !isPreRollBannerInteractive(pendingIntent, intentViewer)
+  );
 
   const applyRemoteSelection = (intent, chipCount) => {
     const snap = applyRemoteSelectionSnapshot(intent);
@@ -4329,17 +4360,32 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
       }
       return;
     }
-    if (!shouldShowPreRollBanner(pendingIntent, intentViewer)) return;
+    if (!shouldShowPreRollBanner(pendingIntent, intentViewer)) {
+      if (preRollBannerRef.current) {
+        resetPreRollLocalState();
+        remoteAckedIntentIdRef.current = null;
+      }
+      return;
+    }
     if (remoteAckedIntentIdRef.current !== pendingIntent.intentId) {
       lastAppliedRemoteDifficultyRef.current = null;
     }
     remoteAckedIntentIdRef.current = pendingIntent.intentId;
+    const readOnly = !isPreRollBannerInteractive(pendingIntent, intentViewer);
     const local = preRollBannerRef.current;
     if (local?.intentId === pendingIntent.intentId) {
       const { apply } = shouldApplyRemoteIntentSnapshot(pendingIntent, {
         lastSentClientWriteSeq: lastSentClientWriteSeqRef.current,
       });
-      if (apply) applyRemoteSelection(pendingIntent, local.chips?.length ?? 0);
+      if (apply) {
+        const observerChips = Array.isArray(pendingIntent.chips) ? pendingIntent.chips : [];
+        if (readOnly) {
+          setPreRollBanner((prev) => (prev ? { ...prev, chips: observerChips } : prev));
+          applyRemoteSelection(pendingIntent, observerChips.length);
+        } else {
+          applyRemoteSelection(pendingIntent, local.chips?.length ?? 0);
+        }
+      }
       return;
     }
     const char = activeElements.find((e) => e.instanceId === pendingIntent.characterInstanceId);
@@ -4349,6 +4395,21 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
       displayName: pendingIntent.characterName || '',
       meta: {},
     };
+    if (readOnly) {
+      const chips = Array.isArray(pendingIntent.chips) ? pendingIntent.chips : [];
+      setPreRollBanner({
+        chips,
+        characterEl: char,
+        pending,
+        needsDifficulty: !!pendingIntent.needsDifficulty,
+        intentId: pendingIntent.intentId,
+        openedByRole: pendingIntent.openedByRole || 'player',
+        initiatorUid: pendingIntent._initiatorUid,
+        initiatorEmail: pendingIntent._initiatorEmail,
+      });
+      applyRemoteSelection(pendingIntent, chips.length);
+      return;
+    }
     const session = collectPreRollSession({
       rollText: pending.rollText,
       displayName: pending.displayName,
@@ -4404,6 +4465,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
 
   useEffect(() => {
     if (!preRollBanner?.intentId || !tableId) return;
+    if (preRollReadOnly) return;
     if (applyingRemoteRef.current) return;
     if (remoteAckedIntentIdRef.current !== preRollBanner.intentId) return;
     const t = setTimeout(() => {
@@ -4435,6 +4497,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     preRollDifficulty,
     tableId,
     isPlayer,
+    preRollReadOnly,
   ]);
 
   const preRollFinalizedGmDifficulty = resolveFinalizedIntentDifficulty(preRollBanner, pendingIntent);
@@ -4446,7 +4509,12 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
 
   const handlePreRollProceed = async () => {
     if (!preRollBanner) return;
-    if (preRollBanner.needsDifficulty && !preRollDifficultyFinalized && preRollFinalizedGmDifficulty == null) return;
+    if (
+      isPlayer
+      && preRollBanner.needsDifficulty
+      && !preRollDifficultyFinalized
+      && preRollFinalizedGmDifficulty == null
+    ) return;
     const intentUsedLog = [];
     const { rollWrapper, chips, characterEl, onProceed, getFeatureStateFor, pending } = preRollBanner;
     if (tableId && preRollBanner.intentId) {
@@ -4516,11 +4584,11 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     if (preRollBanner.needsDifficulty) {
       const dc = preRollFinalizedGmDifficulty ?? preRollDifficulty;
       rollWrapper.meta._difficulty = dc;
-      for (const name of preRollAdvantages) {
+      for (const name of preRollAdvantagesRef.current) {
         rollWrapper.addAdvantageDie((name && name.trim()) || 'Advantage');
         intentUsedLog.push((name && name.trim()) ? `Advantage: ${name.trim()}` : 'Advantage');
       }
-      for (const name of preRollDisadvantages) {
+      for (const name of preRollDisadvantagesRef.current) {
         rollWrapper.addDisadvantage((name && name.trim()) || 'Disadvantage');
         intentUsedLog.push((name && name.trim()) ? `Disadvantage: ${name.trim()}` : 'Disadvantage');
       }
@@ -4684,7 +4752,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
   };
 
   useEffect(() => {
-    if (!preRollBanner) return;
+    if (!preRollBanner || preRollReadOnly) return;
     const onKey = (e) => {
       if (e.key === 'Escape') {
         e.preventDefault();
@@ -4699,7 +4767,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [preRollBanner, preRollExperienceIndex, preRollCompanionExperienceIndex]);
+  }, [preRollBanner, preRollExperienceIndex, preRollCompanionExperienceIndex, preRollReadOnly]);
 
   // Group adversaries of the same type (same id) into consolidated entries.
   // Environments remain as individual entries.
@@ -5331,7 +5399,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                   }
                 : undefined
             }
-            onCallReaction={!isPlayer ? (instanceId) => openReactionCallModal([instanceId]) : undefined}
+            onCallReaction={!isPlayer ? (instanceId) => openReactionCallPanel([instanceId]) : undefined}
             cardRootProps={{}}
             trailingHeaderActions={
               <>
@@ -5388,7 +5456,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
       v2Registry,
       v2TableContextForPanels,
       handleCharacterPanelV2CardChip,
-      openReactionCallModal,
+      openReactionCallPanel,
     ],
   );
 
@@ -5829,6 +5897,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
         marqueeRollDbId: roll._rollDbId,
         pendingBanners,
         tableCharacters,
+        marquee: roll,
       });
     }
     return out;
@@ -6264,6 +6333,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
           <button
             type="button"
             onClick={() => setSupportModalOpen(true)}
+            {...panelChromeHover('support-table')}
             className="w-full rounded-lg border border-amber-600/60 bg-amber-900/40 hover:bg-amber-800/50 px-2.5 py-1.5 flex items-center justify-center gap-1.5 transition-colors"
           >
             <Heart size={11} className="text-amber-400" aria-hidden />
@@ -6298,7 +6368,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
           {playersOpen && (
             <div className="px-3 pb-3 space-y-2">
               {!isPlayer && (
-                <>
+                <div {...panelChromeHover('invite-link', { hasLink: !!inviteLink })}>
                   <p className="text-[10px] text-dh-muted uppercase tracking-wider font-semibold">Invite Link</p>
                   {!inviteLink ? (
                     playerEmails.length === 0 ? (
@@ -6350,7 +6420,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                       <p className="text-[10px] text-dh-muted">Anyone with this link can sign in and join this table.</p>
                     </div>
                   )}
-                </>
+                </div>
               )}
               <p className="text-[10px] text-dh-muted uppercase tracking-wider font-semibold">
                 Joined ({joinedPlayers.filter(p => p.online).length} / {joinedPlayers.length} online)
@@ -6361,7 +6431,11 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                 joinedPlayers.map((player) => {
                   const isPreviewing = previewAsPlayerEmail === player.email;
                   return (
-                    <div key={player.email} className="flex items-center gap-1.5">
+                    <div
+                      key={player.email}
+                      className="flex items-center gap-1.5"
+                      {...panelChromeHover('player', { name: player.name, email: player.email, online: player.online })}
+                    >
                       {player.online && (
                         <Circle size={6} className="text-green-400 fill-green-400 shrink-0" />
                       )}
@@ -6395,7 +6469,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
             </div>
           )}
           {audienceOnlineCount > 0 && (
-            <div className="px-3 pb-2">
+            <div className="px-3 pb-2" {...panelChromeHover('audience')}>
               <button
                 type="button"
                 onClick={() => setAudienceOpen((o) => !o)}
@@ -6419,6 +6493,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
           )}
         </div>
 
+        <div {...panelChromeHover('characters-section', { canAdd: !isSpectator })}>
         <div className="p-3 bg-dh-canvas border-b border-dh-border sticky top-0 z-10">
           <h2 className="font-bold text-dh uppercase tracking-wider flex items-center gap-2 text-sm">
             <Users size={15} className="text-sky-400" /> Characters
@@ -6440,51 +6515,6 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
             <Plus size={12} className="text-yellow-300/80" />
             <span className="text-xs font-semibold text-yellow-100/80">Add Character</span>
           </button>
-          )}
-
-          {isPlayer && !isSpectator && onLeaveTable && (
-            <button
-              type="button"
-              onClick={() => {
-                if (window.confirm('Leave this table? You will need a new invite link to rejoin.')) onLeaveTable();
-              }}
-              className="w-full rounded-lg border border-dh-border bg-dh-surface/40 hover:border-red-700/40 hover:bg-dh-raised/60 px-2.5 py-1.5 flex items-center justify-center gap-1.5 transition-colors"
-            >
-              <LogOut size={11} className="text-dh-muted" />
-              <span className="text-[11px] font-medium text-dh-muted">Leave table</span>
-            </button>
-          )}
-
-          {/* Bug report — visible to GM and all players, never interrupts play */}
-          {!isSpectator && (
-          <BugReportButton tableId={tableId} actionLog={actionLog} activeElements={activeElements} isPlayer={isPlayer} />
-          )}
-
-          {/* Table-not-live error — shown only when session start is blocked */}
-          {tableNotLiveError && !isPlayer && (
-            <div
-              className="rounded-lg border border-amber-700/50 bg-amber-950/30 px-3 py-2 space-y-1.5"
-              role="status"
-            >
-              <p className="text-[11px] font-semibold text-amber-300">Session cannot start</p>
-              <p className="text-[11px] text-amber-200/80 leading-snug">
-                {billingSessionBlockedCopy(tableNotLiveError.reason)}
-              </p>
-              <button
-                type="button"
-                onClick={() => setSupportModalOpen(true)}
-                className="-mx-1 rounded px-1 py-1 text-[11px] font-semibold text-sky-400 underline underline-offset-2 hover:text-sky-300 hover:bg-amber-900/30 transition-colors"
-              >
-                Purchase a Campaign Pass →
-              </button>
-              <button
-                type="button"
-                onClick={() => setTableNotLiveError(null)}
-                className="-mx-1 block rounded px-1 py-1 text-[10px] text-dh-muted hover:text-dh hover:bg-amber-900/30 transition-colors"
-              >
-                Dismiss
-              </button>
-            </div>
           )}
 
           {consolidatedElements.filter(item => item.kind === 'character').map(({ element: el }) => {
@@ -6537,8 +6567,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                       }
                     : undefined
                 }
-                onCallReaction={!isPlayer ? (instanceId) => openReactionCallModal([instanceId]) : undefined}
-                cardRootProps={{}}
+                onCallReaction={!isPlayer ? (instanceId) => openReactionCallPanel([instanceId]) : undefined}
                 v2Registry={srdData ? v2Registry : null}
                 v2TableContext={v2TableContextForPanels}
                 onV2CardChipFactory={handleCharacterPanelV2CardChip}
@@ -6552,9 +6581,19 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
             );
           })}
 
+          {consolidatedElements.filter(item => item.kind === 'character').length === 0 && (
+            <div className="text-center text-dh-muted text-xs py-6">
+              No characters yet.
+            </div>
+          )}
+        </div>
+        </div>
+
+        <div className="p-2 space-y-3">
           <PartyLootCard
             gold={partyLoot.gold}
             itemCount={partyLoot.inventory.length}
+            chromeHoverProps={panelChromeHover('party-loot')}
             sheetTriggerProps={characterOverlay.triggerProps((e) => ({
               type: 'party',
               top: e.currentTarget.getBoundingClientRect().top,
@@ -6562,9 +6601,49 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
             }))}
           />
 
-          {consolidatedElements.filter(item => item.kind === 'character').length === 0 && (
-            <div className="text-center text-dh-muted text-xs py-6">
-              No characters yet.
+          {isPlayer && !isSpectator && onLeaveTable && (
+            <button
+              type="button"
+              onClick={() => {
+                if (window.confirm('Leave this table? You will need a new invite link to rejoin.')) onLeaveTable();
+              }}
+              {...panelChromeHover('leave-table')}
+              className="w-full rounded-lg border border-dh-border bg-dh-surface/40 hover:border-red-700/40 hover:bg-dh-raised/60 px-2.5 py-1.5 flex items-center justify-center gap-1.5 transition-colors"
+            >
+              <LogOut size={11} className="text-dh-muted" />
+              <span className="text-[11px] font-medium text-dh-muted">Leave table</span>
+            </button>
+          )}
+
+          {!isSpectator && (
+          <div {...panelChromeHover('bug-report')}>
+            <BugReportButton tableId={tableId} actionLog={actionLog} activeElements={activeElements} isPlayer={isPlayer} />
+          </div>
+          )}
+
+          {tableNotLiveError && !isPlayer && (
+            <div
+              className="rounded-lg border border-amber-700/50 bg-amber-950/30 px-3 py-2 space-y-1.5"
+              role="status"
+            >
+              <p className="text-[11px] font-semibold text-amber-300">Session cannot start</p>
+              <p className="text-[11px] text-amber-200/80 leading-snug">
+                {billingSessionBlockedCopy(tableNotLiveError.reason)}
+              </p>
+              <button
+                type="button"
+                onClick={() => setSupportModalOpen(true)}
+                className="-mx-1 rounded px-1 py-1 text-[11px] font-semibold text-sky-400 underline underline-offset-2 hover:text-sky-300 hover:bg-amber-900/30 transition-colors"
+              >
+                Purchase a Campaign Pass →
+              </button>
+              <button
+                type="button"
+                onClick={() => setTableNotLiveError(null)}
+                className="-mx-1 block rounded px-1 py-1 text-[10px] text-dh-muted hover:text-dh hover:bg-amber-900/30 transition-colors"
+              >
+                Dismiss
+              </button>
             </div>
           )}
 
@@ -6795,7 +6874,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
         )}
 
         {/* Whiteboard — self-managing; relative so the DiceRoller overlay anchors here */}
-        <div className="flex-1 min-h-0 p-4 overflow-hidden flex flex-col relative">
+        <div className="flex-1 min-h-0 overflow-hidden flex flex-col relative">
           <DiceRoller
             ref={diceRollerRef}
             isPlayer={isPlayer || isSpectator}
@@ -6898,21 +6977,31 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                 visibility={preRollVisibility}
                 onChangeVisibility={setPreRollVisibility}
                 isPlayer={isPlayer}
+                readOnly={preRollReadOnly}
                 joinedPlayers={joinedPlayers}
                 needsDifficulty={!!preRollBanner.needsDifficulty}
                 difficulty={preRollDifficulty}
                 difficultyFinalized={preRollDifficultyFinalized}
                 onDifficultyChange={(v) => { setPreRollDifficulty(v); writeLastDifficulty(v); }}
-                onFinalize={() => {
-                  writeLastDifficulty(preRollDifficulty);
+                onFinalize={(value) => {
+                  const dc = value ?? preRollDifficulty;
+                  writeLastDifficulty(dc);
+                  setPreRollDifficulty(dc);
+                  postFinalizeIntentDifficulty(tableId, {
+                    intentId: preRollBanner.intentId,
+                    difficulty: dc,
+                  });
+                }}
+                onUnlock={() => {
                   postFinalizeIntentDifficulty(tableId, {
                     intentId: preRollBanner.intentId,
                     difficulty: preRollDifficulty,
+                    finalized: false,
                   });
                 }}
                 onProceed={handlePreRollProceed}
                 onCancel={clearPreRollBanner}
-                proceedDisabled={!!preRollBanner.needsDifficulty && !preRollDifficultyFinalized && preRollFinalizedGmDifficulty == null}
+                proceedDisabled={isPlayer && !!preRollBanner.needsDifficulty && !preRollDifficultyFinalized && preRollFinalizedGmDifficulty == null}
                 getTargetsForRoll={getTargetsForRoll}
                 getV2ReviewChipDisableHint={getV2ReviewChipDisableHintCb}
                 activeElements={activeElements}
@@ -7004,6 +7093,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
             spotlight={spotlight}
             onSpotlightChange={onSpotlightChange}
             gmMovesOverlay={!isPlayer ? gmMovesOverlay : undefined}
+            chromeTooltipHint={panelChromeHint}
           />
         </div>
         </div>
@@ -7028,8 +7118,8 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                   clearTable?.();
                 }}
                 disabled={activeElements.length === 0}
-                title="Remove all items from the table"
                 className="p-1 rounded text-dh-muted hover:text-red-400 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                {...panelChromeHover('clear-table')}
               ><Trash2 size={13} /></button>
             </div>
           </div>
@@ -7037,10 +7127,10 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
           {!sessionPlayAllowed && !sessionPaused ? (
             <button
               type="button"
-              title="Start Session — acknowledge to reset session uses, modifiers, and session-start hooks"
               onClick={() => handleSessionCycle('session')}
               data-prep-target="play"
               className="w-full flex flex-col items-center justify-center gap-1.5 min-h-[4.25rem] px-2 py-3 rounded border border-emerald-800/60 bg-emerald-950/30 text-emerald-400 hover:bg-emerald-900/40 hover:border-emerald-700 transition-colors"
+              {...panelChromeHover('start-session')}
             >
               <span className="text-2xl leading-none font-bold">▶</span>
               <span className="text-sm font-bold tracking-wide">Start Session</span>
@@ -7051,41 +7141,41 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                 {sessionPlayAllowed ? (
                   <button
                     type="button"
-                    title="End Session — pause play mechanics until you start again"
                     onClick={() => { void handleEndSession(); }}
                     className="flex-1 text-[10px] font-semibold px-1.5 py-1 rounded border border-rose-800/60 bg-rose-950/30 text-rose-300 hover:bg-rose-900/40 hover:border-rose-600 transition-colors"
+                    {...panelChromeHover('end-session')}
                   >■ End</button>
                 ) : (
                   <button
                     type="button"
-                    title="Resume Session — table was idle; click to continue play"
                     onClick={() => { void handleResumeSession(); }}
                     className="flex-1 text-[10px] font-semibold px-1.5 py-1 rounded border border-emerald-800/60 bg-emerald-950/30 text-emerald-400 hover:bg-emerald-900/40 hover:border-emerald-700 transition-colors"
+                    {...panelChromeHover('resume-session')}
                   >▶ Resume</button>
                 )}
                 <button
-                  title="Short Rest — refresh rest-use features for all characters"
                   onClick={() => handleSessionCycle('rest')}
                   className="flex-1 text-[10px] font-semibold px-1.5 py-1 rounded border border-sky-800/60 bg-sky-950/30 text-sky-400 hover:bg-sky-900/40 hover:border-sky-700 transition-colors"
+                  {...panelChromeHover('short-rest')}
                 >⏸ Short</button>
                 <button
-                  title="Long Rest — refresh rest and long-rest features for all characters"
                   onClick={() => handleSessionCycle('longRest')}
                   className="flex-1 text-[10px] font-semibold px-1.5 py-1 rounded border border-dh-strong bg-dh-hover text-dh hover:bg-dh-strong transition-colors"
+                  {...panelChromeHover('long-rest')}
                 >⏹ Long</button>
               </div>
               <button
                 type="button"
-                title="Call for Reaction — pick characters, trait, and difficulty"
-                onClick={() => openReactionCallModal([])}
                 className="w-full text-[10px] font-semibold px-1.5 py-1 rounded border border-sky-800/60 bg-sky-950/30 text-sky-300 hover:bg-sky-900/40 hover:border-sky-700 transition-colors"
+                {...trackerOverlay.triggerProps(trackerTriggerData('reaction', { seedInstanceIds: [] }))}
+                {...panelChromeHover('call-for-reaction')}
               >
                 ⚡ Call for Reaction
               </button>
             </>
           )}
           {/* Fear tracker */}
-          <div className="rounded-lg border border-dh-strong bg-dh-surface px-2.5 py-2">
+          <div className="rounded-lg border border-dh-strong bg-dh-surface px-2.5 py-2" {...panelChromeHover('fear')}>
             <div className="grid grid-cols-[auto_auto_minmax(0,1fr)] items-center gap-x-1.5 gap-y-1.5">
               <Flame size={12} className="shrink-0 text-fuchsia-400" />
               <span className="shrink-0 text-[10px] font-bold uppercase tracking-widest text-fuchsia-400/90">
@@ -7126,6 +7216,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
             data-testid="gm-moves-trigger"
             className={`rounded-lg border px-2.5 py-2 flex items-center gap-2 transition-colors cursor-pointer ${gmMovesOverlay.isOpen ? 'border-dh-hope/60 bg-dh-inset' : 'border-dh-strong bg-dh-surface hover:border-dh-hope/40'}`}
             {...gmMovesOverlay.triggerProps({ source: 'encounter' })}
+            {...panelChromeHover('gm-moves')}
           >
             <Zap size={14} className="text-dh-hope shrink-0" />
             <span className="text-xs font-semibold text-dh uppercase tracking-wider flex-1">GM Moves</span>
@@ -7145,6 +7236,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                 onClick={() => setModalOpen('scenes')}
                 data-prep-target="build"
                 className="flex flex-1 items-center gap-1.5 rounded border border-violet-700/60 bg-violet-950/40 px-2 py-1.5 text-[11px] font-semibold text-violet-300 transition-colors hover:border-violet-600 hover:bg-violet-900/50"
+                {...panelChromeHover('load-scene')}
               >
                 <FolderOpen size={13} className="shrink-0" />
                 Load Scene
@@ -7153,6 +7245,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                 type="button"
                 onClick={() => setCreateSceneOpen(true)}
                 className="flex flex-1 items-center gap-1.5 whitespace-nowrap rounded border border-dh-strong/50 bg-dh-raised/40 px-2 py-1.5 text-[11px] font-semibold text-dh-muted transition-colors hover:border-dh-strong hover:bg-dh-raised/70 hover:text-dh"
+                {...panelChromeHover('save-scene')}
               >
                 <Camera size={13} className="shrink-0" />
                 Save Scene
@@ -7160,13 +7253,14 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
             </div>
           )}
           <div className="border-t border-dh-border" role="separator" />
+          <div className="space-y-2" {...panelChromeHover('notes-section')}>
           <div className="flex items-center justify-between gap-2">
             <p className="text-[10px] font-semibold uppercase tracking-wide text-dh-muted">Notes</p>
             <button
               type="button"
               onClick={() => handleAddEmptyNote()}
-              title="Add note"
               data-prep-target="build"
+              data-testid="encounter-add-note"
               className="shrink-0 rounded px-1 py-0.5 text-[10px] font-semibold text-dh-muted hover:text-dh hover:bg-dh-hover/60 transition-colors"
             >
               + Add
@@ -7185,6 +7279,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
               onRemove={(el) => removeActiveElement(el.instanceId)}
             />
           ))}
+          </div>
 
           <div className="border-t border-dh-border" role="separator" />
           <SessionCountdownsPanel
@@ -7195,15 +7290,16 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
             onTableOp={sendOp}
             onRollCountdown={rollCountdownStart}
             trackerOverlay={trackerOverlay}
+            chromeHoverProps={panelChromeHover('countdowns-section')}
           />
 
           <div className="border-t border-dh-border" role="separator" />
+          <div className="space-y-2" {...panelChromeHover('environments-section')}>
           <div className="flex items-center justify-between gap-2">
             <p className="text-[10px] font-semibold uppercase tracking-wide text-dh-muted">Environments</p>
             <button
               type="button"
               onClick={() => setModalOpen('environments')}
-              title="Add environment"
               data-prep-target="build"
               className="shrink-0 rounded px-1 py-0.5 text-[10px] font-semibold text-dh-muted hover:text-dh hover:bg-dh-hover/60 transition-colors"
             >
@@ -7218,25 +7314,28 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
               onRemove={(el) => removeActiveElement(el.instanceId)}
             />
           ))}
+          </div>
 
           <div className="border-t border-dh-border" role="separator" />
+          <div className="space-y-2" {...panelChromeHover('adversaries-section')}>
           <div className="flex items-center justify-between gap-2">
             <p className="text-[10px] font-semibold uppercase tracking-wide text-dh-muted">Adversaries</p>
             <button
               type="button"
               onClick={() => setModalOpen('adversaries')}
-              title="Add adversary"
               data-prep-target="build"
               className="shrink-0 rounded px-1 py-0.5 text-[10px] font-semibold text-dh-muted hover:text-dh hover:bg-dh-hover/60 transition-colors"
             >
               + Add
             </button>
           </div>
+          </div>
           {/* Battle Budget card */}
           <div className="rounded-lg bg-dh-surface border border-dh-border overflow-hidden">
             <button
               onClick={() => setBudgetCardOpen(o => !o)}
               className="w-full px-2.5 py-2 flex items-center gap-1.5 text-left hover:bg-dh-raised/50 transition-colors"
+              {...panelChromeHover('bp-budget')}
             >
               {budgetCardOpen
                 ? <ChevronDown size={11} className="text-dh-muted shrink-0" />
@@ -7345,6 +7444,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
             )}
           </div>
 
+          <div className="space-y-2" {...panelChromeHover('adversaries-section')}>
           {consolidatedElements.filter(item => item.kind === 'adversary-group').map((item) => {
             const { baseElement: el, instances } = item;
             const displayEl = el._scaledFromTier != null && !(scaledToggleState[el.id] ?? true) ? getUnscaledAdversary(el) : el;
@@ -7395,6 +7495,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
               />
             );
           })}
+          </div>
           {showConceptAiUi && (
             <div className="rounded-lg border border-violet-800/45 bg-violet-950/20 p-2 space-y-2">
               <p className="text-[10px] font-semibold uppercase tracking-wide text-dh-muted">Encounter builder</p>
@@ -7515,7 +7616,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
               <Swords size={15} className="text-red-400" /> Encounter
             </h2>
             {/* Fear tracker — read-only */}
-            <div className="rounded-lg border border-dh-strong bg-dh-surface px-2.5 py-2">
+            <div className="rounded-lg border border-dh-strong bg-dh-surface px-2.5 py-2" {...panelChromeHover('fear')}>
               <div className="grid grid-cols-[auto_auto_minmax(0,1fr)] items-center gap-x-1.5 gap-y-1.5">
                 <Flame size={12} className="shrink-0 text-fuchsia-400" />
                 <span className="shrink-0 text-[10px] font-bold uppercase tracking-widest text-fuchsia-400/90">
@@ -7550,7 +7651,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
           </div>
 
           {consolidatedElements.some(item => item.kind === 'note' && item.element.visibility !== 'gm') && (
-            <div className="space-y-2 border-b border-dh-border px-2 pb-2">
+            <div className="space-y-2 border-b border-dh-border px-2 pb-2" {...panelChromeHover('notes-section')}>
               <p className="text-[10px] font-semibold uppercase tracking-wide text-dh-muted">Notes</p>
               {consolidatedElements.filter(item => item.kind === 'note' && item.element.visibility !== 'gm').map((item) => {
                 const el = item.element;
@@ -7577,12 +7678,13 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                 sectionTitle="Countdowns"
                 sessionCountdowns={sessionCountdowns}
                 isGm={false}
+                chromeHoverProps={panelChromeHover('countdowns-section')}
               />
             </div>
           )}
 
           {/* Adversaries with damage or conditions (read-only for players) */}
-          <div className="p-2 space-y-2">
+          <div className="p-2 space-y-2" {...panelChromeHover('adversaries-section')}>
             {(() => {
               const damagedGroups = consolidatedElements
                 .filter(item => item.kind === 'adversary-group')
@@ -7926,16 +8028,6 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
       );
     })()}
 
-    {reactionCallModal && !isPlayer && (
-      <ReactionCallModal
-        open
-        characters={activeElements.filter((e) => e.elementType === 'character')}
-        seedInstanceIds={reactionCallModal.seedInstanceIds}
-        onCall={handleCallReaction}
-        onClose={() => setReactionCallModal(null)}
-      />
-    )}
-
     {editState?.step === 'choice' && (
       <EditChoiceDialog
         itemName={editState.baseElement.name}
@@ -8043,6 +8135,8 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
       onApplyCountdownPatch={(id, patch) => sendOp({ op: 'session-countdown-patch', id, patch })}
       onRemoveCountdown={(id) => sendOp({ op: 'session-countdown-remove', id })}
       onRollCountdownStart={rollCountdownStart}
+      characters={activeElements.filter((e) => e.elementType === 'character')}
+      onCallReaction={!isPlayer ? handleCallReaction : undefined}
     />
     <EncounterPotentialAdversaryOverlay
       overlay={potAdvOverlay}

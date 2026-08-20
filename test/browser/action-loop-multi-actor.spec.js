@@ -1077,9 +1077,10 @@ test.describe('M5 — Cross-sheet chip affecting another player\'s sheet in real
 // GM-finalized difficulty for player action rolls (docs/plans:
 // gm_difficulty_finalization_for_player_action_rolls)
 //
-// Player A's trait roll opens the shared strip PreRollBanner on both clients. Proceed stays
-// disabled until the GM Finalizes DC on `#intent-difficulty`. Player A's slider is disabled.
-// After Finalize, either party can Proceed; the posted roll carries `_difficulty`.
+// Player A's trait roll opens the shared strip PreRollBanner on both clients. Player Proceed
+// stays disabled until the GM Approves DC. Player A's slider is read-only; the GM can still
+// change DC after Approve (lock stays). After lock, the player can Proceed; the posted roll
+// carries `_difficulty`.
 
 test.describe('GM-finalized difficulty for player action rolls (trait roll)', () => {
   let tableId;
@@ -1145,40 +1146,42 @@ test.describe('GM-finalized difficulty for player action rolls (trait roll)', ()
     await expect(spotlightBanner).toBeVisible({ timeout: 8000 });
     await spotlightBanner.getByRole('button', { name: 'Acknowledge' }).click();
 
-    // Shared strip card on both clients. Player slider is disabled; Proceed waits on Finalize.
+    // Shared strip card on both clients. Player DC slider is read-only; status is GM... until Approve.
     await expect(playerAPage.getByText('Before you roll')).toBeVisible({ timeout: 8000 });
     await expect(page.getByText('Before you roll')).toBeVisible({ timeout: 8000 });
     const playerSlider = playerAPage.locator('#intent-difficulty');
     await expect(playerSlider).toBeVisible({ timeout: 8000 });
     await expect(playerSlider).toBeDisabled();
+    await expect(playerAPage.getByTestId('preroll-difficulty-band-20')).toBeDisabled();
     const proceedBtn = playerAPage.getByRole('button', { name: 'Proceed' });
     await expect(proceedBtn).toBeDisabled();
+    await expect(playerAPage.getByRole('status', { name: 'GM...' })).toBeVisible();
 
     const difficultySlider = page.locator('#intent-difficulty');
     await expect(difficultySlider).toBeVisible({ timeout: 8000 });
-    const finalizeBtn = page.getByRole('button', { name: 'Finalize' });
-    await expect(finalizeBtn).toBeVisible();
+    await expect(page.getByTestId('preroll-difficulty-band-20')).toBeEnabled();
 
-    // GM drags the real slider to DC 20. React tracks the native input value on the DOM node
-    // itself (to detect genuine changes), so a plain `el.value = '20'` gets silently absorbed by
-    // that tracker and no onChange fires — set the value through the native HTMLInputElement
-    // setter (bypassing React's tracked instance property) before dispatching 'input', which is
-    // the standard way to simulate a real value change on a React-controlled input.
-    await difficultySlider.evaluate((el) => {
-      const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
-      nativeSetter.call(el, '20');
-      el.dispatchEvent(new Event('input', { bubbles: true }));
-      el.dispatchEvent(new Event('change', { bubbles: true }));
-    });
-    await expect(difficultySlider).toHaveValue('20');
-    await expect(page.locator('#intent-difficulty + span')).toHaveText('20');
-    await finalizeBtn.click();
+    // GM clicks Hard to set DC 20, then Approve to lock it.
+    await page.getByTestId('preroll-difficulty-band-20').click();
+    await expect(page.getByTestId('preroll-difficulty-value')).toHaveText('20');
+    await page.getByRole('button', { name: 'Approve' }).click();
 
-    await expect(page.getByText('Locked: DC 20')).toBeVisible({ timeout: 8000 });
-    await expect(playerAPage.getByText('Locked: DC 20')).toBeVisible({ timeout: 8000 });
+    await expect(page.getByRole('button', { name: 'Retract' })).toBeEnabled({ timeout: 8000 });
+    await expect(playerAPage.getByRole('status', { name: 'Approved' })).toBeVisible();
+    await expect(playerAPage.getByRole('button', { name: 'Approve' })).toHaveCount(0);
+    await expect(playerAPage.getByRole('button', { name: 'Retract' })).toHaveCount(0);
     await expect(proceedBtn).toBeEnabled();
 
-    // Player A clicks the real "Proceed" button — the roll is posted with `_difficulty: 20`.
+    // GM can still change DC after Approve; the lock stays (player Proceed remains enabled).
+    await expect(page.locator('#intent-difficulty')).toBeEnabled();
+    await page.getByTestId('preroll-difficulty-band-25').click();
+    await expect(page.getByTestId('preroll-difficulty-value')).toHaveText('25');
+    await expect(page.getByRole('button', { name: 'Retract' })).toBeEnabled();
+    await expect(playerAPage.getByRole('status', { name: 'Approved' })).toBeVisible();
+    await expect(playerAPage.getByTestId('preroll-difficulty-value')).toHaveText('25', { timeout: 8000 });
+    await expect(proceedBtn).toBeEnabled();
+
+    // Player A clicks the real "Proceed" button — the roll is posted with `_difficulty: 25`.
     await proceedBtn.click();
     await expect(playerAPage.getByText('Before you roll')).not.toBeVisible({ timeout: 5000 });
 
@@ -1191,7 +1194,7 @@ test.describe('GM-finalized difficulty for player action rolls (trait roll)', ()
     const playerABanner = playerAPage.locator('.dice-result-banner', { hasText: bannerTitle });
     await expect(gmBanner).toBeVisible({ timeout: 8000 });
     await expect(playerABanner).toBeVisible({ timeout: 8000 });
-    await expect(gmBanner.getByText(/DC 20/)).toBeVisible({ timeout: 8000 });
+    await expect(gmBanner.getByText(/DC 25/)).toBeVisible({ timeout: 8000 });
     await expect(gmBanner.getByText(/Success|Failure/)).toBeVisible({ timeout: 8000 });
 
     // GM acknowledges the roll (real click) — cleans up the banner on all clients.

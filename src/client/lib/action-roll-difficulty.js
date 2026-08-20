@@ -7,9 +7,9 @@ export function isAttackRollMeta(meta = {}) {
 }
 
 /**
- * True when a pre-roll session uses the shared DC slider + Finalize lock:
+ * True when a pre-roll session uses the shared DC slider + Approve lock:
  * not an attack (evasion / target DC) and not a GM-called reaction (those use the reaction DC).
- * Applies to both GM- and player-initiated non-attack rolls so neither party can Proceed early.
+ * The lock only gates the player hitting Proceed; the GM can still edit DC (and Proceed) while approved.
  */
 export function sessionNeedsDifficulty(meta = {}) {
   return !isAttackRollMeta(meta) && meta._reactionCallRollDbId == null;

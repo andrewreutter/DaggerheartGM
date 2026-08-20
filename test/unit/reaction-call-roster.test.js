@@ -3,7 +3,32 @@ import {
   buildReactionCallRoster,
   formatReactionCallResultBadge,
   canViewerProceedReaction,
+  resolveReactionCallTrait,
 } from '../../src/client/lib/reaction-call-roster.js';
+
+describe('resolveReactionCallTrait', () => {
+  it('uses the marquee default trait', () => {
+    expect(resolveReactionCallTrait({ _reactionTrait: 'agility' }, 'c1')).toBe('agility');
+  });
+
+  it('prefers a valid per-character override', () => {
+    expect(resolveReactionCallTrait({
+      _reactionTrait: 'agility',
+      _reactionTraitByInstanceId: { c1: 'presence' },
+    }, 'c1')).toBe('presence');
+    expect(resolveReactionCallTrait({
+      _reactionTrait: 'agility',
+      _reactionTraitByInstanceId: { c1: 'presence' },
+    }, 'c2')).toBe('agility');
+  });
+
+  it('falls back when the override is not a trait key', () => {
+    expect(resolveReactionCallTrait({
+      _reactionTrait: 'instinct',
+      _reactionTraitByInstanceId: { c1: 'not-a-trait' },
+    }, 'c1')).toBe('instinct');
+  });
+});
 
 describe('buildReactionCallRoster', () => {
   const characters = [
@@ -20,10 +45,14 @@ describe('buildReactionCallRoster', () => {
       marqueeRollDbId: 1,
       pendingBanners,
       tableCharacters: characters,
+      marquee: {
+        _reactionTrait: 'agility',
+        _reactionTraitByInstanceId: { c2: 'presence' },
+      },
     });
     expect(roster).toEqual([
-      { instanceId: 'c1', name: 'Ada', subRoll: null },
-      { instanceId: 'c2', name: 'Bea', subRoll: pendingBanners[0] },
+      { instanceId: 'c1', name: 'Ada', subRoll: null, trait: 'agility' },
+      { instanceId: 'c2', name: 'Bea', subRoll: pendingBanners[0], trait: 'presence' },
     ]);
   });
 
@@ -37,6 +66,7 @@ describe('buildReactionCallRoster', () => {
       tableCharacters: characters,
     });
     expect(roster[0].subRoll).toBeNull();
+    expect(roster[0].trait).toBeNull();
   });
 });
 

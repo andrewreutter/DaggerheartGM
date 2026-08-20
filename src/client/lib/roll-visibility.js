@@ -50,9 +50,11 @@ export function canViewerSeeRoll(roll, viewer = {}) {
 }
 
 /**
- * Who receives a pending pre-roll intent over SSE. Banner visibility is GM + initiator +
- * the character's assigned player(s) — not `_rollVisibility` (that is eventual dice privacy).
- * `intent == null` is a clear and is deliverable to everyone so a prior card goes away.
+ * Who receives a pending pre-roll intent over SSE. Same `_rollVisibility` as the looming
+ * roll (`canViewerSeeRoll`): table → GM + invited players + audience; `gm_and_player` →
+ * GM + initiator / assigned / included player(s); `gm_only` → GM. Other viewers get a
+ * read-only card (`isPreRollBannerInteractive` in pre-roll-intent.js). `intent == null`
+ * is a clear and is deliverable to everyone so a prior card goes away.
  *
  * @param {object | null | undefined} intent
  * @param {{ role?: 'gm' | 'player' | 'spectator', uid?: string | null, email?: string | null }} viewer
@@ -60,22 +62,41 @@ export function canViewerSeeRoll(roll, viewer = {}) {
  */
 export function canViewerSeeIntent(intent, viewer = {}) {
   if (intent == null) return true;
-  if (viewer?.role === 'gm') return true;
-  const uid = viewer?.uid != null && viewer.uid !== '' ? String(viewer.uid) : '';
-  const email = normalizeViewerEmail(viewer?.email);
-  if (uid && intent._initiatorUid && uid === String(intent._initiatorUid)) return true;
-  if (email && intent._initiatorEmail && email === normalizeViewerEmail(intent._initiatorEmail)) return true;
-  const assignedEmails = [
+  return canViewerSeeRoll(intentVisibilityRollView(intent), viewer);
+}
+
+/**
+ * Map intent assignment / initiator fields onto the roll-visibility included-player shape
+ * so `gm_and_player` works before `_visibilityPlayer*` is stamped on the posted roll.
+ * @param {object} intent
+ */
+function intentVisibilityRollView(intent) {
+  const vis = normalizeRollVisibility(intent?._rollVisibility);
+  if (vis !== ROLL_VISIBILITY_GM_AND_PLAYER) {
+    return { _rollVisibility: vis };
+  }
+  const extraEmails = [
+    ...(Array.isArray(intent._visibilityPlayerEmails) ? intent._visibilityPlayerEmails : []),
     ...(Array.isArray(intent._assignedPlayerEmails) ? intent._assignedPlayerEmails : []),
     intent._assignedPlayerEmail,
+    intent._initiatorEmail,
+    intent._visibilityPlayerEmail,
   ];
-  const assignedUids = [
+  const extraUids = [
+    ...(Array.isArray(intent._visibilityPlayerUids) ? intent._visibilityPlayerUids : []),
     ...(Array.isArray(intent._assignedPlayerUids) ? intent._assignedPlayerUids : []),
     intent._assignedPlayerUid,
+    intent._initiatorUid,
+    intent._visibilityPlayerUid,
   ];
-  if (email && assignedEmails.some((e) => e && normalizeViewerEmail(e) === email)) return true;
-  if (uid && assignedUids.some((u) => u != null && String(u) === uid)) return true;
-  return false;
+  return {
+    _rollVisibility: vis,
+    _visibilityPlayerUid: intent._visibilityPlayerUid || intent._initiatorUid || intent._assignedPlayerUid,
+    _visibilityPlayerEmail: intent._visibilityPlayerEmail || intent._initiatorEmail || intent._assignedPlayerEmail,
+    _visibilityPlayerEmails: extraEmails.filter(Boolean),
+    _visibilityPlayerUids: extraUids.filter((u) => u != null && u !== ''),
+    _initiatorUid: intent._initiatorUid,
+  };
 }
 
 /**

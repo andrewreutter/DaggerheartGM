@@ -10,6 +10,13 @@ import {
   dedupeAbilitiesById,
   formatTargetSummary,
   parseAllCountdownValues,
+  DIFFICULTY_SLIDER_NAMED_TICKS,
+  difficultySliderTickPercent,
+  getDifficultyLabel,
+  isDifficultyOnBandMarker,
+  difficultyLabelLines,
+  DIFFICULTY_BANDS,
+  difficultySliderTrackInsetCss,
 } from '../../src/client/lib/helpers.js';
 
 describe('isAdversaryDefeated', () => {
@@ -206,6 +213,49 @@ describe('parseAllCountdownValues', () => {
     expect(parseAllCountdownValues('Fear Countdown (Loop 2d6+1)')).toMatchObject([
       { value: null, label: 'Fear Countdown', looping: 'reset', startFormula: '2d6+1' },
     ]);
+  });
+});
+
+describe('difficulty slider SRD bands', () => {
+  it('names Easy / Average / Hard at the SRD 10 / 15 / 20 benchmarks', () => {
+    expect(DIFFICULTY_SLIDER_NAMED_TICKS.map((t) => ({ value: t.value, label: t.label }))).toEqual([
+      { value: 10, label: 'Easy' },
+      { value: 15, label: 'Average' },
+      { value: 20, label: 'Hard' },
+    ]);
+    expect(getDifficultyLabel(10)).toBe('Easy');
+    expect(getDifficultyLabel(15)).toBe('Average');
+    expect(getDifficultyLabel(20)).toBe('Hard');
+  });
+
+  it('places ticks by position along the 5–30 slider', () => {
+    expect(difficultySliderTickPercent(5)).toBe(0);
+    expect(difficultySliderTickPercent(30)).toBe(100);
+    expect(difficultySliderTickPercent(15)).toBe(40);
+  });
+
+  it('treats exact SRD band values as markers and in-between DCs as off-marker', () => {
+    expect(isDifficultyOnBandMarker(10)).toBe(true);
+    expect(isDifficultyOnBandMarker(15)).toBe(true);
+    expect(isDifficultyOnBandMarker(30)).toBe(true);
+    expect(isDifficultyOnBandMarker(12)).toBe(false);
+    expect(isDifficultyOnBandMarker(17)).toBe(false);
+  });
+
+  it('uses Very E. / Very H. on the end-band buttons', () => {
+    expect(DIFFICULTY_BANDS.find((b) => b.value === 5).shortLabel).toBe('Very E.');
+    expect(DIFFICULTY_BANDS.find((b) => b.value === 25).shortLabel).toBe('Very H.');
+  });
+
+  it('splits two-word difficulty labels for the DC column', () => {
+    expect(difficultyLabelLines(15)).toEqual(['Average']);
+    expect(difficultyLabelLines(5)).toEqual(['Very', 'Easy']);
+    expect(difficultyLabelLines(25)).toEqual(['Very', 'Hard']);
+    expect(difficultyLabelLines(30)).toEqual(['Nearly', 'Impossible']);
+  });
+
+  it('insets the slider track by half a 6-col band so thumbs sit on button centers', () => {
+    expect(difficultySliderTrackInsetCss()).toBe('calc((100% - 0.625rem) / 12)');
   });
 });
 

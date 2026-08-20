@@ -47,8 +47,12 @@ describe('GM adversary token pin uses Encounter card + attack/feature actions', 
     expect(src).toContain('token-name-chip');
     expect(src).toContain('placeTokenNameChip');
     expect(src).toContain("style={{ left, maxWidth }}");
+    expect(src).toMatch(/function MapChromeTooltip[\s\S]*if \(!title && !footer\) return null/);
+    expect(src).toMatch(/function MapChromeTooltip[\s\S]*\{title \? \(/);
     expect(src).toMatch(/function MapChromeTooltip[\s\S]*text-left/);
     expect(src).toMatch(/function MapChromeTooltip[\s\S]*fontSize: '0\.96rem'/);
+    expect(src).toContain('map-chrome-show-instructions');
+    expect(src).toContain("fontSize: '0.9rem'");
     expect(src).not.toContain('trayAdversaryOverlay');
     expect(src).not.toContain('data-testid="tray-adversary-overlay"');
     expect(src).not.toContain('hoverOverlay={trayAdversaryOverlay}');

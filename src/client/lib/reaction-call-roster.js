@@ -4,6 +4,22 @@
 
 import { isDualityCritical, rollBeatsDefense } from './duality-roll-outcome.js';
 import { isCharacterAssignedToPlayer } from './character-assignment.js';
+import { TRAIT_KEYS } from './character-calc.js';
+
+/**
+ * Trait for one target on a reaction-call marquee.
+ * Per-character override wins when it is a valid trait key; otherwise `_reactionTrait`.
+ *
+ * @param {object | null | undefined} marquee
+ * @param {string} instanceId
+ * @returns {string | null}
+ */
+export function resolveReactionCallTrait(marquee, instanceId) {
+  const override = marquee?._reactionTraitByInstanceId?.[instanceId];
+  if (typeof override === 'string' && TRAIT_KEYS.includes(override)) return override;
+  const fallback = marquee?._reactionTrait;
+  return typeof fallback === 'string' ? fallback : null;
+}
 
 /**
  * @param {object} [opts]
@@ -11,13 +27,15 @@ import { isCharacterAssignedToPlayer } from './character-assignment.js';
  * @param {number | string | null} [opts.marqueeRollDbId]
  * @param {object[]} [opts.pendingBanners]
  * @param {object[]} [opts.tableCharacters]
- * @returns {Array<{ instanceId: string, name: string, subRoll: object | null }>}
+ * @param {object | null} [opts.marquee] — pending `_reactionCall` roll (trait + optional overrides)
+ * @returns {Array<{ instanceId: string, name: string, subRoll: object | null, trait: string | null }>}
  */
 export function buildReactionCallRoster({
   targetInstanceIds = [],
   marqueeRollDbId,
   pendingBanners = [],
   tableCharacters = [],
+  marquee = null,
 } = {}) {
   const charsById = new Map(tableCharacters.map((c) => [c.instanceId, c]));
   return (targetInstanceIds || []).filter(Boolean).map((instanceId) => {
@@ -29,6 +47,7 @@ export function buildReactionCallRoster({
       instanceId,
       name: char?.name || 'Unknown',
       subRoll,
+      trait: resolveReactionCallTrait(marquee, instanceId),
     };
   });
 }

@@ -74,6 +74,9 @@ import {
   ArrowUpDown,
   Tag,
   Crown,
+  Zap,
+  Plus,
+  Minus,
 } from 'lucide-react';
 import {
   assignSpotlightHolder,
@@ -89,6 +92,7 @@ import {
 import { ConditionsEditor } from './ConditionsEditor.jsx';
 import { Tooltip } from './Tooltip.jsx';
 import { CheckboxTrack } from './DetailCardContent.jsx';
+import { CheckboxTrackMarkedIcon } from './CheckboxTrack.jsx';
 import { normalizeConditionsToList } from '../lib/conditions-utils.js';
 import { conditionMarks } from '../lib/condition-symbols.js';
 import { layoutTokenDotRing } from '../lib/token-dot-ring.js';
@@ -120,6 +124,7 @@ import {
   mapChromeTooltipLeftPx,
   mapChromeTooltipMaxWidthPx,
   resolveMapChromeTooltip,
+  groupChromeTooltipLines,
 } from '../lib/map-hover-hint.js';
 import {
   isMapShowInstructionsEnabled,
@@ -843,7 +848,8 @@ const MapViewStripTile = memo(function MapViewStripTileRaw({
  * groups: [{ color, total, filled, kind?, marks? }] — empty groups already filtered out.
  * Each group's center is equally spaced around the ring (clockwise from 12 o'clock).
  * Within a resource group, filled dots come first, then empty (outline) dots.
- * A `kind: 'condition'` group is one pip per applied condition (symbols + instant tooltip)
+ * A `kind: 'condition'` group is one pip per applied condition (symbols + instant tooltip).
+ * Resource pips with `name` (HP / Stress / Armor) use the same instant tooltip.
  * and is omitted entirely when the token has no conditions, so it takes no ring space.
  */
 function TokenDotRing({ sizeW, sizeH, groups }) {
@@ -907,7 +913,7 @@ function TokenDotRing({ sizeW, sizeH, groups }) {
           </g>
         ))}
       </svg>
-      {conditionDots.map((d) => (
+      {dots.filter((d) => d.name).map((d) => (
         <div
           key={d.key}
           className="absolute pointer-events-auto"
@@ -922,7 +928,11 @@ function TokenDotRing({ sizeW, sizeH, groups }) {
           onClick={(e) => e.stopPropagation()}
         >
           <Tooltip label={d.name} placement="top" className="relative block w-full h-full">
-            <span className="block w-full h-full" data-condition-mark={d.name} aria-label={d.name} />
+            <span
+              className="block w-full h-full"
+              data-condition-mark={d.kind === 'condition' ? d.name : undefined}
+              aria-label={d.name}
+            />
           </Tooltip>
         </div>
       ))}
@@ -940,11 +950,14 @@ function TableNameInset({
   onDeleteTable,
   isPublic = false,
   onPublicChange,
+  tableId,
 }) {
   const isNewTable = tableName === '' || tableName === 'New Table';
   const [isEditingName, setIsEditingName] = useState(false);
   const [nameInput, setNameInput] = useState(tableName || 'New Table');
+  const [publicLinkCopied, setPublicLinkCopied] = useState(false);
   const nameInputRef = useRef(null);
+  const publicLinkCopiedTimerRef = useRef(null);
 
   useEffect(() => { setNameInput(tableName || 'New Table'); }, [tableName]);
 
@@ -963,7 +976,23 @@ function TableNameInset({
     return () => cancelAnimationFrame(id);
   }, [isEditingName]);
 
+  useEffect(() => () => {
+    if (publicLinkCopiedTimerRef.current) clearTimeout(publicLinkCopiedTimerRef.current);
+  }, []);
+
   const skipBlurCommitRef = useRef(false);
+
+  const copyPublicTableLink = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!tableId || typeof window === 'undefined') return;
+    const url = `${window.location.origin}/table/${tableId}`;
+    navigator.clipboard.writeText(url).then(() => {
+      setPublicLinkCopied(true);
+      if (publicLinkCopiedTimerRef.current) clearTimeout(publicLinkCopiedTimerRef.current);
+      publicLinkCopiedTimerRef.current = setTimeout(() => setPublicLinkCopied(false), 1500);
+    }).catch(() => {});
+  };
 
   const commitName = () => {
     const trimmed = (nameInput || '').trim() || 'New Table';
@@ -1027,21 +1056,34 @@ function TableNameInset({
                 />
               </div>
               {typeof onPublicChange === 'function' && (
-                <button
-                  type="button"
-                  role="checkbox"
-                  aria-checked={!!isPublic}
-                  aria-label="Public table"
-                  onMouseDown={e => e.preventDefault()}
-                  onClick={() => onPublicChange(!isPublic)}
-                  className="flex items-start gap-2 px-1 py-0.5 rounded text-left hover:bg-dh-hover/60"
-                >
-                  <span className={`mt-0.5 h-3 w-3 shrink-0 rounded border ${isPublic ? 'bg-sky-600 border-sky-500' : 'border-dh-strong bg-dh-raised'}`} aria-hidden />
-                  <span>
-                    <span className="block text-dh font-medium text-sm">Public table</span>
-                    <span className="block text-[10px] text-dh-muted leading-snug">Anyone with this link can watch. They cannot join or edit.</span>
-                  </span>
-                </button>
+                <div className="flex items-start gap-2 px-1 py-0.5">
+                  <button
+                    type="button"
+                    role="checkbox"
+                    aria-checked={!!isPublic}
+                    aria-label="Public table"
+                    onMouseDown={e => e.preventDefault()}
+                    onClick={() => onPublicChange(!isPublic)}
+                    className="flex items-start gap-2 min-w-0 flex-1 rounded text-left hover:bg-dh-hover/60"
+                  >
+                    <span className={`mt-0.5 h-3 w-3 shrink-0 rounded border ${isPublic ? 'bg-sky-600 border-sky-500' : 'border-dh-strong bg-dh-raised'}`} aria-hidden />
+                    <span>
+                      <span className="block text-dh font-medium text-sm">Public table</span>
+                      <span className="block text-[10px] text-dh-muted leading-snug">Anyone with this link can watch. They cannot join or edit.</span>
+                    </span>
+                  </button>
+                  {tableId ? (
+                    <a
+                      href={`/table/${tableId}`}
+                      onMouseDown={e => e.preventDefault()}
+                      onClick={copyPublicTableLink}
+                      className="ml-auto shrink-0 mt-0.5 inline-grid justify-items-end text-sm text-sky-400 hover:text-sky-300 hover:underline whitespace-nowrap"
+                    >
+                      <span className="invisible col-start-1 row-start-1" aria-hidden>Copy Link</span>
+                      <span className="col-start-1 row-start-1">{publicLinkCopied ? 'Copied' : 'Copy Link'}</span>
+                    </a>
+                  ) : null}
+                </div>
               )}
               {onDeleteTable && (
                 <button
@@ -1091,9 +1133,58 @@ function TokenNameChip({ name, x, y, zIndex }) {
   );
 }
 
-/** Always-mounted map chrome to the right of the camera tile — Game Map idle, or token / object hover. */
+const CHROME_TOOLTIP_ICONS = {
+  users: Users,
+  zap: Zap,
+  trash: Trash2,
+  eye: Eye,
+  'eye-off': EyeOff,
+  plus: Plus,
+  minus: Minus,
+  folder: FolderOpen,
+  camera: Camera,
+  tag: Tag,
+};
+
+const CHROME_TOOLTIP_RESOURCE_KIND = {
+  hope: 'hope',
+  armor: 'armor',
+  hp: 'hp',
+  stress: 'stress',
+};
+
+function ChromeTooltipLineText({ line, index, prefix }) {
+  return (
+    <div key={`${prefix}-${index}`} data-role={line.role || undefined}>
+      {line.text}
+    </div>
+  );
+}
+
+function ChromeTooltipActionRow({ line, index }) {
+  const resourceKind = CHROME_TOOLTIP_RESOURCE_KIND[line.icon];
+  if (resourceKind) {
+    return (
+      <div key={`action-${index}`} className="flex items-center gap-1.5">
+        <CheckboxTrackMarkedIcon trackKind={resourceKind} />
+        <span>{line.text}</span>
+      </div>
+    );
+  }
+  const Icon = CHROME_TOOLTIP_ICONS[line.icon] || null;
+  return (
+    <div key={`action-${index}`} className="flex items-start gap-1.5">
+      {Icon ? <Icon size={12} className="mt-0.5 shrink-0 text-dh-muted" aria-hidden /> : null}
+      <span>{line.text}</span>
+    </div>
+  );
+}
+
+/** Always-mounted map chrome to the right of the camera tile — Game Map idle, or token / object / panel hover. */
 function MapChromeTooltip({ title, lines, maxWidth, left, footer }) {
-  if (!title) return null;
+  if (!title && !footer) return null;
+  const { lead, body, actions, legends } = groupChromeTooltipLines(lines);
+  const hasFollowUp = body.length > 0 || actions.length > 0;
   return (
     <div
       data-testid="map-chrome-tooltip"
@@ -1104,17 +1195,46 @@ function MapChromeTooltip({ title, lines, maxWidth, left, footer }) {
         className="rounded-b-lg border border-t-0 border-dh-border bg-dh-surface/95 px-2 py-1 shadow-md text-xs text-left"
         style={{ maxWidth }}
       >
-        <div
-          className="px-1 py-0.5 text-dh font-semibold leading-tight break-words"
-          style={{ fontSize: '0.96rem' }}
-        >
-          {title}
-        </div>
-        {lines?.length > 0 && (
+        {title ? (
+          <div
+            className="px-1 py-0.5 text-dh font-semibold leading-tight break-words"
+            style={{ fontSize: '0.96rem' }}
+          >
+            {title}
+          </div>
+        ) : null}
+        {(lead.length > 0 || body.length > 0 || actions.length > 0) && (
           <div className="px-1 pb-0.5 text-dh-muted leading-snug break-words">
-            {lines.map((line) => (
-              <div key={line}>{line}</div>
+            {lead.map((line, i) => (
+              <ChromeTooltipLineText key={`lead-${i}`} line={line} index={i} prefix="lead" />
             ))}
+            {lead.length > 0 && hasFollowUp ? <div className="h-2" aria-hidden /> : null}
+            {body.map((line, i) => (
+              <ChromeTooltipLineText key={`body-${i}`} line={line} index={i} prefix="body" />
+            ))}
+            {legends.length > 0 ? (
+              <div
+                className={(body.length > 0 || lead.length > 0) || actions.length > 1 ? 'mt-1.5 py-1.5' : undefined}
+                style={legends.length > 1 ? { whiteSpace: 'nowrap' } : undefined}
+              >
+                {legends.map((rows, gi) => (
+                  <div
+                    key={`legend-${gi}`}
+                    className={rows.length > 1 ? 'space-y-1' : undefined}
+                    style={legends.length > 1 ? {
+                      display: 'inline-block',
+                      verticalAlign: 'top',
+                      whiteSpace: 'normal',
+                      marginRight: gi < legends.length - 1 ? '1.25rem' : undefined,
+                    } : undefined}
+                  >
+                    {rows.map((line, i) => (
+                      <ChromeTooltipActionRow key={`action-${gi}-${i}`} line={line} index={i} />
+                    ))}
+                  </div>
+                ))}
+              </div>
+            ) : null}
           </div>
         )}
         {footer ? (
@@ -1224,19 +1344,19 @@ function TokenCircle({
       // Stress lives on the companion data merged onto the boardToken via withResolvedCompanionStress
       const stressMax = element.maxStress || 0;
       const stressMarked = Math.max(0, element.currentStress || 0);
-      if (stressMax > 0) dotGroups.push({ color: '#f97316', total: stressMax, filled: Math.min(stressMarked, stressMax) });
+      if (stressMax > 0) dotGroups.push({ color: '#f97316', total: stressMax, filled: Math.min(stressMarked, stressMax), name: 'Stress' });
     } else if (isChar) {
       const hpMax = element.maxHp || 0;
       const hpDamage = Math.max(0, hpMax - (element.currentHp ?? hpMax));
-      if (hpMax > 0) dotGroups.push({ color: '#ef4444', total: hpMax, filled: hpDamage });
+      if (hpMax > 0) dotGroups.push({ color: '#ef4444', total: hpMax, filled: hpDamage, name: 'HP' });
 
       const stressMax = element.maxStress || 0;
       const stressMarked = Math.max(0, element.currentStress || 0);
-      if (stressMax > 0) dotGroups.push({ color: '#f97316', total: stressMax, filled: Math.min(stressMarked, stressMax) });
+      if (stressMax > 0) dotGroups.push({ color: '#f97316', total: stressMax, filled: Math.min(stressMarked, stressMax), name: 'Stress' });
 
       const armorMax = element.maxArmor || 0;
       const armorMarked = Math.max(0, element.currentArmor || 0);
-      if (armorMax > 0) dotGroups.push({ color: '#06b6d4', total: armorMax, filled: Math.min(armorMarked, armorMax) });
+      if (armorMax > 0) dotGroups.push({ color: '#06b6d4', total: armorMax, filled: Math.min(armorMarked, armorMax), name: 'Armor' });
     } else if (isAdv) {
       const hpMax = element.hp_max || 0;
       const hpDamage = Math.max(0, hpMax - (element.currentHp ?? hpMax));
@@ -1244,11 +1364,11 @@ function TokenCircle({
       const stressMarked = Math.max(0, element.currentStress || 0);
       if (isPlayer) {
         // Players see only filled (damage taken) dots — hides total pool
-        if (hpDamage > 0) dotGroups.push({ color: '#ef4444', total: hpDamage, filled: hpDamage });
-        if (stressMarked > 0) dotGroups.push({ color: '#f97316', total: stressMarked, filled: stressMarked });
+        if (hpDamage > 0) dotGroups.push({ color: '#ef4444', total: hpDamage, filled: hpDamage, name: 'HP' });
+        if (stressMarked > 0) dotGroups.push({ color: '#f97316', total: stressMarked, filled: stressMarked, name: 'Stress' });
       } else {
-        if (hpMax > 0) dotGroups.push({ color: '#ef4444', total: hpMax, filled: hpDamage });
-        if (stressMax > 0) dotGroups.push({ color: '#f97316', total: stressMax, filled: Math.min(stressMarked, stressMax) });
+        if (hpMax > 0) dotGroups.push({ color: '#ef4444', total: hpMax, filled: hpDamage, name: 'HP' });
+        if (stressMax > 0) dotGroups.push({ color: '#f97316', total: stressMax, filled: Math.min(stressMarked, stressMax), name: 'Stress' });
       }
     }
     const marks = conditionMarks(element.conditions);
@@ -3380,6 +3500,8 @@ export function BattleMap({
   onSpotlightChange,
   /** Game Table GM: click/pin overlay hook for Encounter + GM token → GM Moves panel. */
   gmMovesOverlay = null,
+  /** Left-sidebar Players / Characters hover — wins over token / object / Game Map chrome copy. */
+  chromeTooltipHint = null,
 }) {
   const isTouch = useTouchDevice();
   const scrollWrapperRef = useRef(null);
@@ -7370,6 +7492,7 @@ export function BattleMap({
     ? tokenHoverHintModel(tokenHoverHintElement, { isTouch, isPlayer })
     : null;
   const mapChromeTooltip = resolveMapChromeTooltip({
+    panelHint: chromeTooltipHint,
     tokenElement: tokenHoverHintElement,
     mapObject: dragGhost ? null : hoveredMapObject,
     canModifyMapObject: hoveredMapObject ? canModifyMapObjectFn(hoveredMapObject) : false,
@@ -7801,6 +7924,7 @@ export function BattleMap({
             onDeleteTable={isPlayer ? undefined : onDeleteTable}
             isPublic={isPublic}
             onPublicChange={isPlayer ? undefined : onPublicChange}
+            tableId={tableId}
           />
           <MapChromeTooltip
             title={mapChromeTooltip.title}
@@ -7808,14 +7932,24 @@ export function BattleMap({
             left={chromeTooltipLeft}
             maxWidth={chromeTooltipMaxWidth}
             footer={(
-              <label className="flex items-center gap-1 px-1 pb-0.5 text-dh-muted cursor-pointer select-none">
-                <input
-                  type="checkbox"
-                  checked={showMapInstructions}
-                  onChange={(e) => persistShowMapInstructions(e.target.checked)}
-                />
+              <button
+                type="button"
+                role="checkbox"
+                aria-checked={showMapInstructions}
+                data-testid="map-chrome-show-instructions"
+                className="flex items-center gap-1.5 px-1 pb-0.5 text-dh-muted cursor-pointer select-none"
+                style={{ fontSize: '0.9rem' }}
+                onClick={() => persistShowMapInstructions(!showMapInstructions)}
+              >
+                <span
+                  aria-hidden
+                  className="inline-flex items-center justify-center rounded-sm border border-dh-muted/70 text-dh shrink-0"
+                  style={{ width: '0.9rem', height: '0.9rem', fontSize: '0.72rem', lineHeight: 1, fontWeight: 700 }}
+                >
+                  {showMapInstructions ? '?' : ''}
+                </span>
                 Show instructions
-              </label>
+              </button>
             )}
           />
           {showMapCameraPicker && pickerTriggerTile ? (

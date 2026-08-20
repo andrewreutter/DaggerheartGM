@@ -1,5 +1,6 @@
-import { useState, useRef, useEffect } from 'react';
+import { Fragment, useState, useRef, useEffect } from 'react';
 import { Skull, Shield, Sparkles, Flame, AlertCircle } from 'lucide-react';
+import { Tooltip } from './Tooltip.jsx';
 
 /**
  * @typedef {'hope'|'fear'|'hp'|'armor'|'stress'|'stressPurple'} CheckboxTrackKind
@@ -47,6 +48,32 @@ export function getCheckboxTrackPreset(kind) {
   return CHECKBOX_TRACK_PRESETS[kind] ?? CHECKBOX_TRACK_PRESETS.hp;
 }
 
+/** Box + icon classes for one committed mark — same as a card track slot at rest. */
+export function checkboxTrackMarkedSlotClasses(preset) {
+  return {
+    borderClass: preset.borderFilled
+      ? `${preset.borderFilled} border-solid bg-transparent`
+      : 'border-0 border-transparent bg-transparent',
+    iconClass: preset.icon,
+  };
+}
+
+/** One marked resource pip, identical to a filled CheckboxTrack slot on a card. */
+export function CheckboxTrackMarkedIcon({ trackKind = 'hp' }) {
+  const preset = getCheckboxTrackPreset(trackKind);
+  const { Icon } = preset;
+  const { borderClass, iconClass } = checkboxTrackMarkedSlotClasses(preset);
+  return (
+    <span className={`checkbox-track-item w-4 h-4 rounded-sm flex-shrink-0 inline-flex items-center justify-center ${borderClass}`}>
+      <Icon
+        className={`w-3 h-3 shrink-0 pointer-events-none ${iconClass}`}
+        strokeWidth={2.25}
+        aria-hidden
+      />
+    </span>
+  );
+}
+
 /**
  * Filled count after clicking the box at `hoverIndex` (same value `onSetFilled` receives
  * — damage for HP, stress/armor slots, remaining Hope, etc.).
@@ -70,7 +97,7 @@ export function isCheckboxTrackPreviewSlotChanged(i, filled, effectiveFilled) {
  *
  * @param {object} props
  * @param {CheckboxTrackKind} [props.trackKind] — icon + color palette.
- * @param {boolean} [props.slotTypeTooltip] — when true, each slot shows `label` in the native tooltip (Characters panel); default leaves other surfaces unchanged.
+ * @param {boolean} [props.slotTypeTooltip] — when true, each slot shows `label` in an instant tooltip (Characters panel); default leaves other surfaces unchanged.
  * @param {boolean} [props.stopSlotClickPropagation] — when true and slots are buttons, `click` stops propagation (e.g. Game Table character card opens sheet on card click; only slot icons should not bubble).
  */
 export function CheckboxTrack({
@@ -185,10 +212,9 @@ export function CheckboxTrack({
       borderClass = 'border-2 border-amber-400/60 border-dashed bg-transparent';
       iconClass = `${preset.icon} opacity-60`;
     } else if (isMarkedVisual) {
-      borderClass = preset.borderFilled
-        ? `${preset.borderFilled} border-solid bg-transparent`
-        : 'border-0 border-transparent bg-transparent';
-      iconClass = preset.icon;
+      const marked = checkboxTrackMarkedSlotClasses(preset);
+      borderClass = marked.borderClass;
+      iconClass = marked.iconClass;
     } else {
       borderClass = preset.borderEmpty
         ? `${preset.borderEmpty} border-solid bg-transparent`
@@ -202,9 +228,12 @@ export function CheckboxTrack({
 
     const iconSize = fillRow ? 'w-[0.875rem] h-[0.875rem]' : 'w-3 h-3';
 
-    items.push(
+    const showTip = slotTypeTooltip
+      ? !!title
+      : !!(title && (onSetFilled || isPending || isPendingClear));
+
+    const slot = (
       <El
-        key={i}
         type={El === 'button' ? 'button' : undefined}
         onClick={
           onSetFilled
@@ -220,11 +249,6 @@ export function CheckboxTrack({
             : undefined
         }
         onMouseEnter={onSetFilled ? () => setHoverIndex(i) : undefined}
-        title={
-          slotTypeTooltip
-            ? (title || undefined)
-            : (onSetFilled || isPending || isPendingClear ? title : undefined)
-        }
         className={`checkbox-track-item ${fillRow ? 'flex-1 min-w-0 min-h-5 rounded-sm' : 'w-4 h-4 rounded-sm flex-shrink-0'} inline-flex items-center justify-center ${onSetFilled ? 'cursor-pointer' : ''} ${itemClassName} ${borderClass} ${hoverOutline} transition-[box-shadow,border-color,opacity]`}
       >
         <Icon
@@ -232,7 +256,23 @@ export function CheckboxTrack({
           strokeWidth={2.25}
           aria-hidden
         />
-      </El>,
+      </El>
+    );
+
+    items.push(
+      showTip ? (
+        <Tooltip
+          key={i}
+          label={title}
+          placement="top"
+          showOnTouch={!onSetFilled}
+          className={fillRow ? 'relative flex flex-1 min-w-0' : 'relative inline-flex'}
+        >
+          {slot}
+        </Tooltip>
+      ) : (
+        <Fragment key={i}>{slot}</Fragment>
+      ),
     );
   }
 

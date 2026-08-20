@@ -32,6 +32,7 @@ function SessionCountdownCard({
   onRollStart,
   onLoop,
   rolling,
+  chromeHoverProps = {},
 }) {
   const title = [row.label?.trim() ? row.label : 'Countdown', row.sourceRef ? 'Linked to feature' : '']
     .filter(Boolean)
@@ -49,7 +50,7 @@ function SessionCountdownCard({
     : {};
 
   return (
-    <div data-testid="encounter-countdown-card" className={`${className} ${trackerOverlay ? 'cursor-pointer' : ''}`} {...hoverProps}>
+    <div data-testid="encounter-countdown-card" className={`${className} ${trackerOverlay ? 'cursor-pointer' : ''}`} {...hoverProps} {...chromeHoverProps}>
       <div className="space-y-1.5">
         <div className="flex min-w-0 items-start gap-1.5">
           {isGm ? (
@@ -193,6 +194,7 @@ function SessionCountdownCard({
  * @param {'panel' | 'section'} [props.variant] — `panel`: collapsible card (default). `section`: subtitle + card rows for Encounter column.
  * @param {string} [props.sectionTitle] — uppercase-friendly label when `variant="section"`
  * @param {object} [props.trackerOverlay] — shared Encounter click-to-pin overlay (left-of-aside editor panel)
+ * @param {object} [props.chromeHoverProps] — section-level map-chrome tooltip (title + add + cards)
  */
 export function SessionCountdownsPanel({
   sessionCountdowns = [],
@@ -202,6 +204,9 @@ export function SessionCountdownsPanel({
   sectionTitle = 'Countdowns',
   trackerOverlay,
   onRollCountdown,
+  chromeHoverForRow,
+  addChromeHoverProps = {},
+  chromeHoverProps = {},
 }) {
   const [open, setOpen] = useState(true);
   const [rollingId, setRollingId] = useState(null);
@@ -278,39 +283,36 @@ export function SessionCountdownsPanel({
 
   if (variant === 'section') {
     return (
-      <>
-        <div className="space-y-2">
-          {(sectionTitle || isGm) && (
-            <div className="flex items-center justify-between gap-2">
-              {sectionTitle ? (
-                <p className="text-[10px] font-semibold uppercase tracking-wide text-dh-muted">{sectionTitle}</p>
-              ) : (
-                <span />
-              )}
-              {isGm && (
-                <button
-                  type="button"
-                  onClick={addBlank}
-                  title="Add countdown"
-                  data-prep-target="build"
-                  className="shrink-0 rounded px-1 py-0.5 text-[10px] font-semibold text-dh-muted hover:text-dh hover:bg-dh-hover/60 transition-colors"
-                >
-                  + Add
-                </button>
-              )}
-            </div>
-          )}
-          <div className="space-y-2">
-            {rows.map((row) => (
-              <SessionCountdownCard
-                key={row.id}
-                {...cardProps(row)}
-                className="rounded-lg border border-dh-strong bg-dh-surface px-2.5 py-2"
-              />
-            ))}
+      <div className="space-y-2" {...chromeHoverProps}>
+        {(sectionTitle || isGm) && (
+          <div className="flex items-center justify-between gap-2">
+            {sectionTitle ? (
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-dh-muted">{sectionTitle}</p>
+            ) : (
+              <span />
+            )}
+            {isGm && (
+              <button
+                type="button"
+                onClick={addBlank}
+                data-prep-target="build"
+                className="shrink-0 rounded px-1 py-0.5 text-[10px] font-semibold text-dh-muted hover:text-dh hover:bg-dh-hover/60 transition-colors"
+              >
+                + Add
+              </button>
+            )}
           </div>
+        )}
+        <div className="space-y-2">
+          {rows.map((row) => (
+            <SessionCountdownCard
+              key={row.id}
+              {...cardProps(row)}
+              className="rounded-lg border border-dh-strong bg-dh-surface px-2.5 py-2"
+            />
+          ))}
         </div>
-      </>
+      </div>
     );
   }
 
@@ -339,6 +341,7 @@ export function SessionCountdownsPanel({
               <SessionCountdownCard
                 key={row.id}
                 {...cardProps(row)}
+                chromeHoverProps={chromeHoverForRow?.(row)}
                 className="rounded border border-dh-border bg-dh-raised/40 px-2 py-1.5"
               />
             ))}
