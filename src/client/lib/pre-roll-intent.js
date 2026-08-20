@@ -112,6 +112,11 @@ export function serializePreRollIntent({
     openedByRole: openedByRole === 'gm' ? 'gm' : 'player',
     clientWriteSeq: Number.isFinite(Number(clientWriteSeq)) ? Number(clientWriteSeq) : 0,
     helps: [],
+    _groupRoll: false,
+    groupMembers: [],
+    _tagTeam: false,
+    tagTeamPartner: null,
+    tagTeamPartnerInstanceId: null,
   };
 }
 
@@ -149,6 +154,9 @@ export function mergeIntentPatch(existing, patch, { isGm = false } = {}) {
   const next = { ...existing };
   for (const key of PRE_ROLL_SELECTION_KEYS) {
     if (key in src) next[key] = src[key];
+  }
+  if (existing._groupRoll || existing._tagTeam) {
+    delete next._rollVisibility;
   }
   if (isGm && 'difficulty' in src) {
     const clamped = clampDifficulty(src.difficulty);

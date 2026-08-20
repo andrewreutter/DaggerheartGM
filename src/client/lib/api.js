@@ -1136,7 +1136,7 @@ export const patchTableIntent = async (tableId, patch) => {
  * Compare-and-swap clear of the pending intent. Returns `{ ok, conflict }` so Proceed
  * can abort when the other party already proceeded or cancelled (HTTP 409).
  */
-export const clearTableIntent = async (tableId, intentId) => {
+export const clearTableIntent = async (tableId, intentId, { keepTagTeamBanners = false } = {}) => {
   const token = await getAuthToken();
   if (!token || !tableId) return { ok: false };
   try {
@@ -1146,7 +1146,7 @@ export const clearTableIntent = async (tableId, intentId) => {
     const res = await fetch(`/api/room/${tableId}/intent${qs}`, {
       method: 'DELETE',
       headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
-      body: JSON.stringify({ intentId }),
+      body: JSON.stringify({ intentId, keepTagTeamBanners: keepTagTeamBanners === true }),
     });
     if (res.status === 409) return { ok: false, conflict: true };
     if (!res.ok) return { ok: false };
@@ -1171,6 +1171,51 @@ export const postTableIntentHelp = async (tableId, { intentId, instanceId, activ
     headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
     body: JSON.stringify({ intentId, instanceId, active, label }),
   }).catch(() => {});
+};
+
+/**
+ * Dedicated Group roll write — toggle / setTrait / skip. Does not PATCH the rest
+ * of the intent (would clobber chips / concurrent helper writes).
+ */
+export const postTableIntentGroup = async (tableId, { intentId, action, instanceId, trait, active }) => {
+  const token = await getAuthToken();
+  if (!token || !tableId) return;
+  fetch(`/api/room/${tableId}/intent/group`, {
+    method: 'POST',
+    headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
+    body: JSON.stringify({ intentId, action, instanceId, trait, active }),
+  }).catch(() => {});
+};
+
+/**
+ * Dedicated Tag Team write — toggle / setPartner / setTrait. Does not PATCH the rest
+ * of the intent (would clobber chips / concurrent helper writes).
+ */
+export const postTableIntentTagTeam = async (tableId, { intentId, action, instanceId, trait, active }) => {
+  const token = await getAuthToken();
+  if (!token || !tableId) return;
+  fetch(`/api/room/${tableId}/intent/tag-team`, {
+    method: 'POST',
+    headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
+    body: JSON.stringify({ intentId, action, instanceId, trait, active }),
+  }).catch(() => {});
+};
+
+/** Choose which Tag Team Duality applies; cancels the discarded banner. */
+export const postBannerTagTeamChoose = async (tableId, { intentId, chosenRollDbId }) => {
+  const token = await getAuthToken();
+  if (!token || !tableId) return { ok: false };
+  try {
+    const res = await fetch(`/api/room/${tableId}/banner-tag-team-choose`, {
+      method: 'POST',
+      headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
+      body: JSON.stringify({ intentId, chosenRollDbId }),
+    });
+    if (!res.ok) return { ok: false };
+    return { ok: true, ...(await res.json().catch(() => ({}))) };
+  } catch {
+    return { ok: false };
+  }
 };
 
 /** GM: lock or unlock the difficulty for a pending intent (`finalized` defaults true). */

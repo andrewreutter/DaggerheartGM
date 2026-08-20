@@ -2,14 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { ErrorBoundary } from './ErrorBoundary.jsx';
 import { FatalErrorFallback } from './FatalErrorFallback.jsx';
 import { ImageUploadOverlay } from './ImageUploadOverlay.jsx';
-
-function formatReason(reason) {
-  if (reason instanceof Error) return reason.message || String(reason);
-  if (reason && typeof reason === 'object' && 'message' in reason) {
-    return String(reason.message);
-  }
-  return String(reason);
-}
+import { formatUnhandledRejectionReason, isCrossOriginScriptErrorEvent } from '../lib/fatal-window-error.js';
 
 /**
  * Root shell: global uncaught error / unhandled rejection UI + React error boundary around children.
@@ -22,13 +15,22 @@ export function AppRoot({ children }) {
       if (event.target && event.target !== window && event.target !== document) {
         return;
       }
+      if (isCrossOriginScriptErrorEvent(event)) {
+        console.error('Ignored cross-origin window error (Script error.)');
+        return;
+      }
       const err = event.error;
       const msg = err instanceof Error ? err.message : event.message || (err ? String(err) : 'Unknown error');
       setFatalError(msg);
     };
 
     const onUnhandledRejection = (event) => {
-      setFatalError(formatReason(event.reason));
+      const msg = formatUnhandledRejectionReason(event.reason);
+      if (msg === 'Script error.') {
+        console.error('Ignored cross-origin unhandled rejection (Script error.)');
+        return;
+      }
+      setFatalError(msg);
     };
 
     window.addEventListener('error', onWindowError);

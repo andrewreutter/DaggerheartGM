@@ -30,6 +30,31 @@ import {
   pickPlayerHelpCharacter,
   remainingHopeForCharacter,
 } from '../lib/help-an-ally.js';
+import {
+  canEditGroupMember,
+  eligibleGroupRollCharacters,
+  groupMemberLabel,
+  isGroupRollReactionMeta,
+} from '../lib/group-roll.js';
+import {
+  canEditTagTeamPartner,
+  eligibleTagTeamPartners,
+  isLocalTagTeamPartnerMeta,
+  isTagTeamReactionMeta,
+  tagTeamPartnerLabel,
+} from '../lib/tag-team.js';
+import { formatReactionCallResultBadge } from '../lib/reaction-call-roster.js';
+import { TRAIT_KEYS } from '../lib/character-calc.js';
+import { CustomSelect } from './forms/CustomSelect.jsx';
+
+const TRAIT_FULL = {
+  agility: 'Agility',
+  strength: 'Strength',
+  finesse: 'Finesse',
+  instinct: 'Instinct',
+  presence: 'Presence',
+  knowledge: 'Knowledge',
+};
 
 /**
  * Advantage / disadvantage name field. Draft stays local while typing so a stale
@@ -137,6 +162,22 @@ export function PreRollBanner({
   onHelpChange,
   helpViewer = null,
   pendingResourceCosts = {},
+  groupRoll = false,
+  groupMembers = [],
+  onGroupRollToggle,
+  onGroupMemberAction,
+  onGroupMemberRoll,
+  groupViewer = null,
+  tagTeam = false,
+  tagTeamPartner = null,
+  tagTeamHopeCost = 3,
+  tagTeamRemaining = 1,
+  tagTeamDisabledReason = '',
+  onTagTeamToggle,
+  onTagTeamPartnerAction,
+  onTagTeamPartnerRoll,
+  tagTeamViewer = null,
+  proceedDisabledTitle,
 }) {
   const pendingPoolFocusRef = useRef(null);
   const lastAdvantageInputRef = useRef(null);
@@ -236,7 +277,34 @@ export function PreRollBanner({
           characterEl: cel,
         }));
 
+  const [rollingIds, setRollingIds] = useState(() => new Set());
+  useEffect(() => {
+    setRollingIds((prev) => {
+      const next = new Set();
+      for (const id of prev) {
+        const m = (Array.isArray(groupMembers) ? groupMembers : []).find((x) => x.instanceId === id);
+        if (m && m.status === 'pending') next.add(id);
+      }
+      if (next.size === prev.size && [...next].every((id) => prev.has(id))) return prev;
+      return next;
+    });
+  }, [groupMembers]);
+
   const canEditDifficulty = !isPlayer && !readOnly;
+  const groupReactionMeta = isGroupRollReactionMeta(meta) || isTagTeamReactionMeta(meta)
+    || isLocalTagTeamPartnerMeta(meta);
+  const eligibleGroupOthers = eligibleGroupRollCharacters({
+    actorInstanceId: characterEl?.instanceId,
+    activeElements,
+  });
+  const eligibleTagTeamOthers = eligibleTagTeamPartners({
+    actorInstanceId: characterEl?.instanceId,
+    activeElements,
+  });
+  const showGroupCheckbox = !readOnly && !groupReactionMeta && !tagTeam && eligibleGroupOthers.length > 0;
+  const showTagTeamCheckbox = !readOnly && !groupReactionMeta && !groupRoll && eligibleTagTeamOthers.length > 0;
+  const tableForced = !!(groupRoll || tagTeam);
+  const effectiveVisibility = tableForced ? ROLL_VISIBILITY_TABLE : visibility;
   const observerModel = readOnly
     ? preRollObserverVisibleModel({
         chips,
@@ -331,8 +399,8 @@ export function PreRollBanner({
       aria-labelledby="preroll-title"
       style={{
         pointerEvents: 'auto',
-        width: 'min(24.5rem, 66vw)',
-        maxWidth: '66vw',
+        width: (groupRoll || tagTeam) ? 'min(28rem, 72vw)' : 'min(24.5rem, 66vw)',
+        maxWidth: (groupRoll || tagTeam) ? '72vw' : '66vw',
       }}
     >
       <div
@@ -345,11 +413,12 @@ export function PreRollBanner({
         <div className="flex items-center gap-2 mb-2 flex-wrap">
           <div id="preroll-title" className="text-sm font-bold text-dh">{title}</div>
           {!readOnly && (isPlayer ? (
-            <label className="inline-flex items-center gap-1.5 text-[11px] font-medium text-dh cursor-pointer">
+            <label className={`inline-flex items-center gap-1.5 text-[11px] font-medium text-dh ${tableForced ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}>
               <input
                 type="checkbox"
                 data-testid="preroll-private-checkbox"
-                checked={visibility === ROLL_VISIBILITY_GM_AND_PLAYER}
+                disabled={!!tableForced}
+                checked={effectiveVisibility === ROLL_VISIBILITY_GM_AND_PLAYER}
                 onChange={(e) => {
                   onChangeVisibility?.(e.target.checked ? ROLL_VISIBILITY_GM_AND_PLAYER : ROLL_VISIBILITY_TABLE);
                 }}
@@ -360,13 +429,14 @@ export function PreRollBanner({
             <select
               data-testid="preroll-visibility"
               aria-label="Roll visibility"
+              disabled={!!tableForced}
               value={
-                visibility === ROLL_VISIBILITY_GM_AND_PLAYER && !characterHasAssignedPlayer(characterEl)
+                effectiveVisibility === ROLL_VISIBILITY_GM_AND_PLAYER && !characterHasAssignedPlayer(characterEl)
                   ? ROLL_VISIBILITY_TABLE
-                  : visibility
+                  : effectiveVisibility
               }
               onChange={(e) => onChangeVisibility?.(e.target.value)}
-              className="max-w-[16rem] rounded px-1.5 py-1 text-[11px] bg-dh-raised border border-dh-strong text-dh"
+              className={`max-w-[16rem] rounded px-1.5 py-1 text-[11px] bg-dh-raised border border-dh-strong text-dh ${tableForced ? 'opacity-50 cursor-not-allowed' : ''}`}
             >
               <option value={ROLL_VISIBILITY_TABLE}>Visible to table</option>
               <option value={ROLL_VISIBILITY_GM_ONLY}>Private to me</option>
@@ -377,6 +447,42 @@ export function PreRollBanner({
               )}
             </select>
           ))}
+          {showGroupCheckbox && (
+            <label className="inline-flex items-center gap-1.5 text-[11px] font-medium text-dh cursor-pointer">
+              <input
+                type="checkbox"
+                data-testid="preroll-group-roll"
+                checked={!!groupRoll}
+                onChange={(e) => onGroupRollToggle?.(e.target.checked)}
+              />
+              Group roll
+            </label>
+          )}
+          {showTagTeamCheckbox && (
+            <label
+              className={`inline-flex items-center gap-1.5 text-[11px] font-medium text-dh ${tagTeamDisabledReason && !tagTeam ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+              title={tagTeamDisabledReason && !tagTeam ? tagTeamDisabledReason : `Spend ${tagTeamHopeCost} Hope · ${tagTeamRemaining} left this session`}
+            >
+              <input
+                type="checkbox"
+                data-testid="preroll-tag-team"
+                checked={!!tagTeam}
+                disabled={!!tagTeamDisabledReason && !tagTeam}
+                onChange={(e) => onTagTeamToggle?.(e.target.checked)}
+              />
+              Tag Team ({tagTeamHopeCost} Hope)
+            </label>
+          )}
+          {readOnly && groupRoll && (
+            <span data-testid="preroll-group-roll-label" className="text-[11px] font-medium text-dh-muted">
+              Group roll
+            </span>
+          )}
+          {readOnly && tagTeam && (
+            <span data-testid="preroll-tag-team-label" className="text-[11px] font-medium text-dh-muted">
+              Tag Team
+            </span>
+          )}
         </div>
         {!readOnly && (
           <p className="text-xs text-dh mb-2">Choose experience and optional toggles, then Proceed.</p>
@@ -673,6 +779,255 @@ export function PreRollBanner({
           </div>
         )}
 
+        {groupRoll && Array.isArray(groupMembers) && groupMembers.length > 0 && (
+          <div className="mb-3 w-full flex flex-col gap-1.5" data-testid="preroll-group">
+            <span className="text-[11px] font-semibold text-dh">Group roll</span>
+            <div className="flex flex-col gap-1">
+              {groupMembers.map((m) => {
+                const viewer = groupViewer || { role: isPlayer ? 'player' : 'gm' };
+                const canEdit = canEditGroupMember(viewer, m.instanceId, {
+                  isGm: viewer.role === 'gm',
+                  activeElements,
+                });
+                const rolling = rollingIds.has(m.instanceId) && m.status === 'pending';
+                const displayName = groupMemberLabel(m, activeElements);
+                const traitLabel = m.trait ? (TRAIT_FULL[m.trait] || m.trait) : null;
+                const nameLine = traitLabel ? `${displayName} · ${traitLabel}` : displayName;
+                const badge = (m.status === 'success' || m.status === 'failure')
+                  ? formatReactionCallResultBadge({
+                    total: m.total,
+                    dominant: m.critical ? 'critical' : undefined,
+                    _difficulty: difficulty,
+                  }, difficulty)
+                  : null;
+                if (m.status === 'skipped') {
+                  return (
+                    <div
+                      key={m.instanceId}
+                      data-testid={`preroll-group-row-${m.instanceId}`}
+                      className="flex items-center justify-between gap-2 rounded border border-dh-strong bg-dh-raised/30 px-2 py-1"
+                    >
+                      <span className="text-[11px] font-semibold text-dh-muted truncate">{displayName}</span>
+                      <span className="text-[10px] text-dh-muted shrink-0">Skipped</span>
+                    </div>
+                  );
+                }
+                if (badge) {
+                  const resultCls = badge.success === true
+                    ? 'text-emerald-400'
+                    : badge.success === false
+                      ? 'text-red-400'
+                      : 'text-dh';
+                  return (
+                    <div
+                      key={m.instanceId}
+                      data-testid={`preroll-group-row-${m.instanceId}`}
+                      className="flex items-center justify-between gap-2 rounded border border-dh-strong bg-dh-raised/50 px-2 py-1"
+                    >
+                      <span className="text-[11px] font-semibold text-dh truncate">{nameLine}</span>
+                      <span className={`text-[11px] font-semibold tabular-nums shrink-0 ${resultCls}`}>
+                        {m.total} — {badge.label}
+                      </span>
+                    </div>
+                  );
+                }
+                if (rolling) {
+                  return (
+                    <div
+                      key={m.instanceId}
+                      data-testid={`preroll-group-row-${m.instanceId}`}
+                      className="flex items-center justify-between gap-2 rounded border border-dh-strong bg-dh-raised/50 px-2 py-1"
+                    >
+                      <span className="text-[11px] font-semibold text-dh truncate">{nameLine}</span>
+                      <span className="text-[10px] text-sky-300 shrink-0">Rolling…</span>
+                    </div>
+                  );
+                }
+                if (!canEdit) {
+                  return (
+                    <div
+                      key={m.instanceId}
+                      data-testid={`preroll-group-row-${m.instanceId}`}
+                      className="flex items-center justify-between gap-2 rounded border border-dh-strong bg-dh-raised/30 px-2 py-1"
+                    >
+                      <span className="text-[11px] font-semibold text-dh-muted truncate">{nameLine}</span>
+                      <span className="text-[10px] text-dh-muted shrink-0">Awaiting</span>
+                    </div>
+                  );
+                }
+                return (
+                  <div
+                    key={m.instanceId}
+                    data-testid={`preroll-group-row-${m.instanceId}`}
+                    className="flex items-center justify-between gap-2 rounded border border-sky-700/60 bg-sky-950/40 px-2 py-1"
+                  >
+                    <span className="text-[11px] font-semibold text-dh truncate min-w-0">{displayName}</span>
+                    <div className="flex items-center gap-1 shrink-0">
+                      <div className="w-[7.5rem]" data-testid={`preroll-group-trait-${m.instanceId}`}>
+                        <CustomSelect
+                          value={m.trait}
+                          onChange={(v) => {
+                            if (!TRAIT_KEYS.includes(v)) return;
+                            onGroupMemberAction?.({
+                              action: 'setTrait',
+                              instanceId: m.instanceId,
+                              trait: v,
+                            });
+                          }}
+                          options={TRAIT_KEYS}
+                          getOptionLabel={(key) => TRAIT_FULL[key] || key}
+                          placeholder="Trait"
+                          truncateClosedLabel
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        data-testid={`preroll-group-roll-btn-${m.instanceId}`}
+                        disabled={!m.trait}
+                        onClick={() => {
+                          onGroupMemberRoll?.(m.instanceId);
+                        }}
+                        className="px-2 py-0.5 rounded text-[10px] font-semibold border border-sky-600 bg-sky-900/50 text-sky-100 hover:bg-sky-800/60 disabled:opacity-40 disabled:cursor-not-allowed"
+                      >
+                        Roll
+                      </button>
+                      <button
+                        type="button"
+                        data-testid={`preroll-group-skip-${m.instanceId}`}
+                        onClick={() => onGroupMemberAction?.({ action: 'skip', instanceId: m.instanceId })}
+                        className="px-2 py-0.5 rounded text-[10px] font-medium border border-dh-strong bg-dh-surface/60 text-dh-muted hover:bg-dh-raised hover:text-dh"
+                      >
+                        Skip
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {tagTeam && tagTeamPartner && (
+          <div className="mb-3 w-full flex flex-col gap-1.5" data-testid="preroll-tag-team-block">
+            <span className="text-[11px] font-semibold text-dh">Tag Team</span>
+            {(() => {
+              const viewer = tagTeamViewer || { role: isPlayer ? 'player' : 'gm' };
+              const canEdit = canEditTagTeamPartner(viewer, tagTeamPartner.instanceId, {
+                isGm: viewer.role === 'gm',
+                activeElements,
+              });
+              const rolling = rollingIds.has(tagTeamPartner.instanceId) && tagTeamPartner.status === 'pending';
+              const displayName = tagTeamPartnerLabel(tagTeamPartner, activeElements);
+              const traitLabel = tagTeamPartner.trait ? (TRAIT_FULL[tagTeamPartner.trait] || tagTeamPartner.trait) : null;
+              const nameLine = traitLabel ? `${displayName} · ${traitLabel}` : displayName;
+              const badge = (tagTeamPartner.status === 'success' || tagTeamPartner.status === 'failure' || tagTeamPartner.status === 'rolled')
+                ? formatReactionCallResultBadge({
+                  total: tagTeamPartner.total,
+                  dominant: tagTeamPartner.critical ? 'critical' : undefined,
+                  _difficulty: difficulty,
+                }, difficulty)
+                : null;
+              const partnerOptions = eligibleTagTeamOthers;
+              const showPartnerPicker = !readOnly && partnerOptions.length > 1 && tagTeamPartner.status === 'pending';
+              if (badge) {
+                const resultCls = badge.success === true
+                  ? 'text-emerald-400'
+                  : badge.success === false
+                    ? 'text-red-400'
+                    : 'text-dh';
+                return (
+                  <div
+                    data-testid={`preroll-tag-team-row-${tagTeamPartner.instanceId}`}
+                    className="flex items-center justify-between gap-2 rounded border border-dh-strong bg-dh-raised/50 px-2 py-1"
+                  >
+                    <span className="text-[11px] font-semibold text-dh truncate">{nameLine}</span>
+                    <span className={`text-[11px] font-semibold tabular-nums shrink-0 ${resultCls}`}>
+                      {tagTeamPartner.total} — {badge.label}
+                    </span>
+                  </div>
+                );
+              }
+              if (rolling) {
+                return (
+                  <div
+                    data-testid={`preroll-tag-team-row-${tagTeamPartner.instanceId}`}
+                    className="flex items-center justify-between gap-2 rounded border border-dh-strong bg-dh-raised/50 px-2 py-1"
+                  >
+                    <span className="text-[11px] font-semibold text-dh truncate">{nameLine}</span>
+                    <span className="text-[10px] text-sky-300 shrink-0">Rolling…</span>
+                  </div>
+                );
+              }
+              if (!canEdit) {
+                return (
+                  <div
+                    data-testid={`preroll-tag-team-row-${tagTeamPartner.instanceId}`}
+                    className="flex items-center justify-between gap-2 rounded border border-dh-strong bg-dh-raised/30 px-2 py-1"
+                  >
+                    <span className="text-[11px] font-semibold text-dh-muted truncate">{nameLine}</span>
+                    <span className="text-[10px] text-dh-muted shrink-0">Awaiting</span>
+                  </div>
+                );
+              }
+              return (
+                <div
+                  data-testid={`preroll-tag-team-row-${tagTeamPartner.instanceId}`}
+                  className="flex items-center justify-between gap-2 rounded border border-amber-700/60 bg-amber-950/40 px-2 py-1"
+                >
+                  {showPartnerPicker ? (
+                    <div className="w-[7.5rem] min-w-0" data-testid="preroll-tag-team-partner-pick">
+                      <CustomSelect
+                        value={tagTeamPartner.instanceId}
+                        onChange={(v) => onTagTeamPartnerAction?.({
+                          action: 'setPartner',
+                          instanceId: v,
+                        })}
+                        options={partnerOptions.map((el) => el.instanceId)}
+                        getOptionLabel={(id) => {
+                          const el = partnerOptions.find((e) => e.instanceId === id);
+                          return el?.name || id;
+                        }}
+                        placeholder="Partner"
+                        truncateClosedLabel
+                      />
+                    </div>
+                  ) : (
+                    <span className="text-[11px] font-semibold text-dh truncate min-w-0">{displayName}</span>
+                  )}
+                  <div className="flex items-center gap-1 shrink-0">
+                    <div className="w-[7.5rem]" data-testid={`preroll-tag-team-trait-${tagTeamPartner.instanceId}`}>
+                      <CustomSelect
+                        value={tagTeamPartner.trait}
+                        onChange={(v) => {
+                          if (!TRAIT_KEYS.includes(v)) return;
+                          onTagTeamPartnerAction?.({
+                            action: 'setTrait',
+                            instanceId: tagTeamPartner.instanceId,
+                            trait: v,
+                          });
+                        }}
+                        options={TRAIT_KEYS}
+                        getOptionLabel={(key) => TRAIT_FULL[key] || key}
+                        placeholder="Trait"
+                        truncateClosedLabel
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      data-testid={`preroll-tag-team-roll-btn-${tagTeamPartner.instanceId}`}
+                      disabled={!tagTeamPartner.trait}
+                      onClick={() => onTagTeamPartnerRoll?.(tagTeamPartner.instanceId)}
+                      className="px-2 py-0.5 rounded text-[10px] font-semibold border border-amber-600 bg-amber-900/50 text-amber-100 hover:bg-amber-800/60 disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      Roll
+                    </button>
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
+        )}
+
         {(() => {
           const isReaction = isHelpAllyReactionMeta(meta);
           const actorId = characterEl?.instanceId;
@@ -788,7 +1143,9 @@ export function PreRollBanner({
                 onProceed?.();
               }}
               disabled={proceedDisabled}
-              title={proceedDisabled ? 'Waiting for the GM to approve the difficulty' : undefined}
+              title={proceedDisabled
+                ? (proceedDisabledTitle || 'Waiting for the GM to approve the difficulty')
+                : undefined}
               className="px-3 py-1.5 rounded text-[11px] font-semibold border border-dh-strong bg-dh-hover text-dh hover:bg-dh-strong disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-dh-hover"
             >
               Proceed

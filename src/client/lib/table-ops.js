@@ -91,6 +91,8 @@ export const CHARACTER_RUNTIME_KEYS = [
   'gold',
   /** Game Table runtime: inventory rows `{ uid, name, quantity, id?, refCollection? }`. */
   'inventory',
+  /** Core Tag Team: initiations already used this session (reset on Start Session). */
+  'tagTeamInitiationsUsedThisSession',
 ];
 
 /**
@@ -1484,6 +1486,18 @@ function runV2BannerMutationLoop(mutations, activeElements, ownerInstanceId, onO
       case 'setPrayerDicePool': {
         const { instanceId, pool } = payload;
         merge(instanceId, { prayerDice: { pool: Array.isArray(pool) ? [...pool] : [] } });
+        break;
+      }
+      case 'setTagTeamInitiationsUsed': {
+        const { instanceId, value } = payload;
+        const el = getBase(instanceId);
+        if (!el || el.elementType !== 'character') {
+          skip();
+          break;
+        }
+        merge(instanceId, {
+          tagTeamInitiationsUsedThisSession: Math.max(0, Math.floor(Number(value) || 0)),
+        });
         break;
       }
       case 'removePrayerDieAt': {

@@ -3,6 +3,7 @@ import {
   Courage,
   BattleRitual,
   RiseToTheChallenge,
+  Camaraderie,
 } from '../../../../src/features-v2/subclasses/CallOfTheBrave.js';
 import { collectChips } from '../../../../src/features-v2/engine/chip-system.js';
 import { applyMutations } from '../../../../src/features-v2/engine/table.js';
@@ -135,5 +136,12 @@ describe('Call of the Brave — Rise to the Challenge', () => {
       }),
     });
     expect(mutations.filter((m) => m.type === 'setDie')).toHaveLength(0);
+  });
+});
+
+describe('Call of the Brave — Camaraderie', () => {
+  it('declares an extra Tag Team initiation and a partner Hope discount', () => {
+    expect(Camaraderie.extraTagTeamInitiationsPerSession).toBe(1);
+    expect(Camaraderie.tagTeamPartnerHopeDiscount).toBe(1);
   });
 });

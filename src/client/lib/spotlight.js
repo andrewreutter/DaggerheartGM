@@ -173,6 +173,7 @@ export function qualifiesForSpotlightRoll(roll) {
 export function isSpotlightGatedRollMeta(rollMeta) {
   if (!rollMeta || typeof rollMeta !== 'object') return false;
   if (rollMeta._isReaction || rollMeta._reactionCallRollDbId) return false;
+  if (rollMeta._tagTeamIntentId && rollMeta._tagTeamRole === 'partner') return false;
   if (rollMeta._rest) return false;
   if (rollMeta._v2PhysicalRollResume) return false;
   return rollMeta._intentPanelForActionRoll === true || isAttackRollMeta(rollMeta);

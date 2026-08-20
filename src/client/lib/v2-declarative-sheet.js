@@ -393,6 +393,8 @@ export function mergeV2DeclarativeSheetOverlay(recomputed, rawCharacter, srdData
     domainLoadoutDisabled: decl.domainLoadoutDisabled,
     substituteArmorForHope: decl.substituteArmorForHope,
     _v2RangeOverrides: decl.rangeOverrides,
+    extraTagTeamInitiationsPerSession: decl.extraTagTeamInitiationsPerSession,
+    tagTeamPartnerHopeDiscount: decl.tagTeamPartnerHopeDiscount,
     _v2ExtraTagTeamInitiationsPerSession: decl.extraTagTeamInitiationsPerSession,
     _v2TagTeamPartnerHopeDiscount: decl.tagTeamPartnerHopeDiscount,
     contactsEverywhereSessionUses: decl.contactsEverywhereSessionUses ?? 1,

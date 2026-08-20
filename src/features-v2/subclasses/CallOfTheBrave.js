@@ -58,9 +58,11 @@ export const RiseToTheChallenge = {
   },
 };
 
-/** Narrative-only for now — full automation deferred (tracker Tech Debt / `docs/v2-game-table-cutover-remaining.md`). */
+/** Extra Tag Team initiation + ally pays 2 Hope when you are the partner. */
 export const Camaraderie = {
   name: 'Camaraderie',
   description:
     'Your unwavering bravery is a rallying point for your allies. You can initiate a Tag Team Roll one additional time per session. Additionally, when an ally initiates a Tag Team Roll with you, they only need to spend 2 Hope to do so.',
+  extraTagTeamInitiationsPerSession: 1,
+  tagTeamPartnerHopeDiscount: 1,
 };

@@ -32,6 +32,19 @@ describe('action-roll-difficulty', () => {
       expect(sessionNeedsDifficulty({ _weaponRangeFt: 30 })).toBe(false);
       expect(sessionNeedsDifficulty({ _reactionCallRollDbId: 1 })).toBe(false);
     });
+
+    it('is false for reaction rolls and group-roll collaborator reactions', () => {
+      expect(sessionNeedsDifficulty({ _isReaction: true, _intentPanelForActionRoll: true })).toBe(false);
+      expect(sessionNeedsDifficulty({ _groupRollIntentId: 'int-1', _intentPanelForActionRoll: true })).toBe(false);
+    });
+
+    it('is false for a Tag Team partner Duality overlay', () => {
+      expect(sessionNeedsDifficulty({
+        _tagTeamIntentId: 'int-1',
+        _tagTeamRole: 'partner',
+        _intentPanelForActionRoll: true,
+      })).toBe(false);
+    });
   });
 
   describe('requiresGmFinalizedDifficulty', () => {
@@ -51,6 +64,22 @@ describe('action-roll-difficulty', () => {
 
     it('excludes GM-called reaction rolls', () => {
       expect(requiresGmFinalizedDifficulty({ _intentPanelForActionRoll: true, _reactionCallRollDbId: 42 })).toBe(false);
+    });
+
+    it('excludes group-roll collaborator reaction overlays', () => {
+      expect(requiresGmFinalizedDifficulty({
+        _intentPanelForActionRoll: true,
+        _isReaction: true,
+        _groupRollIntentId: 'int-1',
+      })).toBe(false);
+    });
+
+    it('excludes Tag Team partner Duality overlays', () => {
+      expect(requiresGmFinalizedDifficulty({
+        _intentPanelForActionRoll: true,
+        _tagTeamIntentId: 'int-1',
+        _tagTeamRole: 'partner',
+      })).toBe(false);
     });
   });
 

@@ -1182,7 +1182,7 @@ function buildActionContext(gameState, actorMap, mutations) {
     get target() {
       return targets[0] || null;
     },
-    attacker: type === 'attack' ? actor : undefined,
+    attacker: type === 'attack' || (type === 'tagTeam' && actionData.weaponId) ? actor : undefined,
     trait: actionData.trait,
     range: actionData.range,
     /** Which weapon the actor is using for this attack (primary vs secondary). */

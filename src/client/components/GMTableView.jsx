@@ -104,6 +104,9 @@ import {
   patchTableIntent,
   clearTableIntent,
   postTableIntentHelp,
+  postTableIntentGroup,
+  postTableIntentTagTeam,
+  postBannerTagTeamChoose,
   postFinalizeIntentDifficulty,
   syncDaggerstackCharacter,
   resolveItems,
@@ -203,9 +206,36 @@ import {
   formatHelpAllyRollSuffix,
   mergeHelpAllyEntry,
   mergePendingResourceCostMaps,
+  remainingHopeForCharacter,
   resolveHeldHelpAllyRows,
   subtractPendingResourceCostRows,
 } from '../lib/help-an-ally.js';
+import {
+  canEditGroupMember,
+  eligibleGroupRollCharacters,
+  formatGroupRollBonus,
+  characterDisplayName,
+  groupMemberLabel,
+  groupRollModifier,
+  groupRollsComplete,
+  isLocalGroupReactionPreRoll,
+  pickGroupMemberRow,
+  seedGroupMembers,
+  shouldHydrateSharedIntentOverLocal,
+  shouldWriteSharedPreRollIntent,
+} from '../lib/group-roll.js';
+import {
+  canEditTagTeamPartner,
+  eligibleTagTeamPartners,
+  isLocalTagTeamPartnerPreRoll,
+  planTagTeamAckEffects,
+  seedTagTeamPartner,
+  shouldHydrateSharedIntentOverLocalTagTeam,
+  shouldWriteSharedPreRollIntentForTagTeam,
+  tagTeamInitiationsRemaining,
+  tagTeamInitiatorHopeCost,
+  tagTeamPartnerReady,
+} from '../lib/tag-team.js';
 import { getCharactersWithinFarRange, getCharactersWithinCloseRangeWithMarkedHp, getAdversariesWithinMeleeRange, getAdversariesWithinRangeFt, rangeBandNameToFt, RANGE_BANDS_FT, tokenDistanceFtForElements, positionAtDistanceFt, getTokenFootprintFt } from '../lib/map-range.js';
 import {
   collectCompanionDamageTargets,
@@ -975,12 +1005,22 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
   const remoteAckedIntentIdRef = useRef(null);
   const lastAppliedRemoteDifficultyRef = useRef(null);
   const preRollBannerRef = useRef(null);
+  const pendingIntentRef = useRef(null);
+  const hydrateSharedPreRollRef = useRef(null);
   const [preRollAdvantages, setPreRollAdvantagesState] = useState([]); // string[]: optional name per advantage ('' = default "Advantage")
   const [preRollDisadvantages, setPreRollDisadvantagesState] = useState([]); // string[]: optional name per disadvantage ('' = default "Disadvantage")
   const [preRollHelps, setPreRollHelps] = useState([]);
   const [heldIntentHelps, setHeldIntentHelps] = useState(() => ({ intentId: null, helps: [] }));
   const preRollHelpsRef = useRef([]);
   preRollHelpsRef.current = preRollHelps;
+  const [preRollGroupOn, setPreRollGroupOn] = useState(false);
+  const [preRollGroupMembers, setPreRollGroupMembers] = useState([]);
+  const preRollGroupMembersRef = useRef([]);
+  preRollGroupMembersRef.current = preRollGroupMembers;
+  const [preRollTagTeamOn, setPreRollTagTeamOn] = useState(false);
+  const [preRollTagTeamPartner, setPreRollTagTeamPartner] = useState(null);
+  const preRollTagTeamPartnerRef = useRef(null);
+  preRollTagTeamPartnerRef.current = preRollTagTeamPartner;
   const preRollAdvantagesRef = useRef(preRollAdvantages);
   const preRollDisadvantagesRef = useRef(preRollDisadvantages);
   const setPreRollAdvantages = (next) => {
@@ -1072,6 +1112,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     if (!rows.length) return;
     setPendingResourceCosts((prev) => subtractPendingResourceCostRows(prev, rows));
   };
+  pendingIntentRef.current = pendingIntent;
   const extraIntentHelpRows = resolveHeldHelpAllyRows({
     pendingIntent,
     held: heldIntentHelps,
@@ -2629,7 +2670,26 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
           updateActiveElement(attackerId, { hope: Math.min(current + 1, maxHope) });
         }
       }
-    } else if (!isReactionRoll(roll)) {
+    } else if (roll._tagTeamChosen) {
+      const initiatorId = roll._tagTeamInitiatorInstanceId || roll._attackerInstanceId;
+      const partnerId = roll._tagTeamPartnerInstanceId;
+      const involved = [initiatorId, partnerId].filter(Boolean);
+      const planned = planTagTeamAckEffects({
+        dominant: effectiveDominant,
+        involvedInstanceIds: involved,
+        initiatorInstanceId: initiatorId,
+        hopeCost: roll._tagTeamHopeCost,
+        elements: activeElements,
+      });
+      for (const u of planned.updates) {
+        const { instanceId, ...patch } = u;
+        if (instanceId) updateActiveElement(instanceId, patch);
+      }
+      if (planned.fearDelta && setFearCount) {
+        const delta = planned.fearDelta;
+        setFearCount((prev) => Math.max(0, Math.min(12, (prev ?? 0) + delta)));
+      }
+    } else if (!isReactionRoll(roll) && !roll._tagTeamIntentId) {
       // Reaction rolls don't generate Hope or Fear (SRD: Reaction Rolls).
       applyRollSideEffects(effectiveDominant, roll.rollUser);
     }
@@ -2842,9 +2902,12 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
       if (char.featureState?.[RALLY_FEATURE_STATE_BAG_KEY]) {
         updates.featureState = stripRallyVolatileSessionKeys({ ...char.featureState });
       }
+      if ((char.tagTeamInitiationsUsedThisSession || 0) > 0) {
+        updates.tagTeamInitiationsUsedThisSession = 0;
+      }
       if (Object.keys(updates).length > 0) {
         // Bypass the play-blocked gate directly: this runs right after `set-table-top` confirmed
-        // the session as started, but the local `sessionPlayAllowed` prop (derived from the SSE
+        // the session as started, but the local `sessionPlayAllowed` prop (derived from the SSE)
         // snapshot) hasn't caught up yet — going through the gated `updateActiveElement` wrapper
         // here would incorrectly pop the "Session not started"/"Session paused" dialog.
         pushTableElementUpdate(char.instanceId, updates, { bypassPrepGate: true });
@@ -3954,6 +4017,10 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     setPreRollAdvantages([]);
     setPreRollDisadvantages([]);
     setPreRollHelps([]);
+    setPreRollGroupOn(false);
+    setPreRollGroupMembers([]);
+    setPreRollTagTeamOn(false);
+    setPreRollTagTeamPartner(null);
     setPreRollTargetInstanceId(null);
     setPreRollVisibility(ROLL_VISIBILITY_TABLE);
   };
@@ -4002,6 +4069,12 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     // all game logic once the GM acknowledges the result. Skip the entire preroll intent-chip /
     // "Before your roll" pipeline below (difficulty chip, advantage/disadvantage triggers, etc.)
     // and post the roll exactly as specified.
+    if (rollMeta._skipPreRollIntent) {
+      dismissAllHoverCards();
+      return postRoll(rollText, displayName || rollText, targetTableId, meta)
+        .catch(err => handleRollTransportError(err, 'Player roll failed:'));
+    }
+
     if (rollMeta._v2PhysicalRollResume) {
       dismissAllHoverCards();
       postRoll(rollText, displayName || rollText, targetTableId, meta)
@@ -4088,12 +4161,26 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
 
     const intentId = generateId();
     const openedByRole = isPlayer ? 'player' : 'gm';
+    const isLocalGroupReaction = !!meta._groupRollIntentId && !meta._skipPreRollIntent;
+    const isLocalTagTeamPartner = !!meta._tagTeamIntentId && meta._tagTeamRole === 'partner' && !meta._skipPreRollIntent;
+    const isLocalOverlay = isLocalGroupReaction || isLocalTagTeamPartner;
     const onProceed = async () => {
-      const finalText = rollWrapper.getFinalRollText() + formatHelpAllyRollSuffix(pending.meta?._helpAlly);
+      const finalText = rollWrapper.getFinalRollText()
+        + formatHelpAllyRollSuffix(pending.meta?._helpAlly)
+        + formatGroupRollBonus(pending.meta?._groupRoll?.modifier);
       const metaWithLabel = { ...pending.meta, ...(pending.rollBonusLabel ? { _staticModifierLabel: pending.rollBonusLabel } : {}) };
       try {
         await postRoll(finalText, pending.displayName || pending.rollText, targetTableId, metaWithLabel);
-        resetPreRollLocalState();
+        if (isLocalOverlay) {
+          const shared = pendingIntentRef.current;
+          if (shared && hydrateSharedPreRollRef.current) {
+            hydrateSharedPreRollRef.current(shared);
+          } else {
+            resetPreRollLocalState();
+          }
+        } else {
+          resetPreRollLocalState();
+        }
       } catch (err) {
         handleRollTransportError(err, '[GMTableView] onProceed postRoll failed:');
       }
@@ -4111,14 +4198,22 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
       onProceed,
       getFeatureStateFor,
       pending,
-      needsDifficulty,
-      requiresGmDifficulty: needsDifficulty,
+      needsDifficulty: isLocalOverlay ? false : needsDifficulty,
+      requiresGmDifficulty: isLocalOverlay ? false : needsDifficulty,
       intentId,
       openedByRole,
+      ...(isLocalGroupReaction ? {
+        localGroupReaction: true,
+        groupRollIntentId: meta._groupRollIntentId,
+      } : {}),
+      ...(isLocalTagTeamPartner ? {
+        localTagTeamPartner: true,
+        tagTeamIntentId: meta._tagTeamIntentId,
+      } : {}),
     });
     setSelectedPreRollChips(chips.map(() => false));
 
-    if (tableId) {
+    if (tableId && !isLocalOverlay) {
       const seq = ++lastSentClientWriteSeqRef.current;
       postTableIntent(tableId, serializePreRollIntent({
         intentId,
@@ -4194,6 +4289,108 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
       _intentPanelForActionRoll: true,
       _deferExperienceToPreRoll: true,
     }, { characterEl });
+  };
+
+  const handleGroupRollReaction = (instanceId) => {
+    try {
+      const intent = pendingIntent;
+      if (!intent?._groupRoll || !intent.intentId) return;
+      const member = pickGroupMemberRow(
+        instanceId,
+        preRollGroupMembersRef.current,
+        intent.groupMembers,
+      );
+      if (!member || member.status !== 'pending' || !member.trait) return;
+      const characterEl = activeElements.find((e) => e.instanceId === instanceId && e.elementType === 'character');
+      if (!characterEl) return;
+      const viewer = isPlayer
+        ? { role: 'player', uid: user?.uid, email: playerEmail }
+        : { role: 'gm', uid: user?.uid, email: user?.email };
+      if (!canEditGroupMember(viewer, instanceId, {
+        isGm: !isPlayer,
+        memberEl: characterEl,
+        activeElements,
+      })) return;
+      const alreadyRolled = (pendingBanners || []).some(
+        (b) => b._groupRollIntentId === intent.intentId && b._attackerInstanceId === instanceId,
+      );
+      if (alreadyRolled) return;
+      const displayChar = characterDisplayByInstanceId?.get?.(instanceId) || characterEl;
+      const traits = displayChar?.traits || {};
+      const baseScore = traits[member.trait] ?? 0;
+      const bf = parseBeastformBonus(displayChar?.activeBeastform?.trait_bonus);
+      const traitScore = baseScore + (bf?.stat === member.trait ? bf.bonus : 0);
+      const traitLabel = TRAIT_FULL?.[member.trait] || member.trait;
+      const actorName = characterDisplayName(displayChar)
+        || characterDisplayName(characterEl)
+        || groupMemberLabel(member, activeElements);
+      const rollText = buildTraitRollText(actorName, member.trait, traitScore, null, 2);
+      const displayName = `${actorName} — Reaction (${traitLabel})`;
+      const dc = intent.difficulty ?? preRollDifficulty ?? 15;
+      handlePlayerOwnRoll(rollText, displayName, {
+        _attackerInstanceId: instanceId,
+        _traitKey: member.trait,
+        _isReaction: true,
+        _difficulty: dc,
+        _groupRollIntentId: intent.intentId,
+        _intentPanelForActionRoll: true,
+        _deferExperienceToPreRoll: true,
+      }, { characterEl });
+    } catch (err) {
+      console.error('[group-roll] collaborator roll failed:', err);
+      handleRollTransportError(err, 'Group reaction roll failed:');
+    }
+  };
+
+  const handleTagTeamPartnerRoll = (instanceId) => {
+    try {
+      const intent = pendingIntent;
+      if (!intent?._tagTeam || !intent.intentId) return;
+      const partner = preRollTagTeamPartnerRef.current || intent.tagTeamPartner;
+      if (!partner || partner.instanceId !== instanceId || partner.status !== 'pending' || !partner.trait) return;
+      const characterEl = activeElements.find((e) => e.instanceId === instanceId && e.elementType === 'character');
+      if (!characterEl) return;
+      const viewer = isPlayer
+        ? { role: 'player', uid: user?.uid, email: playerEmail }
+        : { role: 'gm', uid: user?.uid, email: user?.email };
+      if (!canEditTagTeamPartner(viewer, instanceId, {
+        isGm: !isPlayer,
+        memberEl: characterEl,
+        activeElements,
+      })) return;
+      const alreadyRolled = (pendingBanners || []).some(
+        (b) => b._tagTeamIntentId === intent.intentId && b._tagTeamRole === 'partner' && b._attackerInstanceId === instanceId,
+      );
+      if (alreadyRolled) return;
+      const displayChar = characterDisplayByInstanceId?.get?.(instanceId) || characterEl;
+      const traits = displayChar?.traits || {};
+      const baseScore = traits[partner.trait] ?? 0;
+      const bf = parseBeastformBonus(displayChar?.activeBeastform?.trait_bonus);
+      const traitScore = baseScore + (bf?.stat === partner.trait ? bf.bonus : 0);
+      const traitLabel = TRAIT_FULL?.[partner.trait] || partner.trait;
+      const actorName = characterDisplayName(displayChar)
+        || characterDisplayName(characterEl)
+        || characterEl.name;
+      const rollText = buildTraitRollText(actorName, partner.trait, traitScore, null, 2);
+      const displayName = `${actorName} — ${traitLabel}`;
+      const dc = intent.difficulty ?? preRollDifficulty ?? 15;
+      const initiatorId = intent.characterInstanceId || intent.pending?.meta?._attackerInstanceId;
+      handlePlayerOwnRoll(rollText, displayName, {
+        _attackerInstanceId: instanceId,
+        _traitKey: partner.trait,
+        _isReaction: false,
+        _difficulty: dc,
+        _tagTeamIntentId: intent.intentId,
+        _tagTeamRole: 'partner',
+        _tagTeamInitiatorInstanceId: initiatorId,
+        _tagTeamPartnerInstanceId: instanceId,
+        _intentPanelForActionRoll: true,
+        _deferExperienceToPreRoll: true,
+      }, { characterEl });
+    } catch (err) {
+      console.error('[tag-team] partner roll failed:', err);
+      handleRollTransportError(err, 'Tag Team partner roll failed:');
+    }
   };
 
   /** V2 `isToggle` card chips on sidebar character cards (GM; assigned players on their own card — same path as hover sheet). */
@@ -4318,10 +4515,19 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
   );
 
   const clearPreRollBanner = () => {
+    if (isLocalGroupReactionPreRoll(preRollBanner) || isLocalTagTeamPartnerPreRoll(preRollBanner)) {
+      const shared = pendingIntentRef.current;
+      if (shared && hydrateSharedPreRollRef.current) {
+        hydrateSharedPreRollRef.current(shared);
+        return;
+      }
+    }
     const id = preRollBanner?.intentId;
     resetPreRollLocalState();
     setHeldIntentHelps({ intentId: null, helps: [] });
-    if (tableId && id) void clearTableIntent(tableId, id);
+    if (tableId && id && shouldWriteSharedPreRollIntent(preRollBanner)) {
+      void clearTableIntent(tableId, id);
+    }
   };
 
   useEffect(() => {
@@ -4366,69 +4572,29 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     queueMicrotask(() => { applyingRemoteRef.current = false; });
   };
 
-  useEffect(() => {
-    if (!pendingIntent) {
-      if (
-        remoteAckedIntentIdRef.current
-        && preRollBannerRef.current?.intentId === remoteAckedIntentIdRef.current
-      ) {
-        const goneId = remoteAckedIntentIdRef.current;
-        resetPreRollLocalState();
-        if (!(pendingBanners || []).some((b) => b._preRollIntentId === goneId)) {
-          setHeldIntentHelps({ intentId: null, helps: [] });
-        }
-        remoteAckedIntentIdRef.current = null;
-      }
-      return;
-    }
-    if (!shouldShowPreRollBanner(pendingIntent, intentViewer)) {
-      if (preRollBannerRef.current) {
-        resetPreRollLocalState();
-        remoteAckedIntentIdRef.current = null;
-      }
-      return;
-    }
-    if (remoteAckedIntentIdRef.current !== pendingIntent.intentId) {
-      lastAppliedRemoteDifficultyRef.current = null;
-    }
-    remoteAckedIntentIdRef.current = pendingIntent.intentId;
-    const readOnly = !isPreRollBannerInteractive(pendingIntent, intentViewer);
-    const local = preRollBannerRef.current;
-    if (local?.intentId === pendingIntent.intentId) {
-      const { apply } = shouldApplyRemoteIntentSnapshot(pendingIntent, {
-        lastSentClientWriteSeq: lastSentClientWriteSeqRef.current,
-      });
-      if (apply) {
-        const observerChips = Array.isArray(pendingIntent.chips) ? pendingIntent.chips : [];
-        if (readOnly) {
-          setPreRollBanner((prev) => (prev ? { ...prev, chips: observerChips } : prev));
-          applyRemoteSelection(pendingIntent, observerChips.length);
-        } else {
-          applyRemoteSelection(pendingIntent, local.chips?.length ?? 0);
-        }
-      }
-      return;
-    }
-    const char = activeElements.find((e) => e.instanceId === pendingIntent.characterInstanceId);
+  const hydrateSharedPreRollFromIntent = (intent) => {
+    if (!intent) return;
+    const readOnly = !isPreRollBannerInteractive(intent, intentViewer);
+    const char = activeElements.find((e) => e.instanceId === intent.characterInstanceId);
     if (!char) return;
-    const pending = pendingIntent.pending || {
-      rollText: pendingIntent.rollText || '',
-      displayName: pendingIntent.characterName || '',
+    const pending = intent.pending || {
+      rollText: intent.rollText || '',
+      displayName: intent.characterName || '',
       meta: {},
     };
     if (readOnly) {
-      const chips = Array.isArray(pendingIntent.chips) ? pendingIntent.chips : [];
+      const chips = Array.isArray(intent.chips) ? intent.chips : [];
       setPreRollBanner({
         chips,
         characterEl: char,
         pending,
-        needsDifficulty: !!pendingIntent.needsDifficulty,
-        intentId: pendingIntent.intentId,
-        openedByRole: pendingIntent.openedByRole || 'player',
-        initiatorUid: pendingIntent._initiatorUid,
-        initiatorEmail: pendingIntent._initiatorEmail,
+        needsDifficulty: !!intent.needsDifficulty,
+        intentId: intent.intentId,
+        openedByRole: intent.openedByRole || 'player',
+        initiatorUid: intent._initiatorUid,
+        initiatorEmail: intent._initiatorEmail,
       });
-      applyRemoteSelection(pendingIntent, chips.length);
+      applyRemoteSelection(intent, chips.length);
       return;
     }
     const session = collectPreRollSession({
@@ -4455,7 +4621,9 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     const { rollWrapper, chips, getFeatureStateFor, needsDifficulty } = session;
     const targetTableId = isPlayer ? tableId : null;
     const onProceed = async () => {
-      const finalText = rollWrapper.getFinalRollText() + formatHelpAllyRollSuffix(session.pending.meta?._helpAlly);
+      const finalText = rollWrapper.getFinalRollText()
+        + formatHelpAllyRollSuffix(session.pending.meta?._helpAlly)
+        + formatGroupRollBonus(session.pending.meta?._groupRoll?.modifier);
       const metaWithLabel = {
         ...session.pending.meta,
         ...(session.pending.rollBonusLabel ? { _staticModifierLabel: session.pending.rollBonusLabel } : {}),
@@ -4476,20 +4644,92 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
       pending: session.pending,
       needsDifficulty,
       requiresGmDifficulty: needsDifficulty,
-      intentId: pendingIntent.intentId,
-      openedByRole: pendingIntent.openedByRole || 'player',
-      initiatorUid: pendingIntent._initiatorUid,
-      initiatorEmail: pendingIntent._initiatorEmail,
+      intentId: intent.intentId,
+      openedByRole: intent.openedByRole || 'player',
+      initiatorUid: intent._initiatorUid,
+      initiatorEmail: intent._initiatorEmail,
     });
-    applyRemoteSelection(pendingIntent, chips.length);
+    applyRemoteSelection(intent, chips.length);
+  };
+  hydrateSharedPreRollRef.current = hydrateSharedPreRollFromIntent;
+
+  useEffect(() => {
+    if (!pendingIntent) {
+      if (
+        isLocalGroupReactionPreRoll(preRollBannerRef.current)
+        || isLocalTagTeamPartnerPreRoll(preRollBannerRef.current)
+      ) {
+        resetPreRollLocalState();
+      }
+      if (
+        remoteAckedIntentIdRef.current
+        && preRollBannerRef.current?.intentId === remoteAckedIntentIdRef.current
+      ) {
+        const goneId = remoteAckedIntentIdRef.current;
+        resetPreRollLocalState();
+        if (!(pendingBanners || []).some((b) => b._preRollIntentId === goneId)) {
+          setHeldIntentHelps({ intentId: null, helps: [] });
+        }
+        remoteAckedIntentIdRef.current = null;
+      }
+      return;
+    }
+    if (!shouldShowPreRollBanner(pendingIntent, intentViewer)) {
+      if (preRollBannerRef.current) {
+        resetPreRollLocalState();
+        remoteAckedIntentIdRef.current = null;
+      }
+      return;
+    }
+    if (!shouldHydrateSharedIntentOverLocal(preRollBannerRef.current, pendingIntent)) {
+      return;
+    }
+    if (!shouldHydrateSharedIntentOverLocalTagTeam(preRollBannerRef.current, pendingIntent)) {
+      return;
+    }
+    if (remoteAckedIntentIdRef.current !== pendingIntent.intentId) {
+      lastAppliedRemoteDifficultyRef.current = null;
+    }
+    remoteAckedIntentIdRef.current = pendingIntent.intentId;
+    const readOnly = !isPreRollBannerInteractive(pendingIntent, intentViewer);
+    const local = preRollBannerRef.current;
+    if (local?.intentId === pendingIntent.intentId) {
+      const { apply } = shouldApplyRemoteIntentSnapshot(pendingIntent, {
+        lastSentClientWriteSeq: lastSentClientWriteSeqRef.current,
+      });
+      if (apply) {
+        const observerChips = Array.isArray(pendingIntent.chips) ? pendingIntent.chips : [];
+        if (readOnly) {
+          setPreRollBanner((prev) => (prev ? { ...prev, chips: observerChips } : prev));
+          applyRemoteSelection(pendingIntent, observerChips.length);
+        } else {
+          applyRemoteSelection(pendingIntent, local.chips?.length ?? 0);
+        }
+      }
+      return;
+    }
+    hydrateSharedPreRollFromIntent(pendingIntent);
   }, [pendingIntent, activeElements, pendingBanners]);
 
   useEffect(() => {
-    if (!pendingIntent) return;
+    if (!pendingIntent) {
+      setPreRollGroupOn(false);
+      setPreRollGroupMembers([]);
+      return;
+    }
     const nextHelps = Array.isArray(pendingIntent.helps) ? pendingIntent.helps : [];
     setPreRollHelps(nextHelps);
     setHeldIntentHelps({ intentId: pendingIntent.intentId, helps: nextHelps });
-  }, [pendingIntent]);
+    setPreRollGroupOn(!!pendingIntent._groupRoll);
+    setPreRollGroupMembers(
+      (Array.isArray(pendingIntent.groupMembers) ? pendingIntent.groupMembers : []).map((m) => ({
+        ...m,
+        name: groupMemberLabel(m, activeElements),
+      })),
+    );
+    setPreRollTagTeamOn(!!pendingIntent._tagTeam);
+    setPreRollTagTeamPartner(pendingIntent.tagTeamPartner || null);
+  }, [pendingIntent, activeElements]);
 
   useEffect(() => {
     const id = pendingIntent?.intentId || heldIntentHelps.intentId;
@@ -4502,6 +4742,8 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
   useEffect(() => {
     if (!preRollBanner?.intentId || !tableId) return;
     if (preRollReadOnly) return;
+    if (!shouldWriteSharedPreRollIntent(preRollBanner)) return;
+    if (!shouldWriteSharedPreRollIntentForTagTeam(preRollBanner)) return;
     if (applyingRemoteRef.current) return;
     if (remoteAckedIntentIdRef.current !== preRollBanner.intentId) return;
     const t = setTimeout(() => {
@@ -4545,30 +4787,62 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
 
   const handlePreRollProceed = async () => {
     if (!preRollBanner) return;
+    const localGroupReaction = isLocalGroupReactionPreRoll(preRollBanner);
+    const localTagTeamPartner = isLocalTagTeamPartnerPreRoll(preRollBanner);
+    const localOverlay = localGroupReaction || localTagTeamPartner;
     if (
       isPlayer
       && preRollBanner.needsDifficulty
       && !preRollDifficultyFinalized
       && preRollFinalizedGmDifficulty == null
     ) return;
+    const membersSnapshot = preRollGroupMembersRef.current.length
+      ? preRollGroupMembersRef.current
+      : (Array.isArray(pendingIntent?.groupMembers) ? pendingIntent.groupMembers : []);
+    const groupOn = !localOverlay && !!(pendingIntent?._groupRoll || preRollGroupOn);
+    if (groupOn && !groupRollsComplete(membersSnapshot)) return;
+    const tagTeamPartnerSnapshot = preRollTagTeamPartnerRef.current || pendingIntent?.tagTeamPartner || null;
+    const tagTeamOn = !localOverlay && !!(pendingIntent?._tagTeam || preRollTagTeamOn);
+    if (tagTeamOn && !tagTeamPartnerReady(tagTeamPartnerSnapshot)) return;
     const intentUsedLog = [];
-    const { rollWrapper, chips, characterEl, onProceed, getFeatureStateFor, pending } = preRollBanner;
+    const { rollWrapper, chips = [], characterEl, onProceed, getFeatureStateFor, pending } = preRollBanner;
+    if (!pending || !rollWrapper || !characterEl || typeof onProceed !== 'function') return;
     const helpsSnapshot = preRollHelpsRef.current.length
       ? preRollHelpsRef.current
       : (Array.isArray(pendingIntent?.helps) ? pendingIntent.helps : (heldIntentHelps.helps || []));
-    setHeldIntentHelps({ intentId: preRollBanner.intentId, helps: helpsSnapshot });
-    pending.meta = {
-      ...pending.meta,
-      _helpAlly: helpsSnapshot,
-      _preRollIntentId: preRollBanner.intentId,
-    };
-    if (tableId && preRollBanner.intentId) {
-      const cas = await clearTableIntent(tableId, preRollBanner.intentId);
-      if (cas?.conflict) {
-        resetPreRollLocalState();
-        return;
+    const partnerDisplayEl = tagTeamPartnerSnapshot?.instanceId
+      ? (characterDisplayByInstanceId?.get?.(tagTeamPartnerSnapshot.instanceId)
+        || activeElements.find((e) => e.instanceId === tagTeamPartnerSnapshot.instanceId)
+        || null)
+      : null;
+    const tagTeamHopeCost = tagTeamOn ? tagTeamInitiatorHopeCost(partnerDisplayEl) : undefined;
+    if (!localOverlay) {
+      setHeldIntentHelps({ intentId: preRollBanner.intentId, helps: helpsSnapshot });
+      pending.meta = {
+        ...pending.meta,
+        _helpAlly: helpsSnapshot,
+        _preRollIntentId: preRollBanner.intentId,
+        ...(groupOn ? {
+          _groupRoll: { members: membersSnapshot, modifier: groupRollModifier(membersSnapshot) },
+        } : {}),
+        ...(tagTeamOn ? {
+          _tagTeamIntentId: preRollBanner.intentId,
+          _tagTeamRole: 'initiator',
+          _tagTeamInitiatorInstanceId: characterEl.instanceId,
+          _tagTeamPartnerInstanceId: tagTeamPartnerSnapshot?.instanceId ?? null,
+          _tagTeamHopeCost: tagTeamHopeCost,
+        } : {}),
+      };
+      if (tableId && preRollBanner.intentId) {
+        const cas = await clearTableIntent(tableId, preRollBanner.intentId, {
+          keepTagTeamBanners: tagTeamOn,
+        });
+        if (cas?.conflict) {
+          resetPreRollLocalState();
+          return;
+        }
+        if (!cas?.ok) return;
       }
-      if (!cas?.ok) return;
     }
     const charEl = activeElements.find(e => e.instanceId === characterEl.instanceId) || characterEl;
     const traitKeyPre = pending.meta?._traitKey;
@@ -4626,9 +4900,11 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
         updateActiveElement(charEl.instanceId, { selectedExperienceIndex: preRollExperienceIndex });
       }
     }
-    if (preRollBanner.needsDifficulty) {
-      const dc = preRollFinalizedGmDifficulty ?? preRollDifficulty;
-      rollWrapper.meta._difficulty = dc;
+    if (preRollBanner.needsDifficulty || localGroupReaction || localTagTeamPartner) {
+      if (preRollBanner.needsDifficulty) {
+        const dc = preRollFinalizedGmDifficulty ?? preRollDifficulty;
+        rollWrapper.meta._difficulty = dc;
+      }
       for (const name of preRollAdvantagesRef.current) {
         rollWrapper.addAdvantageDie((name && name.trim()) || 'Advantage');
         intentUsedLog.push((name && name.trim()) ? `Advantage: ${name.trim()}` : 'Advantage');
@@ -4783,17 +5059,29 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     }
     setPreRollAdvantages([]);
     setPreRollDisadvantages([]);
-    pending.meta = {
-      ...pending.meta,
-      _helpAlly: helpsSnapshot,
-      _preRollIntentId: preRollBanner.intentId,
-    };
-    if (intentUsedLog.length > 0 || preRollTargetInstanceId != null || (preRollVisibility && preRollVisibility !== ROLL_VISIBILITY_TABLE)) {
+    if (!localOverlay) {
+      pending.meta = {
+        ...pending.meta,
+        _helpAlly: helpsSnapshot,
+        _preRollIntentId: preRollBanner.intentId,
+        ...(groupOn ? {
+          _groupRoll: { members: membersSnapshot, modifier: groupRollModifier(membersSnapshot) },
+        } : {}),
+        ...(tagTeamOn ? {
+          _tagTeamIntentId: preRollBanner.intentId,
+          _tagTeamRole: 'initiator',
+          _tagTeamInitiatorInstanceId: characterEl.instanceId,
+          _tagTeamPartnerInstanceId: tagTeamPartnerSnapshot?.instanceId ?? null,
+          _tagTeamHopeCost: tagTeamHopeCost,
+        } : {}),
+      };
+    }
+    if (intentUsedLog.length > 0 || preRollTargetInstanceId != null || (preRollVisibility && preRollVisibility !== ROLL_VISIBILITY_TABLE && !groupOn && !tagTeamOn)) {
       pending.meta = {
         ...pending.meta,
         ...(intentUsedLog.length > 0 ? { _v2IntentUsedLog: intentUsedLog } : {}),
         ...(preRollTargetInstanceId != null ? { _selectedTargetInstanceId: preRollTargetInstanceId } : {}),
-        ...(preRollVisibility && preRollVisibility !== ROLL_VISIBILITY_TABLE
+        ...(preRollVisibility && preRollVisibility !== ROLL_VISIBILITY_TABLE && !groupOn && !tagTeamOn
           ? { _rollVisibility: preRollVisibility }
           : {}),
       };
@@ -5528,26 +5816,30 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     for (const roll of pendingBanners || []) {
       const id = roll._rollDbId;
       if (id == null) continue;
-      const chips = collectV2ReviewActionChips({
-        roll,
-        activeElements,
-        srdData,
-        fearCount,
-        mapConfig,
-        tableFeatureState,
-        viewer,
-        preloaded,
-      });
-      // Union local optimistic consumed keys with the persisted banner field.
-      const localConsumed = v2BannerConsumedOnUseByRollDbId.get(id);
-      const persistedConsumed = consumedActivationKeysFromBanner(roll);
-      const consumed = localConsumed?.size
-        ? new Set([...localConsumed, ...persistedConsumed])
-        : persistedConsumed.size
-          ? persistedConsumed
-          : undefined;
-      const annotated = annotateV2ReviewChipsBannerConsumed(chips, consumed);
-      if (annotated.length) m.set(id, annotated);
+      try {
+        const chips = collectV2ReviewActionChips({
+          roll,
+          activeElements,
+          srdData,
+          fearCount,
+          mapConfig,
+          tableFeatureState,
+          viewer,
+          preloaded,
+        });
+        // Union local optimistic consumed keys with the persisted banner field.
+        const localConsumed = v2BannerConsumedOnUseByRollDbId.get(id);
+        const persistedConsumed = consumedActivationKeysFromBanner(roll);
+        const consumed = localConsumed?.size
+          ? new Set([...localConsumed, ...persistedConsumed])
+          : persistedConsumed.size
+            ? persistedConsumed
+            : undefined;
+        const annotated = annotateV2ReviewChipsBannerConsumed(chips, consumed);
+        if (annotated.length) m.set(id, annotated);
+      } catch (err) {
+        console.error('[v2] review chips failed for banner', id, err);
+      }
     }
     return m;
   }, [
@@ -7000,6 +7292,14 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
             getV2ReviewChipDisableHint={getV2ReviewChipDisableHintCb}
             canUseV2ReviewChips={!isPlayer || !!playerViewerCharacterInstanceId}
             getV2PendingMoveBlockInfo={!isPlayer ? getV2PendingMoveBlockInfo : undefined}
+            tagTeamViewer={intentViewer}
+            onTagTeamChoose={(roll) => {
+              if (!tableId || roll?._rollDbId == null || !roll._tagTeamIntentId) return;
+              postBannerTagTeamChoose(tableId, {
+                intentId: roll._tagTeamIntentId,
+                chosenRollDbId: roll._rollDbId,
+              });
+            }}
             preRollSlot={preRollBanner ? (
               <PreRollBanner
                 key={preRollBanner.intentId || 'preroll'}
@@ -7027,7 +7327,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                 visibility={preRollVisibility}
                 onChangeVisibility={setPreRollVisibility}
                 isPlayer={isPlayer}
-                readOnly={preRollReadOnly}
+                readOnly={(isLocalGroupReactionPreRoll(preRollBanner) || isLocalTagTeamPartnerPreRoll(preRollBanner)) ? false : preRollReadOnly}
                 joinedPlayers={joinedPlayers}
                 needsDifficulty={!!preRollBanner.needsDifficulty}
                 difficulty={preRollDifficulty}
@@ -7051,7 +7351,24 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                 }}
                 onProceed={handlePreRollProceed}
                 onCancel={clearPreRollBanner}
-                proceedDisabled={isPlayer && !!preRollBanner.needsDifficulty && !preRollDifficultyFinalized && preRollFinalizedGmDifficulty == null}
+                proceedDisabled={(isLocalGroupReactionPreRoll(preRollBanner) || isLocalTagTeamPartnerPreRoll(preRollBanner)) ? false : (
+                  (isPlayer && !!preRollBanner.needsDifficulty && !preRollDifficultyFinalized && preRollFinalizedGmDifficulty == null)
+                  || (!!(pendingIntent?._tagTeam || preRollTagTeamOn) && !tagTeamPartnerReady(
+                    preRollTagTeamPartner || pendingIntent?.tagTeamPartner
+                  ))
+                  || (!!(pendingIntent?._groupRoll || preRollGroupOn) && !groupRollsComplete(
+                    preRollGroupMembers.length ? preRollGroupMembers : (pendingIntent?.groupMembers || [])
+                  ))
+                )}
+                proceedDisabledTitle={(
+                  isPlayer && !!preRollBanner.needsDifficulty && !preRollDifficultyFinalized && preRollFinalizedGmDifficulty == null
+                )
+                  ? 'Waiting for the GM to approve the difficulty'
+                  : (!!(pendingIntent?._tagTeam || preRollTagTeamOn) && !tagTeamPartnerReady(
+                    preRollTagTeamPartner || pendingIntent?.tagTeamPartner
+                  ))
+                    ? 'Waiting for Tag Team partner roll'
+                    : 'Waiting for group reaction rolls'}
                 getTargetsForRoll={getTargetsForRoll}
                 getV2ReviewChipDisableHint={getV2ReviewChipDisableHintCb}
                 activeElements={activeElements}
@@ -7062,6 +7379,159 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                 helps={preRollHelps}
                 helpViewer={intentViewer}
                 pendingResourceCosts={displayPendingResourceCosts}
+                groupRoll={!isLocalGroupReactionPreRoll(preRollBanner) && !isLocalTagTeamPartnerPreRoll(preRollBanner) && !!(pendingIntent?._groupRoll || preRollGroupOn)}
+                groupMembers={preRollGroupMembers.length ? preRollGroupMembers : (pendingIntent?.groupMembers || [])}
+                groupViewer={intentViewer}
+                tagTeam={!isLocalGroupReactionPreRoll(preRollBanner) && !isLocalTagTeamPartnerPreRoll(preRollBanner) && !!(pendingIntent?._tagTeam || preRollTagTeamOn)}
+                tagTeamPartner={preRollTagTeamPartner || pendingIntent?.tagTeamPartner || null}
+                tagTeamHopeCost={tagTeamInitiatorHopeCost((() => {
+                  const pid = (preRollTagTeamPartner || pendingIntent?.tagTeamPartner)?.instanceId;
+                  if (!pid) return null;
+                  return characterDisplayByInstanceId?.get?.(pid)
+                    || activeElements.find((e) => e.instanceId === pid)
+                    || null;
+                })())}
+                tagTeamRemaining={tagTeamInitiationsRemaining(
+                  preRollBanner.characterEl,
+                  characterDisplayByInstanceId?.get?.(preRollBanner.characterEl?.instanceId) || preRollBanner.characterEl,
+                )}
+                tagTeamDisabledReason={(() => {
+                  const remaining = tagTeamInitiationsRemaining(
+                    preRollBanner.characterEl,
+                    characterDisplayByInstanceId?.get?.(preRollBanner.characterEl?.instanceId) || preRollBanner.characterEl,
+                  );
+                  const pid = (preRollTagTeamPartner || pendingIntent?.tagTeamPartner)?.instanceId;
+                  const partnerEl = pid
+                    ? (characterDisplayByInstanceId?.get?.(pid) || activeElements.find((e) => e.instanceId === pid) || null)
+                    : null;
+                  const cost = tagTeamInitiatorHopeCost(partnerEl);
+                  if (remaining <= 0) return 'Already initiated a Tag Team this session';
+                  if (remainingHopeForCharacter(preRollBanner.characterEl, displayPendingResourceCosts) < cost) {
+                    return `Need ${cost} Hope`;
+                  }
+                  return '';
+                })()}
+                tagTeamViewer={intentViewer}
+                onTagTeamToggle={(active) => {
+                  setPreRollTagTeamOn(active);
+                  if (active) {
+                    setPreRollVisibility(ROLL_VISIBILITY_TABLE);
+                    setPreRollGroupOn(false);
+                    setPreRollGroupMembers([]);
+                    const partner = seedTagTeamPartner(eligibleTagTeamPartners({
+                      actorInstanceId: preRollBanner.characterEl?.instanceId,
+                      activeElements,
+                    }));
+                    setPreRollTagTeamPartner(partner);
+                    setPreRollBanner((prev) => {
+                      if (!prev?.pending) return prev;
+                      return {
+                        ...prev,
+                        pending: {
+                          ...prev.pending,
+                          meta: {
+                            ...prev.pending.meta,
+                            _tagTeamIntentId: prev.intentId,
+                            _tagTeamPartnerInstanceId: partner?.instanceId ?? null,
+                          },
+                        },
+                      };
+                    });
+                  } else {
+                    setPreRollTagTeamPartner(null);
+                    setPreRollBanner((prev) => {
+                      if (!prev?.pending) return prev;
+                      const meta = { ...prev.pending.meta };
+                      delete meta._tagTeamIntentId;
+                      delete meta._tagTeamPartnerInstanceId;
+                      return { ...prev, pending: { ...prev.pending, meta } };
+                    });
+                  }
+                  if (tableId && preRollBanner.intentId) {
+                    postTableIntentTagTeam(tableId, {
+                      intentId: preRollBanner.intentId,
+                      action: 'toggle',
+                      active,
+                    });
+                  }
+                }}
+                onTagTeamPartnerAction={({ action, instanceId, trait }) => {
+                  if (action === 'setPartner') {
+                    const el = activeElements.find((e) => e.instanceId === instanceId);
+                    setPreRollTagTeamPartner(el ? {
+                      instanceId,
+                      name: el.name || 'Unknown',
+                      trait: null,
+                      status: 'pending',
+                    } : null);
+                    setPreRollBanner((prev) => {
+                      if (!prev?.pending) return prev;
+                      return {
+                        ...prev,
+                        pending: {
+                          ...prev.pending,
+                          meta: {
+                            ...prev.pending.meta,
+                            _tagTeamPartnerInstanceId: instanceId,
+                          },
+                        },
+                      };
+                    });
+                  } else if (action === 'setTrait') {
+                    setPreRollTagTeamPartner((prev) => (
+                      prev && prev.instanceId === instanceId && prev.status === 'pending'
+                        ? { ...prev, trait }
+                        : prev
+                    ));
+                  }
+                  if (tableId && preRollBanner.intentId) {
+                    postTableIntentTagTeam(tableId, {
+                      intentId: preRollBanner.intentId,
+                      action,
+                      instanceId,
+                      trait,
+                    });
+                  }
+                }}
+                onTagTeamPartnerRoll={handleTagTeamPartnerRoll}
+                onGroupRollToggle={(active) => {
+                  setPreRollGroupOn(active);
+                  if (active) {
+                    setPreRollVisibility(ROLL_VISIBILITY_TABLE);
+                    setPreRollTagTeamOn(false);
+                    setPreRollTagTeamPartner(null);
+                    setPreRollGroupMembers(seedGroupMembers(eligibleGroupRollCharacters({
+                      actorInstanceId: preRollBanner.characterEl?.instanceId,
+                      activeElements,
+                    })));
+                  } else {
+                    setPreRollGroupMembers([]);
+                  }
+                  if (tableId && preRollBanner.intentId) {
+                    postTableIntentGroup(tableId, {
+                      intentId: preRollBanner.intentId,
+                      action: 'toggle',
+                      active,
+                    });
+                  }
+                }}
+                onGroupMemberAction={({ action, instanceId, trait }) => {
+                  setPreRollGroupMembers((prev) => prev.map((m) => {
+                    if (m.instanceId !== instanceId || m.status !== 'pending') return m;
+                    if (action === 'setTrait') return { ...m, trait };
+                    if (action === 'skip') return { ...m, status: 'skipped' };
+                    return m;
+                  }));
+                  if (tableId && preRollBanner.intentId) {
+                    postTableIntentGroup(tableId, {
+                      intentId: preRollBanner.intentId,
+                      action,
+                      instanceId,
+                      trait,
+                    });
+                  }
+                }}
+                onGroupMemberRoll={handleGroupRollReaction}
                 onHelpChange={({ instanceId, active, label }) => {
                   const el = activeElements.find((e) => e.instanceId === instanceId);
                   setPreRollHelps((prev) => mergeHelpAllyEntry(prev, active === false

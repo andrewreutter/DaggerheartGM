@@ -578,14 +578,16 @@ export function buildActionConfigFromRoll(roll, activeElements) {
   /** Set on VTT spellcast rolls only — avoids misclassifying a normal trait roll on the spellcast trait. */
   const isSpellcastRoll = !isAttackRoll && roll._isSpellcastRoll === true;
 
+  const isTagTeam = roll._tagTeamIntentId != null && roll._tagTeamIntentId !== '';
   return {
-    type: isAttackRoll ? 'attack' : isSpellcastRoll ? 'spellcast' : 'trait',
+    type: isTagTeam ? 'tagTeam' : isAttackRoll ? 'attack' : isSpellcastRoll ? 'spellcast' : 'trait',
     actorInstanceId,
     targetInstanceIds,
     traitKey,
     range,
     weaponId: roll._weaponId ?? null,
     rollText: roll.rollText || '',
+    tagTeamPartnerInstanceId: roll._tagTeamPartnerInstanceId ?? null,
   };
 }
 
@@ -1314,6 +1316,10 @@ export function buildV2PreRollWeaponAttackRollSkeleton(opts) {
     _traitKey: pendingMeta._traitKey,
     _weaponRangeFt: pendingMeta._weaponRangeFt,
     _selectedTargetInstanceId: pendingMeta._selectedTargetInstanceId,
+    ...(pendingMeta._tagTeamIntentId ? {
+      _tagTeamIntentId: pendingMeta._tagTeamIntentId,
+      _tagTeamPartnerInstanceId: pendingMeta._tagTeamPartnerInstanceId ?? null,
+    } : {}),
     subItems: [
       { pre: 'Hope ', input: 'd12', result: '1', post: '' },
       { pre: 'Fear ', input: 'd12', result: '1', post: '' },
@@ -1347,6 +1353,10 @@ export function buildV2PreRollTraitRollSkeleton(opts) {
     _attackerInstanceId: pendingMeta._attackerInstanceId,
     _traitKey: rawTk,
     _selectedTargetInstanceId: pendingMeta._selectedTargetInstanceId,
+    ...(pendingMeta._tagTeamIntentId ? {
+      _tagTeamIntentId: pendingMeta._tagTeamIntentId,
+      _tagTeamPartnerInstanceId: pendingMeta._tagTeamPartnerInstanceId ?? null,
+    } : {}),
     subItems: [
       { pre: 'Hope ', input: 'd12', result: '1', post: '' },
       { pre: 'Fear ', input: 'd12', result: '1', post: '' },

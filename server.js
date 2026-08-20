@@ -54,6 +54,18 @@ import {
 } from './src/client/lib/roll-visibility.js';
 import { applyIntentDifficultyLock, isPreRollBannerInteractive, mergeIntentPatch, resolveDeleteIntentCas } from './src/client/lib/pre-roll-intent.js';
 import { applyHelpAllyToIntent, validateHelpAllyRequest } from './src/client/lib/help-an-ally.js';
+import {
+  applyGroupRollAction,
+  applyGroupRollResult,
+  evaluateGroupReactionOutcome,
+  validateGroupRollRequest,
+} from './src/client/lib/group-roll.js';
+import {
+  applyTagTeamAction,
+  applyTagTeamPartnerResult,
+  combineTagTeamDamage,
+  validateTagTeamRequest,
+} from './src/client/lib/tag-team.js';
 import { sessionNeedsDifficulty } from './src/client/lib/action-roll-difficulty.js';
 import { v2RollDieExtrasFromActionLoopPayload } from './src/client/lib/v2-action-notification-dice.js';
 import { withActionBannerSuppression } from './src/client/lib/action-notification-banner.js';
@@ -1217,6 +1229,80 @@ async function applyPostedRollVisibility(rollData, {
     assignedPlayerEmails,
   });
   return rollData;
+}
+
+/** Auto-ack leftover collaborator reaction banners tied to a group-roll intent. */
+async function ackGroupRollCollaboratorBanners(gmUid, intentId) {
+  if (!gmUid || intentId == null || intentId === '') return;
+  try {
+    const pending = await getPendingBanners(APP_ID, gmUid);
+    const ids = (pending || [])
+      .filter((b) => b._groupRollIntentId === intentId && b._rollDbId != null)
+      .map((b) => b._rollDbId);
+    for (const id of ids) {
+      await setBannerStatus(id, 'acknowledged');
+    }
+    if (ids.length) subscriptionManager.notifyChange('banners', gmUid);
+  } catch (err) {
+    console.error('[group-roll] leftover banner ack failed:', err.message);
+  }
+}
+
+/** Auto-ack leftover Tag Team banners (toggle-off / cancel — not after a successful Proceed). */
+async function ackTagTeamBanners(gmUid, intentId) {
+  if (!gmUid || intentId == null || intentId === '') return;
+  try {
+    const pending = await getPendingBanners(APP_ID, gmUid);
+    const ids = (pending || [])
+      .filter((b) => b._tagTeamIntentId === intentId && b._rollDbId != null)
+      .map((b) => b._rollDbId);
+    for (const id of ids) {
+      await setBannerStatus(id, 'cancelled');
+    }
+    if (ids.length) subscriptionManager.notifyChange('banners', gmUid);
+  } catch (err) {
+    console.error('[tag-team] leftover banner ack failed:', err.message);
+  }
+}
+
+/** Stamp a collaborator reaction onto the leader's pending intent after the roll persists. */
+function stampGroupRollResultOnIntent(tableId, rollData) {
+  const intentId = rollData?._groupRollIntentId;
+  if (!tableId || intentId == null || intentId === '') return;
+  const existing = pendingIntents.get(tableId);
+  if (!existing || existing.intentId !== intentId) return;
+  const instanceId = rollData._attackerInstanceId;
+  const outcome = evaluateGroupReactionOutcome(rollData, existing.difficulty);
+  if (!outcome || !instanceId) return;
+  const updated = applyGroupRollResult(existing, {
+    instanceId,
+    total: outcome.total,
+    success: outcome.success,
+    critical: outcome.critical,
+    rollDbId: rollData._rollDbId,
+  });
+  pendingIntents.set(tableId, updated);
+  broadcastIntentToRoom(tableId, updated);
+}
+
+/** Stamp a Tag Team partner Duality onto the initiator's pending intent after the roll persists. */
+function stampTagTeamPartnerResultOnIntent(tableId, rollData) {
+  const intentId = rollData?._tagTeamIntentId;
+  if (!tableId || intentId == null || intentId === '') return;
+  if (rollData._tagTeamRole !== 'partner') return;
+  const existing = pendingIntents.get(tableId);
+  if (!existing || existing.intentId !== intentId) return;
+  const instanceId = rollData._attackerInstanceId;
+  if (!instanceId) return;
+  const updated = applyTagTeamPartnerResult(existing, {
+    instanceId,
+    total: Number(rollData.total) || 0,
+    success: rollData.isSuccess === true,
+    critical: rollData.dominant === 'critical',
+    rollDbId: rollData._rollDbId,
+  });
+  pendingIntents.set(tableId, updated);
+  broadcastIntentToRoom(tableId, updated);
 }
 
 /** Broadcast a pending intent (or its finalize update). Filtered by canViewerSeeIntent (_rollVisibility); others get null so a prior card clears. */
@@ -3780,18 +3866,20 @@ app.post('/api/room/my/roll', requireAuth, async (req, res) => {
   if (!rollData) {
     return res.status(400).json({ error: 'No dice expressions found in rollText' });
   }
-  await applyPostedRollVisibility(rollData, {
-    requestedVisibility: extraMeta._rollVisibility,
-    isGm: true,
-    requesterUid: req.uid,
-    requesterEmail: req.email,
-    tableId: bodyTableId || req.uid,
-    attackerInstanceId: extraMeta._attackerInstanceId,
-  });
-  if (!silent) {
-    const tid = bodyTableId || req.uid;
-    if (!(await assertGmTableSessionActive(tid, req.uid, res, { bypassPrepGate: bypassPrepGate === true }))) return;
-    await appendRollLog(req.uid, rollData);
+    await applyPostedRollVisibility(rollData, {
+      requestedVisibility: (extraMeta._groupRollIntentId || extraMeta._tagTeamIntentId) ? undefined : extraMeta._rollVisibility,
+      isGm: true,
+      requesterUid: req.uid,
+      requesterEmail: req.email,
+      tableId: bodyTableId || req.uid,
+      attackerInstanceId: extraMeta._attackerInstanceId,
+    });
+    if (!silent) {
+      const tid = bodyTableId || req.uid;
+      if (!(await assertGmTableSessionActive(tid, req.uid, res, { bypassPrepGate: bypassPrepGate === true }))) return;
+      await appendRollLog(req.uid, rollData);
+      stampGroupRollResultOnIntent(tid, rollData);
+      stampTagTeamPartnerResultOnIntent(tid, rollData);
     if (process.env.DATABASE_URL && bypassPrepGate !== true) {
       try {
         await applyOpToTableState(tid, { op: 'touch-session-activity' });
@@ -4832,9 +4920,21 @@ app.post('/api/room/:tableId/intent', requireAuth, async (req, res) => {
     _assignedPlayerUid: assigned.uid || null,
     _assignedPlayerEmail: assigned.email || null,
     helps: [],
+    _groupRoll: false,
+    groupMembers: [],
+    _tagTeam: false,
+    tagTeamPartner: null,
+    tagTeamPartnerInstanceId: null,
   };
-  if (body._rollVisibility === 'gm_and_player' || body._rollVisibility === 'gm_only') {
+  if (!intent._groupRoll && !intent._tagTeam && (body._rollVisibility === 'gm_and_player' || body._rollVisibility === 'gm_only')) {
     intent._rollVisibility = body._rollVisibility;
+  }
+  const previous = pendingIntents.get(req.params.tableId);
+  if (previous?._groupRoll && previous.intentId && previous.intentId !== intent.intentId) {
+    await ackGroupRollCollaboratorBanners(ctx.gmUid, previous.intentId);
+  }
+  if (previous?._tagTeam && previous.intentId && previous.intentId !== intent.intentId) {
+    await ackTagTeamBanners(ctx.gmUid, previous.intentId);
   }
   pendingIntents.set(req.params.tableId, intent);
   broadcastIntentToRoom(req.params.tableId, intent);
@@ -4874,6 +4974,12 @@ app.delete('/api/room/:tableId/intent', requireAuth, async (req, res) => {
   }
   const cas = resolveDeleteIntentCas(existing, intentId);
   if (!cas.ok) return res.status(cas.status).json({ error: cas.error });
+  if (existing._groupRoll) {
+    await ackGroupRollCollaboratorBanners(ctx.gmUid, existing.intentId);
+  }
+  if (existing._tagTeam && req.body?.keepTagTeamBanners !== true) {
+    await ackTagTeamBanners(ctx.gmUid, existing.intentId);
+  }
   pendingIntents.delete(req.params.tableId);
   broadcastIntentToRoom(req.params.tableId, null);
   res.json({ ok: true });
@@ -4929,6 +5035,150 @@ app.post('/api/room/:tableId/intent/help', requireAuth, async (req, res) => {
   pendingIntents.set(req.params.tableId, updated);
   broadcastIntentToRoom(req.params.tableId, updated);
   res.json({ ok: true });
+});
+
+// POST /api/room/:tableId/intent/group — Toggle / setTrait / skip one Group roll row.
+// Body: { intentId, action, instanceId?, trait?, active? }. Does not accept a full-intent PATCH.
+app.post('/api/room/:tableId/intent/group', requireAuth, async (req, res) => {
+  const ctx = await resolveTableAccess(APP_ID, req.params.tableId, req);
+  if (ctx.error) return res.status(ctx.error).json({ error: ctx.message });
+  const { gmUid, tableState } = ctx;
+  const body = req.body || {};
+  const existing = pendingIntents.get(req.params.tableId);
+  const isGm = req.uid === gmUid;
+  const viewer = { role: isGm ? 'gm' : 'player', uid: req.uid, email: req.email };
+  const instanceId = typeof body.instanceId === 'string' ? body.instanceId.trim() : '';
+  let tableElements = tableState.elements || [];
+  if (body.action === 'toggle' && body.active === true) {
+    try {
+      tableElements = await resolveCharacterElementsDb(APP_ID, tableElements);
+    } catch (err) {
+      console.error('[group-roll] resolve character names failed:', err.message);
+    }
+  }
+  const memberEl = instanceId
+    ? tableElements.find((e) => e.instanceId === instanceId) || null
+    : null;
+  const check = validateGroupRollRequest({
+    intent: existing,
+    intentId: body.intentId,
+    action: body.action,
+    instanceId,
+    trait: body.trait,
+    active: body.active === true,
+    viewer,
+    isGm,
+    memberEl,
+    activeElements: tableElements,
+  });
+  if (!check.ok) return res.status(check.status).json({ error: check.error });
+  const wasOn = existing._groupRoll === true;
+  const updated = applyGroupRollAction(existing, {
+    action: body.action,
+    instanceId,
+    trait: body.trait,
+    active: body.active === true,
+  }, { activeElements: tableElements });
+  if (wasOn && !updated._groupRoll) {
+    await ackGroupRollCollaboratorBanners(gmUid, existing.intentId);
+  }
+  if (existing._tagTeam && !updated._tagTeam) {
+    await ackTagTeamBanners(gmUid, existing.intentId);
+  }
+  pendingIntents.set(req.params.tableId, updated);
+  broadcastIntentToRoom(req.params.tableId, updated);
+  res.json({ ok: true });
+});
+
+// POST /api/room/:tableId/intent/tag-team — Toggle / setPartner / setTrait.
+// Body: { intentId, action, instanceId?, trait?, active? }. Does not accept a full-intent PATCH.
+app.post('/api/room/:tableId/intent/tag-team', requireAuth, async (req, res) => {
+  const ctx = await resolveTableAccess(APP_ID, req.params.tableId, req);
+  if (ctx.error) return res.status(ctx.error).json({ error: ctx.message });
+  const { gmUid, tableState } = ctx;
+  const body = req.body || {};
+  const existing = pendingIntents.get(req.params.tableId);
+  const isGm = req.uid === gmUid;
+  const viewer = { role: isGm ? 'gm' : 'player', uid: req.uid, email: req.email };
+  const instanceId = typeof body.instanceId === 'string' ? body.instanceId.trim() : '';
+  let tableElements = tableState.elements || [];
+  if ((body.action === 'toggle' && body.active === true) || body.action === 'setPartner') {
+    try {
+      tableElements = await resolveCharacterElementsDb(APP_ID, tableElements);
+    } catch (err) {
+      console.error('[tag-team] resolve character names failed:', err.message);
+    }
+  }
+  const memberEl = instanceId
+    ? tableElements.find((e) => e.instanceId === instanceId) || null
+    : null;
+  const check = validateTagTeamRequest({
+    intent: existing,
+    intentId: body.intentId,
+    action: body.action,
+    instanceId,
+    trait: body.trait,
+    active: body.active === true,
+    viewer,
+    isGm,
+    memberEl,
+    activeElements: tableElements,
+  });
+  if (!check.ok) return res.status(check.status).json({ error: check.error });
+  const wasOn = existing._tagTeam === true;
+  const updated = applyTagTeamAction(existing, {
+    action: body.action,
+    instanceId,
+    trait: body.trait,
+    active: body.active === true,
+  }, { activeElements: tableElements });
+  if (wasOn && !updated._tagTeam) {
+    await ackTagTeamBanners(gmUid, existing.intentId);
+  }
+  if (existing._groupRoll && !updated._groupRoll) {
+    await ackGroupRollCollaboratorBanners(gmUid, existing.intentId);
+  }
+  pendingIntents.set(req.params.tableId, updated);
+  broadcastIntentToRoom(req.params.tableId, updated);
+  res.json({ ok: true });
+});
+
+// POST /api/room/:tableId/banner-tag-team-choose — Pick which Duality applies; cancel the other.
+app.post('/api/room/:tableId/banner-tag-team-choose', requireAuth, async (req, res) => {
+  const ctx = await resolveTableAccess(APP_ID, req.params.tableId, req);
+  if (ctx.error) return res.status(ctx.error).json({ error: ctx.message });
+  const { gmUid } = ctx;
+  const intentId = typeof req.body?.intentId === 'string' ? req.body.intentId.trim() : '';
+  const chosenRollDbId = req.body?.chosenRollDbId;
+  if (!intentId || chosenRollDbId == null) {
+    return res.status(400).json({ error: 'intentId and chosenRollDbId required' });
+  }
+  try {
+    const pending = await getPendingBanners(APP_ID, gmUid);
+    const pair = (pending || []).filter((b) => b._tagTeamIntentId === intentId && b._rollDbId != null);
+    const chosen = pair.find((b) => String(b._rollDbId) === String(chosenRollDbId));
+    const discarded = pair.find((b) => String(b._rollDbId) !== String(chosenRollDbId));
+    if (!chosen || !discarded) {
+      return res.status(409).json({ error: 'Both Tag Team rolls must be pending' });
+    }
+    const combined = combineTagTeamDamage(chosen, discarded);
+    const patch = {
+      _tagTeamChosen: true,
+      ...(combined ? {
+        _tagTeamPeerDamageTotal: combined.peerTotal,
+        _tagTeamDamageTypes: combined.types,
+        _tagTeamNeedDamageTypePick: combined.needsTypePick,
+        ...(combined.type ? { _tagTeamDamageType: combined.type } : {}),
+      } : {}),
+    };
+    await updateDiceRollData(APP_ID, gmUid, chosen._rollDbId, patch);
+    await setBannerStatus(discarded._rollDbId, 'cancelled');
+    subscriptionManager.notifyChange('banners', gmUid);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[tag-team] choose failed:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
 });
 
 
@@ -5464,7 +5714,7 @@ app.post('/api/room/:tableId/roll', requireAuth, async (req, res) => {
     const rollData = buildRollData(rollText, displayName, _clientId, { _playerInitiated: true, _initiatorUid: req.uid, ...extraMeta });
     if (!rollData) return res.status(400).json({ error: 'No dice expressions found in rollText' });
     await applyPostedRollVisibility(rollData, {
-      requestedVisibility: extraMeta._rollVisibility,
+      requestedVisibility: (extraMeta._groupRollIntentId || extraMeta._tagTeamIntentId) ? undefined : extraMeta._rollVisibility,
       isGm: false,
       requesterUid: req.uid,
       requesterEmail: req.email,
@@ -5473,6 +5723,8 @@ app.post('/api/room/:tableId/roll', requireAuth, async (req, res) => {
     });
     if (!silent) {
       await appendRollLog(gmUid, rollData);
+      stampGroupRollResultOnIntent(req.params.tableId, rollData);
+      stampTagTeamPartnerResultOnIntent(req.params.tableId, rollData);
       if (process.env.DATABASE_URL) {
         try {
           await applyOpToTableState(req.params.tableId, { op: 'touch-session-activity' });

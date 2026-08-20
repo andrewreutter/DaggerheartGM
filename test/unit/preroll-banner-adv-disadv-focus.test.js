@@ -457,3 +457,256 @@ describe('PreRollBanner read-only observer', () => {
   });
 });
 
+describe('PreRollBanner Group roll', () => {
+  let container;
+  let root;
+
+  afterEach(() => {
+    if (root) {
+      act(() => root.unmount());
+      root = null;
+    }
+    if (container) {
+      container.remove();
+      container = null;
+    }
+  });
+
+  const otherPcs = [
+    { instanceId: 'c1', elementType: 'character', name: 'Hero' },
+    {
+      instanceId: 'c2',
+      elementType: 'character',
+      name: 'Beau',
+      assignedPlayerUid: 'player-b',
+      assignedPlayerEmail: 'b@example.com',
+    },
+  ];
+
+  async function mountGroup(props = {}) {
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+    await act(async () => {
+      root.render(createElement(PreRollBanner, {
+        pending: { displayName: 'Hero Agility', meta: { _traitKey: 'agility' } },
+        characterEl: { instanceId: 'c1', name: 'Hero' },
+        needsDifficulty: true,
+        isPlayer: false,
+        activeElements: otherPcs,
+        groupViewer: { role: 'gm', uid: 'gm-1', email: 'gm@example.com' },
+        onProceed: () => {},
+        onCancel: () => {},
+        ...props,
+      }));
+    });
+  }
+
+  it('places the Group roll checkbox after visibility', async () => {
+    await mountGroup();
+    const visibility = container.querySelector('[data-testid="preroll-visibility"]');
+    const checkbox = container.querySelector('[data-testid="preroll-group-roll"]');
+    expect(visibility).toBeTruthy();
+    expect(checkbox).toBeTruthy();
+    expect(visibility.compareDocumentPosition(checkbox) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('disables visibility when Group roll is on', async () => {
+    await mountGroup({
+      groupRoll: true,
+      groupMembers: [{ instanceId: 'c2', name: 'Beau', trait: null, status: 'pending' }],
+    });
+    expect(container.querySelector('[data-testid="preroll-visibility"]')?.disabled).toBe(true);
+    expect(container.querySelector('[data-testid="preroll-group"]')).toBeTruthy();
+    expect(container.querySelector('[data-testid="preroll-group-row-c2"]')).toBeTruthy();
+  });
+
+  it('uses the group-wait Proceed title when that is the blocker', async () => {
+    await mountGroup({
+      groupRoll: true,
+      groupMembers: [{ instanceId: 'c2', name: 'Beau', trait: null, status: 'pending' }],
+      proceedDisabled: true,
+      proceedDisabledTitle: 'Waiting for group reaction rolls',
+    });
+    const proceed = [...container.querySelectorAll('button')].find((b) => b.textContent.includes('Proceed'));
+    expect(proceed?.getAttribute('title')).toBe('Waiting for group reaction rolls');
+  });
+
+  it('hides the checkbox on a reaction session', async () => {
+    await mountGroup({
+      pending: { displayName: 'Hero Agility', meta: { _isReaction: true } },
+    });
+    expect(container.querySelector('[data-testid="preroll-group-roll"]')).toBeNull();
+  });
+
+  it('hides the checkbox when there are no other PCs', async () => {
+    await mountGroup({
+      activeElements: [{ instanceId: 'c1', elementType: 'character', name: 'Hero' }],
+    });
+    expect(container.querySelector('[data-testid="preroll-group-roll"]')).toBeNull();
+  });
+
+  it('shows a static Group roll label on an observer card when already on', async () => {
+    await mountGroup({
+      readOnly: true,
+      isPlayer: true,
+      groupRoll: true,
+      groupMembers: [{ instanceId: 'c2', name: 'Beau', trait: 'agility', status: 'pending' }],
+      groupViewer: { role: 'player', uid: 'player-a', email: 'a@example.com' },
+    });
+    expect(container.querySelector('[data-testid="preroll-group-roll"]')).toBeNull();
+    expect(container.querySelector('[data-testid="preroll-group-roll-label"]')?.textContent).toContain('Group roll');
+    expect(container.querySelector('[data-testid="preroll-group-row-c2"]')?.textContent).toContain('Awaiting');
+  });
+
+  it('does not flip the row to Rolling before the collaborator pre-roll sheet opens', async () => {
+    const onGroupMemberRoll = vi.fn();
+    await mountGroup({
+      groupRoll: true,
+      groupMembers: [{ instanceId: 'c2', name: 'Beau', trait: 'agility', status: 'pending' }],
+      onGroupMemberRoll,
+    });
+    const rollBtn = container.querySelector('[data-testid="preroll-group-roll-btn-c2"]');
+    expect(rollBtn).toBeTruthy();
+    await act(async () => {
+      rollBtn.click();
+    });
+    expect(onGroupMemberRoll).toHaveBeenCalledWith('c2');
+    expect(container.querySelector('[data-testid="preroll-group-row-c2"]')?.textContent).not.toContain('Rolling');
+    expect(container.querySelector('[data-testid="preroll-group-roll-btn-c2"]')).toBeTruthy();
+  });
+});
+
+describe('PreRollBanner Tag Team', () => {
+  let container;
+  let root;
+
+  afterEach(() => {
+    if (root) {
+      act(() => root.unmount());
+      root = null;
+    }
+    if (container) {
+      container.remove();
+      container = null;
+    }
+  });
+
+  const otherPcs = [
+    { instanceId: 'c1', elementType: 'character', name: 'Hero', hope: 5, maxHope: 6 },
+    {
+      instanceId: 'c2',
+      elementType: 'character',
+      name: 'Beau',
+      hope: 4,
+      maxHope: 6,
+      assignedPlayerUid: 'player-b',
+      assignedPlayerEmail: 'b@example.com',
+    },
+  ];
+
+  async function mountTag(props = {}) {
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+    await act(async () => {
+      root.render(createElement(PreRollBanner, {
+        pending: { displayName: 'Hero Agility', meta: { _traitKey: 'agility' } },
+        characterEl: { instanceId: 'c1', name: 'Hero', hope: 5, maxHope: 6 },
+        needsDifficulty: true,
+        isPlayer: false,
+        activeElements: otherPcs,
+        tagTeamViewer: { role: 'gm', uid: 'gm-1', email: 'gm@example.com' },
+        onProceed: () => {},
+        onCancel: () => {},
+        ...props,
+      }));
+    });
+  }
+
+  it('places the Tag Team checkbox after visibility', async () => {
+    await mountTag();
+    const visibility = container.querySelector('[data-testid="preroll-visibility"]');
+    const checkbox = container.querySelector('[data-testid="preroll-tag-team"]');
+    expect(visibility).toBeTruthy();
+    expect(checkbox).toBeTruthy();
+    expect(visibility.compareDocumentPosition(checkbox) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('disables visibility when Tag Team is on', async () => {
+    await mountTag({
+      tagTeam: true,
+      tagTeamPartner: { instanceId: 'c2', name: 'Beau', trait: null, status: 'pending' },
+    });
+    expect(container.querySelector('[data-testid="preroll-visibility"]')?.disabled).toBe(true);
+    expect(container.querySelector('[data-testid="preroll-tag-team-block"]')).toBeTruthy();
+    expect(container.querySelector('[data-testid="preroll-tag-team-row-c2"]')).toBeTruthy();
+  });
+
+  it('uses the Tag Team wait Proceed title when that is the blocker', async () => {
+    await mountTag({
+      tagTeam: true,
+      tagTeamPartner: { instanceId: 'c2', name: 'Beau', trait: null, status: 'pending' },
+      proceedDisabled: true,
+      proceedDisabledTitle: 'Waiting for Tag Team partner roll',
+    });
+    const proceed = [...container.querySelectorAll('button')].find((b) => b.textContent.includes('Proceed'));
+    expect(proceed?.getAttribute('title')).toBe('Waiting for Tag Team partner roll');
+  });
+
+  it('hides the checkbox on a reaction session', async () => {
+    await mountTag({
+      pending: { displayName: 'Hero Agility', meta: { _isReaction: true } },
+    });
+    expect(container.querySelector('[data-testid="preroll-tag-team"]')).toBeNull();
+  });
+
+  it('hides the checkbox on a partner Duality overlay', async () => {
+    await mountTag({
+      pending: {
+        displayName: 'Beau Presence',
+        meta: { _tagTeamIntentId: 'int-1', _tagTeamRole: 'partner', _traitKey: 'presence' },
+      },
+    });
+    expect(container.querySelector('[data-testid="preroll-tag-team"]')).toBeNull();
+    expect(container.querySelector('[data-testid="preroll-group-roll"]')).toBeNull();
+  });
+
+  it('hides the checkbox when there are no other PCs', async () => {
+    await mountTag({
+      activeElements: [{ instanceId: 'c1', elementType: 'character', name: 'Hero' }],
+    });
+    expect(container.querySelector('[data-testid="preroll-tag-team"]')).toBeNull();
+  });
+
+  it('shows a static Tag Team label on an observer card when already on', async () => {
+    await mountTag({
+      readOnly: true,
+      isPlayer: true,
+      tagTeam: true,
+      tagTeamPartner: { instanceId: 'c2', name: 'Beau', trait: 'agility', status: 'pending' },
+      tagTeamViewer: { role: 'player', uid: 'player-a', email: 'a@example.com' },
+    });
+    expect(container.querySelector('[data-testid="preroll-tag-team"]')).toBeNull();
+    expect(container.querySelector('[data-testid="preroll-tag-team-label"]')?.textContent).toContain('Tag Team');
+    expect(container.querySelector('[data-testid="preroll-tag-team-row-c2"]')?.textContent).toContain('Awaiting');
+  });
+
+  it('does not flip the row to Rolling before the partner pre-roll sheet opens', async () => {
+    const onTagTeamPartnerRoll = vi.fn();
+    await mountTag({
+      tagTeam: true,
+      tagTeamPartner: { instanceId: 'c2', name: 'Beau', trait: 'agility', status: 'pending' },
+      onTagTeamPartnerRoll,
+    });
+    const rollBtn = container.querySelector('[data-testid="preroll-tag-team-roll-btn-c2"]');
+    expect(rollBtn).toBeTruthy();
+    await act(async () => {
+      rollBtn.click();
+    });
+    expect(onTagTeamPartnerRoll).toHaveBeenCalledWith('c2');
+    expect(container.querySelector('[data-testid="preroll-tag-team-row-c2"]')?.textContent).not.toContain('Rolling');
+    expect(container.querySelector('[data-testid="preroll-tag-team-roll-btn-c2"]')).toBeTruthy();
+  });
+});
+

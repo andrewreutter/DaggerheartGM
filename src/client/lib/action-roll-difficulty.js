@@ -8,11 +8,16 @@ export function isAttackRollMeta(meta = {}) {
 
 /**
  * True when a pre-roll session uses the shared DC slider + Approve lock:
- * not an attack (evasion / target DC) and not a GM-called reaction (those use the reaction DC).
- * The lock only gates the player hitting Proceed; the GM can still edit DC (and Proceed) while approved.
+ * not an attack (evasion / target DC) and not a reaction (GM-called or group-roll collaborator;
+ * those already have a DC). The lock only gates the player hitting Proceed; the GM can still
+ * edit DC (and Proceed) while approved.
  */
 export function sessionNeedsDifficulty(meta = {}) {
-  return !isAttackRollMeta(meta) && meta._reactionCallRollDbId == null;
+  return !isAttackRollMeta(meta)
+    && meta._reactionCallRollDbId == null
+    && !meta._isReaction
+    && !meta._groupRollIntentId
+    && !meta._tagTeamIntentId;
 }
 
 /**

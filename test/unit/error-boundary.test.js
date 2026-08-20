@@ -131,4 +131,34 @@ describe('AppRoot', () => {
     expect(container.textContent).toContain('Unexpected error');
     expect(container.textContent).toContain('promise-exploded');
   });
+
+  it('does not unmount the app on a cross-origin Script error.', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(createElement(AppRoot, null, createElement(Ok)));
+    });
+
+    await act(async () => {
+      window.dispatchEvent(new ErrorEvent('error', {
+        message: 'Script error.',
+        error: null,
+      }));
+    });
+    expect(container.querySelector('[data-testid="ok-child"]')).toBeTruthy();
+    expect(container.querySelector('[data-testid="fatal-error-fallback"]')).toBeNull();
+
+    const promise = Promise.resolve();
+    await act(async () => {
+      window.dispatchEvent(new PromiseRejectionEvent('unhandledrejection', {
+        promise,
+        reason: 'Script error.',
+      }));
+    });
+    expect(container.querySelector('[data-testid="ok-child"]')).toBeTruthy();
+    expect(container.querySelector('[data-testid="fatal-error-fallback"]')).toBeNull();
+    spy.mockRestore();
+  });
 });

@@ -59,6 +59,7 @@ import {
   prefersBannerStripExitReducedMotion,
 } from '../lib/banner-strip-exit.js';
 import { isReactionRoll as getIsReactionRoll, resolveDualityBannerSchemeKey } from '../lib/reaction-roll-display.js';
+import { canChooseTagTeamRoll, isTagTeamPendingChoice } from '../lib/tag-team.js';
 import { BannerSheetDisplayNameLine } from '../lib/sheet-display-label-inline.jsx';
 import { isRestrictedRollVisibility } from '../lib/roll-visibility.js';
 import { getGmHelperBannerSuffix, getGmHelperBannerTooltip } from '../lib/v2-chip-session-view.js';
@@ -1357,7 +1358,7 @@ function BannerTargetHpStepper({ value, max, unit = 'HP', disabled, onChange }) 
   );
 }
 
-function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTargetsForRoll, getTargetDisadvantageLabels, onApplyDamage, onApplyVulnerable, onConcussiveKnock, disableDismiss, canApplyDamage = true, onQuickTarget, onDoubledUpTarget, onBouncingTarget, wizardsWithHope = [], onNotThisTime, displayOverridesByRollId, tableCharacters = [], rangerFocusRerollChars = [], onRangerFocusReroll, onRangerFocusRerollRequest, rangerFocusRequestedBannerIds, holdThemOffChars = [], onHoldThemOffToggle, onBannerTargetsChange, lockedOnAutoSuccessRollDbIds = new Set(), wingsOfLightFlyingInstanceIds, onWingsD8Toggle, onWingsD8ToggleRequest, onGetWingsD8Extra, getV2DamageBannerAckNotices, sessionRole, isPlayer = false, currentUserUid = null, onResolveInstantly, onReplayDice, v2ReviewChips = [], onV2ReviewChip, resolveV2ReviewChipPicker, getV2ReviewChipDisableHint, canUseV2ReviewChips, v2PendingMoveInfo = { blocked: false, desiredCondition: '', description: '', featureName: '' } }) {
+function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTargetsForRoll, getTargetDisadvantageLabels, onApplyDamage, onApplyVulnerable, onConcussiveKnock, disableDismiss, canApplyDamage = true, onQuickTarget, onDoubledUpTarget, onBouncingTarget, wizardsWithHope = [], onNotThisTime, displayOverridesByRollId, tableCharacters = [], rangerFocusRerollChars = [], onRangerFocusReroll, onRangerFocusRerollRequest, rangerFocusRequestedBannerIds, holdThemOffChars = [], onHoldThemOffToggle, onBannerTargetsChange, lockedOnAutoSuccessRollDbIds = new Set(), wingsOfLightFlyingInstanceIds, onWingsD8Toggle, onWingsD8ToggleRequest, onGetWingsD8Extra, getV2DamageBannerAckNotices, sessionRole, isPlayer = false, currentUserUid = null, onResolveInstantly, onReplayDice, v2ReviewChips = [], onV2ReviewChip, resolveV2ReviewChipPicker, getV2ReviewChipDisableHint, canUseV2ReviewChips, v2PendingMoveInfo = { blocked: false, desiredCondition: '', description: '', featureName: '' }, tagTeamPeerRoll = null, tagTeamViewer = null, onTagTeamChoose }) {
   const visible = useBannerVisible();
   const effectiveSessionRole = sessionRole ?? (isPlayer ? 'player' : 'gm');
   const attackerEl = roll._attackerInstanceId
@@ -1407,6 +1408,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
     (roll._hopefulArmorInsteadByInstanceId && typeof roll._hopefulArmorInsteadByInstanceId === 'object' ? { ...roll._hopefulArmorInsteadByInstanceId } : {})
   );
   const [concussiveKnockActive, setConcussiveKnockActive] = useState(false);
+  const [tagTeamTypePick, setTagTeamTypePick] = useState(() => roll._tagTeamDamageType || '');
   // Popup menu for target selection (same UX as initiating player's "Choose target" menu).
   const [targetMenuAnchorRect, setTargetMenuAnchorRect] = useState(null);
   const targetsSyncDebounceRef = useRef(null);
@@ -1490,11 +1492,14 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
   const diceDamageTotal = damageSubs.reduce((sum, s) => sum + (parseInt(s.result, 10) || 0), 0);
   const critExtra = critExtraDamageForRoll(roll);
   const damageTotal = diceDamageTotal + critExtra;
+  const tagTeamPeerDmg = roll._tagTeamChosen ? (Number(roll._tagTeamPeerDamageTotal) || 0) : 0;
+  const tagTeamPending = isTagTeamPendingChoice(roll);
+  const tagTeamCanChoose = canChooseTagTeamRoll(tagTeamViewer, roll, tableCharacters);
   /** Base damage used for thresholds and application. */
-  const baseDamage  = (roll._damageTotalOverride != null ? roll._damageTotalOverride : damageTotal);
+  const baseDamage  = (roll._damageTotalOverride != null ? roll._damageTotalOverride : damageTotal) + tagTeamPeerDmg;
   const damageSub   = damageSubs[0];
   const dmg         = parseDiceSub(damageSub);
-  const hasDamage   = (dmg != null || damageSubs.length > 0);
+  const hasDamage   = (dmg != null || damageSubs.length > 0 || tagTeamPeerDmg > 0);
   const multiDamage = damageSubs.length > 1;
 
   // Unified multi-target mode: Hold Them Off toggle or roll._multiTarget (e.g. Elemental Breath).
@@ -1523,7 +1528,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
 
   // Whether to show action buttons (Acknowledge / Apply damage).
   // Sub-rolls owned by a GM-called reaction marquee are dismissed with the marquee, not independently.
-  const ownedByReactionCall = roll._reactionCallRollDbId != null;
+  const ownedByReactionCall = roll._reactionCallRollDbId != null || roll._groupRollIntentId != null || tagTeamPending;
   const showActions = !disableDismiss && !ownedByReactionCall;
   // Show action row (target selection, toggles) to GM or to the initiating player; only GM sees Apply/Dismiss.
   const showActionRow = showActions || (isPlayer && isInitiator);
@@ -1584,8 +1589,8 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
   // Character rolls target adversaries. Treat as character roll when the attacker is a character (not adversary).
   const isCharacterRoll = (roll._attackerInstanceId != null && roll._attackerType !== 'adversary') || (rollSrc
     ? allTargets.some(t => t.type === 'character' && (
-        t.name.toLowerCase() === rollSrc ||
-        rollSrc.startsWith(t.name.toLowerCase())
+        (t.name || '').toLowerCase() === rollSrc ||
+        rollSrc.startsWith((t.name || '').toLowerCase())
       ))
     : false);
   const filteredTargets = isCharacterRoll
@@ -1956,6 +1961,9 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                 )}
                 {critExtra > 0 && (resolved || (damageSubs.length > 0 && damageSubs.every((s) => s._preset))) && (
                   <> <span className="text-yellow-300/90">+ Crit ({critExtra})</span></>
+                )}
+                {tagTeamPeerDmg > 0 && (
+                  <> <span className="text-amber-300/90">+ Tag Team ({tagTeamPeerDmg})</span></>
                 )}
                 {roll._wingsOfLightD8Result != null && (
                   <> + d8({roll._wingsOfLightD8Result})</>
@@ -2666,6 +2674,25 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                         </div>
                       );
                     })() : null}
+                    {roll._tagTeamChosen && roll._tagTeamNeedDamageTypePick && (
+                      <div className="mt-1.5 flex flex-wrap justify-center gap-1" data-testid="tag-team-damage-type">
+                        {(roll._tagTeamDamageTypes || []).map((t) => (
+                          <button
+                            key={t}
+                            type="button"
+                            data-testid={`tag-team-damage-type-${t}`}
+                            onClick={() => setTagTeamTypePick(t)}
+                            className={`px-2 py-0.5 rounded text-[10px] font-semibold border ${
+                              (tagTeamTypePick || roll._tagTeamDamageType) === t
+                                ? 'border-amber-500 bg-amber-900/60 text-amber-100'
+                                : 'border-dh-strong bg-dh-raised/60 text-dh-muted hover:text-dh'
+                            }`}
+                          >
+                            {t}
+                          </button>
+                        ))}
+                      </div>
+                    )}
                     <div className="flex flex-wrap justify-center gap-1.5">
                       {roll._featureNeedsTarget ? (
                         <>
@@ -2698,7 +2725,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                                 <button
                                   data-testid="banner-acknowledge"
                                   onClick={async () => {
-                                    const dmgType = dmg?.type || '';
+                                    const dmgType = tagTeamTypePick || roll._tagTeamDamageType || dmg?.type || '';
                                     if (selectedDamageTargetIds.length > 0 && hasDamage && onApplyDamage) {
                                       for (const id of selectedDamageTargetIds) {
                                         const target = filteredTargets.find(t => t.instanceId === id);
@@ -2722,7 +2749,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                                       onAcknowledge?.();
                                     }
                                   }}
-                                  disabled={selectedDamageTargetIds.length === 0 || v2MoveBlocksAck}
+                                  disabled={selectedDamageTargetIds.length === 0 || v2MoveBlocksAck || !!(roll._tagTeamChosen && roll._tagTeamNeedDamageTypePick && !(tagTeamTypePick || roll._tagTeamDamageType))}
                                   className="px-2 py-0.5 rounded text-[11px] font-semibold border border-dh-strong bg-dh-raised/60 text-dh hover:bg-dh-hover hover:text-dh transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-dh-raised/60"
                                 >
                                   {primaryActionLabel}
@@ -2761,7 +2788,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                                     const dmgReduction = selectedDmgReduceDie?.value ?? 0;
                                     const totalDamage = Math.max(0, (hasDamage ? baseDamage : 0) + d8Extra - dmgReduction);
                                     if (applyDamage) {
-                                      const dmgType = dmg?.type || '';
+                                      const dmgType = tagTeamTypePick || roll._tagTeamDamageType || dmg?.type || '';
                                       const damageModifiers = [];
                                       const overridden = Object.prototype.hasOwnProperty.call(hpOverrideByTargetId, selectedTarget.instanceId);
                                       await onApplyDamage({
@@ -2791,7 +2818,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                                     if (alreadyAcked) ackOpts.alreadyAcked = true;
                                     onAcknowledge?.(Object.keys(ackOpts).length > 0 ? ackOpts : undefined);
                                   }}
-                                  disabled={(filteredTargets.length > 0 && !selectedDamageTargetId) || v2MoveBlocksAck}
+                                  disabled={(filteredTargets.length > 0 && !selectedDamageTargetId) || v2MoveBlocksAck || !!(roll._tagTeamChosen && roll._tagTeamNeedDamageTypePick && !(tagTeamTypePick || roll._tagTeamDamageType))}
                                   className="px-2 py-0.5 rounded text-[11px] font-semibold border border-dh-strong bg-dh-raised/60 text-dh hover:bg-dh-hover hover:text-dh transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-dh-raised/60"
                                 >
                                   {primaryActionLabel}
@@ -2850,6 +2877,22 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
             >
               Cancel
             </button>
+          </div>
+        )}
+        {tagTeamPending && (
+          <div className="mt-2.5 pt-2 border-t border-white/10 flex flex-col items-center gap-1">
+            {tagTeamPeerRoll && tagTeamCanChoose ? (
+              <button
+                type="button"
+                data-testid="tag-team-use-roll"
+                onClick={() => onTagTeamChoose?.(roll)}
+                className="px-2 py-0.5 rounded text-[11px] font-semibold border border-amber-600 bg-amber-900/50 text-amber-100 hover:bg-amber-800/60"
+              >
+                Use this roll
+              </button>
+            ) : (
+              <span className="text-[10px] text-dh-muted">Waiting for the other Tag Team roll…</span>
+            )}
           </div>
         )}
         {/* Feline Instincts and other ancestry reactions are handled by the generic banner reaction buttons above */}
@@ -3006,6 +3049,8 @@ export const DiceRoller = forwardRef(function DiceRoller({
   canReactionProceed,
   reactionProceedingInstanceId = null,
   preRollSlot = null,
+  onTagTeamChoose,
+  tagTeamViewer = null,
 }, ref) {
   const diceCanvasHiddenRef = useRef(diceCanvasHidden);
   useEffect(() => {
@@ -3673,11 +3718,11 @@ export const DiceRoller = forwardRef(function DiceRoller({
               <ResultBanner
                 roll={{ ...entry.roll, _bannerId: entry._bannerId }}
                 resolved={entry.resolved}
-                onAcknowledge={!isPlayer && entry.roll._reactionCallRollDbId == null ? (opts) => {
+                onAcknowledge={!isPlayer && entry.roll._reactionCallRollDbId == null && entry.roll._groupRollIntentId == null && !isTagTeamPendingChoice(entry.roll) ? (opts) => {
                   onBannerAcknowledgeRef.current?.(entry._bannerId, entry.roll, opts);
                   dismissBannerById(entry._bannerId);
                 } : undefined}
-                onCancel={!isPlayer && entry.roll._reactionCallRollDbId == null ? () => {
+                onCancel={!isPlayer && entry.roll._reactionCallRollDbId == null && entry.roll._groupRollIntentId == null && !isTagTeamPendingChoice(entry.roll) ? () => {
                   onBannerCancelRef.current?.(entry._bannerId, entry.roll);
                   dismissBannerById(entry._bannerId);
                 } : undefined}
@@ -3687,7 +3732,14 @@ export const DiceRoller = forwardRef(function DiceRoller({
                 onApplyDamage={onApplyDamage}
                 onApplyVulnerable={onApplyVulnerable}
                 onConcussiveKnock={onConcussiveKnock}
-                disableDismiss={isPlayer || entry.roll._reactionCallRollDbId != null}
+                disableDismiss={isPlayer || entry.roll._reactionCallRollDbId != null || entry.roll._groupRollIntentId != null || isTagTeamPendingChoice(entry.roll)}
+                tagTeamPeerRoll={activeBanners.find((e) => (
+                  e.roll._tagTeamIntentId
+                  && e.roll._tagTeamIntentId === entry.roll._tagTeamIntentId
+                  && e.roll._rollDbId !== entry.roll._rollDbId
+                ))?.roll || null}
+                tagTeamViewer={tagTeamViewer}
+                onTagTeamChoose={onTagTeamChoose}
                 canApplyDamage={canApplyDamage}
                 onQuickTarget={onQuickTarget}
                 onDoubledUpTarget={onDoubledUpTarget}

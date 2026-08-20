@@ -90,6 +90,31 @@ describe('mergeIntentPatch', () => {
     expect(next.selectedChips).toEqual([true, false]);
   });
 
+  it('cannot privatize a group-roll intent', () => {
+    const group = { ...baseIntent, _groupRoll: true };
+    const next = mergeIntentPatch(group, { _rollVisibility: 'gm_only' }, { isGm: true });
+    expect(next._rollVisibility).toBeUndefined();
+    expect(next._groupRoll).toBe(true);
+  });
+
+  it('cannot privatize a Tag Team intent', () => {
+    const tagged = { ...baseIntent, _tagTeam: true };
+    const next = mergeIntentPatch(tagged, { _rollVisibility: 'gm_only' }, { isGm: true });
+    expect(next._rollVisibility).toBeUndefined();
+    expect(next._tagTeam).toBe(true);
+  });
+
+  it('does not copy groupMembers from a selection PATCH', () => {
+    const members = [{ instanceId: 'char-b', name: 'Beau', trait: null, status: 'pending' }];
+    const withGroup = { ...baseIntent, _groupRoll: true, groupMembers: members };
+    const next = mergeIntentPatch(withGroup, {
+      selectedChips: [true, false],
+      groupMembers: [],
+    }, { isGm: false });
+    expect(next.groupMembers).toEqual(members);
+    expect(next.selectedChips).toEqual([true, false]);
+  });
+
   it('returns null when there is no existing session', () => {
     expect(mergeIntentPatch(null, { difficulty: 12 }, { isGm: true })).toBeNull();
   });
@@ -306,6 +331,10 @@ describe('applyRemoteSelectionSnapshot / serialize', () => {
     ]);
     expect(payload.chips[0].onUse).toBeUndefined();
     expect(payload.helps).toEqual([]);
+    expect(payload._groupRoll).toBe(false);
+    expect(payload.groupMembers).toEqual([]);
+    expect(payload._tagTeam).toBe(false);
+    expect(payload.tagTeamPartner).toBeNull();
     expect(serializeDisplayChips([{ _difficultyChip: true }])).toEqual([]);
   });
 
