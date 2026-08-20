@@ -350,7 +350,7 @@ test.describe('Subclass video — Seraph / Divine Wielder', () => {
       await playerPage.keyboard.press('Escape');
       const lifeSupportBanner = gmPage.locator('.dice-result-banner', { hasText: 'Life Support' });
       await expect(lifeSupportBanner).toBeVisible({ timeout: 8000 });
-      const lifeSupportAck = lifeSupportBanner.getByRole('button', { name: 'Acknowledge' });
+      const lifeSupportAck = lifeSupportBanner.getByTestId('banner-acknowledge');
       if (!(await lifeSupportAck.isEnabled().catch(() => false))) {
         await lifeSupportBanner.getByRole('button', { name: /Reya/i }).click();
       }

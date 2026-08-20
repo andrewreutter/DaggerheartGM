@@ -164,7 +164,7 @@ export function tablePanelHoverHintModel(kind, payload = {}, {
         title: 'Start Session',
         lines: [
           chromeLead(`${click} to start the session.`),
-          'Acknowledge the banner to reset session uses and run session-start hooks.',
+          'Apply the banner to reset session uses and run session-start hooks.',
         ],
       };
     case 'end-session':
@@ -185,7 +185,7 @@ export function tablePanelHoverHintModel(kind, payload = {}, {
         title: 'Short Rest',
         lines: [
           chromeLead(`${click} to call a short rest.`),
-          'Characters pick downtime moves. Acknowledge to add Fear and refresh rest uses.',
+          'Characters pick downtime moves. Apply to add Fear and refresh rest uses.',
         ],
       };
     case 'long-rest':
@@ -194,7 +194,7 @@ export function tablePanelHoverHintModel(kind, payload = {}, {
         title: 'Long Rest',
         lines: [
           chromeLead(`${click} to call a long rest.`),
-          'Characters pick downtime moves. Acknowledge to add Fear and refresh rest and long-rest uses.',
+          'Characters pick downtime moves. Apply to add Fear and refresh rest and long-rest uses.',
         ],
       };
     case 'call-for-reaction':

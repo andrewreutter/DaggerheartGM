@@ -581,7 +581,7 @@ test.describe('M2 — Cross-player reaction chip mid-banner (Seraph Prayer Dice)
     await expect(playerABannerCard.getByText(String(originalTotal + 3), { exact: true })).toBeVisible({ timeout: 8000 });
 
     // GM acknowledges the augmented roll (real click on the Acknowledge button).
-    const ackBtn = page.locator('button', { hasText: 'Acknowledge' }).first();
+    const ackBtn = page.getByTestId('banner-acknowledge').first();
     await expect(ackBtn).toBeVisible({ timeout: 5000 });
     await ackBtn.click();
     await expect(page.locator('text=Player A Attack Roll')).not.toBeVisible({ timeout: 5000 });
@@ -685,7 +685,7 @@ test.describe('Regression — Start Session grants Seraph Prayer Dice via a real
     // which dispatches Seraph's onSessionStart hook.
     const startSessionBanner = page.locator('.dice-result-banner', { hasText: 'Start Session' });
     await expect(startSessionBanner).toBeVisible({ timeout: 8000 });
-    await startSessionBanner.locator('button', { hasText: 'Acknowledge' }).first().click();
+    await startSessionBanner.getByTestId('banner-acknowledge').click();
     await expect(startSessionBanner).not.toBeVisible({ timeout: 5000 });
 
     // The Prayer Dice physical roll banner appears as a real dice-roll banner (not silently
@@ -695,7 +695,7 @@ test.describe('Regression — Start Session grants Seraph Prayer Dice via a real
 
     // Acknowledge the Prayer Dice roll — this resolves onPhysicalRollResolved, which calls
     // table.me.setPrayerDicePool(pool) and grants the die.
-    await prayerDiceBanner.locator('button', { hasText: 'Acknowledge' }).first().click();
+    await prayerDiceBanner.getByTestId('banner-acknowledge').click();
     await expect(prayerDiceBanner).not.toBeVisible({ timeout: 5000 });
 
     // Verify the pool was actually granted (server-side state), rather than just that a roll
@@ -1047,7 +1047,7 @@ test.describe('M5 — Cross-sheet chip affecting another player\'s sheet in real
 
     // GM acknowledges the physical Rally Die roll (real click on the Acknowledge button).
     const rallyBannerOnGm = page.locator('.dice-result-banner', { hasText: rallyBannerTitle });
-    const ackBtn = rallyBannerOnGm.locator('button', { hasText: 'Acknowledge' }).first();
+    const ackBtn = rallyBannerOnGm.getByTestId('banner-acknowledge');
     await expect(ackBtn).toBeVisible({ timeout: 5000 });
     await ackBtn.click();
     await expect(page.locator('.dice-result-banner', { hasText: rallyBannerTitle })).not.toBeVisible({ timeout: 5000 });
@@ -1144,7 +1144,7 @@ test.describe('GM-finalized difficulty for player action rolls (trait roll)', ()
     // Voluntary player trait rolls request Spotlight first. GM Ack resumes into the shared strip.
     const spotlightBanner = page.locator('.dice-result-banner', { hasText: 'requesting the spotlight' });
     await expect(spotlightBanner).toBeVisible({ timeout: 8000 });
-    await spotlightBanner.getByRole('button', { name: 'Acknowledge' }).click();
+    await spotlightBanner.getByTestId('banner-acknowledge').click();
 
     // Shared strip card on both clients. Player DC slider is read-only; status is GM... until Approve.
     await expect(playerAPage.getByText('Before you roll')).toBeVisible({ timeout: 8000 });
@@ -1198,7 +1198,7 @@ test.describe('GM-finalized difficulty for player action rolls (trait roll)', ()
     await expect(gmBanner.getByText(/Success|Failure/)).toBeVisible({ timeout: 8000 });
 
     // GM acknowledges the roll (real click) — cleans up the banner on all clients.
-    await gmBanner.getByRole('button', { name: 'Acknowledge' }).first().click();
+    await gmBanner.getByTestId('banner-acknowledge').click();
     await expect(gmBanner).not.toBeVisible({ timeout: 5000 });
 
     const seriousErrors = consoleErrors.filter((e) => !/favicon|manifest|WebGL|\[DiceRoller\] init failed|Failed to load resource.*403/i.test(e));

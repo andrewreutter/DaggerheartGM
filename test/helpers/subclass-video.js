@@ -269,7 +269,7 @@ export async function acknowledgeBanner(bannerLocator, opts = {}) {
   const { holdPage, holdMs = DICE_TUMBLE_HOLD_MS, force = true } = opts;
   const page = holdPage || bannerLocator.page();
   if (holdMs > 0) await holdForDiceTumble(page, holdMs);
-  const btn = bannerLocator.getByRole('button', { name: 'Acknowledge' }).first();
+  const btn = bannerLocator.getByTestId('banner-acknowledge').first();
   await expect(btn).toBeVisible({ timeout: 15000 });
 
   // While 3D dice are animating, ResultBanner wraps internals in pointer-events:none and

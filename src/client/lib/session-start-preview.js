@@ -28,7 +28,7 @@ export function buildSessionStartBannerActionText(activeElements, opts) {
   });
 
   const intro = [
-    '**Nothing changes on the table until you press Acknowledge.** After you do, the app will:',
+    '**Nothing changes on the table until you press Apply.** After you do, the app will:',
     '',
     '- Reset **session-frequency** feature uses',
     '- Clear **session-refresh** modifiers (e.g. Rally die tokens)',

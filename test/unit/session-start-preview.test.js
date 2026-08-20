@@ -78,7 +78,7 @@ describe('buildSessionStartBannerActionText', () => {
       v2ClassSubclassFeatureDescriptorsByName: {},
       getV2OriginFeatureDescriptor: () => undefined,
     });
-    expect(text).toContain('Nothing changes on the table until you press Acknowledge');
+    expect(text).toContain('Nothing changes on the table until you press Apply');
     expect(text).toContain('session-frequency');
     expect(text).toContain('No character session-start hooks');
   });

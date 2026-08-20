@@ -1,4 +1,4 @@
-import { useEffect, useImperativeHandle, useRef, useState, forwardRef } from 'react';
+import { useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, forwardRef } from 'react';
 import { createPortal } from 'react-dom';
 import { Info, Check, CheckCircle, AlertTriangle, RotateCcw, Shield, ChevronDown, CheckSquare, Loader2 } from 'lucide-react';
 import DiceBox from '@3d-dice/dice-box-threejs';
@@ -16,6 +16,13 @@ import {
   shouldApplyDamageOnAcknowledge,
   countAttackHitsAndMisses,
 } from '../lib/banner-target-roll.js';
+import { bannerPrimaryActionLabel } from '../lib/banner-primary-action.js';
+import {
+  adjustBannerTargetHpLoss,
+  bannerTargetHpLossMax,
+  defaultBannerTargetHpLoss,
+  resolveBannerTargetHpLoss,
+} from '../lib/banner-target-hp.js';
 import { isAdversaryNatural20, rollBeatsDefense } from '../lib/duality-roll-outcome.js';
 import { formatTargetSummary, computeHpLoss } from '../lib/helpers.js';
 import { isAdversaryAttackPartyTarget } from '../lib/companion-attack-targets.js';
@@ -40,6 +47,17 @@ import {
   DICE_BOTTOM_RESERVE,
   bannerStripStyle,
 } from '../lib/dice-banner-layout.js';
+import {
+  BANNER_STRIP_EXIT_REMOVE_DELAY_MS,
+  BANNER_STRIP_PRE_ROLL_SLOT_ID,
+  bannerExitTranslateX,
+  bannerSlotExitStyle,
+  bannerSlotFlipStyle,
+  bannerSlotRestStyle,
+  buildBannerExitMotion,
+  measureBannerSlots,
+  prefersBannerStripExitReducedMotion,
+} from '../lib/banner-strip-exit.js';
 import { isReactionRoll as getIsReactionRoll, resolveDualityBannerSchemeKey } from '../lib/reaction-roll-display.js';
 import { BannerSheetDisplayNameLine } from '../lib/sheet-display-label-inline.jsx';
 import { isRestrictedRollVisibility } from '../lib/roll-visibility.js';
@@ -281,7 +299,7 @@ function RestBanner({
 
   const handleRestAcknowledge = () => {
     if (!allFilled) {
-      if (!window.confirm('Not all rest moves are filled in. Acknowledge this rest anyway?')) return;
+      if (!window.confirm('Not all rest moves are filled in. Apply this rest anyway?')) return;
     }
     onAcknowledge?.();
   };
@@ -492,9 +510,10 @@ function RestBanner({
                 type="button"
                 onClick={handleRestAcknowledge}
                 title={!allFilled ? 'Not all moves are chosen — click to confirm and acknowledge anyway' : undefined}
+                data-testid="banner-acknowledge"
                 className={`flex-1 min-w-0 px-3 py-1 rounded text-[11px] font-semibold border border-dh-strong bg-dh-hover text-dh hover:bg-dh-strong transition-colors ${!allFilled ? 'ring-1 ring-dh-hope/35' : ''}`}
               >
-                Acknowledge
+                {bannerPrimaryActionLabel({ showCancel: onCancel != null })}
               </button>
             )}
             {onCancel != null && (
@@ -560,7 +579,7 @@ function ActionBanner({
     if (roll._reactionCall) {
       const awaiting = reactionCallRoster.filter((r) => !r.subRoll);
       if (awaiting.length > 0) {
-        if (!window.confirm('Not everyone has rolled. Acknowledge this reaction call anyway?')) return;
+        if (!window.confirm('Not everyone has rolled. Apply this reaction call anyway?')) return;
       }
     }
     const extra = {};
@@ -810,11 +829,12 @@ function ActionBanner({
               <button
                 onClick={handleAcknowledge}
                 disabled={!canAcknowledge}
+                data-testid="banner-acknowledge"
                 className={isSpotlightRequest
                   ? 'flex-1 min-w-0 px-3 py-1 rounded text-[11px] font-semibold border border-yellow-400/45 bg-yellow-500/20 text-yellow-50 hover:bg-yellow-500/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed'
                   : 'flex-1 min-w-0 px-3 py-1 rounded text-[11px] font-semibold border border-dh-strong bg-dh-hover text-dh hover:bg-dh-strong transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-dh-hover'}
               >
-                Acknowledge
+                {bannerPrimaryActionLabel({ showCancel: showActionBannerCancel })}
               </button>
             )}
             {showActionBannerCancel && (
@@ -1311,6 +1331,32 @@ function V2ReviewChipRow({
   return panel;
 }
 
+function BannerTargetHpStepper({ value, max, unit = 'HP', disabled, onChange }) {
+  return (
+    <span className="inline-flex items-center gap-0.5 shrink-0" data-testid="banner-target-hp-stepper">
+      <button
+        type="button"
+        aria-label={`Decrease ${unit}`}
+        disabled={disabled || value <= 0}
+        onClick={() => onChange(adjustBannerTargetHpLoss(value, -1, max))}
+        className="flex h-5 w-5 items-center justify-center rounded bg-dh-hover text-[10px] font-bold text-dh hover:bg-red-900/50 disabled:opacity-40 disabled:cursor-not-allowed"
+      >
+        −
+      </button>
+      <span className="min-w-[2.75rem] text-center text-[11px] font-semibold tabular-nums text-red-400">{value} {unit}</span>
+      <button
+        type="button"
+        aria-label={`Increase ${unit}`}
+        disabled={disabled || value >= max}
+        onClick={() => onChange(adjustBannerTargetHpLoss(value, 1, max))}
+        className="flex h-5 w-5 items-center justify-center rounded bg-dh-hover text-[10px] font-bold text-dh hover:bg-emerald-900/40 disabled:opacity-40 disabled:cursor-not-allowed"
+      >
+        +
+      </button>
+    </span>
+  );
+}
+
 function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTargetsForRoll, getTargetDisadvantageLabels, onApplyDamage, onApplyVulnerable, onConcussiveKnock, disableDismiss, canApplyDamage = true, onQuickTarget, onDoubledUpTarget, onBouncingTarget, wizardsWithHope = [], onNotThisTime, displayOverridesByRollId, tableCharacters = [], rangerFocusRerollChars = [], onRangerFocusReroll, onRangerFocusRerollRequest, rangerFocusRequestedBannerIds, holdThemOffChars = [], onHoldThemOffToggle, onBannerTargetsChange, lockedOnAutoSuccessRollDbIds = new Set(), wingsOfLightFlyingInstanceIds, onWingsD8Toggle, onWingsD8ToggleRequest, onGetWingsD8Extra, getV2DamageBannerAckNotices, sessionRole, isPlayer = false, currentUserUid = null, onResolveInstantly, onReplayDice, v2ReviewChips = [], onV2ReviewChip, resolveV2ReviewChipPicker, getV2ReviewChipDisableHint, canUseV2ReviewChips, v2PendingMoveInfo = { blocked: false, desiredCondition: '', description: '', featureName: '' } }) {
   const visible = useBannerVisible();
   const effectiveSessionRole = sessionRole ?? (isPlayer ? 'player' : 'gm');
@@ -1324,7 +1370,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
   const v2MoveBlocksAck = !isPlayer && v2PendingMoveInfo?.blocked === true;
   const v2MoveFeatureName = (v2PendingMoveInfo?.featureName || '').trim() || 'Feature';
   const v2MoveDesiredCond = (v2PendingMoveInfo?.desiredCondition || v2PendingMoveInfo?.description || '').trim();
-  const v2MoveAckLabel = v2MoveBlocksAck ? `Apply ${v2MoveFeatureName} to acknowledge` : 'Acknowledge';
+  const v2MoveAckLabel = v2MoveBlocksAck ? `Apply ${v2MoveFeatureName}` : null;
   const v2MoveAckTooltip = v2MoveBlocksAck
     ? v2MoveDesiredCond
       ? `Drop the token so the map satisfies: ${v2MoveDesiredCond}. Then acknowledge.`
@@ -1339,6 +1385,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
     () => (roll._featureNeedsTarget && roll._selectedTargetInstanceId) ? roll._selectedTargetInstanceId : null
   );
   // Damage banners: target chips are selectors only; selection is applied when Acknowledge is pressed.
+  const [hpOverrideByTargetId, setHpOverrideByTargetId] = useState({});
   const [selectedDamageTargetId, setSelectedDamageTargetId] = useState(() => roll._selectedTargetInstanceId ?? null);
   const [useArmorForSelected, setUseArmorForSelected] = useState(false);
   // Hold Them Off / Focus reroll UI: Phase 1 banner tools removed; V2 review chips handle Ranger flows.
@@ -1384,6 +1431,9 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
       setUseHopefulArmorByInstanceId(prev => ({ ...roll._hopefulArmorInsteadByInstanceId }));
     }
   }, [roll._rollDbId, roll._hopefulArmorInsteadByInstanceId]);
+  useEffect(() => {
+    setHpOverrideByTargetId({});
+  }, [roll._rollDbId]);
 
   // When Hold Them Off is toggled on, seed multi-select from current single selection if empty.
   useEffect(() => {
@@ -1475,7 +1525,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
   // Sub-rolls owned by a GM-called reaction marquee are dismissed with the marquee, not independently.
   const ownedByReactionCall = roll._reactionCallRollDbId != null;
   const showActions = !disableDismiss && !ownedByReactionCall;
-  // Show action row (target selection, toggles) to GM or to the initiating player; only GM sees Acknowledge/Skip.
+  // Show action row (target selection, toggles) to GM or to the initiating player; only GM sees Apply/Dismiss.
   const showActionRow = showActions || (isPlayer && isInitiator);
 
   // DH rolls: label + numeric value for each non-damage sub-item. Include input to detect static parts.
@@ -1636,8 +1686,6 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
     .map((id) => filteredTargets.find((t) => t.instanceId === id))
     .filter(Boolean);
   const { hitCount, missCount } = countAttackHitsAndMisses(roll, selectedOutcomeTargets, attackOutcomeOpts);
-  const selectedAllMiss = selectedOutcomeTargets.length > 0
-    && selectedOutcomeTargets.every((t) => classifyAttackAgainstTarget(roll, t, attackOutcomeOpts) === 'miss');
   const showHitMiss =
     resolved &&
     (hitCount + missCount) > 0 &&
@@ -1662,6 +1710,21 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
   const resultFailure = showHitMiss ? (hitCount === 0 && missCount > 0) : (showSuccessFailure && !difficultySuccess);
   const resultMixed = showHitMiss && hitCount > 0 && missCount > 0;
   const resultLabelClass = resultSuccess ? 'text-emerald-400' : resultFailure ? 'text-red-400' : resultMixed ? 'text-orange-400' : '';
+  const primaryActionLabel = bannerPrimaryActionLabel({
+    showCancel: showBannerDismissCancel,
+    blockedLabel: v2MoveAckLabel,
+  });
+  const resolvedDisplayDmg = Math.max(0, baseDamage + (roll._wingsOfLightD8Result ?? 0) - (selectedDmgReduceDie?.value ?? 0));
+  const defaultHpForTarget = (t) => defaultBannerTargetHpLoss({
+    displayDmg: resolvedDisplayDmg,
+    thresholds: t.thresholds,
+    isMiss: classifyAttackAgainstTarget(roll, t, attackOutcomeOpts) === 'miss',
+    isCompanion: t.type === 'companion',
+  });
+  const hpForTarget = (t) => resolveBannerTargetHpLoss(hpOverrideByTargetId, t.instanceId, defaultHpForTarget(t));
+  const setHpForTarget = (t, next) => {
+    setHpOverrideByTargetId((prev) => ({ ...prev, [t.instanceId]: next }));
+  };
 
   const handleResolveClick = !resolved && onResolveInstantly
     ? (e) => { e.stopPropagation(); onResolveInstantly(); }
@@ -2297,12 +2360,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                                 <ChevronDown size={10} className="opacity-70" />
                               </button>
                             </Tooltip>
-                            {selectedDamageTargetIds.length > 0 && (() => {
-                              const dmgReduction = selectedDmgReduceDie?.value ?? 0;
-                              const wingsBonus = roll._wingsOfLightD8Result ?? 0;
-                              const baseDmg = baseDamage + wingsBonus;
-                              const displayDmg = Math.max(0, baseDmg - dmgReduction);
-                              return (
+                            {selectedDamageTargetIds.length > 0 && (
                                 <div className="mt-1 space-y-0.5 w-full">
                                   {selectedDamageTargetIds.map((id) => {
                                     const t = filteredTargets.find(x => x.instanceId === id);
@@ -2310,14 +2368,24 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                                     const dmgType = dmg?.type || '';
                                     const armorBlockedByType = (t.armorFeatureName === 'Physical' && dmgType === 'mag') || (t.armorFeatureName === 'Magic' && dmgType === 'phy');
                                     const hasArmor = t.type === 'character' && (t.maxArmor ?? 0) > 0 && (t.currentArmor ?? 0) < (t.maxArmor ?? 0) && !armorBlockedByType;
-                                    const hpLoss = resolved && t.thresholds != null ? computeHpLoss(displayDmg, t.thresholds) : null;
+                                    const hpLoss = hpForTarget(t);
+                                    const unit = t.type === 'companion' ? 'Stress' : 'HP';
                                     return (
                                       <div key={id} className="flex items-center justify-between gap-2 text-[11px] w-full">
                                         <span className="font-medium text-dh truncate min-w-0">{t.name}</span>
                                         <span className="flex items-center gap-1.5 shrink-0">
-                                          {hasDamage && (t.type === 'companion'
-                                            ? (resolved ? <span className="text-orange-400 font-semibold tabular-nums">1 Stress</span> : <Spinner />)
-                                            : (resolved && hpLoss != null ? <span className="text-red-400 font-semibold tabular-nums">{hpLoss} HP</span> : hasDamage && resolved ? <span className="text-dh-muted">—</span> : hasDamage ? <Spinner /> : null))}
+                                          {hasDamage && (resolved
+                                            ? (!isPlayer
+                                              ? (
+                                                <BannerTargetHpStepper
+                                                  value={hpLoss}
+                                                  max={bannerTargetHpLossMax(t, defaultHpForTarget(t))}
+                                                  unit={unit}
+                                                  onChange={(next) => setHpForTarget(t, next)}
+                                                />
+                                              )
+                                              : <span className={t.type === 'companion' ? 'text-orange-400 font-semibold tabular-nums' : 'text-red-400 font-semibold tabular-nums'}>{hpLoss} {unit}</span>)
+                                            : <Spinner />)}
                                           {hasArmor ? (
                                             <label className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium border border-cyan-700 bg-cyan-900/40 text-cyan-200 cursor-pointer hover:bg-cyan-800/50">
                                               <input
@@ -2342,8 +2410,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                                     );
                                   })}
                                 </div>
-                              );
-                            })()}
+                            )}
                             {targetMenuAnchorRect != null && createPortal(
                               <>
                                 <div className="fixed inset-0 z-[200]" onClick={() => setTargetMenuAnchorRect(null)} aria-hidden />
@@ -2452,10 +2519,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                                   {(() => {
                                     if (!selectedTarget || selectedTarget.type !== 'character' || !hasDamage || !resolved) return null;
                                     const currentHp = selectedTarget.currentHp ?? selectedTarget.maxHp ?? 0;
-                                    const dmgReduction = selectedDmgReduceDie?.value ?? 0;
-                                    const wingsBonus = roll._wingsOfLightD8Result ?? 0;
-                                    const displayDmg = Math.max(0, baseDamage + wingsBonus - dmgReduction);
-                                    const hpLoss = selectedTarget.thresholds != null ? computeHpLoss(displayDmg, selectedTarget.thresholds) : 0;
+                                    const hpLoss = hpForTarget(selectedTarget);
                                     const wouldBeZero = currentHp - hpLoss <= 0;
                                     const hasImpenetrable = selectedTarget.armorFeatureName === 'Impenetrable';
                                     const hasStressSpace = (selectedTarget.currentStress ?? 0) < (selectedTarget.maxStress ?? 6);
@@ -2514,18 +2578,24 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                             {selectedDamageTargetId && hasDamage && (() => {
                               const t = filteredTargets.find(x => x.instanceId === selectedDamageTargetId);
                               if (!t) return null;
-                              const dmgReduction = selectedDmgReduceDie?.value ?? 0;
-                              const wingsBonus = roll._wingsOfLightD8Result ?? 0;
-                              const baseDmg = baseDamage + wingsBonus;
-                              const displayDmg = Math.max(0, baseDmg - dmgReduction);
-                              const hpLoss = resolved && t.thresholds != null ? computeHpLoss(displayDmg, t.thresholds) : null;
+                              const hpLoss = hpForTarget(t);
+                              const unit = t.type === 'companion' ? 'Stress' : 'HP';
                               return (
                                 <div className="mt-1 flex items-center justify-between gap-2 text-[11px] w-full">
                                   <span className="font-medium text-dh truncate min-w-0">{t.name}</span>
                                   <span className="shrink-0">
-                                    {t.type === 'companion'
-                                      ? (resolved ? <span className="text-orange-400 font-semibold tabular-nums">1 Stress</span> : <Spinner />)
-                                      : resolved && hpLoss != null ? <span className="text-red-400 font-semibold tabular-nums">{hpLoss} HP</span> : resolved ? <span className="text-dh-muted">—</span> : <Spinner />}
+                                    {resolved
+                                      ? (!isPlayer
+                                        ? (
+                                          <BannerTargetHpStepper
+                                            value={hpLoss}
+                                            max={bannerTargetHpLossMax(t, defaultHpForTarget(t))}
+                                            unit={unit}
+                                            onChange={(next) => setHpForTarget(t, next)}
+                                          />
+                                        )
+                                        : <span className={t.type === 'companion' ? 'text-orange-400 font-semibold tabular-nums' : 'text-red-400 font-semibold tabular-nums'}>{hpLoss} {unit}</span>)
+                                      : <Spinner />}
                                   </span>
                                 </div>
                               );
@@ -2600,13 +2670,14 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                       {roll._featureNeedsTarget ? (
                         <>
                           {!isPlayer && onAcknowledge != null && (
-                            <Tooltip label={v2MoveBlocksAck ? (v2MoveAckTooltip || '') : featureTargetSelectedId ? 'Acknowledge' : filteredTargets.length === 0 ? 'Acknowledge' : 'Select a target first'}>
+                            <Tooltip label={v2MoveBlocksAck ? (v2MoveAckTooltip || '') : featureTargetSelectedId ? primaryActionLabel : filteredTargets.length === 0 ? primaryActionLabel : 'Select a target first'}>
                               <button
+                                data-testid="banner-acknowledge"
                                 onClick={() => onAcknowledge(featureTargetSelectedId ? { selectedFeatureTargetInstanceId: featureTargetSelectedId } : undefined)}
                                 disabled={(filteredTargets.length > 0 && !featureTargetSelectedId) || v2MoveBlocksAck}
                                 className="px-2 py-0.5 rounded text-[11px] font-semibold border border-dh-strong bg-dh-raised/60 text-dh hover:bg-dh-hover hover:text-dh transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-dh-raised/60"
                               >
-                                {v2MoveAckLabel}
+                                {primaryActionLabel}
                               </button>
                             </Tooltip>
                           )}
@@ -2623,17 +2694,26 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                         <>
                           {!isPlayer && (
                             <>
-                              <Tooltip label={v2MoveBlocksAck ? (v2MoveAckTooltip || '') : selectedDamageTargetIds.length === 0 ? 'Select at least one target' : selectedAllMiss ? 'Acknowledge without applying damage (miss)' : holdThemOffActive && selectedDamageTargetIds.length >= 2 ? (missCount > 0 ? 'Acknowledge and apply damage to hits (3 Hope)' : 'Acknowledge and apply damage (3 Hope)') : missCount > 0 ? 'Acknowledge and apply damage to hits' : 'Acknowledge and apply damage'}>
+                              <Tooltip label={v2MoveBlocksAck ? (v2MoveAckTooltip || '') : selectedDamageTargetIds.length === 0 ? 'Select at least one target' : holdThemOffActive && selectedDamageTargetIds.length >= 2 ? `${primaryActionLabel} (3 Hope)` : primaryActionLabel}>
                                 <button
+                                  data-testid="banner-acknowledge"
                                   onClick={async () => {
                                     const dmgType = dmg?.type || '';
                                     if (selectedDamageTargetIds.length > 0 && hasDamage && onApplyDamage) {
                                       for (const id of selectedDamageTargetIds) {
                                         const target = filteredTargets.find(t => t.instanceId === id);
-                                        if (target && shouldApplyDamageOnAcknowledge(roll, target, attackOutcomeOpts)) {
-                                          const damageModifiers = [];
-                                          await onApplyDamage({ ...target, useArmor: !!useArmorByTargetId[id], damageModifiers, useImpenetrable: !!useImpenetrableByTargetId[id] }, baseDamage, tags, roll, dmgType);
-                                        }
+                                        if (!target) continue;
+                                        const hp = hpForTarget(target);
+                                        if (hp <= 0) continue;
+                                        const damageModifiers = [];
+                                        const overridden = Object.prototype.hasOwnProperty.call(hpOverrideByTargetId, id);
+                                        await onApplyDamage({
+                                          ...target,
+                                          useArmor: !!useArmorByTargetId[id],
+                                          damageModifiers,
+                                          useImpenetrable: !!useImpenetrableByTargetId[id],
+                                          ...(overridden ? { hpLossOverride: hp } : {}),
+                                        }, baseDamage, tags, roll, dmgType);
                                       }
                                     }
                                     if (holdThemOffActive && selectedDamageTargetIds.length >= 2 && roll._attackerInstanceId) {
@@ -2645,16 +2725,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                                   disabled={selectedDamageTargetIds.length === 0 || v2MoveBlocksAck}
                                   className="px-2 py-0.5 rounded text-[11px] font-semibold border border-dh-strong bg-dh-raised/60 text-dh hover:bg-dh-hover hover:text-dh transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-dh-raised/60"
                                 >
-                                  {v2MoveAckLabel}
-                                </button>
-                              </Tooltip>
-                              <Tooltip label={v2MoveBlocksAck ? (v2MoveAckTooltip || '') : 'Acknowledge without applying damage'}>
-                                <button
-                                  onClick={() => onAcknowledge?.()}
-                                  disabled={v2MoveBlocksAck}
-                                  className="px-2 py-0.5 rounded text-[11px] font-semibold border border-dh-strong bg-dh-raised/60 text-dh hover:bg-dh-hover hover:text-dh transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                                >
-                                  Skip
+                                  {primaryActionLabel}
                                 </button>
                               </Tooltip>
                               {showBannerDismissCancel && (
@@ -2672,15 +2743,16 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                         <>
                           {!isPlayer && (
                             <>
-                              <Tooltip label={v2MoveBlocksAck ? (v2MoveAckTooltip || '') : filteredTargets.length > 0 && !selectedDamageTargetId ? 'Select a target first' : selectedAllMiss ? 'Acknowledge without applying damage (miss)' : 'Acknowledge and apply damage to selected target'}>
+                              <Tooltip label={v2MoveBlocksAck ? (v2MoveAckTooltip || '') : filteredTargets.length > 0 && !selectedDamageTargetId ? 'Select a target first' : primaryActionLabel}>
                                 <button
+                                  data-testid="banner-acknowledge"
                                   onClick={async () => {
                                     let alreadyAcked = false;
                                     const selectedTarget = selectedDamageTargetId
                                       ? filteredTargets.find(t => t.instanceId === selectedDamageTargetId)
                                       : null;
-                                    const applyDamage = !!(selectedTarget && hasDamage && onApplyDamage
-                                      && shouldApplyDamageOnAcknowledge(roll, selectedTarget, attackOutcomeOpts));
+                                    const hp = selectedTarget ? hpForTarget(selectedTarget) : 0;
+                                    const applyDamage = !!(selectedTarget && hasDamage && onApplyDamage && hp > 0);
                                     let d8Extra = 0;
                                     if (applyDamage && roll._wingsOfLightAddD8 && onGetWingsD8Extra) {
                                       d8Extra = roll._wingsOfLightD8Result ?? (await onGetWingsD8Extra(roll)) ?? 0;
@@ -2691,7 +2763,14 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                                     if (applyDamage) {
                                       const dmgType = dmg?.type || '';
                                       const damageModifiers = [];
-                                      await onApplyDamage({ ...selectedTarget, useArmor: useArmorForSelected, damageModifiers, useImpenetrable: useImpenetrableForSelected }, totalDamage, tags, roll, dmgType);
+                                      const overridden = Object.prototype.hasOwnProperty.call(hpOverrideByTargetId, selectedTarget.instanceId);
+                                      await onApplyDamage({
+                                        ...selectedTarget,
+                                        useArmor: useArmorForSelected,
+                                        damageModifiers,
+                                        useImpenetrable: useImpenetrableForSelected,
+                                        ...(overridden ? { hpLossOverride: hp } : {}),
+                                      }, totalDamage, tags, roll, dmgType);
                                     }
                                     // Katari Retracting Claws: no damage line; V2 virtual weapon has no Phase-1 onAcknowledge — `_featureNeedsTarget` is false, so GMTableView virtual-weapon ack never runs. Apply Vulnerable on successful hit here.
                                     if (
@@ -2715,16 +2794,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                                   disabled={(filteredTargets.length > 0 && !selectedDamageTargetId) || v2MoveBlocksAck}
                                   className="px-2 py-0.5 rounded text-[11px] font-semibold border border-dh-strong bg-dh-raised/60 text-dh hover:bg-dh-hover hover:text-dh transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-dh-raised/60"
                                 >
-                                  {v2MoveAckLabel}
-                                </button>
-                              </Tooltip>
-                              <Tooltip label={v2MoveBlocksAck ? (v2MoveAckTooltip || '') : 'Acknowledge without applying damage'}>
-                                <button
-                                  onClick={() => onAcknowledge?.()}
-                                  disabled={v2MoveBlocksAck}
-                                  className="px-2 py-0.5 rounded text-[11px] font-semibold border border-dh-strong bg-dh-raised/60 text-dh hover:bg-dh-hover hover:text-dh transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                                >
-                                  Skip
+                                  {primaryActionLabel}
                                 </button>
                               </Tooltip>
                               {showBannerDismissCancel && (
@@ -2746,13 +2816,14 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                 <div className="flex flex-col gap-1.5">
                   {!isPlayer && (
                     <div className="flex items-center justify-center gap-1.5">
-                      <Tooltip label={v2MoveAckTooltip || 'Acknowledge'}>
+                      <Tooltip label={v2MoveAckTooltip || primaryActionLabel}>
                         <button
+                          data-testid="banner-acknowledge"
                           onClick={() => onAcknowledge?.()}
                           disabled={v2MoveBlocksAck}
                           className="flex-1 min-w-0 px-3 py-1 rounded text-[11px] font-semibold border border-dh-strong bg-dh-raised/60 text-dh hover:bg-dh-hover hover:text-dh transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                         >
-                          {v2MoveAckLabel}
+                          {primaryActionLabel}
                         </button>
                       </Tooltip>
                       {showBannerDismissCancel && (
@@ -2945,6 +3016,11 @@ export const DiceRoller = forwardRef(function DiceRoller({
   const containerIdRef = useRef(`dice-canvas-container-${Date.now()}`);
   const diceBoxRef     = useRef(null);
   const initDoneRef    = useRef(false);
+  const bannerStripRef = useRef(null);
+  const pendingBannerFlipRef = useRef(null);
+  const bannerExitTimersRef = useRef(new Map());
+  const [bannerExitEndIds, setBannerExitEndIds] = useState(() => new Set());
+  const [bannerSlotFlip, setBannerSlotFlip] = useState(null);
   const onBannerAcknowledgeRef = useRef(onBannerAcknowledge);
   const onBannerCancelRef      = useRef(onBannerCancel);
   useEffect(() => { onBannerAcknowledgeRef.current = onBannerAcknowledge; }, [onBannerAcknowledge]);
@@ -3006,7 +3082,7 @@ export const DiceRoller = forwardRef(function DiceRoller({
       }
       const isReplay = replayBannerIdsRef.current.has(nextId);
       if (isReplay) replayBannerIdsRef.current.delete(nextId);
-      if (!isReplay && entry.resolved) {
+      if (!isReplay && (entry.resolved || entry.exiting)) {
         // Banner was dismissed or already resolved — skip (replay allows resolved)
         diceQueueRef.current.shift();
         continue;
@@ -3047,8 +3123,7 @@ export const DiceRoller = forwardRef(function DiceRoller({
 
   // ── Banner management ──────────────────────────────────────────────────────
 
-  /** Purely visual dismissal — no callbacks fired. */
-  function dismissBannerById(bannerId) {
+  function applyBannerDismissSideEffects(bannerId) {
     const entry = activeBannersRef.current.find(b => b._bannerId === bannerId);
     if (!entry) return;
     if (
@@ -3062,8 +3137,92 @@ export const DiceRoller = forwardRef(function DiceRoller({
       if (animatingIdRef.current === bannerId) animatingIdRef.current = null;
     }
     diceQueueRef.current = diceQueueRef.current.filter(id => id !== bannerId);
+  }
+
+  function finishBannerExit(bannerId) {
+    const t = bannerExitTimersRef.current.get(bannerId);
+    if (t != null) {
+      clearTimeout(t);
+      bannerExitTimersRef.current.delete(bannerId);
+    }
     syncBanners(activeBannersRef.current.filter(b => b._bannerId !== bannerId));
+    setBannerExitEndIds((prev) => {
+      if (!prev.has(bannerId)) return prev;
+      const next = new Set(prev);
+      next.delete(bannerId);
+      return next;
+    });
+    if (!activeBannersRef.current.some(b => b.exiting)) {
+      setBannerSlotFlip(null);
+    }
+  }
+
+  /**
+   * Visual dismiss: slide the card off the map to the right (clipped at the
+   * adversary tray) and FLIP any banners to its left into the vacated spots.
+   */
+  function beginBannerExit(bannerIds) {
+    const ids = (Array.isArray(bannerIds) ? bannerIds : [bannerIds])
+      .filter((id) => id != null && id !== '');
+    const unique = [];
+    for (const id of ids) {
+      const entry = activeBannersRef.current.find(b => b._bannerId === id);
+      if (entry && !entry.exiting && !unique.includes(id)) unique.push(id);
+    }
+    if (unique.length === 0) return;
+
+    for (const id of unique) applyBannerDismissSideEffects(id);
+
+    if (prefersBannerStripExitReducedMotion() || !bannerStripRef.current) {
+      syncBanners(activeBannersRef.current.filter(b => !unique.includes(b._bannerId)));
+      processNextDice();
+      return;
+    }
+
+    const { slots } = measureBannerSlots(bannerStripRef.current);
+    const canAnimate = unique.every((id) => (slots.get(id)?.width ?? 0) > 0);
+    if (!canAnimate) {
+      syncBanners(activeBannersRef.current.filter(b => !unique.includes(b._bannerId)));
+      processNextDice();
+      return;
+    }
+
+    const prevPending = pendingBannerFlipRef.current;
+    const exitingIds = new Set(prevPending?.exitingIds);
+    for (const id of unique) exitingIds.add(id);
+    const prevSlots = new Map(prevPending?.prevSlots);
+    for (const [k, v] of slots) {
+      if (!prevSlots.has(k)) prevSlots.set(k, v);
+    }
+    pendingBannerFlipRef.current = { prevSlots, exitingIds };
+    setBannerSlotFlip(null);
+
+    syncBanners(activeBannersRef.current.map((b) => {
+      if (!unique.includes(b._bannerId)) return b;
+      const prev = prevSlots.get(b._bannerId) || slots.get(b._bannerId);
+      return {
+        ...b,
+        exiting: true,
+        exitLeft: prev?.left ?? 0,
+        exitBottom: prev?.bottom ?? 0,
+        exitWidth: prev?.width ?? 0,
+        exitTranslateX: bannerExitTranslateX(prev?.width ?? 0),
+      };
+    }));
+
+    for (const id of unique) {
+      const existing = bannerExitTimersRef.current.get(id);
+      if (existing != null) clearTimeout(existing);
+      bannerExitTimersRef.current.set(id, setTimeout(() => {
+        finishBannerExit(id);
+      }, BANNER_STRIP_EXIT_REMOVE_DELAY_MS));
+    }
     processNextDice();
+  }
+
+  /** Purely visual dismissal — no callbacks fired. */
+  function dismissBannerById(bannerId) {
+    beginBannerExit([bannerId]);
   }
 
   /** Find a banner by its DB id (_rollDbId) and dismiss it visually. Called by the pendingBanners sync effect. */
@@ -3116,7 +3275,7 @@ export const DiceRoller = forwardRef(function DiceRoller({
     diceBoxRef.current?.clearDice();
     animatingIdRef.current = null;
     diceQueueRef.current = [];
-    syncBanners([]);
+    beginBannerExit(activeBannersRef.current.map(b => b._bannerId));
   }
 
   /** Visual-only dismiss of the first banner. */
@@ -3159,6 +3318,59 @@ export const DiceRoller = forwardRef(function DiceRoller({
     resolveCurrentAndQueueInstantly();
     processNextDice();
   }, [diceCanvasHidden]);
+
+  const bannerExitingKey = activeBanners.filter((b) => b.exiting).map((b) => b._bannerId).join('|');
+  useLayoutEffect(() => {
+    const pending = pendingBannerFlipRef.current;
+    if (!pending) return undefined;
+
+    const { slots: nextSlots } = measureBannerSlots(bannerStripRef.current);
+    const motion = buildBannerExitMotion({
+      previousSlots: pending.prevSlots,
+      nextSlots,
+      exitingIds: pending.exitingIds,
+    });
+    setBannerSlotFlip({ invert: motion.invert, phase: 'start' });
+
+    let raf2 = 0;
+    const raf1 = requestAnimationFrame(() => {
+      raf2 = requestAnimationFrame(() => {
+        if (pendingBannerFlipRef.current === pending) pendingBannerFlipRef.current = null;
+        setBannerSlotFlip((prev) => (prev ? { ...prev, phase: 'end' } : { invert: motion.invert, phase: 'end' }));
+        setBannerExitEndIds((prev) => {
+          const next = new Set(prev);
+          for (const id of pending.exitingIds) next.add(id);
+          return next;
+        });
+      });
+    });
+    return () => {
+      cancelAnimationFrame(raf1);
+      cancelAnimationFrame(raf2);
+    };
+  }, [bannerExitingKey]);
+
+  useEffect(() => () => {
+    for (const t of bannerExitTimersRef.current.values()) clearTimeout(t);
+    bannerExitTimersRef.current.clear();
+  }, []);
+
+  function bannerSlotMotionStyle(slotId, exitEntry) {
+    if (exitEntry?.exiting) {
+      return bannerSlotExitStyle({
+        left: exitEntry.exitLeft,
+        bottom: exitEntry.exitBottom,
+        width: exitEntry.exitWidth,
+        translateX: exitEntry.exitTranslateX,
+        phase: bannerExitEndIds.has(exitEntry._bannerId) ? 'end' : 'start',
+      });
+    }
+    const invertX = bannerSlotFlip?.invert?.[slotId];
+    if (invertX != null) {
+      return bannerSlotFlipStyle({ invertX, phase: bannerSlotFlip.phase });
+    }
+    return bannerSlotRestStyle();
+  }
 
   // ── Public API (imperative) ────────────────────────────────────────────────
 
@@ -3369,7 +3581,16 @@ export const DiceRoller = forwardRef(function DiceRoller({
   // Canvas bottom inset is BANNER_MAX_HEIGHT + BANNER_STRIP_BOTTOM so dice settle above banners.
   return (
     <>
-    <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 15 }}>
+    <div style={{
+      position: 'absolute',
+      top: 0,
+      left: 0,
+      // Stop at the adversary tray so exiting banners clip behind it, not over it.
+      right: bannerStripRightOffset,
+      bottom: 0,
+      pointerEvents: 'none',
+      zIndex: 15,
+    }}>
       <div
         ref={containerRef}
         style={{
@@ -3384,16 +3605,24 @@ export const DiceRoller = forwardRef(function DiceRoller({
       {/* Banner strip — oldest at map bottom-right; newer stack left. Offsets clear the trays. */}
       {(activeBanners.length > 0 || preRollSlot) && (
         <div
+          ref={bannerStripRef}
           data-testid="banner-strip"
           style={bannerStripStyle({
             leftOffset: bannerStripLeftOffset,
-            rightOffset: bannerStripRightOffset,
+            // Overlay already ends at the adversary tray; keep only the strip's gap.
+            rightOffset: 0,
           })}
         >
           {activeBanners.map(entry => (
-            entry.roll._rest ? (
+            <div
+              key={entry._bannerId}
+              data-banner-slot={entry._bannerId}
+              data-testid={entry.exiting ? 'banner-slot-exiting' : 'banner-slot'}
+              aria-hidden={entry.exiting || undefined}
+              style={bannerSlotMotionStyle(entry._bannerId, entry)}
+            >
+            {entry.roll._rest ? (
               <RestBanner
-                key={entry._bannerId}
                 roll={entry.roll}
                 characters={restTableCharacters}
                 restMovesForRoll={entry.roll._rollDbId != null ? (restMovesSelections[entry.roll._rollDbId] || {}) : {}}
@@ -3417,7 +3646,6 @@ export const DiceRoller = forwardRef(function DiceRoller({
               />
             ) : entry.roll._action ? (
               <ActionBanner
-                key={entry._bannerId}
                 roll={entry.roll}
                 lifeSupportSelectedId={entry.roll._rollDbId != null ? lifeSupportSelections[entry.roll._rollDbId] : undefined}
                 onLifeSupportSelect={onLifeSupportSelect && entry.roll._rollDbId != null ? (instanceId) => onLifeSupportSelect(entry.roll._rollDbId, instanceId) : undefined}
@@ -3443,7 +3671,6 @@ export const DiceRoller = forwardRef(function DiceRoller({
               />
             ) : (
               <ResultBanner
-                key={entry._bannerId}
                 roll={{ ...entry.roll, _bannerId: entry._bannerId }}
                 resolved={entry.resolved}
                 onAcknowledge={!isPlayer && entry.roll._reactionCallRollDbId == null ? (opts) => {
@@ -3494,9 +3721,18 @@ export const DiceRoller = forwardRef(function DiceRoller({
                 canUseV2ReviewChips={canUseV2ReviewChips}
                 v2PendingMoveInfo={getV2PendingMoveBlockInfo?.(entry.roll) ?? { blocked: false, desiredCondition: '', description: '', featureName: '' }}
               />
-            )
+            )}
+            </div>
           ))}
-          {preRollSlot}
+          {preRollSlot ? (
+            <div
+              data-banner-slot={BANNER_STRIP_PRE_ROLL_SLOT_ID}
+              data-testid="banner-slot-preroll"
+              style={bannerSlotMotionStyle(BANNER_STRIP_PRE_ROLL_SLOT_ID)}
+            >
+              {preRollSlot}
+            </div>
+          ) : null}
         </div>
       )}
     </div>

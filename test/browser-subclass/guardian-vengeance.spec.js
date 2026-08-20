@@ -398,7 +398,7 @@ test.describe('Subclass video — Guardian / Vengeance', () => {
       // Rest Acknowledge prompts confirm when moves are empty — accept explicitly, then click
       // without the dice-banner force/resolve path (RestBanner has no pointer-events gate).
       gmPage.once('dialog', (dialog) => dialog.accept());
-      await restBanner.getByRole('button', { name: 'Acknowledge' }).click({ timeout: 15000 });
+      await restBanner.getByTestId('banner-acknowledge').click({ timeout: 15000 });
       await expect(restBanner).not.toBeVisible({ timeout: 10000 });
 
       await expect(async () => {

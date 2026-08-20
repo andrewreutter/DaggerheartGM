@@ -366,7 +366,7 @@ test('Regression: acknowledging Start Session does not pop the play-blocked dial
 
   await page.goto('/table/test-user-uid');
 
-  const ackButton = page.locator('button', { hasText: 'Acknowledge' }).first();
+  const ackButton = page.getByTestId('banner-acknowledge').first();
   await expect(ackButton).toBeVisible({ timeout: 10000 });
   await ackButton.click();
 

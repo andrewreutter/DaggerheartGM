@@ -48,6 +48,10 @@ const BANNER_STRIP_TRAY_GAP_PX = 16;
  * `pointerEvents: 'none'` so empty flex space (row-reverse leftover to the left
  * of the cards) does not steal map hover. Each RestBanner / ActionBanner /
  * ResultBanner re-enables `pointer-events: auto` on the card itself.
+ *
+ * `overflow: hidden` is load-bearing for dismiss: Apply / Dismiss / Cancel
+ * slides the card right and clips it at the adversary-tray edge (see
+ * `banner-strip-exit.js`).
  */
 export function bannerStripStyle({ leftOffset = 0, rightOffset = 0 } = {}) {
   return {

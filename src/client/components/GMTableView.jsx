@@ -1190,6 +1190,10 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
       }
     }
 
+    if (typeof target.hpLossOverride === 'number' && Number.isFinite(target.hpLossOverride)) {
+      wrappedRoll.hpLoss = Math.max(0, Math.floor(target.hpLossOverride));
+    }
+
     // Armor reduction when a slot is used
     if (applyReduction) {
       let reduction = 1;
@@ -1381,6 +1385,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
   // dmgType: 'phy' | 'mag' | '' — damage type extracted from the roll (Phase 3)
   const handleApplyDamage = async (target, dmgTotal, tags = [], roll = null, dmgType = '') => {
     if (roll?._treatAsMissForTarget === target.instanceId) return;
+    if (typeof target.hpLossOverride === 'number' && target.hpLossOverride <= 0) return;
     if (target.type === 'companion') {
       const parentId = target.parentInstanceId;
       const parentEl = parentId

@@ -477,7 +477,7 @@ test.describe('Subclass video — Wizard / School of Knowledge', () => {
       await caption('GM', 'Acknowledges the (re)rolled attack', '3 Hope spent from Quill');
       if (
         await nttBanner
-          .getByRole('button', { name: 'Acknowledge' })
+          .getByTestId('banner-acknowledge')
           .first()
           .isVisible({ timeout: 3000 })
           .catch(() => false)

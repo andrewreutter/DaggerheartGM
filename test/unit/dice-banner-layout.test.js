@@ -34,5 +34,7 @@ describe('dice-banner-layout', () => {
     // Empty strip chrome must not capture map pointermove (token hover).
     // Banner cards re-enable pointer-events: auto on themselves.
     expect(style.pointerEvents).toBe('none');
+    // Dismiss slides cards right; hidden overflow clips them at the tray edge.
+    expect(style.overflow).toBe('hidden');
   });
 });

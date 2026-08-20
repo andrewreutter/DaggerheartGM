@@ -93,8 +93,8 @@ export function classifyAttackAgainstTarget(roll, target, opts = {}) {
 }
 
 /**
- * Acknowledge applies HP only when the attack is not a known miss.
- * Skip still dismisses without damage.
+ * Acknowledge / Apply marks HP only when the attack is not a known miss
+ * (unless the GM raised that target's HP stepper above 0).
  *
  * @param {object} roll
  * @param {object|null|undefined} target

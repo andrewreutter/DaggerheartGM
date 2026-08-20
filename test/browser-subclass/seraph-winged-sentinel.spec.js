@@ -366,7 +366,7 @@ test.describe('Subclass video — Seraph / Winged Sentinel', () => {
       await playerPage.keyboard.press('Escape');
       const lifeSupportBanner = gmPage.locator('.dice-result-banner', { hasText: 'Life Support' });
       await expect(lifeSupportBanner).toBeVisible({ timeout: 8000 });
-      const lifeSupportAck = lifeSupportBanner.getByRole('button', { name: 'Acknowledge' });
+      const lifeSupportAck = lifeSupportBanner.getByTestId('banner-acknowledge');
       // Sheet select already posts `life-support-select`. A second banner click would toggle
       // the selection off (`sendLifeSupportSelect` deselects) and leave Ack disabled.
       if (!(await lifeSupportAck.isEnabled().catch(() => false))) {
