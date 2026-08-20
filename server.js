@@ -73,6 +73,8 @@ import { computePlayerV2CrossSheetChipApply } from './src/server/v2-player-cross
 import { computePlayerV2OwnedCardChipApply } from './src/server/v2-player-owned-card-chip.js';
 import { computePlayerV2ReviewChipApply, loadSrdDataForV2Engine } from './src/server/v2-player-review-chip.js';
 import { applyBannerReviewMetaPersist } from './src/server/v2-banner-review-meta.js';
+import { collectBannerIdsByIntentField, collectReactionCallChildBannerIds } from './src/client/lib/owned-roll-banner.js';
+import { setLivePendingIntentsGetter, sweepOrphanedOwnedBanners } from './src/server/owned-banner-sweep.js';
 import { buildCharacterAiFromConcept } from './src/llm-character-builder.js';
 import { buildAdversaryAiFromConcept } from './src/llm-adversary-builder.js';
 import { buildEnvironmentAiFromConcept } from './src/llm-environment-builder.js';
@@ -1178,6 +1180,7 @@ async function resolveDisplayNameForMapPing(req) {
 //   openedByRole, _initiatorUid, _initiatorEmail, _assignedPlayerEmails, _assignedPlayerUid,
 //   clientWriteSeq, timestamp }
 const pendingIntents = new Map();
+setLivePendingIntentsGetter(() => pendingIntents);
 
 function writeFilteredRollHistory(res, rolls, viewer) {
   const filtered = filterRollsForViewer(rolls, viewer);
@@ -1236,9 +1239,7 @@ async function ackGroupRollCollaboratorBanners(gmUid, intentId) {
   if (!gmUid || intentId == null || intentId === '') return;
   try {
     const pending = await getPendingBanners(APP_ID, gmUid);
-    const ids = (pending || [])
-      .filter((b) => b._groupRollIntentId === intentId && b._rollDbId != null)
-      .map((b) => b._rollDbId);
+    const ids = collectBannerIdsByIntentField(pending, '_groupRollIntentId', intentId);
     for (const id of ids) {
       await setBannerStatus(id, 'acknowledged');
     }
@@ -1253,9 +1254,7 @@ async function ackTagTeamBanners(gmUid, intentId) {
   if (!gmUid || intentId == null || intentId === '') return;
   try {
     const pending = await getPendingBanners(APP_ID, gmUid);
-    const ids = (pending || [])
-      .filter((b) => b._tagTeamIntentId === intentId && b._rollDbId != null)
-      .map((b) => b._rollDbId);
+    const ids = collectBannerIdsByIntentField(pending, '_tagTeamIntentId', intentId);
     for (const id of ids) {
       await setBannerStatus(id, 'cancelled');
     }
@@ -4076,9 +4075,25 @@ app.post('/api/room/my/banner-ack', requireAuth, async (req, res) => {
 
   if (bannerId) {
     const status = action === 'cancel' ? 'cancelled' : 'acknowledged';
-    setBannerStatus(bannerId, status)
-      .then(() => subscriptionManager.notifyChange('banners', req.uid))
-      .catch(err => console.error('[banner] DB status update failed:', err.message));
+    (async () => {
+      try {
+        let childIds = [];
+        if (process.env.DATABASE_URL) {
+          const row = await getDiceRollById(APP_ID, req.uid, bannerId);
+          if (row?.data?._reactionCall === true) {
+            const pending = await getPendingBanners(APP_ID, req.uid);
+            childIds = collectReactionCallChildBannerIds(pending, row.id ?? bannerId);
+          }
+        }
+        const ids = [bannerId, ...childIds.filter((id) => Number(id) !== Number(bannerId))];
+        for (const id of ids) {
+          await setBannerStatus(id, status);
+        }
+        subscriptionManager.notifyChange('banners', req.uid);
+      } catch (err) {
+        console.error('[banner] DB status update failed:', err.message);
+      }
+    })();
   }
 
   const payload = { ok: true };
@@ -4973,7 +4988,16 @@ app.delete('/api/room/:tableId/intent', requireAuth, async (req, res) => {
     return res.status(403).json({ error: 'Read-only observer' });
   }
   const cas = resolveDeleteIntentCas(existing, intentId);
-  if (!cas.ok) return res.status(cas.status).json({ error: cas.error });
+  if (!cas.ok) {
+    if (cas.status === 409 && ctx.gmUid) {
+      try {
+        await sweepOrphanedOwnedBanners(APP_ID, ctx.gmUid);
+      } catch (err) {
+        console.error('[owned-banner] sweep after dead intent failed:', err.message);
+      }
+    }
+    return res.status(cas.status).json({ error: cas.error });
+  }
   if (existing._groupRoll) {
     await ackGroupRollCollaboratorBanners(ctx.gmUid, existing.intentId);
   }
@@ -5090,8 +5114,8 @@ app.post('/api/room/:tableId/intent/group', requireAuth, async (req, res) => {
   res.json({ ok: true });
 });
 
-// POST /api/room/:tableId/intent/tag-team — Toggle / setPartner / setTrait.
-// Body: { intentId, action, instanceId?, trait?, active? }. Does not accept a full-intent PATCH.
+// POST /api/room/:tableId/intent/tag-team — Toggle / setPartner / setTrait / setPartnerPending.
+// Body: { intentId, action, instanceId?, trait?, active?, pending?, chips?, clear? }. Does not accept a full-intent PATCH.
 app.post('/api/room/:tableId/intent/tag-team', requireAuth, async (req, res) => {
   const ctx = await resolveTableAccess(APP_ID, req.params.tableId, req);
   if (ctx.error) return res.status(ctx.error).json({ error: ctx.message });
@@ -5119,6 +5143,8 @@ app.post('/api/room/:tableId/intent/tag-team', requireAuth, async (req, res) => 
     instanceId,
     trait: body.trait,
     active: body.active === true,
+    pending: body.pending,
+    clear: body.clear === true,
     viewer,
     isGm,
     memberEl,
@@ -5131,6 +5157,9 @@ app.post('/api/room/:tableId/intent/tag-team', requireAuth, async (req, res) => 
     instanceId,
     trait: body.trait,
     active: body.active === true,
+    pending: body.pending,
+    chips: body.chips,
+    clear: body.clear === true,
   }, { activeElements: tableElements });
   if (wasOn && !updated._tagTeam) {
     await ackTagTeamBanners(gmUid, existing.intentId);
@@ -5162,13 +5191,20 @@ app.post('/api/room/:tableId/banner-tag-team-choose', requireAuth, async (req, r
       return res.status(409).json({ error: 'Both Tag Team rolls must be pending' });
     }
     const combined = combineTagTeamDamage(chosen, discarded);
+    const requestedType = typeof req.body?.damageType === 'string' ? req.body.damageType.trim() : '';
+    if (combined?.needsTypePick && !combined.types.includes(requestedType)) {
+      return res.status(400).json({ error: 'damageType required' });
+    }
+    const stampedType = combined?.needsTypePick
+      ? requestedType
+      : (combined?.type || requestedType || '');
     const patch = {
       _tagTeamChosen: true,
       ...(combined ? {
         _tagTeamPeerDamageTotal: combined.peerTotal,
         _tagTeamDamageTypes: combined.types,
-        _tagTeamNeedDamageTypePick: combined.needsTypePick,
-        ...(combined.type ? { _tagTeamDamageType: combined.type } : {}),
+        _tagTeamNeedDamageTypePick: false,
+        ...(stampedType ? { _tagTeamDamageType: stampedType } : {}),
       } : {}),
     };
     await updateDiceRollData(APP_ID, gmUid, chosen._rollDbId, patch);

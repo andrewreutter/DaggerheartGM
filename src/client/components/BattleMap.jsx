@@ -8635,12 +8635,12 @@ export function BattleMap({
             parentCharacterEl={el.elementType === 'boardToken' ? parentByInstanceId.get(el.parentInstanceId) : undefined}
             adversaryEncounterCard={
               el.elementType === 'adversary' && typeof renderAdversaryEncounterCard === 'function'
-                ? renderAdversaryEncounterCard(el)
+                ? renderAdversaryEncounterCard(el, { onDismissOverlay: () => setPinnedToken(null) })
                 : null
             }
             adversaryTargetAid={
               el.elementType === 'adversary' && typeof renderAdversaryTargetAid === 'function'
-                ? renderAdversaryTargetAid(el)
+                ? renderAdversaryTargetAid(el, { onDismissOverlay: () => setPinnedToken(null) })
                 : null
             }
             adversaryPinInstanceNum={advPinInstanceNum}

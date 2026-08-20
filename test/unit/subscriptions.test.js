@@ -17,6 +17,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 // without a real database.
 vi.mock('../../src/db.js', () => ({
   getPendingBanners: vi.fn(),
+  setBannerStatus: vi.fn(),
   getResolvedTableState: vi.fn(),
   invalidateCharacterLibraryCache: vi.fn(),
   listTableStates: vi.fn(),

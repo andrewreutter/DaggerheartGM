@@ -6,6 +6,7 @@ import {
   canEditTagTeamPartner,
   canToggleTagTeam,
   combineTagTeamDamage,
+  resolveTagTeamBannerDamage,
   eligibleTagTeamPartners,
   extractTagTeamDamage,
   isLocalTagTeamPartnerPreRoll,
@@ -13,8 +14,12 @@ import {
   isTagTeamOwnedBanner,
   isTagTeamPendingChoice,
   isLocalTagTeamPartnerMeta,
+  isPendingTagTeamPartnerActor,
   isTagTeamReactionMeta,
   planTagTeamAckEffects,
+  shouldShowTagTeamWaitBanner,
+  stampTagTeamPartnerActionMeta,
+  tagTeamSharedTargetId,
   seedTagTeamPartner,
   shouldHydrateSharedIntentOverLocalTagTeam,
   shouldWriteSharedPreRollIntentForTagTeam,
@@ -62,7 +67,7 @@ const tableIntent = {
   _assignedPlayerEmails: ['a@example.com'],
   _assignedPlayerUid: 'player-a',
   _rollVisibility: 'table',
-  pending: { meta: { _attackerInstanceId: 'ada' } },
+  pending: { meta: { _attackerInstanceId: 'ada', _weaponRangeFt: 5 } },
   _tagTeam: false,
   tagTeamPartner: null,
   tagTeamPartnerInstanceId: null,
@@ -117,6 +122,13 @@ describe('canToggle / canEdit / canChoose', () => {
     expect(canToggleTagTeam(GM, tableIntent)).toBe(true);
     expect(canToggleTagTeam(PLAYER_A, tableIntent)).toBe(true);
     expect(canToggleTagTeam(PLAYER_B, tableIntent)).toBe(false);
+  });
+
+  it('does not allow Tag Team on a trait roll', () => {
+    expect(canToggleTagTeam(GM, {
+      ...tableIntent,
+      pending: { meta: { _attackerInstanceId: 'ada', _traitKey: 'agility' } },
+    })).toBe(false);
   });
 
   it('lets the assigned partner edit their row', () => {
@@ -245,6 +257,124 @@ describe('validateTagTeamRequest', () => {
       memberEl: beau,
     }).ok).toBe(true);
   });
+
+  it('accepts setPartnerPending from the partner and rejects a trait', () => {
+    const on = applyTagTeamAction(tableIntent, { action: 'toggle', active: true }, {
+      activeElements: elements,
+    });
+    expect(validateTagTeamRequest({
+      intent: on,
+      intentId: 'int-1',
+      action: 'setPartnerPending',
+      instanceId: 'beau',
+      pending: { meta: { _weaponRangeFt: 5 } },
+      viewer: PLAYER_B,
+      activeElements: elements,
+      memberEl: beau,
+    }).ok).toBe(true);
+    expect(validateTagTeamRequest({
+      intent: on,
+      intentId: 'int-1',
+      action: 'setPartnerPending',
+      instanceId: 'beau',
+      pending: { meta: { _traitKey: 'agility' } },
+      viewer: PLAYER_B,
+      activeElements: elements,
+      memberEl: beau,
+    }).status).toBe(400);
+  });
+});
+
+describe('partner sheet action / wait banner', () => {
+  const on = applyTagTeamAction({
+    ...tableIntent,
+    targetInstanceId: 'goblin-1',
+    pending: { meta: { _attackerInstanceId: 'ada', _selectedTargetInstanceId: 'goblin-1', _weaponRangeFt: 5 } },
+  }, { action: 'toggle', active: true }, { activeElements: elements });
+
+  it('identifies the pending partner and shared target', () => {
+    expect(isPendingTagTeamPartnerActor(on, 'beau')).toBe(true);
+    expect(isPendingTagTeamPartnerActor(on, 'ada')).toBe(false);
+    expect(tagTeamSharedTargetId(on)).toBe('goblin-1');
+  });
+
+  it('stamps a sheet attack as the partner Duality with the same target', () => {
+    const stamped = stampTagTeamPartnerActionMeta(on, {
+      _attackerInstanceId: 'beau',
+      _traitKey: 'agility',
+      _weaponRangeFt: 5,
+    });
+    expect(stamped._tagTeamIntentId).toBe('int-1');
+    expect(stamped._tagTeamRole).toBe('partner');
+    expect(stamped._tagTeamPartnerInstanceId).toBe('beau');
+    expect(stamped._selectedTargetInstanceId).toBe('goblin-1');
+    expect(stamped._isReaction).toBe(false);
+    expect(stamped._intentPanelForActionRoll).toBe(true);
+  });
+
+  it('does not stamp reactions, trait rolls, or mechanical resume dice', () => {
+    expect(stampTagTeamPartnerActionMeta(on, { _isReaction: true })._tagTeamIntentId).toBeUndefined();
+    expect(stampTagTeamPartnerActionMeta(on, { _skipPreRollIntent: true })._tagTeamIntentId).toBeUndefined();
+    expect(stampTagTeamPartnerActionMeta(on, {
+      _attackerInstanceId: 'beau',
+      _traitKey: 'agility',
+    })._tagTeamIntentId).toBeUndefined();
+  });
+
+  it('stores a partner attack pre-roll on the shared intent', () => {
+    const withPending = applyTagTeamAction(on, {
+      action: 'setPartnerPending',
+      instanceId: 'beau',
+      pending: {
+        rollText: 'Beau Shortsword',
+        displayName: 'Beau Shortsword',
+        meta: { _attackerInstanceId: 'beau', _weaponRangeFt: 5 },
+      },
+      chips: [],
+    });
+    expect(withPending.tagTeamPartnerPending.characterInstanceId).toBe('beau');
+    expect(shouldShowTagTeamWaitBanner({
+      tagTeam: true,
+      partner: withPending.tagTeamPartner,
+      partnerPending: withPending.tagTeamPartnerPending,
+    })).toBe(false);
+    const cleared = applyTagTeamAction(withPending, {
+      action: 'setPartnerPending',
+      clear: true,
+    });
+    expect(cleared.tagTeamPartnerPending).toBeUndefined();
+  });
+
+  it('drops partner pending when the partner is swapped or Tag Team turns off', () => {
+    const withPending = applyTagTeamAction(on, {
+      action: 'setPartnerPending',
+      instanceId: 'beau',
+      pending: { meta: { _weaponRangeFt: 5 } },
+    });
+    const swapped = applyTagTeamAction(withPending, { action: 'setPartner', instanceId: 'cara' }, {
+      activeElements: elements,
+    });
+    expect(swapped.tagTeamPartnerPending).toBeUndefined();
+    const again = applyTagTeamAction(withPending, { action: 'toggle', active: false });
+    expect(again.tagTeamPartnerPending).toBeUndefined();
+  });
+
+  it('shows the wait banner until the partner pre-roll is open', () => {
+    expect(shouldShowTagTeamWaitBanner({
+      tagTeam: true,
+      partner: on.tagTeamPartner,
+      localPartnerPreRoll: false,
+    })).toBe(true);
+    expect(shouldShowTagTeamWaitBanner({
+      tagTeam: true,
+      partner: on.tagTeamPartner,
+      localPartnerPreRoll: true,
+    })).toBe(false);
+    expect(shouldShowTagTeamWaitBanner({
+      tagTeam: true,
+      partner: { ...on.tagTeamPartner, status: 'rolled' },
+    })).toBe(false);
+  });
 });
 
 describe('local partner overlay', () => {
@@ -283,6 +413,27 @@ describe('combine damage / ack effects', () => {
     expect(mixed.peerTotal).toBe(7);
     expect(mixed.needsTypePick).toBe(true);
     expect(mixed.types).toEqual(['phy', 'mag']);
+  });
+
+  it('previews peer damage on each pending banner', () => {
+    const live = resolveTagTeamBannerDamage(phy, mag);
+    expect(live.peerTotal).toBe(7);
+    expect(live.needsTypePick).toBe(true);
+    expect(resolveTagTeamBannerDamage(mag, phy).peerTotal).toBe(11);
+    const afterChoose = resolveTagTeamBannerDamage({
+      ...phy,
+      _tagTeamChosen: true,
+      _tagTeamPeerDamageTotal: 7,
+      _tagTeamDamageType: 'mag',
+      _tagTeamNeedDamageTypePick: false,
+      _tagTeamDamageTypes: ['phy', 'mag'],
+    }, null);
+    expect(afterChoose).toEqual({
+      peerTotal: 7,
+      type: 'mag',
+      needsTypePick: false,
+      types: ['phy', 'mag'],
+    });
   });
 
   it('spends initiator Hope then grants Hope to every involved PC', () => {

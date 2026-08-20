@@ -2,9 +2,12 @@
  * Tag Team Rolls — core table mechanic (not a V2 feature module).
  *
  * The initiator’s pending intent stays the single table session. The partner
- * opens a local Duality action pre-roll (not a reaction) that does not
- * `POST /intent` or replace the leader session. Both result banners stay
- * pending until someone chooses which Duality applies; the discarded banner
+ * takes a full distinct attack (same target) from their sheet; that opens a
+ * Duality pre-roll that does not replace the leader session. A wait banner
+ * shows until that partner pre-roll opens. Both pre-roll banners stay visible
+ * to the table. Both result banners stay pending until someone chooses which
+ * Duality applies; each pending banner previews the other’s damage on its
+ * total. Mixed phy/mag types pick beside Use this roll. The discarded banner
  * is cancelled. Hope/Fear and the initiator’s 3 Hope + session slot are
  * resolved on Apply of the chosen roll.
  */
@@ -13,6 +16,7 @@ import { canViewerSeeIntent } from './roll-visibility.js';
 import { isCharacterAssignedToPlayer } from './character-assignment.js';
 import { TRAIT_KEYS } from './character-calc.js';
 import { isPreRollBannerInteractive } from './pre-roll-intent.js';
+import { isAttackRollMeta } from './action-roll-difficulty.js';
 import {
   DEFAULT_TAG_TEAM_INITIATIONS_PER_SESSION,
   DEFAULT_TAG_TEAM_INITIATOR_HOPE_COST,
@@ -30,13 +34,104 @@ export function isTagTeamReactionMeta(meta) {
 }
 
 /**
- * Partner Duality overlay (not a reaction) — hide Group / Tag Team checkboxes.
+ * Partner Duality overlay (not a reaction) — hide the Action / Group / Tag Team selector.
  * @param {unknown} meta
  * @returns {boolean}
  */
 export function isLocalTagTeamPartnerMeta(meta) {
   if (!meta || typeof meta !== 'object') return false;
   return !!(meta._tagTeamIntentId && meta._tagTeamRole === 'partner');
+}
+
+/**
+ * Shared target the partner must use (initiator pre-roll or pending meta).
+ * @param {object | null | undefined} intent
+ * @returns {string | null}
+ */
+export function tagTeamSharedTargetId(intent) {
+  if (!intent || typeof intent !== 'object') return null;
+  const fromIntent = intent.targetInstanceId;
+  if (fromIntent != null && fromIntent !== '') return String(fromIntent);
+  const fromMeta = intent.pending?.meta?._selectedTargetInstanceId;
+  if (fromMeta != null && fromMeta !== '') return String(fromMeta);
+  return null;
+}
+
+/**
+ * Pending Tag Team partner who has not rolled yet.
+ * @param {object | null | undefined} intent
+ * @param {string | null | undefined} actorInstanceId
+ * @returns {boolean}
+ */
+export function isPendingTagTeamPartnerActor(intent, actorInstanceId) {
+  if (!intent?._tagTeam || !intent.intentId || !actorInstanceId) return false;
+  const partner = intent.tagTeamPartner;
+  if (!partner || partner.status !== 'pending') return false;
+  return String(partner.instanceId) === String(actorInstanceId);
+}
+
+/**
+ * Stamp a sheet **attack** as the Tag Team partner’s distinct action (same target).
+ * Trait rolls and other non-attacks are ignored. Skips reactions, group leftovers,
+ * and mechanical `rollThenResume` dice.
+ *
+ * @param {object | null | undefined} intent
+ * @param {object} [meta]
+ * @returns {object}
+ */
+export function stampTagTeamPartnerActionMeta(intent, meta = {}) {
+  if (!meta || typeof meta !== 'object') return meta;
+  if (!intent?._tagTeam || !intent.intentId) return meta;
+  if (!isAttackRollMeta(meta)) return meta;
+  if (meta._isReaction || meta._reactionCall || meta._groupRollIntentId) return meta;
+  if (meta._skipPreRollIntent || meta._v2PhysicalRollResume) return meta;
+  if (meta._tagTeamIntentId && meta._tagTeamRole === 'partner') {
+    const targetId = tagTeamSharedTargetId(intent);
+    if (targetId && !meta._selectedTargetInstanceId) {
+      return { ...meta, _selectedTargetInstanceId: targetId };
+    }
+    return meta;
+  }
+  const partnerId = intent.tagTeamPartner?.instanceId;
+  if (!partnerId) return meta;
+  const initiatorId = intent.characterInstanceId || intent.pending?.meta?._attackerInstanceId;
+  const targetId = tagTeamSharedTargetId(intent);
+  return {
+    ...meta,
+    _tagTeamIntentId: intent.intentId,
+    _tagTeamRole: 'partner',
+    _tagTeamInitiatorInstanceId: initiatorId ?? null,
+    _tagTeamPartnerInstanceId: partnerId,
+    ...(targetId ? { _selectedTargetInstanceId: targetId } : {}),
+    _isReaction: false,
+    _intentPanelForActionRoll: true,
+    _deferExperienceToPreRoll: true,
+  };
+}
+
+/**
+ * Wait banner while the partner has not opened their own pre-roll yet.
+ * @param {{
+ *   tagTeam?: boolean,
+ *   partner?: object | null,
+ *   localPartnerPreRoll?: boolean,
+ *   partnerPending?: object | null,
+ * }} args
+ * @returns {boolean}
+ */
+export function shouldShowTagTeamWaitBanner({
+  tagTeam = false,
+  partner = null,
+  localPartnerPreRoll = false,
+  partnerPending = null,
+} = {}) {
+  return !!(
+    tagTeam
+    && partner
+    && partner.status === 'pending'
+    && !localPartnerPreRoll
+    && !partnerPending
+  );
 }
 
 /**
@@ -105,6 +200,7 @@ export function eligibleTagTeamPartners({
 export function canToggleTagTeam(viewer, intent) {
   if (!intent) return false;
   if (isTagTeamReactionIntent(intent)) return false;
+  if (!isAttackRollMeta(intent.pending?.meta)) return false;
   return isPreRollBannerInteractive(intent, viewer);
 }
 
@@ -291,7 +387,7 @@ export function extractTagTeamDamage(roll) {
 }
 
 /**
- * Sum both players’ damage dice. Types that differ need a pick before Apply.
+ * Sum both players’ damage dice. Types that differ need a pick beside Use this roll.
  *
  * @param {object | null | undefined} chosenRoll
  * @param {object | null | undefined} peerRoll
@@ -314,6 +410,41 @@ export function combineTagTeamDamage(chosenRoll, peerRoll) {
     needsTypePick: unique.length > 1,
     types: unique,
   };
+}
+
+/**
+ * Peer damage + type pick for a Tag Team result banner.
+ * While both banners are pending, uses the live peer roll so each card can
+ * preview the other's damage. After choose, uses stamped fields (peer is gone).
+ *
+ * @param {object | null | undefined} roll
+ * @param {object | null | undefined} peerRoll
+ * @returns {{
+ *   peerTotal: number,
+ *   type: string | null,
+ *   needsTypePick: boolean,
+ *   types: string[],
+ * }}
+ */
+export function resolveTagTeamBannerDamage(roll, peerRoll = null) {
+  if (peerRoll) {
+    return combineTagTeamDamage(roll, peerRoll) || {
+      peerTotal: 0,
+      type: null,
+      needsTypePick: false,
+      types: [],
+    };
+  }
+  if (roll?._tagTeamChosen) {
+    const types = Array.isArray(roll._tagTeamDamageTypes) ? roll._tagTeamDamageTypes : [];
+    return {
+      peerTotal: Number(roll._tagTeamPeerDamageTotal) || 0,
+      type: roll._tagTeamDamageType || (types.length === 1 ? types[0] : null) || null,
+      needsTypePick: !!roll._tagTeamNeedDamageTypePick,
+      types,
+    };
+  }
+  return { peerTotal: 0, type: null, needsTypePick: false, types: [] };
 }
 
 /**
@@ -376,6 +507,9 @@ export function planTagTeamAckEffects({
  *   instanceId?: string,
  *   trait?: string,
  *   active?: boolean,
+ *   pending?: object,
+ *   chips?: object[],
+ *   clear?: boolean,
  *   chosenRollDbId?: number | string,
  * }} body
  * @param {{
@@ -407,13 +541,37 @@ export function applyTagTeamAction(intent, body = {}, ctx = {}) {
         timestamp: Date.now(),
       };
       delete next._rollVisibility;
+      delete next.tagTeamPartnerPending;
       return next;
     }
-    return {
+    const off = {
       ...intent,
       _tagTeam: false,
       tagTeamPartner: null,
       tagTeamPartnerInstanceId: null,
+      timestamp: Date.now(),
+    };
+    delete off.tagTeamPartnerPending;
+    return off;
+  }
+  if (action === 'setPartnerPending') {
+    if (!intent._tagTeam) return intent;
+    if (body.clear === true) {
+      const cleared = { ...intent, timestamp: Date.now() };
+      delete cleared.tagTeamPartnerPending;
+      return cleared;
+    }
+    const instanceId = String(body.instanceId || '').trim();
+    if (!instanceId || intent.tagTeamPartner?.instanceId !== instanceId) return intent;
+    const pending = body.pending && typeof body.pending === 'object' ? body.pending : null;
+    if (!pending || !isAttackRollMeta(pending.meta)) return intent;
+    return {
+      ...intent,
+      tagTeamPartnerPending: {
+        characterInstanceId: instanceId,
+        pending,
+        chips: Array.isArray(body.chips) ? body.chips : [],
+      },
       timestamp: Date.now(),
     };
   }
@@ -425,7 +583,7 @@ export function applyTagTeamAction(intent, body = {}, ctx = {}) {
     const el = (Array.isArray(ctx.activeElements) ? ctx.activeElements : [])
       .find((e) => e?.instanceId === instanceId && e.elementType === 'character') || null;
     if (!el) return intent;
-    return {
+    const next = {
       ...intent,
       tagTeamPartnerInstanceId: instanceId,
       tagTeamPartner: {
@@ -436,6 +594,8 @@ export function applyTagTeamAction(intent, body = {}, ctx = {}) {
       },
       timestamp: Date.now(),
     };
+    delete next.tagTeamPartnerPending;
+    return next;
   }
   if (action === 'setTrait') {
     const instanceId = String(body.instanceId || '').trim();
@@ -469,7 +629,7 @@ export function applyTagTeamPartnerResult(intent, {
   if (!id || intent.tagTeamPartner.instanceId !== id) return intent;
   if (intent.tagTeamPartner.status !== 'pending') return intent;
   const numericTotal = Number(total);
-  return {
+  const next = {
     ...intent,
     tagTeamPartner: {
       ...intent.tagTeamPartner,
@@ -481,6 +641,8 @@ export function applyTagTeamPartnerResult(intent, {
     },
     timestamp: Date.now(),
   };
+  delete next.tagTeamPartnerPending;
+  return next;
 }
 
 /**
@@ -505,6 +667,8 @@ export function validateTagTeamRequest({
   instanceId,
   trait,
   active,
+  pending,
+  clear,
   viewer = {},
   isGm = false,
   memberEl = null,
@@ -532,6 +696,36 @@ export function validateTagTeamRequest({
       if (eligible.length === 0) {
         return { ok: false, status: 400, error: 'No other characters on the table' };
       }
+    }
+    return { ok: true };
+  }
+  if (action === 'setPartnerPending') {
+    if (!intent._tagTeam) {
+      return { ok: false, status: 400, error: 'Tag Team is not active' };
+    }
+    const id = typeof instanceId === 'string' ? instanceId.trim() : '';
+    if (clear === true) {
+      if (!canToggleTagTeam(viewer, intent) && !canEditTagTeamPartner(viewer, id || intent.tagTeamPartner?.instanceId, { isGm, memberEl, activeElements })) {
+        return { ok: false, status: 403, error: 'Cannot clear Tag Team partner action' };
+      }
+      return { ok: true };
+    }
+    if (!id) {
+      return { ok: false, status: 400, error: 'instanceId required' };
+    }
+    if (intent.tagTeamPartner?.instanceId !== id) {
+      return { ok: false, status: 400, error: 'Not the Tag Team partner' };
+    }
+    if (!isAttackRollMeta(pending?.meta)) {
+      return { ok: false, status: 400, error: 'Tag Team partner must take an attack' };
+    }
+    const el = memberEl || (Array.isArray(activeElements) ? activeElements : [])
+      .find((e) => e?.instanceId === id) || null;
+    if (!el || el.elementType !== 'character') {
+      return { ok: false, status: 400, error: 'Unknown character' };
+    }
+    if (!canEditTagTeamPartner(viewer, id, { isGm, memberEl: el, activeElements })) {
+      return { ok: false, status: 403, error: 'Not assigned to this character' };
     }
     return { ok: true };
   }

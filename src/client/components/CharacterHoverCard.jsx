@@ -215,6 +215,8 @@ export function CharacterHoverCard({
   consumePendingStressForManualMark,
   isPlayer = false,
   getValidTargets,
+  /** When set (Tag Team partner), skip the in-sheet target menu and use this target. */
+  forcedActionTarget = null,
   system,
   characters,
   fearCount = 0,
@@ -742,6 +744,14 @@ export function CharacterHoverCard({
       // GM and players select the target when initiating the action.
       // Skip picker for force-action features (e.g. Elemental Incarnation Fire/Water) where target is unused.
       if (action.targetType === 'adversary' && getValidTargets && onActionNotification && !forceAction) {
+        if (forcedActionTarget?.instanceId) {
+          onActionNotification?.({
+            ...notification,
+            _selectedTargetInstanceId: forcedActionTarget.instanceId,
+            _selectedTargetName: forcedActionTarget.name,
+          });
+          return;
+        }
         const closeFt = rangeBandNameToFt('Close') ?? 30;
         let validTargets = getValidTargets(el.instanceId, { weaponRangeFt: closeFt }) ?? [];
         if (validTargets.length === 0) {
@@ -872,6 +882,16 @@ export function CharacterHoverCard({
       displayName = `${el.name} ${weaponLabel} with Ranger's Focus attempt`;
     }
 
+    if (forcedActionTarget?.instanceId) {
+      const status = sendWeaponRoll(rollText, displayName, {
+        ...rollMeta,
+        _selectedTargetInstanceId: forcedActionTarget.instanceId,
+      }, opts);
+      if (status !== 'spotlight-requested' && rollMeta._rangerFocusAttempt && updateFn) {
+        updateFn(el.instanceId, { rangerFocusOnNextAttack: false });
+      }
+      return;
+    }
     if (getValidTargets && rollMeta._weaponRangeFt != null) {
       const validTargets = getValidTargets(el.instanceId, {
         weaponRangeFt: rollMeta._weaponRangeFt,
@@ -983,6 +1003,13 @@ export function CharacterHoverCard({
     if (range) {
       const ft = rangeBandNameToFt(range);
       if (ft != null) beastformRollMeta._weaponRangeFt = ft;
+    }
+    if (forcedActionTarget?.instanceId) {
+      onRoll(rollText, displayName, {
+        ...beastformRollMeta,
+        _selectedTargetInstanceId: forcedActionTarget.instanceId,
+      }, { characterEl: el });
+      return;
     }
     if (getValidTargets && beastformRollMeta._weaponRangeFt != null) {
       const validTargets = getValidTargets(el.instanceId, {

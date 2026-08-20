@@ -1188,28 +1188,30 @@ export const postTableIntentGroup = async (tableId, { intentId, action, instance
 };
 
 /**
- * Dedicated Tag Team write — toggle / setPartner / setTrait. Does not PATCH the rest
+ * Dedicated Tag Team write — toggle / setPartner / setTrait / setPartnerPending. Does not PATCH the rest
  * of the intent (would clobber chips / concurrent helper writes).
  */
-export const postTableIntentTagTeam = async (tableId, { intentId, action, instanceId, trait, active }) => {
+export const postTableIntentTagTeam = async (tableId, {
+  intentId, action, instanceId, trait, active, pending, chips, clear,
+}) => {
   const token = await getAuthToken();
   if (!token || !tableId) return;
   fetch(`/api/room/${tableId}/intent/tag-team`, {
     method: 'POST',
     headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
-    body: JSON.stringify({ intentId, action, instanceId, trait, active }),
+    body: JSON.stringify({ intentId, action, instanceId, trait, active, pending, chips, clear }),
   }).catch(() => {});
 };
 
 /** Choose which Tag Team Duality applies; cancels the discarded banner. */
-export const postBannerTagTeamChoose = async (tableId, { intentId, chosenRollDbId }) => {
+export const postBannerTagTeamChoose = async (tableId, { intentId, chosenRollDbId, damageType }) => {
   const token = await getAuthToken();
   if (!token || !tableId) return { ok: false };
   try {
     const res = await fetch(`/api/room/${tableId}/banner-tag-team-choose`, {
       method: 'POST',
       headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
-      body: JSON.stringify({ intentId, chosenRollDbId }),
+      body: JSON.stringify({ intentId, chosenRollDbId, damageType }),
     });
     if (!res.ok) return { ok: false };
     return { ok: true, ...(await res.json().catch(() => ({}))) };

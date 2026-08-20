@@ -1,7 +1,7 @@
 /**
  * Group Rolls on the shared pre-roll strip (multi-actor).
  *
- * Player A opens a table-visible trait pre-roll; GM checks Group roll;
+ * Player A opens a table-visible trait pre-roll; GM selects Group Roll;
  * Player B picks a trait and rolls a reaction. A's Proceed stays disabled
  * until B finishes or skips. Proceed appends +1 / −1 from the chip result.
  */
@@ -99,10 +99,10 @@ test.describe('Group roll — collaborator reaction then modifier', () => {
     await openTraitPreRoll({ gmPage: page, actorPage: playerAPage, actorName: 'Actor PC' });
     await expect(playerBPage.getByText('Before the roll')).toBeVisible({ timeout: 8000 });
 
-    await page.getByTestId('preroll-group-roll').check();
+    await page.getByTestId('preroll-group-roll').click();
     await expect(page.getByTestId(`preroll-group-row-${helperId}`)).toBeVisible({ timeout: 8000 });
     await expect(playerBPage.getByTestId(`preroll-group-row-${helperId}`)).toBeVisible({ timeout: 8000 });
-    await expect(page.getByTestId('preroll-visibility')).toBeDisabled();
+    await expect(page.getByTestId('preroll-group-roll')).toHaveAttribute('aria-checked', 'true');
 
     await page.getByRole('button', { name: 'Approve' }).click();
     const proceedBtn = playerAPage.getByRole('button', { name: 'Proceed' });
@@ -187,7 +187,7 @@ test.describe('Group roll — Skip unblocks with no modifier', () => {
     await openTraitPreRoll({ gmPage: page, actorPage: playerAPage, actorName: 'Lead PC' });
     await expect(playerBPage.getByText('Before the roll')).toBeVisible({ timeout: 8000 });
 
-    await page.getByTestId('preroll-group-roll').check();
+    await page.getByTestId('preroll-group-roll').click();
     await expect(playerBPage.getByTestId(`preroll-group-skip-${helperId}`)).toBeVisible({ timeout: 8000 });
     await playerBPage.getByTestId(`preroll-group-skip-${helperId}`).click();
     await expect(playerBPage.getByTestId(`preroll-group-row-${helperId}`)).toContainText('Skipped');

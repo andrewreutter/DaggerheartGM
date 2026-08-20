@@ -18,7 +18,8 @@
  */
 
 import pg from 'pg';
-import { getPendingBanners, getResolvedTableState, invalidateCharacterLibraryCache, listTableStates, getTableStatesByPlayerEmail, listPublicTables, toTableCardDto } from './db.js';
+import { getResolvedTableState, invalidateCharacterLibraryCache, listTableStates, getTableStatesByPlayerEmail, listPublicTables, toTableCardDto } from './db.js';
+import { getPendingBannersAfterSweep } from './server/owned-banner-sweep.js';
 import { redactTableStateForPlayerAudience, redactTableStateForSpectatorAudience } from './client/lib/session-countdowns.js';
 import {
   bannerViewerCacheKey,
@@ -38,7 +39,7 @@ const DEBOUNCE_MS = 50;
 
 /** Channel definitions: each maps a channel name to a query function. */
 const CHANNEL_QUERIES = {
-  banners: (appId, key) => getPendingBanners(appId, key),
+  banners: (appId, key) => getPendingBannersAfterSweep(appId, key),
   table_state: (appId, key) => getResolvedTableState(appId, key),
   // Home-lobby channels — push card DTO snapshots to homepage subscribers
   home_owned: async (appId, ownerUid) => {

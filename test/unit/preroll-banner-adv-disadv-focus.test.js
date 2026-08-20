@@ -2,7 +2,7 @@
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { createElement, act, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { PreRollBanner } from '../../src/client/components/PreRollBanner.jsx';
+import { PreRollBanner, TagTeamWaitBanner } from '../../src/client/components/PreRollBanner.jsx';
 import { PRE_ROLL_POOL_TEXT_DEBOUNCE_MS } from '../../src/client/lib/pre-roll-intent.js';
 
 beforeEach(() => {
@@ -352,7 +352,7 @@ describe('PreRollBanner read-only observer', () => {
     expect([...container.querySelectorAll('button')].some((b) => b.textContent.includes('Proceed'))).toBe(false);
     expect([...container.querySelectorAll('button')].some((b) => b.textContent.includes('Cancel'))).toBe(false);
     expect([...container.querySelectorAll('button')].some((b) => b.textContent.includes('Add advantage'))).toBe(false);
-    expect(container.querySelector('[data-testid="preroll-private-checkbox"]')).toBeNull();
+    expect(container.querySelector('[data-testid="preroll-mode-private"]')).toBeNull();
   });
 
   it('omits the advantage section when no chips or pool names are on', async () => {
@@ -502,21 +502,25 @@ describe('PreRollBanner Group roll', () => {
     });
   }
 
-  it('places the Group roll checkbox after visibility', async () => {
+  it('places Group Roll in the shared mode selector after Action and Private', async () => {
     await mountGroup();
-    const visibility = container.querySelector('[data-testid="preroll-visibility"]');
-    const checkbox = container.querySelector('[data-testid="preroll-group-roll"]');
-    expect(visibility).toBeTruthy();
-    expect(checkbox).toBeTruthy();
-    expect(visibility.compareDocumentPosition(checkbox) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    const action = container.querySelector('[data-testid="preroll-mode-action"]');
+    const priv = container.querySelector('[data-testid="preroll-mode-private"]');
+    const group = container.querySelector('[data-testid="preroll-group-roll"]');
+    expect(action).toBeTruthy();
+    expect(priv).toBeTruthy();
+    expect(group).toBeTruthy();
+    expect(action.compareDocumentPosition(group) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(priv.compareDocumentPosition(group) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
-  it('disables visibility when Group roll is on', async () => {
+  it('selects Group Roll in the mode selector when Group is on', async () => {
     await mountGroup({
       groupRoll: true,
       groupMembers: [{ instanceId: 'c2', name: 'Beau', trait: null, status: 'pending' }],
     });
-    expect(container.querySelector('[data-testid="preroll-visibility"]')?.disabled).toBe(true);
+    expect(container.querySelector('[data-testid="preroll-group-roll"]')?.getAttribute('aria-checked')).toBe('true');
+    expect(container.querySelector('[data-testid="preroll-mode-action"]')?.getAttribute('aria-checked')).toBe('false');
     expect(container.querySelector('[data-testid="preroll-group"]')).toBeTruthy();
     expect(container.querySelector('[data-testid="preroll-group-row-c2"]')).toBeTruthy();
   });
@@ -555,7 +559,7 @@ describe('PreRollBanner Group roll', () => {
       groupViewer: { role: 'player', uid: 'player-a', email: 'a@example.com' },
     });
     expect(container.querySelector('[data-testid="preroll-group-roll"]')).toBeNull();
-    expect(container.querySelector('[data-testid="preroll-group-roll-label"]')?.textContent).toContain('Group roll');
+    expect(container.querySelector('[data-testid="preroll-group-roll-label"]')?.textContent).toContain('Group Roll');
     expect(container.querySelector('[data-testid="preroll-group-row-c2"]')?.textContent).toContain('Awaiting');
   });
 
@@ -611,7 +615,7 @@ describe('PreRollBanner Tag Team', () => {
     root = createRoot(container);
     await act(async () => {
       root.render(createElement(PreRollBanner, {
-        pending: { displayName: 'Hero Agility', meta: { _traitKey: 'agility' } },
+        pending: { displayName: 'Hero Shortsword', meta: { _traitKey: 'agility', _weaponRangeFt: 5 } },
         characterEl: { instanceId: 'c1', name: 'Hero', hope: 5, maxHope: 6 },
         needsDifficulty: true,
         isPlayer: false,
@@ -624,23 +628,35 @@ describe('PreRollBanner Tag Team', () => {
     });
   }
 
-  it('places the Tag Team checkbox after visibility', async () => {
-    await mountTag();
-    const visibility = container.querySelector('[data-testid="preroll-visibility"]');
-    const checkbox = container.querySelector('[data-testid="preroll-tag-team"]');
-    expect(visibility).toBeTruthy();
-    expect(checkbox).toBeTruthy();
-    expect(visibility.compareDocumentPosition(checkbox) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  it('hides Tag Team on a trait roll', async () => {
+    await mountTag({
+      pending: { displayName: 'Hero Agility', meta: { _traitKey: 'agility' } },
+    });
+    expect(container.querySelector('[data-testid="preroll-tag-team"]')).toBeNull();
   });
 
-  it('disables visibility when Tag Team is on', async () => {
+  it('places Tag Team in the shared mode selector after Action and Private', async () => {
+    await mountTag();
+    const action = container.querySelector('[data-testid="preroll-mode-action"]');
+    const tag = container.querySelector('[data-testid="preroll-tag-team"]');
+    expect(action).toBeTruthy();
+    expect(tag).toBeTruthy();
+    expect(action.compareDocumentPosition(tag) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('puts the partner picker immediately below the mode selector', async () => {
     await mountTag({
       tagTeam: true,
       tagTeamPartner: { instanceId: 'c2', name: 'Beau', trait: null, status: 'pending' },
     });
-    expect(container.querySelector('[data-testid="preroll-visibility"]')?.disabled).toBe(true);
-    expect(container.querySelector('[data-testid="preroll-tag-team-block"]')).toBeTruthy();
+    const mode = container.querySelector('[data-testid="preroll-mode"]');
+    const block = container.querySelector('[data-testid="preroll-tag-team-block"]');
+    expect(container.querySelector('[data-testid="preroll-tag-team"]')?.getAttribute('aria-checked')).toBe('true');
+    expect(block).toBeTruthy();
     expect(container.querySelector('[data-testid="preroll-tag-team-row-c2"]')).toBeTruthy();
+    expect(mode.compareDocumentPosition(block) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(container.querySelector('[data-testid="preroll-tag-team-roll-btn-c2"]')).toBeNull();
+    expect(container.querySelector('[data-testid="preroll-tag-team-trait-c2"]')).toBeNull();
   });
 
   it('uses the Tag Team wait Proceed title when that is the blocker', async () => {
@@ -648,10 +664,10 @@ describe('PreRollBanner Tag Team', () => {
       tagTeam: true,
       tagTeamPartner: { instanceId: 'c2', name: 'Beau', trait: null, status: 'pending' },
       proceedDisabled: true,
-      proceedDisabledTitle: 'Waiting for Tag Team partner roll',
+      proceedDisabledTitle: 'Waiting for Tag Team partner action',
     });
     const proceed = [...container.querySelectorAll('button')].find((b) => b.textContent.includes('Proceed'));
-    expect(proceed?.getAttribute('title')).toBe('Waiting for Tag Team partner roll');
+    expect(proceed?.getAttribute('title')).toBe('Waiting for Tag Team partner action');
   });
 
   it('hides the checkbox on a reaction session', async () => {
@@ -692,21 +708,59 @@ describe('PreRollBanner Tag Team', () => {
     expect(container.querySelector('[data-testid="preroll-tag-team-row-c2"]')?.textContent).toContain('Awaiting');
   });
 
-  it('does not flip the row to Rolling before the partner pre-roll sheet opens', async () => {
-    const onTagTeamPartnerRoll = vi.fn();
+  it('does not show a trait-and-roll row for the partner', async () => {
     await mountTag({
       tagTeam: true,
       tagTeamPartner: { instanceId: 'c2', name: 'Beau', trait: 'agility', status: 'pending' },
-      onTagTeamPartnerRoll,
     });
-    const rollBtn = container.querySelector('[data-testid="preroll-tag-team-roll-btn-c2"]');
-    expect(rollBtn).toBeTruthy();
+    expect(container.querySelector('[data-testid="preroll-tag-team-row-c2"]')?.textContent).toContain('Awaiting');
+    expect(container.querySelector('[data-testid="preroll-tag-team-roll-btn-c2"]')).toBeNull();
+  });
+});
+
+describe('TagTeamWaitBanner', () => {
+  let container;
+  let root;
+
+  afterEach(() => {
+    if (root) {
+      act(() => root.unmount());
+      root = null;
+    }
+    if (container) {
+      container.remove();
+      container = null;
+    }
+  });
+
+  it('tells the partner to take an action against the shared target', async () => {
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
     await act(async () => {
-      rollBtn.click();
+      root.render(createElement(TagTeamWaitBanner, {
+        partnerName: 'Beau',
+        targetName: 'Goblin',
+        isPartnerViewer: true,
+      }));
     });
-    expect(onTagTeamPartnerRoll).toHaveBeenCalledWith('c2');
-    expect(container.querySelector('[data-testid="preroll-tag-team-row-c2"]')?.textContent).not.toContain('Rolling');
-    expect(container.querySelector('[data-testid="preroll-tag-team-roll-btn-c2"]')).toBeTruthy();
+    expect(container.querySelector('[data-testid="preroll-tag-team-wait"]')?.textContent)
+      .toContain('Take a Tag Team Action against Goblin');
+  });
+
+  it('tells other viewers who is still preparing', async () => {
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+    await act(async () => {
+      root.render(createElement(TagTeamWaitBanner, {
+        partnerName: 'Beau',
+        targetName: 'Goblin',
+        isPartnerViewer: false,
+      }));
+    });
+    expect(container.querySelector('[data-testid="preroll-tag-team-wait"]')?.textContent)
+      .toContain('Waiting for Beau to take a Tag Team Action against Goblin');
   });
 });
 
