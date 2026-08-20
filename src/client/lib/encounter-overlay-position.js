@@ -47,12 +47,9 @@ export function encounterTrackerOverlayStyle({
   });
 }
 
-/** Token-detail hover overlay sits just left of the adversary tray. */
-export const TRAY_OVERLAY_WIDTH_REM = 24;
-
 /**
  * CSS `right` / `top` so a fixed overlay sits `gapPx` left of an edge
- * (Encounter aside, right tray, …) and vertically centers on the trigger.
+ * (Encounter aside, …) and vertically centers on the trigger.
  * `paddingRight` is a hover bridge so the pointer can leave the trigger
  * without the overlay dismissing.
  */

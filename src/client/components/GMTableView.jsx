@@ -2,7 +2,7 @@ import { useMemo, useState, useEffect, useLayoutEffect, useRef, useCallback } fr
 import { createPortal, flushSync } from 'react-dom';
 import { useTouchDevice } from '../lib/useTouchDevice.js';
 import { useHoverOverlay } from '../lib/useHoverOverlay.js';
-import { Zap, Trash2, Dices, ChevronDown, ChevronRight, X, Plus, Swords, AlertTriangle, Flame, Edit, Users, RefreshCw, ExternalLink, Eye, EyeOff, Circle, Square, CheckSquare, Heart, LogOut, Camera, FolderOpen } from 'lucide-react';
+import { Zap, Trash2, Dices, ChevronDown, ChevronRight, X, Plus, Swords, AlertTriangle, Flame, Edit, Users, RefreshCw, ExternalLink, Eye, EyeOff, Circle, Heart, LogOut, Camera, FolderOpen } from 'lucide-react';
 import { BattleMap, CHARACTER_TRAY_WIDTH_PX, TokenTrayActionButton } from './BattleMap.jsx';
 import { EncounterAdversaryInstancePlayerSummary } from './EncounterAdversaryMarkedSummary.jsx';
 import { playerEncounterInstanceRowVisible } from '../lib/encounter-adversary-player-summary.js';
@@ -11,7 +11,7 @@ import { GameTableCharacterListCard } from './GameTableCharacterListCard.jsx';
 import { PartyLootCard, PartyLootSheet } from './PartyLootCard.jsx';
 import { AnchoredFloatingPanel } from './AnchoredFloatingPanel.jsx';
 import { ActionLog } from './ActionLog.jsx';
-import { parseAllCountdownValues, generateId, effectiveThresholds, effectiveEvasion, computeHpLoss, isAdversaryDefeated, getDifficultyLabel, parseBeastformBonus, isWingsOfLightFlying, extractGmFeatureWhenClause } from '../lib/helpers.js';
+import { parseAllCountdownValues, generateId, effectiveThresholds, effectiveEvasion, computeHpLoss, isAdversaryDefeated, parseBeastformBonus, isWingsOfLightFlying, extractGmFeatureWhenClause } from '../lib/helpers.js';
 import {
   buildCountdownStartRollText,
   findSessionCountdownBySource,
@@ -50,11 +50,11 @@ import { indexResolvedItemsByRequestId } from '../lib/resolve-items-index.js';
 import { buildSystemContext } from '../lib/feature-context.js';
 import { withActionBannerSuppression } from '../lib/action-notification-banner.js';
 import { isReactionRoll } from '../lib/reaction-roll-display.js';
-import { buildTraitRollText, buildPreRollPanelTitle } from '../lib/trait-roll-text.js';
+import { buildTraitRollText } from '../lib/trait-roll-text.js';
 import { buildReactionCallRoster, canViewerProceedReaction } from '../lib/reaction-call-roster.js';
 import { buildJoinedPlayerRoster, mergePresenceNamesIntoCache } from '../lib/joined-player-roster.js';
 import { toggleAssignedPlayerEmail, isCharacterAssignedToPlayer } from '../lib/character-assignment.js';
-import { requiresGmFinalizedDifficulty, resolveFinalizedIntentDifficulty } from '../lib/action-roll-difficulty.js';
+import { resolveFinalizedIntentDifficulty } from '../lib/action-roll-difficulty.js';
 import {
   ROLL_VISIBILITY_GM_AND_PLAYER,
   ROLL_VISIBILITY_GM_ONLY,
@@ -99,9 +99,10 @@ import {
   postBannerRerollDie,
   postCharacterUpdate,
   postHopeDieUpgrade,
-  postPlayerIntent,
+  postTableIntent,
   postPlayerV2ReviewChip,
-  clearPlayerIntent,
+  patchTableIntent,
+  clearTableIntent,
   postFinalizeIntentDifficulty,
   syncDaggerstackCharacter,
   resolveItems,
@@ -157,13 +158,21 @@ import {
   CharacterSheetHighlightSurface,
 } from './CharacterSheetSourceHighlight.jsx';
 import { resolveV2LibraryItemSourcePath } from '../../features-v2/resolve-feature-source-path.js';
-import { FeatureResourceCostIcons } from './FeatureResourceCostIcons.jsx';
-import { FrequencyCycleChipSuffix, getFrequencyCycleWord } from '../lib/frequency-cycle-ui.jsx';
 import { DiceRoller } from './DiceRoller.jsx';
+import { PreRollBanner } from './PreRollBanner.jsx';
+import { collectPreRollSession } from '../lib/collect-pre-roll-session.js';
+import {
+  alignSelectedChips,
+  applyRemoteSelectionSnapshot,
+  PRE_ROLL_PATCH_DEBOUNCE_MS,
+  remoteDifficultyDraftToApply,
+  serializePreRollIntent,
+  shouldApplyRemoteIntentSnapshot,
+  shouldShowPreRollBanner,
+} from '../lib/pre-roll-intent.js';
 import { ConditionsEditor } from './ConditionsEditor.jsx';
 import { normalizeConditionsToList } from '../lib/conditions-utils.js';
 import { collectLiveConditionNames } from '../lib/conditions-history.js';
-import { Tooltip } from './Tooltip.jsx';
 import { usePortalHoverTooltip, PortalHoverTooltipLayer } from '../lib/portal-hover-tooltip.jsx';
 import {
   wrapEntity,
@@ -179,18 +188,13 @@ import {
   resolveWeaponTagDescriptor,
   buildRollBaseBannerNarrationParts,
 } from '../lib/game-table-mechanics.js';
-import { buildAdvantageTriggerPrerollChips } from '../lib/advantage-trigger-preroll.js';
 import { applyRangerFocusV2IntentToPending } from '../lib/ranger-focus-v2-intent.js';
-import { extractDetailsValues, insertDisadvantageD6, stripDisadvantageFromRollText } from '../lib/dice-utils.js';
+import { extractDetailsValues, insertDisadvantageD6 } from '../lib/dice-utils.js';
 import {
   applyOwnPoolDieMutations,
   appendOwnPoolDisadvantageToRollText,
-  extractOwnPoolFromRollText,
-  formatOwnPoolCancelledNote,
-  formatOwnPoolDieSuffix,
-  resolveOwnPool,
 } from '../lib/advantage-disadvantage-pool.js';
-import { getCharactersWithinFarRange, getCharactersWithinCloseRangeWithMarkedHp, getAdversariesWithinMeleeRange, getAdversariesWithinRangeFt, rangeBandNameToFt, rangeFtToLabel, RANGE_BANDS_FT, tokenDistanceFtForElements, positionAtDistanceFt, getTokenFootprintFt } from '../lib/map-range.js';
+import { getCharactersWithinFarRange, getCharactersWithinCloseRangeWithMarkedHp, getAdversariesWithinMeleeRange, getAdversariesWithinRangeFt, rangeBandNameToFt, RANGE_BANDS_FT, tokenDistanceFtForElements, positionAtDistanceFt, getTokenFootprintFt } from '../lib/map-range.js';
 import {
   collectCompanionDamageTargets,
   filterPartyDamageTargetsByIds,
@@ -261,7 +265,6 @@ import {
   sumPendingEvasionBonusFromFeatureState,
   buildPendingEvasionBonusAckCleanupUpdates,
   runV2DamageApplyReviewOutcomePhase,
-  collectV2WeaponIntentChips,
   buildV2PreRollWeaponAttackRollSkeleton,
   buildV2PreRollTraitRollSkeleton,
   collectV2RestPlacementChipsForCharacter,
@@ -496,7 +499,7 @@ function buildGameTableNewEnvironmentStub(tier = 1, type = 'exploration') {
   };
 }
 
-export function GMTableView({ tableId, activeElements, updateActiveElement: pushTableElementUpdate, removeActiveElement, updateActiveElementsBaseData, data, saveItem, saveImage, addToTable, addElements, sendDoAddToTable, onMergeAdversary, user, route, navigate, featureCountdowns = {}, sessionCountdowns = [], updateCountdown, partySize = 1, partyTier = 1, characters = [], tableBattleMods, nextScenes = [], setTableBattleMods, fearCount = 0, setFearCount, partyLoot: partyLootProp, onSetPartyLoot, onMoveInventoryItem, spotlight = null, onSpotlightChange, conditionsHistory = [], onAddConditionsHistoryEntry, onRemoveConditionsHistoryEntry, tableName = '', gmDisplayName = '', tableStateReady = false, onTableNameChange, onDeleteTable, ensureAdventuresLoaded, ensureCharactersLoaded, clearTable, isPlayer = false, isSpectator = false, isPublic = false, onPublicChange, audienceOnlineCount = 0, playerEmail, connectedPlayers = [], playerEmails = [], playerNames = {}, inviteLink = null, onGenerateInviteLink, onRevokeInviteLink, onRemovePlayerEmail, onLeaveTable, gmUid, onPlayerAddCharacter, pendingBanners = [], pendingPlayerIntent = null, intentDifficultyUpdate = null, spotlightRequestGrant = null, onSpotlightRequestGrantConsumed, onFeatureRequestSuccess, onFeatureRequestCancel, rangerFocusRequestedBannerIds, onRangerFocusRerollRequestSuccess, onRangerFocusRerollRequestCancel, previewAsPlayerEmail = null, onPreviewAsPlayer, onExitPreview, actionLog = [], setActionLog, mapConfig, maps = [], activeMapId = null, gmMapView = null, onSetActiveMap, onAddMap, onAddMapWithImage, onRemoveMap, onRenameMap, onMapConfigChange, onMapViewSync, lifeSupportSelections = {}, onLifeSupportSelect, onLifeSupportClear, restMovesSelections = {}, onRestMoveSelect, onRestMoveClear, tableFeatureState = {}, sessionPlayAllowed = true, sessionStarted = true, sessionPaused = false, mapPings = [], onDismissMapPing = () => {}, appendMapPing = () => {},
+export function GMTableView({ tableId, activeElements, updateActiveElement: pushTableElementUpdate, removeActiveElement, updateActiveElementsBaseData, data, saveItem, saveImage, addToTable, addElements, sendDoAddToTable, onMergeAdversary, user, route, navigate, featureCountdowns = {}, sessionCountdowns = [], updateCountdown, partySize = 1, partyTier = 1, characters = [], tableBattleMods, nextScenes = [], setTableBattleMods, fearCount = 0, setFearCount, partyLoot: partyLootProp, onSetPartyLoot, onMoveInventoryItem, spotlight = null, onSpotlightChange, conditionsHistory = [], onAddConditionsHistoryEntry, onRemoveConditionsHistoryEntry, tableName = '', gmDisplayName = '', tableStateReady = false, onTableNameChange, onDeleteTable, ensureAdventuresLoaded, ensureCharactersLoaded, clearTable, isPlayer = false, isSpectator = false, isPublic = false, onPublicChange, audienceOnlineCount = 0, playerEmail, connectedPlayers = [], playerEmails = [], playerNames = {}, inviteLink = null, onGenerateInviteLink, onRevokeInviteLink, onRemovePlayerEmail, onLeaveTable, gmUid, onPlayerAddCharacter, pendingBanners = [], pendingIntent = null, spotlightRequestGrant = null, onSpotlightRequestGrantConsumed, onFeatureRequestSuccess, onFeatureRequestCancel, rangerFocusRequestedBannerIds, onRangerFocusRerollRequestSuccess, onRangerFocusRerollRequestCancel, previewAsPlayerEmail = null, onPreviewAsPlayer, onExitPreview, actionLog = [], setActionLog, mapConfig, maps = [], activeMapId = null, gmMapView = null, onSetActiveMap, onAddMap, onAddMapWithImage, onRemoveMap, onRenameMap, onMapConfigChange, onMapViewSync, lifeSupportSelections = {}, onLifeSupportSelect, onLifeSupportClear, restMovesSelections = {}, onRestMoveSelect, onRestMoveClear, tableFeatureState = {}, sessionPlayAllowed = true, sessionStarted = true, sessionPaused = false, mapPings = [], onDismissMapPing = () => {}, appendMapPing = () => {},
   mapScribbles = [],
   mapViews = [], gmActiveViewId = null, onSetActiveView, onAddMapViewOp, onRemoveMapView, onRenameMapView, onSetViewBroadcast, onSetViewLocked, onSetMapShare,
   onSetMapOverlay,
@@ -941,11 +944,12 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
   const writeLastDifficulty = (val) => {
     try { localStorage.setItem('dh_gm_last_difficulty', String(val)); } catch {}
   };
-  const [preRollDifficulty, setPreRollDifficulty] = useState(readLastDifficulty); // DC 5–30 when GM shows difficulty chip
-  const [intentDifficultyDraft, setIntentDifficultyDraft] = useState(readLastDifficulty); // DC 5–30 draft for GM-finalized player-intent difficulty
-  useEffect(() => {
-    setIntentDifficultyDraft(pendingPlayerIntent?.difficulty ?? readLastDifficulty());
-  }, [pendingPlayerIntent?.intentId]);
+  const [preRollDifficulty, setPreRollDifficulty] = useState(readLastDifficulty); // DC 5–30 shared slider
+  const lastSentClientWriteSeqRef = useRef(0);
+  const applyingRemoteRef = useRef(false);
+  const remoteAckedIntentIdRef = useRef(null);
+  const lastAppliedRemoteDifficultyRef = useRef(null);
+  const preRollBannerRef = useRef(null);
   const [preRollAdvantages, setPreRollAdvantages] = useState([]); // string[]: optional name per advantage ('' = default "Advantage")
   const [preRollDisadvantages, setPreRollDisadvantages] = useState([]); // string[]: optional name per disadvantage ('' = default "Disadvantage")
   /** Intent panel: review/change attack target (same list as in-sheet target menu). */
@@ -3899,6 +3903,17 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
       .catch(err => handleRollTransportError(err, 'Trait roll failed:'));
   };
 
+  const resetPreRollLocalState = () => {
+    setPreRollBanner(null);
+    setSelectedPreRollChips([]);
+    setPreRollExperienceIndex(null);
+    setPreRollCompanionExperienceIndex(null);
+    setPreRollAdvantages([]);
+    setPreRollDisadvantages([]);
+    setPreRollTargetInstanceId(null);
+    setPreRollVisibility(ROLL_VISIBILITY_TABLE);
+  };
+
   // Roll handler for a player acting on their own character.
   // Routes through POST /api/room/:gmUid/roll (validated server-side, real dice).
     // When context.characterEl is provided, collects preroll chips from origin features; if any chips are added,
@@ -3965,195 +3980,31 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
       return;
     }
 
-    /** Merged sheet (incl. beastform synthetic `activeFeatures` / advantageTriggers) — read-only for preroll chip collection; keep `characterEl` for persisted state. */
-    const characterElForIntent =
-      srdData && characterEl.instanceId
-        ? mergeV2DeclarativeSheetOverlay(recomputeCharacter(characterEl, srdData), characterEl, srdData, {
-            fearCount,
-            mapConfig,
-            tableFeatureState,
-          })
-        : characterEl;
-
-    const extractedPool = extractOwnPoolFromRollText(rollText);
-    let textToUse = extractedPool.strippedText;
-    const advantageNames = [...extractedPool.advantageNames];
-    const disadvantageNames = [...extractedPool.disadvantageNames];
-    for (const src of characterEl.disadvantageSources || []) {
-      if (src) disadvantageNames.push(src);
-    }
-    const pending = { rollText: textToUse, displayName, meta, rollBonus: 0, rollBonusLabel: null };
-    const rollWrapper = {
-      get rollText() { return pending.rollText; },
-      set rollText(v) { pending.rollText = v; },
-      get displayName() { return pending.displayName; },
-      set displayName(v) { pending.displayName = v; },
-      get meta() { return pending.meta; },
-      get _traitKey() { return pending.meta?._traitKey; },
-      isMine: true,
-      isReaction: !!rollMeta._isReaction,
-      addAdvantageDie(name) {
-        if (name) advantageNames.push(name);
-      },
-      addDisadvantage(name) {
-        if (name) disadvantageNames.push(name);
-      },
-      addDisadvantageDie(name) {
-        if (name) disadvantageNames.push(name);
-      },
-      /**
-       * Remove all disadvantage from this roll (undo addDisadvantage, strip disadvantage from roll text,
-       * including GM-set difficulty disadvantage) and append a message to the roll string.
-       * Used by e.g. Goblin Surefooted (ignore disadvantage on Agility rolls).
-       */
-      removeDisadvantage() {
-        const fromGM = [...disadvantageNames];
-        disadvantageNames.length = 0;
-        const { strippedText, removedLabels } = stripDisadvantageFromRollText(pending.rollText);
-        pending.rollText = strippedText;
-        const allRemoved = [...fromGM, ...removedLabels];
-        if (allRemoved.length > 0) {
-          pending.rollText = pending.rollText.trimEnd() + ` — disadvantage removed: ${allRemoved.join(', ')}`;
-        }
-      },
-      addRollBonus(n) {
-        pending.rollBonus = (pending.rollBonus || 0) + n;
-      },
-      setFromText(text) {
-        pending.rollText = text ?? pending.rollText;
-      },
-      setDisplayName(name) {
-        pending.displayName = name ?? pending.displayName;
-      },
-      setMeta(m) {
-        if (m != null) pending.meta = { ...pending.meta, ...m };
-      },
-      getFinalRollText() {
-        const resolved = resolveOwnPool({ advantageNames, disadvantageNames });
-        let t = pending.rollText;
-        t += formatOwnPoolDieSuffix(resolved);
-        if (pending.rollBonus) t += ` + ${pending.rollBonus}`;
-        t += formatOwnPoolCancelledNote(resolved);
-        return t;
-      },
-    };
-
-    const canvas = { chips: [] };
-    canvas.isUsed = (featureKey) => !!(characterEl.featureUsage?.[featureKey]?.used);
-    canvas.addChip = (descriptor) => {
-      const featureName = descriptor._featureName;
-      const merged = { ...descriptor, _featureName: featureName };
-      const hadCustomIsVisible = typeof descriptor.isVisible === 'function';
-      if (merged.resetsOn) {
-        if (featureName) {
-          const originList = [...(characterEl.ancestryFeatures || []), ...(characterEl.communityFeatures || [])];
-          merged._featureKey = `${featureName}-${Math.max(0, originList.findIndex(f => f.name === featureName))}`;
-        } else {
-          merged._featureKey = null;
-        }
-        if (!hadCustomIsVisible) {
-          merged.isVisible = (r) => r.isMine && merged._featureKey != null && !canvas.isUsed(merged._featureKey);
-        }
-        merged._used = !!(merged._featureKey && canvas.isUsed(merged._featureKey));
-      }
-      const featureReader = { get(key, d) { const bag = characterEl._originFeatureState?.[featureName]; return bag != null && key in bag ? bag[key] : d; } };
-      const baseDescriptor = featureName ? resolveOriginFeatureDescriptor(characterEl, featureName) : null;
-      const featureWithState = baseDescriptor && getFeatureStateFor
-        ? { ...baseDescriptor, ...getFeatureStateFor(characterEl, featureName) }
-        : (getFeatureStateFor && featureName ? getFeatureStateFor(characterEl, featureName) : { get: () => undefined, set: () => {} });
-      const character = wrapEntity(characterEl, updateActiveElement);
-      const canvasContext = { roll: rollWrapper, character, characters: wrappedPartyCharacters, system, feature: featureWithState };
-      // Backward compatible: support legacy (roll, featureState, context?) signature
-      const isVisibleResult = typeof merged.isVisible === 'function' 
-        ? (merged.isVisible.length === 1 ? merged.isVisible(canvasContext) : merged.isVisible(rollWrapper, featureReader, canvasContext))
-        : true;
-      // When isVisible returns a number N > 0, add N copies of the chip (each can be toggled and onUse called).
-      const count = typeof isVisibleResult === 'number' && isVisibleResult > 0
-        ? Math.floor(isVisibleResult)
-        : (isVisibleResult ? 1 : 0);
-      if (count === 0 && typeof merged.isVisible === 'function' && hadCustomIsVisible) return;
-      for (let i = 0; i < count; i++) canvas.chips.push({ ...merged });
-    };
-
-    // GM-initiated character roll: add difficulty chip so banner is shown and GM can set DC before rolling.
-    // Skip for attack rolls (weapon/beastform/feature-with-target); those use the target's difficulty or evasion.
-    const isAttackRoll = (meta) => (meta._weaponRangeFt != null || meta._featureNeedsTarget === true);
-    if (!isPlayer && !isAttackRoll(meta) && meta._reactionCallRollDbId == null) {
-      canvas.chips.push({ _difficultyChip: true, label: 'Difficulty' });
-    }
-    // Player-initiated action roll (non-attack, non-reaction): the GM must finalize a difficulty
-    // via the Intent banner before this player's own pre-roll sheet can Proceed.
-    const requiresGmDifficulty = isPlayer && requiresGmFinalizedDifficulty(meta);
-    const intentId = requiresGmDifficulty ? generateId() : null;
-
-    const getFeatureStateFor = (el, featureName) => {
-      const get = (key, defaultVal) => {
-        const bag = el._originFeatureState?.[featureName];
-        return bag != null && key in bag ? bag[key] : defaultVal;
-      };
-      const set = (key, value) => {
-        const current = el._originFeatureState ?? {};
-        const featureBag = current[featureName] ?? {};
-        const next = { ...current, [featureName]: { ...featureBag, [key]: value } };
-        el._originFeatureState = next;
-        updateActiveElement(el.instanceId, { _originFeatureState: next });
-      };
-      return { get, set };
-    };
-    // Collect pre-roll chips from declarative chips array (placement: 'preroll').
-    if (Array.isArray(characterElForIntent.activeFeatures) && characterElForIntent.activeFeatures.length > 0) {
-      for (const feature of characterElForIntent.activeFeatures) {
-        const prerollChips = feature.chips?.filter(c => c.placement === 'preroll') || [];
-        for (const c of prerollChips) {
-          canvas.addChip({ ...c, _featureName: feature.name });
-        }
-      }
-    } else {
-      const featureNames = [...(characterElForIntent.ancestryFeatures || []).map(f => f.name), ...(characterElForIntent.communityFeatures || []).map(f => f.name)];
-      for (const name of featureNames) {
-        const descriptor = resolveOriginFeatureDescriptor(characterElForIntent, name);
-        const prerollChips = descriptor?.chips?.filter(c => c.placement === 'preroll') || [];
-        for (const c of prerollChips) {
-          canvas.addChip({ ...c, _featureName: name });
-        }
-      }
-    }
-
-    for (const advChip of buildAdvantageTriggerPrerollChips(characterElForIntent, {
+    const session = collectPreRollSession({
+      rollText,
+      displayName,
+      rollMeta: meta,
+      characterEl,
+      isPlayer,
+      updateActiveElement,
+      wrappedPartyCharacters,
+      system,
+      srdData,
+      fearCount,
+      mapConfig,
+      tableFeatureState,
+      activeElements,
+      user,
+      playerEmail,
+      previewAsPlayerEmail,
       resolveOriginFeatureDescriptor,
       resolveClassFeatureDescriptor,
       resolveWeaponTagDescriptor,
-    })) {
-      canvas.addChip(advChip);
-    }
-
-    if (srdData && meta._intentPanelForActionRoll === true) {
-      const tableChars = activeElements.filter((e) => e.elementType === 'character');
-      const { viewer } = buildV2ChipViewer({
-        isPlayer,
-        user,
-        playerEmail,
-        previewAsPlayerEmail,
-        tableCharacters: tableChars,
-      });
-      const v2WeaponIntent = collectV2WeaponIntentChips({
-        pendingMeta: meta,
-        pendingRollText: textToUse,
-        characterEl: characterElForIntent,
-        activeElements,
-        srdData,
-        fearCount,
-        mapConfig,
-        tableFeatureState,
-        viewer,
-      });
-      for (const c of v2WeaponIntent) {
-        canvas.chips.push(c);
-      }
-    }
+    });
+    const { rollWrapper, pending, chips, getFeatureStateFor, needsDifficulty } = session;
 
     const intentMandatory = meta._intentPanelForActionRoll === true;
-    if (canvas.chips.length === 0 && !intentMandatory) {
+    if (chips.length === 0 && !intentMandatory && !(!isPlayer && needsDifficulty)) {
       const tkFast = pending.meta?._traitKey;
       if (tkFast && characterEl?.instanceId && srdData) {
         const intentMuts = runV2IntentPhaseForTraitRoll({
@@ -4191,13 +4042,14 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
       return;
     }
 
+    const intentId = generateId();
+    const openedByRole = isPlayer ? 'player' : 'gm';
     const onProceed = async () => {
       const finalText = rollWrapper.getFinalRollText();
       const metaWithLabel = { ...pending.meta, ...(pending.rollBonusLabel ? { _staticModifierLabel: pending.rollBonusLabel } : {}) };
       try {
         await postRoll(finalText, pending.displayName || pending.rollText, targetTableId, metaWithLabel);
-        setPreRollBanner(null);
-        setSelectedPreRollChips([]);
+        resetPreRollLocalState();
       } catch (err) {
         handleRollTransportError(err, '[GMTableView] onProceed postRoll failed:');
       }
@@ -4205,33 +4057,39 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     dismissAllHoverCards();
     setPreRollExperienceIndex(null);
     setPreRollCompanionExperienceIndex(null);
+    setPreRollAdvantages([]);
+    setPreRollDisadvantages([]);
     setPreRollVisibility(ROLL_VISIBILITY_TABLE);
-    const intentPayload = isPlayer && tableId
-      ? {
-          characterName: characterEl?.name || '',
-          characterInstanceId: characterEl?.instanceId || '',
-          rollText: pending.rollText,
-          chips: canvas.chips
-            .filter((c) => !c._difficultyChip)
-            .map((c) => ({
-              label: c.label || c.name || c._featureName || '',
-              description: c.description || '',
-              hopeCost: c.hopeCost || 0,
-              stressCost: c.stressCost || 0,
-              frequency: c.frequency || null,
-              isToggle: c.isToggle || false,
-              v2Intent: !!c._v2IntentChip,
-            })),
-          intentId,
-          needsDifficulty: requiresGmDifficulty,
-        }
-      : null;
-    setPreRollBanner({ rollWrapper, chips: canvas.chips, characterEl, onProceed, getFeatureStateFor, pending, requiresGmDifficulty, intentId, intentPayload });
-    setSelectedPreRollChips(canvas.chips.map(() => false));
+    setPreRollBanner({
+      rollWrapper,
+      chips,
+      characterEl,
+      onProceed,
+      getFeatureStateFor,
+      pending,
+      needsDifficulty,
+      requiresGmDifficulty: needsDifficulty,
+      intentId,
+      openedByRole,
+    });
+    setSelectedPreRollChips(chips.map(() => false));
 
-    // Broadcast the intent to the GM so they can see the pre-roll banner too.
-    // Serialize chips to plain objects (strip functions) for JSON transport.
-    if (intentPayload) postPlayerIntent(tableId, intentPayload);
+    if (tableId) {
+      const seq = ++lastSentClientWriteSeqRef.current;
+      postTableIntent(tableId, serializePreRollIntent({
+        intentId,
+        characterName: characterEl?.name || '',
+        characterInstanceId: characterEl?.instanceId || '',
+        pending,
+        chips,
+        selectedChips: chips.map(() => false),
+        needsDifficulty,
+        difficulty: readLastDifficulty(),
+        openedByRole,
+        clientWriteSeq: seq,
+        _rollVisibility: ROLL_VISIBILITY_TABLE,
+      }));
+    }
   };
 
   const handlePlayerOwnRollRef = useRef(handlePlayerOwnRoll);
@@ -4415,16 +4273,14 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
   );
 
   const clearPreRollBanner = () => {
-    setPreRollBanner(null);
-    setSelectedPreRollChips([]);
-    setPreRollExperienceIndex(null);
-    setPreRollCompanionExperienceIndex(null);
-    setPreRollAdvantages([]);
-    setPreRollDisadvantages([]);
-    setPreRollTargetInstanceId(null);
-    setPreRollVisibility(ROLL_VISIBILITY_TABLE);
-    if (isPlayer && tableId) clearPlayerIntent(tableId);
+    const id = preRollBanner?.intentId;
+    resetPreRollLocalState();
+    if (tableId && id) void clearTableIntent(tableId, id);
   };
+
+  useEffect(() => {
+    preRollBannerRef.current = preRollBanner;
+  }, [preRollBanner]);
 
   useEffect(() => {
     if (!preRollBanner) {
@@ -4432,19 +4288,170 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
       return;
     }
     const id = preRollBanner.pending?.meta?._selectedTargetInstanceId;
-    setPreRollTargetInstanceId(id ?? null);
+    if (preRollTargetInstanceId == null && id != null) setPreRollTargetInstanceId(id);
   }, [preRollBanner]);
 
-  // GM-finalized difficulty for the current player's own pre-roll banner (null until the GM sets it).
-  const preRollFinalizedGmDifficulty = resolveFinalizedIntentDifficulty(preRollBanner, intentDifficultyUpdate);
+  const intentViewer = isPlayer
+    ? { role: 'player', uid: user?.uid, email: playerEmail }
+    : { role: 'gm', uid: user?.uid, email: user?.email };
+
+  const applyRemoteSelection = (intent, chipCount) => {
+    const snap = applyRemoteSelectionSnapshot(intent);
+    applyingRemoteRef.current = true;
+    setSelectedPreRollChips(alignSelectedChips(snap.selectedChips, chipCount));
+    setPreRollExperienceIndex(snap.experienceIndex);
+    setPreRollCompanionExperienceIndex(snap.companionExperienceIndex);
+    setPreRollAdvantages(snap.advantages);
+    setPreRollDisadvantages(snap.disadvantages);
+    if (snap.targetInstanceId != null) setPreRollTargetInstanceId(snap.targetInstanceId);
+    setPreRollVisibility(snap._rollVisibility);
+    const nextDc = remoteDifficultyDraftToApply(snap.difficulty, lastAppliedRemoteDifficultyRef.current);
+    if (nextDc != null) {
+      lastAppliedRemoteDifficultyRef.current = nextDc;
+      setPreRollDifficulty(nextDc);
+    }
+    queueMicrotask(() => { applyingRemoteRef.current = false; });
+  };
+
+  useEffect(() => {
+    if (!pendingIntent) {
+      if (
+        remoteAckedIntentIdRef.current
+        && preRollBannerRef.current?.intentId === remoteAckedIntentIdRef.current
+      ) {
+        resetPreRollLocalState();
+        remoteAckedIntentIdRef.current = null;
+      }
+      return;
+    }
+    if (!shouldShowPreRollBanner(pendingIntent, intentViewer)) return;
+    if (remoteAckedIntentIdRef.current !== pendingIntent.intentId) {
+      lastAppliedRemoteDifficultyRef.current = null;
+    }
+    remoteAckedIntentIdRef.current = pendingIntent.intentId;
+    const local = preRollBannerRef.current;
+    if (local?.intentId === pendingIntent.intentId) {
+      const { apply } = shouldApplyRemoteIntentSnapshot(pendingIntent, {
+        lastSentClientWriteSeq: lastSentClientWriteSeqRef.current,
+      });
+      if (apply) applyRemoteSelection(pendingIntent, local.chips?.length ?? 0);
+      return;
+    }
+    const char = activeElements.find((e) => e.instanceId === pendingIntent.characterInstanceId);
+    if (!char) return;
+    const pending = pendingIntent.pending || {
+      rollText: pendingIntent.rollText || '',
+      displayName: pendingIntent.characterName || '',
+      meta: {},
+    };
+    const session = collectPreRollSession({
+      rollText: pending.rollText,
+      displayName: pending.displayName,
+      rollMeta: pending.meta || {},
+      characterEl: char,
+      isPlayer,
+      updateActiveElement,
+      wrappedPartyCharacters,
+      system,
+      srdData,
+      fearCount,
+      mapConfig,
+      tableFeatureState,
+      activeElements,
+      user,
+      playerEmail,
+      previewAsPlayerEmail,
+      resolveOriginFeatureDescriptor,
+      resolveClassFeatureDescriptor,
+      resolveWeaponTagDescriptor,
+    });
+    const { rollWrapper, chips, getFeatureStateFor, needsDifficulty } = session;
+    const targetTableId = isPlayer ? tableId : null;
+    const onProceed = async () => {
+      const finalText = rollWrapper.getFinalRollText();
+      const metaWithLabel = {
+        ...session.pending.meta,
+        ...(session.pending.rollBonusLabel ? { _staticModifierLabel: session.pending.rollBonusLabel } : {}),
+      };
+      try {
+        await postRoll(finalText, session.pending.displayName || session.pending.rollText, targetTableId, metaWithLabel);
+        resetPreRollLocalState();
+      } catch (err) {
+        handleRollTransportError(err, '[GMTableView] hydrate onProceed postRoll failed:');
+      }
+    };
+    setPreRollBanner({
+      rollWrapper,
+      chips,
+      characterEl: char,
+      onProceed,
+      getFeatureStateFor,
+      pending: session.pending,
+      needsDifficulty,
+      requiresGmDifficulty: needsDifficulty,
+      intentId: pendingIntent.intentId,
+      openedByRole: pendingIntent.openedByRole || 'player',
+      initiatorUid: pendingIntent._initiatorUid,
+      initiatorEmail: pendingIntent._initiatorEmail,
+    });
+    applyRemoteSelection(pendingIntent, chips.length);
+  }, [pendingIntent, activeElements]);
+
+  useEffect(() => {
+    if (!preRollBanner?.intentId || !tableId) return;
+    if (applyingRemoteRef.current) return;
+    if (remoteAckedIntentIdRef.current !== preRollBanner.intentId) return;
+    const t = setTimeout(() => {
+      const seq = ++lastSentClientWriteSeqRef.current;
+      patchTableIntent(tableId, {
+        intentId: preRollBanner.intentId,
+        selectedChips: selectedPreRollChips,
+        experienceIndex: preRollExperienceIndex,
+        companionExperienceIndex: preRollCompanionExperienceIndex,
+        advantages: preRollAdvantages,
+        disadvantages: preRollDisadvantages,
+        targetInstanceId: preRollTargetInstanceId,
+        _rollVisibility: preRollVisibility,
+        ...(!isPlayer ? { difficulty: preRollDifficulty } : {}),
+        clientWriteSeq: seq,
+      });
+    }, PRE_ROLL_PATCH_DEBOUNCE_MS);
+    return () => clearTimeout(t);
+  }, [
+    preRollBanner?.intentId,
+    pendingIntent?.intentId,
+    selectedPreRollChips,
+    preRollExperienceIndex,
+    preRollCompanionExperienceIndex,
+    preRollAdvantages,
+    preRollDisadvantages,
+    preRollTargetInstanceId,
+    preRollVisibility,
+    preRollDifficulty,
+    tableId,
+    isPlayer,
+  ]);
+
+  const preRollFinalizedGmDifficulty = resolveFinalizedIntentDifficulty(preRollBanner, pendingIntent);
+  const preRollDifficultyFinalized = !!(
+    preRollBanner
+    && pendingIntent?.intentId === preRollBanner.intentId
+    && pendingIntent?.difficultyFinalized === true
+  );
 
   const handlePreRollProceed = async () => {
     if (!preRollBanner) return;
-    if (preRollBanner.requiresGmDifficulty && preRollFinalizedGmDifficulty == null) return;
+    if (preRollBanner.needsDifficulty && !preRollDifficultyFinalized && preRollFinalizedGmDifficulty == null) return;
     const intentUsedLog = [];
     const { rollWrapper, chips, characterEl, onProceed, getFeatureStateFor, pending } = preRollBanner;
-    // Clear the GM's intent banner as dice are now rolling
-    if (isPlayer && tableId) clearPlayerIntent(tableId);
+    if (tableId && preRollBanner.intentId) {
+      const cas = await clearTableIntent(tableId, preRollBanner.intentId);
+      if (cas?.conflict) {
+        resetPreRollLocalState();
+        return;
+      }
+      if (!cas?.ok) return;
+    }
     const charEl = activeElements.find(e => e.instanceId === characterEl.instanceId) || characterEl;
     const traitKeyPre = pending.meta?._traitKey;
     if (traitKeyPre && charEl?.instanceId && srdData) {
@@ -4501,9 +4508,9 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
         updateActiveElement(charEl.instanceId, { selectedExperienceIndex: preRollExperienceIndex });
       }
     }
-    const hasDifficultyChip = chips.some(c => c._difficultyChip);
-    if (hasDifficultyChip) {
-      rollWrapper.meta._difficulty = preRollDifficulty;
+    if (preRollBanner.needsDifficulty) {
+      const dc = preRollFinalizedGmDifficulty ?? preRollDifficulty;
+      rollWrapper.meta._difficulty = dc;
       for (const name of preRollAdvantages) {
         rollWrapper.addAdvantageDie((name && name.trim()) || 'Advantage');
         intentUsedLog.push((name && name.trim()) ? `Advantage: ${name.trim()}` : 'Advantage');
@@ -4512,26 +4519,31 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
         rollWrapper.addDisadvantage((name && name.trim()) || 'Disadvantage');
         intentUsedLog.push((name && name.trim()) ? `Disadvantage: ${name.trim()}` : 'Disadvantage');
       }
-    } else if (preRollBanner.requiresGmDifficulty) {
-      rollWrapper.meta._difficulty = preRollFinalizedGmDifficulty;
     }
-                    const onRollCtxProceed = {
-                      roll: rollWrapper,
-                      characters: wrappedPartyCharacters,
-                      system,
-                      character: wrapEntity(charEl, updateActiveElement),
-                      updateActiveElement,
-                      _characterEl: charEl,
-                    };
-                    if (Array.isArray(charEl.activeFeatures) && charEl.activeFeatures.length > 0) {
-                      runCharacterHook(charEl.activeFeatures, 'onRoll', onRollCtxProceed);
-                    } else {
-                      const proceedNames = [...(charEl.ancestryFeatures || []).map(f => f.name), ...(charEl.communityFeatures || []).map(f => f.name)];
-                      const proceedRows = proceedNames.map((n) => resolveOriginFeatureDescriptor(charEl, n)).filter(Boolean);
-                      if (proceedRows.length) {
-                        runCharacterHook(proceedRows, 'onRoll', onRollCtxProceed);
-                      }
-                    }
+    if (!isPlayer && preRollBanner.openedByRole === 'player') {
+      pending.meta = {
+        ...pending.meta,
+        ...(preRollBanner.initiatorUid ? { _initiatorUid: preRollBanner.initiatorUid } : {}),
+        ...(preRollBanner.initiatorEmail ? { _initiatorEmail: preRollBanner.initiatorEmail } : {}),
+      };
+    }
+    const onRollCtxProceed = {
+      roll: rollWrapper,
+      characters: wrappedPartyCharacters,
+      system,
+      character: wrapEntity(charEl, updateActiveElement),
+      updateActiveElement,
+      _characterEl: charEl,
+    };
+    if (Array.isArray(charEl.activeFeatures) && charEl.activeFeatures.length > 0) {
+      runCharacterHook(charEl.activeFeatures, 'onRoll', onRollCtxProceed);
+    } else {
+      const proceedNames = [...(charEl.ancestryFeatures || []).map(f => f.name), ...(charEl.communityFeatures || []).map(f => f.name)];
+      const proceedRows = proceedNames.map((n) => resolveOriginFeatureDescriptor(charEl, n)).filter(Boolean);
+      if (proceedRows.length) {
+        runCharacterHook(proceedRows, 'onRoll', onRollCtxProceed);
+      }
+    }
     for (let i = 0; i < chips.length; i++) {
       const chip = chips[i];
       if (chip._difficultyChip) continue;
@@ -5258,7 +5270,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
   }
 
   const renderPinnedCharacterPanel = useCallback(
-    ({ element, anchorX, anchorY, onClose, onRemoveFromMap, onPlaceOnMap }) => {
+    ({ element, anchorX, anchorY, preferLeft = false, onClose, onRemoveFromMap, onPlaceOnMap }) => {
       const el = activeElements.find((e) => e.instanceId === element.instanceId) || element;
       if (el.elementType !== 'character') return null;
       const isOnMap = el.tokenX != null && el.tokenY != null;
@@ -5280,6 +5292,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
         <AnchoredFloatingPanel
           anchorX={anchorX}
           anchorY={anchorY}
+          preferLeft={preferLeft}
           onEscape={onClose}
           className="w-56 min-w-0 max-w-[min(18rem,92vw)]"
         >
@@ -6715,428 +6728,6 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
           </div>
         )}
         <div className="flex-1 min-h-0 relative flex flex-col overflow-hidden">
-        {/* Pre-roll banner (onAct chips, e.g. Quick Reactions) — slides up over the map */}
-        {preRollBanner && (
-          <div
-            className="dh-preroll-sheet absolute inset-x-0 bottom-0 z-20 h-auto max-h-full rounded-t-lg border-t border-dh-border bg-dh-surface/95 px-4 py-3 text-dh overflow-y-auto overscroll-contain pointer-events-auto shadow-[0_-12px_40px_rgba(0,0,0,0.5)]"
-            role="region"
-            aria-labelledby="preroll-title"
-          >
-            <div className="max-w-3xl mx-auto w-full">
-              {(() => {
-                const cel = activeElements.find((e) => e.instanceId === preRollBanner.characterEl.instanceId) || preRollBanner.characterEl;
-                const meta = preRollBanner.pending?.meta || {};
-                const companion = cel?.companion;
-                const isCompanionAttack = !!meta._companionExperienceForRoll && !!companion?.attackName;
-                const weapon = Array.isArray(cel?.weapons) && meta._weaponId != null
-                  ? cel.weapons.find((w) => w.id === meta._weaponId)
-                  : null;
-                const title = buildPreRollPanelTitle({
-                  actorName: isCompanionAttack ? companion.name : (cel?.name || ''),
-                  traitKey: meta._traitKey,
-                  displayName: preRollBanner.pending?.displayName,
-                  actionName: meta._subFeatureName || meta._featureName || null,
-                  weaponName: weapon?.name || null,
-                  isSpellcast: !!meta._isSpellcastRoll && !meta._companionExperienceForRoll,
-                  isReaction: !!meta._isReaction,
-                  companionAttackName: isCompanionAttack ? companion.attackName : null,
-                });
-                return (
-                  <>
-                    <div className="text-[10px] font-bold uppercase tracking-wide text-dh-muted mb-0.5">Before you roll</div>
-                    <div className="flex items-center gap-2 mb-2 flex-wrap">
-                      <div id="preroll-title" className="text-sm font-bold text-dh">{title}</div>
-                      {isPlayer ? (
-                        <label className="inline-flex items-center gap-1.5 text-[11px] font-medium text-dh cursor-pointer">
-                          <input
-                            type="checkbox"
-                            data-testid="preroll-private-checkbox"
-                            checked={preRollVisibility === ROLL_VISIBILITY_GM_AND_PLAYER}
-                            onChange={(e) => {
-                              const next = e.target.checked ? ROLL_VISIBILITY_GM_AND_PLAYER : ROLL_VISIBILITY_TABLE;
-                              setPreRollVisibility(next);
-                              if (tableId && preRollBanner.intentPayload) {
-                                postPlayerIntent(tableId, {
-                                  ...preRollBanner.intentPayload,
-                                  ...(next === ROLL_VISIBILITY_GM_AND_PLAYER
-                                    ? { _rollVisibility: ROLL_VISIBILITY_GM_AND_PLAYER }
-                                    : {}),
-                                });
-                              }
-                            }}
-                          />
-                          Private to me and GM
-                        </label>
-                      ) : (
-                        <select
-                          data-testid="preroll-visibility"
-                          aria-label="Roll visibility"
-                          value={
-                            preRollVisibility === ROLL_VISIBILITY_GM_AND_PLAYER
-                            && !characterHasAssignedPlayer(preRollBanner.characterEl)
-                              ? ROLL_VISIBILITY_TABLE
-                              : preRollVisibility
-                          }
-                          onChange={(e) => setPreRollVisibility(e.target.value)}
-                          className="max-w-[16rem] rounded px-1.5 py-1 text-[11px] bg-dh-raised border border-dh-strong text-dh"
-                        >
-                          <option value={ROLL_VISIBILITY_TABLE}>Visible to table</option>
-                          <option value={ROLL_VISIBILITY_GM_ONLY}>Private to me</option>
-                          {characterHasAssignedPlayer(preRollBanner.characterEl) && (
-                            <option value={ROLL_VISIBILITY_GM_AND_PLAYER}>
-                              Private to me and {assignedPlayerDisplayName(preRollBanner.characterEl, joinedPlayers)}
-                            </option>
-                          )}
-                        </select>
-                      )}
-                    </div>
-                  </>
-                );
-              })()}
-              <p className="text-xs text-dh mb-2">Choose experience and optional toggles, then Proceed.</p>
-              {preRollBanner.requiresGmDifficulty && (
-                <div className="mb-3 w-full rounded border border-dh-strong bg-dh-raised/40 px-2.5 py-1.5">
-                  {preRollFinalizedGmDifficulty == null ? (
-                    <p className="text-[11px] text-dh-muted italic">Waiting for the GM to set the difficulty&hellip;</p>
-                  ) : (
-                    <p className="text-[11px] text-dh">
-                      Difficulty: <span className="font-bold">DC {preRollFinalizedGmDifficulty}</span>{' '}
-                      <span className="text-dh-muted">({getDifficultyLabel(preRollFinalizedGmDifficulty)}) — set by GM</span>
-                    </p>
-                  )}
-                </div>
-              )}
-              {preRollBanner.pending?.meta?._deferExperienceToPreRoll && (() => {
-                const cel = activeElements.find(e => e.instanceId === preRollBanner.characterEl.instanceId) || preRollBanner.characterEl;
-                const meta = preRollBanner.pending.meta;
-                const isComp = meta._companionExperienceForRoll;
-                const exps = isComp ? (cel.companion?.experiences || []) : (cel.experiences || []);
-                const hope = cel.hope ?? (cel.maxHope ?? 6);
-                if (exps.length === 0) return null;
-                return (
-                  <div className="mb-3 w-full">
-                    <div className="text-[11px] font-semibold text-dh mb-1.5">
-                      Experience <span className="text-dh-hope-soft font-normal">(1 Hope)</span>
-                    </div>
-                    <div className="flex flex-wrap gap-1">
-                      {exps.map((exp, i) => {
-                        const selected = isComp ? preRollCompanionExperienceIndex === i : preRollExperienceIndex === i;
-                        const noHope = hope === 0;
-                        const disabled = noHope && !selected;
-                        return (
-                          <button
-                            key={i}
-                            type="button"
-                            disabled={disabled}
-                            onClick={() => {
-                              if (isComp) {
-                                setPreRollCompanionExperienceIndex(selected ? null : i);
-                              } else {
-                                setPreRollExperienceIndex(selected ? null : i);
-                              }
-                            }}
-                            className={`text-[11px] rounded px-2 py-0.5 border transition-colors font-medium
-                              ${disabled
-                                ? 'opacity-35 cursor-not-allowed bg-dh-raised border-dh-strong text-dh-muted'
-                                : selected
-                                  ? 'bg-sky-900/60 border-sky-500 text-sky-100 ring-1 ring-sky-500/50 cursor-pointer'
-                                  : 'bg-dh-raised border-dh-strong text-dh hover:bg-dh-hover/60 hover:border-dh-strong cursor-pointer'}`}
-                          >
-                            {exp.name}
-                            {exp.score != null && (
-                              <span className={`font-bold ml-1 ${disabled ? 'text-dh-muted' : 'text-sky-400'}`}>+{exp.score}</span>
-                            )}
-                          </button>
-                        );
-                      })}
-                    </div>
-                    {hope === 0 && (
-                      <p className="text-[9px] text-red-500/70 mt-0.5">No Hope — cannot select an experience</p>
-                    )}
-                  </div>
-                );
-              })()}
-              {(() => {
-                const chips = preRollBanner.chips;
-                const diffChip = chips.find((c) => c._difficultyChip);
-                const hasDifficultyChip = !!diffChip;
-                const advantageTriggerIndices = chips.reduce((acc, c, i) => {
-                  if (c._advantageTriggerChip) acc.push(i);
-                  return acc;
-                }, []);
-                const showAdvantageSection = advantageTriggerIndices.length > 0 || hasDifficultyChip;
-
-                const meta = preRollBanner.pending?.meta;
-                const syntheticRoll = {
-                  _attackerInstanceId: meta?._attackerInstanceId ?? preRollBanner.characterEl?.instanceId,
-                  _attackerType: meta?._attackerType,
-                  _weaponRangeFt: meta?._weaponRangeFt,
-                  _attackRangeFt: meta?._attackRangeFt,
-                  _attackerInstanceIds: meta?._attackerInstanceIds,
-                  _featureNeedsTarget: meta?._featureNeedsTarget,
-                };
-                const rawPrerollTargets = getTargetsForRoll(syntheticRoll);
-                const isPcAttack = syntheticRoll._attackerInstanceId != null && syntheticRoll._attackerType !== 'adversary';
-                const prerollIntentTargets = isPcAttack
-                  ? rawPrerollTargets.filter((t) => t.type === 'adversary')
-                  : rawPrerollTargets.filter((t) => t.type === 'character');
-                const prerollTargetRangeLabel =
-                  meta?._weaponRangeFt != null
-                    ? rangeFtToLabel(meta._weaponRangeFt)
-                    : meta?._attackerType === 'adversary' && meta?._attackRangeFt != null
-                      ? rangeFtToLabel(meta._attackRangeFt)
-                      : null;
-                const showPreRollTargetPicker = !!meta?._selectedTargetInstanceId && prerollIntentTargets.length > 0;
-
-                const celForIntent =
-                  activeElements.find((e) => e.instanceId === preRollBanner.characterEl.instanceId) ||
-                  preRollBanner.characterEl;
-                const syntheticRollForV2Intent =
-                  srdData &&
-                  (meta?._weaponRangeFt != null || meta?._weaponId != null
-                    ? buildV2PreRollWeaponAttackRollSkeleton({
-                        pendingMeta: meta,
-                        pendingRollText: preRollBanner.pending.rollText,
-                        characterEl: celForIntent,
-                      })
-                    : buildV2PreRollTraitRollSkeleton({
-                        pendingMeta: meta,
-                        pendingRollText: preRollBanner.pending.rollText,
-                        characterEl: celForIntent,
-                      }));
-
-                const renderPrerollToggle = (i, emerald) => {
-                  const chip = chips[i];
-                  const selected = selectedPreRollChips[i];
-                  const used = chip._used;
-                  const v2Hint =
-                    chip._v2IntentChip && syntheticRollForV2Intent
-                      ? getV2ReviewChipDisableHint(chip, syntheticRollForV2Intent, activeElements, srdData, {
-                          fearCount,
-                          mapConfig,
-                          tableFeatureState,
-                        })
-                      : null;
-                  const v2Disabled = !!v2Hint;
-                  // Prefer explicit chip label/name; fall back to owning feature name so unnamed
-                  // intent chips (e.g. Apex Predator) still have an accessible button name.
-                  const label = chip.label ?? chip.name ?? chip._featureName ?? '';
-                  const costParts = [];
-                  if (chip.stressCost) costParts.push(`${chip.stressCost} Stress`);
-                  if (chip.hopeCost) costParts.push(`${chip.hopeCost} Hope`);
-                  const costLabel = costParts.length ? ` (${costParts.join(', ')})` : '';
-                  const cycleWord = getFrequencyCycleWord(chip.resetsOn);
-                  const descForTooltip =
-                    typeof chip.description === 'string' && chip.description.trim() !== ''
-                      ? chip.description.trim()
-                      : null;
-                  const tooltipLabel = used
-                    ? (cycleWord ? `Already used (${cycleWord})` : 'Already used')
-                    : v2Hint || (descForTooltip ?? label) + costLabel;
-                  const selEmerald = emerald && selected && !used && !v2Disabled;
-                  const unselEmerald = emerald && !selected && !used && !v2Disabled;
-                  return (
-                    <Tooltip key={i} label={tooltipLabel} placement="bottom-left">
-                      <span className="inline-flex items-center gap-1">
-                        <button
-                          type="button"
-                          disabled={used || v2Disabled}
-                          onClick={used || v2Disabled ? undefined : () => setSelectedPreRollChips((prev) => {
-                            const next = [...prev];
-                            next[i] = !next[i];
-                            return next;
-                          })}
-                          className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded text-[11px] font-semibold border transition-colors ${
-                            used
-                              ? 'border-dh-strong bg-dh-raised/30 text-dh-muted cursor-not-allowed opacity-70'
-                              : selEmerald
-                                ? 'border-emerald-600 bg-emerald-900/50 text-emerald-100'
-                                : unselEmerald
-                                  ? 'border-emerald-700/60 bg-emerald-950/35 text-emerald-200/90 hover:border-emerald-500 hover:bg-emerald-900/30'
-                                  : selected
-                                    ? 'border-sky-500 bg-sky-950/40 text-dh ring-1 ring-sky-500/40'
-                                    : 'border-dh-strong bg-dh-raised/40 text-dh-muted hover:border-dh-strong hover:text-dh'
-                          }`}
-                        >
-                          <Square size={12} className={`shrink-0 ${selected && !used ? 'hidden' : ''}`} />
-                          <CheckSquare size={12} className={`shrink-0 ${selected && !used ? '' : 'hidden'}`} />
-                          <span className="truncate max-w-[180px]">{label}</span>
-                          {!used && <FeatureResourceCostIcons action={chip} iconSize={9} className="ml-0.5" />}
-                          {chip.resetsOn && (
-                            <FrequencyCycleChipSuffix frequency={chip.resetsOn} iconSize={9} className="ml-0.5" />
-                          )}
-                        </button>
-                      </span>
-                    </Tooltip>
-                  );
-                };
-
-                return (
-                  <>
-                    {hasDifficultyChip && (
-                      <div className="mb-3 w-full flex flex-col gap-1">
-                        <label className="text-[11px] font-semibold text-dh" htmlFor="preroll-difficulty">
-                          {diffChip.label}
-                        </label>
-                        <div className="flex items-center gap-2">
-                          <input
-                            id="preroll-difficulty"
-                            type="range"
-                            min={5}
-                            max={30}
-                            step={1}
-                            value={preRollDifficulty}
-                            onChange={(e) => { const v = Number(e.target.value); setPreRollDifficulty(v); writeLastDifficulty(v); }}
-                            className="flex-1 h-2 rounded-full appearance-none bg-gradient-to-r from-slate-600 to-slate-900 cursor-pointer accent-sky-500"
-                            aria-label="Difficulty (DC 5–30)"
-                          />
-                          <span className="text-sm font-bold tabular-nums text-dh shrink-0 w-8" aria-live="polite">
-                            {preRollDifficulty}
-                          </span>
-                        </div>
-                        <span className="text-[10px] text-dh-muted">{getDifficultyLabel(preRollDifficulty)}</span>
-                      </div>
-                    )}
-                    {showPreRollTargetPicker && (
-                      <div className="mb-3 w-full flex flex-col gap-1.5">
-                        <span className="text-[11px] font-semibold text-dh">
-                          Target{prerollTargetRangeLabel ? ` (within ${prerollTargetRangeLabel})` : ''}
-                        </span>
-                        <div className="flex flex-wrap gap-1.5">
-                          {prerollIntentTargets.map((t) => {
-                            const selected = preRollTargetInstanceId === t.instanceId;
-                            return (
-                              <button
-                                key={t.instanceId}
-                                type="button"
-                                onClick={() => setPreRollTargetInstanceId(t.instanceId)}
-                                className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded text-[11px] font-semibold border transition-colors ${
-                                  selected
-                                    ? 'border-sky-500 bg-sky-950/40 text-dh ring-1 ring-sky-500/40'
-                                    : 'border-dh-strong bg-dh-raised/40 text-dh hover:border-dh-strong hover:text-dh'
-                                }`}
-                              >
-                                {t.name}
-                              </button>
-                            );
-                          })}
-                        </div>
-                        <p className="text-[9px] text-dh-muted">
-                          Same valid targets as the in-sheet picker (range, map position, etc.).
-                        </p>
-                      </div>
-                    )}
-                    <div className="flex flex-wrap gap-1.5 items-center mb-3">
-                      {chips.map((chip, i) => {
-                        if (chip._difficultyChip || chip._advantageTriggerChip) return null;
-                        return renderPrerollToggle(i, false);
-                      })}
-                    </div>
-                    {showAdvantageSection && (
-                      <div className="mb-3 w-full flex flex-col gap-1.5">
-                        <span className="text-[11px] font-semibold text-dh">Advantage</span>
-                        {advantageTriggerIndices.length > 0 && (
-                          <div className="flex flex-wrap gap-1.5">
-                            {advantageTriggerIndices.map((ti) => renderPrerollToggle(ti, true))}
-                          </div>
-                        )}
-                        {hasDifficultyChip && (
-                          <>
-                            {preRollAdvantages.map((name, idx) => (
-                              <div key={idx} className="flex items-center gap-1.5">
-                                <input
-                                  type="text"
-                                  value={name}
-                                  onChange={(e) => setPreRollAdvantages((prev) => {
-                                    const next = [...prev];
-                                    next[idx] = e.target.value;
-                                    return next;
-                                  })}
-                                  placeholder="Advantage"
-                                  className="flex-1 min-w-0 rounded px-2 py-1 text-[11px] bg-dh-raised border border-dh-strong text-dh placeholder-dh-muted focus:border-sky-500 focus:ring-1 focus:ring-sky-500"
-                                  aria-label="Advantage name"
-                                />
-                                <button
-                                  type="button"
-                                  onClick={() => setPreRollAdvantages((prev) => prev.filter((_, i) => i !== idx))}
-                                  className="shrink-0 p-1 rounded text-dh-muted hover:bg-dh-hover hover:text-dh"
-                                  aria-label="Remove advantage"
-                                >
-                                  <Trash2 size={14} />
-                                </button>
-                              </div>
-                            ))}
-                            <button
-                              type="button"
-                              onClick={() => setPreRollAdvantages((prev) => [...prev, ''])}
-                              className="self-start inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] text-dh-muted hover:text-sky-400 hover:bg-dh-raised/80 border border-dh-strong hover:border-dh-strong"
-                            >
-                              <Plus size={12} /> Add advantage [d6]
-                            </button>
-                          </>
-                        )}
-                      </div>
-                    )}
-                    {hasDifficultyChip && (
-                      <div className="mb-3 w-full flex flex-col gap-1">
-                        <span className="text-[11px] font-semibold text-dh">Disadvantage</span>
-                        {preRollDisadvantages.map((name, idx) => (
-                          <div key={idx} className="flex items-center gap-1.5">
-                            <input
-                              type="text"
-                              value={name}
-                              onChange={(e) => setPreRollDisadvantages((prev) => {
-                                const next = [...prev];
-                                next[idx] = e.target.value;
-                                return next;
-                              })}
-                              placeholder="Disadvantage"
-                              className="flex-1 min-w-0 rounded px-2 py-1 text-[11px] bg-dh-raised border border-dh-strong text-dh placeholder-dh-muted focus:border-sky-500 focus:ring-1 focus:ring-sky-500"
-                              aria-label="Disadvantage name"
-                            />
-                            <button
-                              type="button"
-                              onClick={() => setPreRollDisadvantages((prev) => prev.filter((_, i) => i !== idx))}
-                              className="shrink-0 p-1 rounded text-dh-muted hover:bg-dh-hover hover:text-dh"
-                              aria-label="Remove disadvantage"
-                            >
-                              <Trash2 size={14} />
-                            </button>
-                          </div>
-                        ))}
-                        <button
-                          type="button"
-                          onClick={() => setPreRollDisadvantages((prev) => [...prev, ''])}
-                          className="self-start inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] text-dh-muted hover:text-sky-400 hover:bg-dh-raised/80 border border-dh-strong hover:border-dh-strong"
-                        >
-                          <Plus size={12} /> Add disadvantage [d6]
-                        </button>
-                      </div>
-                    )}
-                  </>
-                );
-              })()}
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={handlePreRollProceed}
-                  disabled={preRollBanner.requiresGmDifficulty && preRollFinalizedGmDifficulty == null}
-                  title={preRollBanner.requiresGmDifficulty && preRollFinalizedGmDifficulty == null ? 'Waiting for the GM to set the difficulty' : undefined}
-                  className="px-3 py-1.5 rounded text-[11px] font-semibold border border-dh-strong bg-dh-hover text-dh hover:bg-dh-strong disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-dh-hover"
-                >
-                  Proceed
-                </button>
-                <button
-                  type="button"
-                  onClick={clearPreRollBanner}
-                  className="px-2 py-0.5 rounded text-[10px] font-medium border border-dh-strong bg-dh-surface/60 text-dh-muted hover:bg-dh-raised hover:text-dh"
-                >
-                  Cancel
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
         {spotlightBlockedHint && typeof document !== 'undefined' && createPortal(
           <div
             role="status"
@@ -7146,65 +6737,6 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
           </div>,
           document.body,
         )}
-        {/* GM intent banner: shown when a player has opened their pre-roll banner. Interactive (Difficulty slider + Finalize) when the roll needs a GM-set DC. */}
-        {!isPlayer && pendingPlayerIntent && createPortal(
-          <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 max-w-sm w-full px-3 py-2.5 rounded-xl shadow-2xl bg-dh-surface/95 border border-dh-strong text-dh flex flex-col gap-1.5 pointer-events-auto">
-            <div className="flex items-center gap-2">
-              <span className="text-[10px] font-bold uppercase tracking-wide text-dh-muted">Intent</span>
-              <span className="text-[11px] font-semibold text-dh truncate">{pendingPlayerIntent.characterName}</span>
-            </div>
-            {pendingPlayerIntent.rollText && (
-              <p className="text-[10px] text-dh-muted truncate font-mono">{pendingPlayerIntent.rollText}</p>
-            )}
-            {pendingPlayerIntent.chips?.length > 0 && (
-              <div className="flex flex-wrap gap-1">
-                {pendingPlayerIntent.chips.map((chip, i) => (
-                  <span key={i} className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] bg-dh-inset border border-dh-border text-dh">
-                    <span className="truncate max-w-[140px]">{chip.label || chip.description}</span>
-                    <FeatureResourceCostIcons action={chip} iconSize={9} />
-                  </span>
-                ))}
-              </div>
-            )}
-            {pendingPlayerIntent.needsDifficulty ? (
-              <div className="flex flex-col gap-1.5 pt-0.5">
-                <label className="text-[10px] font-semibold text-dh" htmlFor="intent-difficulty">Difficulty</label>
-                <div className="flex items-center gap-2">
-                  <input
-                    id="intent-difficulty"
-                    type="range"
-                    min={5}
-                    max={30}
-                    step={1}
-                    value={intentDifficultyDraft}
-                    onChange={(e) => { const v = Number(e.target.value); setIntentDifficultyDraft(v); writeLastDifficulty(v); }}
-                    className="flex-1 h-2 rounded-full appearance-none bg-gradient-to-r from-slate-600 to-slate-900 cursor-pointer accent-sky-500"
-                    aria-label="Difficulty (DC 5–30)"
-                  />
-                  <span className="text-sm font-bold tabular-nums text-dh shrink-0 w-8" aria-live="polite">
-                    {intentDifficultyDraft}
-                  </span>
-                </div>
-                <span className="text-[10px] text-dh-muted">{getDifficultyLabel(intentDifficultyDraft)}</span>
-                {pendingPlayerIntent.difficultyFinalized ? (
-                  <span className="self-start text-[10px] font-semibold text-emerald-400">Locked: DC {pendingPlayerIntent.difficulty}</span>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => { writeLastDifficulty(intentDifficultyDraft); postFinalizeIntentDifficulty(tableId, { intentId: pendingPlayerIntent.intentId, difficulty: intentDifficultyDraft }); }}
-                    className="self-start px-2.5 py-1 rounded text-[11px] font-semibold border border-sky-600 bg-sky-900/50 text-sky-100 hover:bg-sky-800/60"
-                  >
-                    Finalize
-                  </button>
-                )}
-              </div>
-            ) : (
-              <p className="text-[9px] text-dh-muted italic">Player is deciding — dice haven't rolled yet.</p>
-            )}
-          </div>,
-          document.body
-        )}
-
         {typeof document !== 'undefined' && playBlockedDialog && !isPlayer && createPortal(
           <div
             className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/60"
@@ -7334,6 +6866,57 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
             getV2ReviewChipDisableHint={getV2ReviewChipDisableHintCb}
             canUseV2ReviewChips={!isPlayer || !!playerViewerCharacterInstanceId}
             getV2PendingMoveBlockInfo={!isPlayer ? getV2PendingMoveBlockInfo : undefined}
+            preRollSlot={preRollBanner ? (
+              <PreRollBanner
+                key={preRollBanner.intentId || 'preroll'}
+                characterEl={preRollBanner.characterEl}
+                pending={preRollBanner.pending}
+                chips={preRollBanner.chips}
+                selectedChips={selectedPreRollChips}
+                onToggleChip={(i) => setSelectedPreRollChips((prev) => {
+                  const next = [...prev];
+                  next[i] = !next[i];
+                  return next;
+                })}
+                experienceIndex={preRollExperienceIndex}
+                companionExperienceIndex={preRollCompanionExperienceIndex}
+                onSelectExperience={(kind, index) => {
+                  if (kind === 'companion') setPreRollCompanionExperienceIndex(index);
+                  else setPreRollExperienceIndex(index);
+                }}
+                advantages={preRollAdvantages}
+                disadvantages={preRollDisadvantages}
+                onChangeAdvantages={setPreRollAdvantages}
+                onChangeDisadvantages={setPreRollDisadvantages}
+                targetInstanceId={preRollTargetInstanceId}
+                onSelectTarget={setPreRollTargetInstanceId}
+                visibility={preRollVisibility}
+                onChangeVisibility={setPreRollVisibility}
+                isPlayer={isPlayer}
+                joinedPlayers={joinedPlayers}
+                needsDifficulty={!!preRollBanner.needsDifficulty}
+                difficulty={preRollDifficulty}
+                difficultyFinalized={preRollDifficultyFinalized}
+                onDifficultyChange={(v) => { setPreRollDifficulty(v); writeLastDifficulty(v); }}
+                onFinalize={() => {
+                  writeLastDifficulty(preRollDifficulty);
+                  postFinalizeIntentDifficulty(tableId, {
+                    intentId: preRollBanner.intentId,
+                    difficulty: preRollDifficulty,
+                  });
+                }}
+                onProceed={handlePreRollProceed}
+                onCancel={clearPreRollBanner}
+                proceedDisabled={!!preRollBanner.needsDifficulty && !preRollDifficultyFinalized && preRollFinalizedGmDifficulty == null}
+                getTargetsForRoll={getTargetsForRoll}
+                getV2ReviewChipDisableHint={getV2ReviewChipDisableHintCb}
+                activeElements={activeElements}
+                srdData={srdData}
+                fearCount={fearCount}
+                mapConfig={mapConfig}
+                tableFeatureState={tableFeatureState}
+              />
+            ) : null}
           />
           <BattleMap
             gmUid={tableId}

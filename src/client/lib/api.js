@@ -1105,13 +1105,12 @@ export const postAddCharacter = async (tableId, charData) => {
 };
 
 /**
- * Broadcast a pre-roll intent banner to the GM.
- * chips must be plain serializable objects (no functions) — strip onUse etc. before calling.
- * Intent shape: { characterName, characterInstanceId, rollText, chips }
+ * Create / replace the shared pre-roll intent session (GM or player).
+ * chips / pending must be plain serializable objects (no functions).
  */
-export const postPlayerIntent = async (tableId, intent) => {
+export const postTableIntent = async (tableId, intent) => {
   const token = await getAuthToken();
-  if (!token) return;
+  if (!token || !tableId) return;
   fetch(`/api/room/${tableId}/intent`, {
     method: 'POST',
     headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
@@ -1119,15 +1118,46 @@ export const postPlayerIntent = async (tableId, intent) => {
   }).catch(() => {});
 };
 
-/** Clear the pending pre-roll intent (call after Proceed or Cancel). */
-export const clearPlayerIntent = async (tableId) => {
+/** @deprecated use postTableIntent */
+export const postPlayerIntent = postTableIntent;
+
+/** Merge selection fields (both roles) and DC draft (GM only) into the pending intent. */
+export const patchTableIntent = async (tableId, patch) => {
   const token = await getAuthToken();
-  if (!token) return;
+  if (!token || !tableId) return;
   fetch(`/api/room/${tableId}/intent`, {
-    method: 'DELETE',
-    headers: apiHeaders({ Authorization: `Bearer ${token}` }),
+    method: 'PATCH',
+    headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
+    body: JSON.stringify(patch),
   }).catch(() => {});
 };
+
+/**
+ * Compare-and-swap clear of the pending intent. Returns `{ ok, conflict }` so Proceed
+ * can abort when the other party already proceeded or cancelled (HTTP 409).
+ */
+export const clearTableIntent = async (tableId, intentId) => {
+  const token = await getAuthToken();
+  if (!token || !tableId) return { ok: false };
+  try {
+    const qs = intentId != null && intentId !== ''
+      ? `?intentId=${encodeURIComponent(intentId)}`
+      : '';
+    const res = await fetch(`/api/room/${tableId}/intent${qs}`, {
+      method: 'DELETE',
+      headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
+      body: JSON.stringify({ intentId }),
+    });
+    if (res.status === 409) return { ok: false, conflict: true };
+    if (!res.ok) return { ok: false };
+    return { ok: true };
+  } catch {
+    return { ok: false };
+  }
+};
+
+/** @deprecated use clearTableIntent */
+export const clearPlayerIntent = clearTableIntent;
 
 /** GM: finalize the difficulty for a pending player intent so their pre-roll sheet can Proceed. */
 export const postFinalizeIntentDifficulty = async (tableId, { intentId, difficulty }) => {

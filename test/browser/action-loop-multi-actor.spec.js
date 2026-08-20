@@ -1077,14 +1077,9 @@ test.describe('M5 — Cross-sheet chip affecting another player\'s sheet in real
 // GM-finalized difficulty for player action rolls (docs/plans:
 // gm_difficulty_finalization_for_player_action_rolls)
 //
-// Player A's trait roll (a non-attack, non-reaction action roll) opens their own "Before you
-// roll" pre-roll sheet, which is blocked on Proceed until the GM sets a DC → the real, room-wide
-// `intent` SSE broadcast surfaces an interactive Intent banner on the GM's client (Difficulty
-// slider + Finalize button, real DOM elements, real clicks — no direct API calls) → the GM drags
-// the slider and clicks Finalize → the same SSE channel echoes the finalized DC back to Player A,
-// unlocking Proceed with the GM-set DC shown → Player A clicks Proceed and the roll is posted with
-// `_difficulty` attached, which is verified end-to-end by the resulting banner rendering a real
-// Success/Failure label (DiceRoller only shows that label when `roll._difficulty != null`).
+// Player A's trait roll opens the shared strip PreRollBanner on both clients. Proceed stays
+// disabled until the GM Finalizes DC on `#intent-difficulty`. Player A's slider is disabled.
+// After Finalize, either party can Proceed; the posted roll carries `_difficulty`.
 
 test.describe('GM-finalized difficulty for player action rolls (trait roll)', () => {
   let tableId;
@@ -1145,15 +1140,20 @@ test.describe('GM-finalized difficulty for player action rolls (trait roll)', ()
     await expect(agilityChip).toBeVisible({ timeout: 8000 });
     await agilityChip.click();
 
-    // Player A's own pre-roll sheet opens and blocks the real Proceed button until the GM sets
-    // a difficulty — no slider is offered on the player's own sheet for this roll type.
-    await expect(playerAPage.getByText('Waiting for the GM to set the difficulty')).toBeVisible({ timeout: 8000 });
+    // Voluntary player trait rolls request Spotlight first. GM Ack resumes into the shared strip.
+    const spotlightBanner = page.locator('.dice-result-banner', { hasText: 'requesting the spotlight' });
+    await expect(spotlightBanner).toBeVisible({ timeout: 8000 });
+    await spotlightBanner.getByRole('button', { name: 'Acknowledge' }).click();
+
+    // Shared strip card on both clients. Player slider is disabled; Proceed waits on Finalize.
+    await expect(playerAPage.getByText('Before you roll')).toBeVisible({ timeout: 8000 });
+    await expect(page.getByText('Before you roll')).toBeVisible({ timeout: 8000 });
+    const playerSlider = playerAPage.locator('#intent-difficulty');
+    await expect(playerSlider).toBeVisible({ timeout: 8000 });
+    await expect(playerSlider).toBeDisabled();
     const proceedBtn = playerAPage.getByRole('button', { name: 'Proceed' });
     await expect(proceedBtn).toBeDisabled();
 
-    // The real Intent banner appears on the GM's client via the room-wide `intent` SSE broadcast,
-    // and — because this roll needsDifficulty — is interactive with a Difficulty slider and a
-    // Finalize button (not the old read-only "Player is deciding" copy).
     const difficultySlider = page.locator('#intent-difficulty');
     await expect(difficultySlider).toBeVisible({ timeout: 8000 });
     const finalizeBtn = page.getByRole('button', { name: 'Finalize' });
@@ -1168,15 +1168,14 @@ test.describe('GM-finalized difficulty for player action rolls (trait roll)', ()
       const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
       nativeSetter.call(el, '20');
       el.dispatchEvent(new Event('input', { bubbles: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
     });
     await expect(difficultySlider).toHaveValue('20');
+    await expect(page.locator('#intent-difficulty + span')).toHaveText('20');
     await finalizeBtn.click();
 
-    // The finalize POST re-broadcasts room-wide; the GM's own banner locks in place...
     await expect(page.getByText('Locked: DC 20')).toBeVisible({ timeout: 8000 });
-    // ...and Player A's pre-roll sheet, which shares the same SSE `intent` listener, unlocks
-    // Proceed and shows the GM-set DC — with no reload or further interaction on Player A's side.
-    await expect(playerAPage.getByText('DC 20')).toBeVisible({ timeout: 8000 });
+    await expect(playerAPage.getByText('Locked: DC 20')).toBeVisible({ timeout: 8000 });
     await expect(proceedBtn).toBeEnabled();
 
     // Player A clicks the real "Proceed" button — the roll is posted with `_difficulty: 20`.
@@ -1192,7 +1191,8 @@ test.describe('GM-finalized difficulty for player action rolls (trait roll)', ()
     const playerABanner = playerAPage.locator('.dice-result-banner', { hasText: bannerTitle });
     await expect(gmBanner).toBeVisible({ timeout: 8000 });
     await expect(playerABanner).toBeVisible({ timeout: 8000 });
-    await expect(gmBanner.getByText(/^(Success|Failure)$/)).toBeVisible({ timeout: 8000 });
+    await expect(gmBanner.getByText(/DC 20/)).toBeVisible({ timeout: 8000 });
+    await expect(gmBanner.getByText(/Success|Failure/)).toBeVisible({ timeout: 8000 });
 
     // GM acknowledges the roll (real click) — cleans up the banner on all clients.
     await gmBanner.getByRole('button', { name: 'Acknowledge' }).first().click();
@@ -1200,6 +1200,77 @@ test.describe('GM-finalized difficulty for player action rolls (trait roll)', ()
 
     const seriousErrors = consoleErrors.filter((e) => !/favicon|manifest|WebGL|\[DiceRoller\] init failed|Failed to load resource.*403/i.test(e));
     expect(seriousErrors, `Unexpected console errors:\n${seriousErrors.join('\n')}`).toEqual([]);
+
+    await playerAPage.close();
+  });
+});
+
+test.describe('shared pre-roll banner: GM opens trait, assigned player toggles experience', () => {
+  let tableId;
+  let charAInstanceId;
+  let sharedLibId;
+
+  test.beforeAll(async () => {
+    tableId = await setupTestTable({ playerEmails: [ACTOR_PLAYER_A.email] });
+    // Experiences are library fields (not CHARACTER_RUNTIME_KEYS) — they only survive
+    // resolveCharacterElements when the table element's `id` matches a real library row.
+    const sharedLib = await createLibraryCharacter(ACTOR_GM, {
+      name: 'Shared Banner PC',
+      maxHp: 6, maxStress: 6, maxHope: 6, maxArmor: 0,
+      experiences: [{ id: 'exp-streetwise', name: 'Streetwise', score: 2 }],
+      _tableId: tableId,
+    });
+    sharedLibId = sharedLib.id;
+    charAInstanceId = `char-a-shared-${Date.now()}`;
+    await addElementsToTable(tableId, [
+      {
+        instanceId: charAInstanceId,
+        elementType: 'character',
+        id: sharedLib.id,
+        name: sharedLib.name,
+        currentHp: 6, currentStress: 0, hope: 3,
+        conditions: '',
+        assignedPlayerUid: ACTOR_PLAYER_A.uid,
+        assignedPlayerEmail: ACTOR_PLAYER_A.email,
+      },
+    ]);
+    await setTableTop(tableId, { sessionStarted: true });
+  });
+
+  test.afterAll(async () => {
+    if (sharedLibId) await deleteLibraryCharacter(ACTOR_GM, sharedLibId);
+    if (tableId) await deleteTestTable(tableId);
+  });
+
+  test('player sees the GM-opened strip and can toggle an experience the GM observes', async ({ page }) => {
+    await authenticateActor(page, ACTOR_GM);
+    await page.goto(`/table/${tableId}`);
+    await expect(page.locator('button', { hasText: 'Add Character' })).toBeVisible({ timeout: 15000 });
+
+    const playerAPage = await page.context().newPage();
+    await authenticateActor(playerAPage, ACTOR_PLAYER_A);
+    await playerAPage.goto(`/table/${tableId}`);
+    await expect(playerAPage.locator('text=Shared Banner PC').first()).toBeVisible({ timeout: 15000 });
+
+    for (const p of [page, playerAPage]) {
+      await p.getByLabel('Hide dice').click();
+    }
+
+    await page.locator('text=Shared Banner PC').first().click();
+    const agilityChip = page.getByTitle('Roll Agility');
+    await expect(agilityChip).toBeVisible({ timeout: 8000 });
+    await agilityChip.click();
+
+    await expect(page.getByText('Before you roll')).toBeVisible({ timeout: 8000 });
+    await expect(playerAPage.getByText('Before you roll')).toBeVisible({ timeout: 8000 });
+    await expect(page.locator('#intent-difficulty')).toBeVisible();
+    await expect(playerAPage.locator('#intent-difficulty')).toBeDisabled();
+
+    const playerExp = playerAPage.getByTestId('preroll-experience-0');
+    await expect(playerExp).toBeVisible({ timeout: 8000 });
+    await playerExp.click();
+
+    await expect(page.getByTestId('preroll-experience-0')).toHaveClass(/ring-sky/, { timeout: 8000 });
 
     await playerAPage.close();
   });

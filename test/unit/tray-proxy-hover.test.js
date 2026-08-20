@@ -2,7 +2,6 @@ import { describe, it, expect } from 'vitest';
 import {
   trayProxyShouldSnapBullseye,
   bullseyeFtForPlacedTokenHover,
-  shouldPinTokenOnClick,
 } from '../../src/client/lib/tray-proxy-hover.js';
 
 describe('trayProxyShouldSnapBullseye', () => {
@@ -40,18 +39,5 @@ describe('bullseyeFtForPlacedTokenHover', () => {
       { halfWidth: 2.5, halfLength: 2.5 },
     );
     expect(snap.altitude).toBe(0);
-  });
-});
-
-describe('shouldPinTokenOnClick', () => {
-  it('does not pin tray adversaries (hover overlay owns that surface)', () => {
-    expect(shouldPinTokenOnClick({ fromTray: true, elementType: 'adversary' })).toBe(false);
-  });
-
-  it('still allows pin for map tokens and non-adversary tray tokens', () => {
-    expect(shouldPinTokenOnClick({ fromTray: false, elementType: 'adversary' })).toBe(true);
-    expect(shouldPinTokenOnClick({ fromTray: true, elementType: 'character' })).toBe(true);
-    expect(shouldPinTokenOnClick({ fromTray: true, elementType: 'boardToken' })).toBe(true);
-    expect(shouldPinTokenOnClick({})).toBe(true);
   });
 });

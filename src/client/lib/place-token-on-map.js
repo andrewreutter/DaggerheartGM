@@ -169,3 +169,13 @@ export function pickRandomPlaceOnMapSpots({
 export function getTokenTrayDirection(elementType) {
   return elementType === 'adversary' ? 'right' : 'left';
 }
+
+/**
+ * Right-tray pins open to the left of the token (mirrored from left-tray
+ * character pins, which open to the right). Map tokens keep the default
+ * right-of-click placement.
+ * @param {{ fromTray?: boolean, elementType?: string }} opts
+ */
+export function tokenPinPrefersLeft({ fromTray, elementType } = {}) {
+  return !!fromTray && getTokenTrayDirection(elementType) === 'right';
+}

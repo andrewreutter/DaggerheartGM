@@ -126,7 +126,7 @@ DaggerheartGM/
 │   │   │   ├── ImageUploadOverlay.jsx # Full-viewport Loader2 driven by image-upload-busy.js
 │   │   │   ├── ActionLog.jsx            # Action/roll history strip above the BattleMap (no polling)
 │   │   │   ├── ManualDiceBuilder.jsx  # Action Log's manual dice roll builder — live 3D Duality + size-tray previews, big per-size inputs
-│   │   │   ├── BattleMap.jsx          # Custom battle map with draggable tokens, trays, altitude HUD, hover tray overlays, and right-click / modifier-click map panels
+│   │   │   ├── BattleMap.jsx          # Custom battle map with draggable tokens, trays, altitude HUD, and right-click / modifier-click map panels
 │   │   │   ├── MapCameraPicker.jsx    # On-map current-camera chip (top-right) + hover overlay of every map/camera row
 │   │   │   ├── MapArtistCredit.jsx    # Bottom-right "Map by {artist}" inset (link when artistUrl is set)
 │   │   │   ├── CharacterDisplay.jsx   # Single source of truth for all character sheet display components; exports formatGold (base-10 handfuls/bags/chests), GoldTracker, CharacterInventoryList, TRAIT_FULL, TRAIT_LABELS, TRAIT_VERBS, WEAPON_TAG_DESCRIPTIONS, Section; all components support optional interactivity props

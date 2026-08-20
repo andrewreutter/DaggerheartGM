@@ -3,6 +3,7 @@ import {
   isAttackRollMeta,
   requiresGmFinalizedDifficulty,
   resolveFinalizedIntentDifficulty,
+  sessionNeedsDifficulty,
 } from '../../src/client/lib/action-roll-difficulty.js';
 
 describe('action-roll-difficulty', () => {
@@ -18,6 +19,18 @@ describe('action-roll-difficulty', () => {
     it('is false for a plain trait/spellcast roll', () => {
       expect(isAttackRollMeta({ _traitKey: 'instinct' })).toBe(false);
       expect(isAttackRollMeta({})).toBe(false);
+    });
+  });
+
+  describe('sessionNeedsDifficulty', () => {
+    it('is true for a non-attack, non-reaction roll (GM or player)', () => {
+      expect(sessionNeedsDifficulty({ _traitKey: 'instinct' })).toBe(true);
+      expect(sessionNeedsDifficulty({ _intentPanelForActionRoll: true })).toBe(true);
+    });
+
+    it('is false for attacks and GM-called reactions', () => {
+      expect(sessionNeedsDifficulty({ _weaponRangeFt: 30 })).toBe(false);
+      expect(sessionNeedsDifficulty({ _reactionCallRollDbId: 1 })).toBe(false);
     });
   });
 
@@ -62,6 +75,13 @@ describe('action-roll-difficulty', () => {
 
     it('returns the finalized difficulty when intentId matches and it is finalized', () => {
       expect(resolveFinalizedIntentDifficulty(banner, { intentId: 'abc-123', difficultyFinalized: true, difficulty: 20 })).toBe(20);
+    });
+
+    it('also reads needsDifficulty on the unified pendingIntent banner', () => {
+      expect(resolveFinalizedIntentDifficulty(
+        { needsDifficulty: true, intentId: 'abc-123' },
+        { intentId: 'abc-123', difficultyFinalized: true, difficulty: 18 },
+      )).toBe(18);
     });
 
     it('returns null when the finalized difficulty is not a finite number', () => {

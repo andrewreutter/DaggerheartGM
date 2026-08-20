@@ -38,9 +38,8 @@ describe('GM adversary token pin uses Encounter card + attack/feature actions', 
     expect(pinBody).not.toContain('EncounterAdversaryMarkedSummary');
   });
 
-  it('tray adversaries hover-open a left-of-tray overlay instead of click-to-pin', () => {
+  it('tray adversaries pin like character tokens (no hover overlay)', () => {
     const src = readFileSync(join(dir, '../../src/client/components/BattleMap.jsx'), 'utf8');
-    expect(src).toContain('shouldPinTokenOnClick');
     expect(src).toContain('isTokenOverlayActivateEvent');
     expect(src).toContain('MapChromeTooltip');
     expect(src).toContain('map-chrome-tooltip');
@@ -50,10 +49,14 @@ describe('GM adversary token pin uses Encounter card + attack/feature actions', 
     expect(src).toContain("style={{ left, maxWidth }}");
     expect(src).toMatch(/function MapChromeTooltip[\s\S]*text-left/);
     expect(src).toMatch(/function MapChromeTooltip[\s\S]*fontSize: '0\.96rem'/);
-    expect(src).toContain('trayAdversaryOverlay');
-    expect(src).toContain('data-testid="tray-adversary-overlay"');
-    expect(src).toContain('overlayLeftOfEdgeStyle');
-    expect(src).toContain('hoverOverlay={trayAdversaryOverlay}');
+    expect(src).not.toContain('trayAdversaryOverlay');
+    expect(src).not.toContain('data-testid="tray-adversary-overlay"');
+    expect(src).not.toContain('hoverOverlay={trayAdversaryOverlay}');
+    expect(src).not.toContain('shouldPinTokenOnClick');
+    expect(src).toContain('tokenPinPrefersLeft');
+    expect(src).toContain('preferLeft={!!pinnedToken.preferLeft}');
+    expect(src).toContain('onContextMenuCapture={suppressBrowserContextMenu}');
+    expect(src).toContain('swallowNextContextMenu');
     expect(src).toContain('data-testid="gm-spotlight-token"');
     expect(src).toContain('<GmSpotlightToken tokenSizePx={trayTokenSizePx} />');
     expect(src).toMatch(/<GmSpotlightToken tokenSizePx=\{trayTokenSizePx\} \/>\s*<div\s+className="absolute top-1\/2 right-full z-30 -translate-y-1\/2"\s+style=\{\{ marginRight: -SPOTLIGHT_BEAM_OVERLAP_PX \}\}/);

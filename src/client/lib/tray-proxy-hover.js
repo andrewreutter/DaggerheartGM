@@ -32,12 +32,3 @@ export function bullseyeFtForPlacedTokenHover(element, footprint) {
   };
 }
 
-/**
- * Map tokens (and non-adversary tray tokens) pin on right-click / modifier-click.
- * Tray adversaries use hover overlays instead.
- * @param {{ fromTray?: boolean, elementType?: string }} opts
- */
-export function shouldPinTokenOnClick({ fromTray, elementType } = {}) {
-  if (fromTray && elementType === 'adversary') return false;
-  return true;
-}

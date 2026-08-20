@@ -246,11 +246,8 @@ function App() {
   const [mapPings, setMapPings] = useState([]);
   /** Ephemeral scribble segments (SSE `map_scribble`); not persisted */
   const [mapScribbles, setMapScribbles] = useState([]);
-  // pendingPlayerIntent: pre-roll intent broadcast by a player before dice are rolled (GM sees this)
-  const [pendingPlayerIntent, setPendingPlayerIntent] = useState(null);
-  // intentDifficultyUpdate: latest `intent` SSE payload as seen by a player — used to detect when the
-  // GM has finalized the difficulty for that player's own pending pre-roll banner.
-  const [intentDifficultyUpdate, setIntentDifficultyUpdate] = useState(null);
+  // pendingIntent: shared pre-roll session (GM + initiator + assigned player)
+  const [pendingIntent, setPendingIntent] = useState(null);
   const [spotlightRequestGrant, setSpotlightRequestGrant] = useState(null);
   // Player-only: banner IDs for which a feature reroll was requested, keyed by reaction stateKey (optimistic feedback)
   const [featureRequestedBannerIdsByKey, setFeatureRequestedBannerIdsByKey] = useState(() => ({}));
@@ -1169,7 +1166,7 @@ function App() {
       });
       es.addEventListener('intent', (e) => {
         const intent = JSON.parse(e.data);
-        setPendingPlayerIntent(intent); // null clears the banner
+        setPendingIntent(intent); // null clears the banner
       });
       es.addEventListener('spotlight-request-granted', handleSpotlightRequestGrantedEvent);
       es.addEventListener('map_ping', (e) => {
@@ -1296,7 +1293,7 @@ function App() {
       });
       es.addEventListener('intent', (e) => {
         try {
-          setIntentDifficultyUpdate(JSON.parse(e.data));
+          setPendingIntent(JSON.parse(e.data));
         } catch { /* ignore */ }
       });
       es.addEventListener('spotlight-request-granted', handleSpotlightRequestGrantedEvent);
@@ -2775,8 +2772,7 @@ function App() {
                 gmUid={tableOwnerUid ?? user?.uid}
                 onPlayerAddCharacter={isSpectator ? undefined : (isPlayer ? handlePlayerAddCharacter : (isPreviewMode ? handleGmImpersonateAddCharacter : undefined))}
                 pendingBanners={pendingBanners}
-                pendingPlayerIntent={pendingPlayerIntent}
-                intentDifficultyUpdate={intentDifficultyUpdate}
+                pendingIntent={pendingIntent}
                 spotlightRequestGrant={spotlightRequestGrant}
                 onSpotlightRequestGrantConsumed={consumeSpotlightRequestGrant}
                 onFeatureRequestSuccess={effectiveIsPlayer ? (bannerId, stateKey) => {

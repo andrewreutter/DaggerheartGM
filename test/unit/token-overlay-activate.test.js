@@ -3,6 +3,8 @@ import {
   isModifierKeyDown,
   isTokenOverlayActivateEvent,
   resolveTokenHoverHintElement,
+  suppressBrowserContextMenu,
+  swallowNextContextMenu,
   tokenHoverHintModel,
   tokenHoverTooltipName,
   tokenHoverTooltipText,
@@ -43,6 +45,43 @@ describe('isTokenOverlayActivateEvent', () => {
     expect(isTokenOverlayActivateEvent({ button: 1 })).toBe(false);
     expect(isTokenOverlayActivateEvent({ button: 1, shiftKey: true })).toBe(false);
     expect(isTokenOverlayActivateEvent(null)).toBe(false);
+  });
+});
+
+describe('suppressBrowserContextMenu', () => {
+  it('prevents default and stops propagation', () => {
+    const e = { preventDefault: () => { e.prevented = true; }, stopPropagation: () => { e.stopped = true; } };
+    suppressBrowserContextMenu(e);
+    expect(e.prevented).toBe(true);
+    expect(e.stopped).toBe(true);
+  });
+
+  it('no-ops on a missing event', () => {
+    expect(() => suppressBrowserContextMenu(null)).not.toThrow();
+  });
+});
+
+describe('swallowNextContextMenu', () => {
+  it('suppresses the next capture-phase contextmenu then removes the listener', () => {
+    const listeners = [];
+    const root = {
+      addEventListener: (type, fn, capture) => { listeners.push({ type, fn, capture }); },
+      removeEventListener: (type, fn, capture) => {
+        const i = listeners.findIndex((l) => l.type === type && l.fn === fn && l.capture === capture);
+        if (i >= 0) listeners.splice(i, 1);
+      },
+    };
+    swallowNextContextMenu(root, 5000);
+    expect(listeners).toHaveLength(1);
+    const ev = { preventDefault() { ev.prevented = true; }, stopPropagation() { ev.stopped = true; } };
+    listeners[0].fn(ev);
+    expect(ev.prevented).toBe(true);
+    expect(ev.stopped).toBe(true);
+    expect(listeners).toHaveLength(0);
+  });
+
+  it('no-ops without a root', () => {
+    expect(typeof swallowNextContextMenu(null)).toBe('function');
   });
 });
 

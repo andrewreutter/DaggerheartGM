@@ -3,7 +3,6 @@ import {
   ENCOUNTER_ASIDE_WIDTH_REM,
   ENCOUNTER_OVERLAY_GAP_PX,
   ENCOUNTER_TRACKER_WIDTH_REM,
-  TRAY_OVERLAY_WIDTH_REM,
   GM_MOVES_ENCOUNTER_RIGHT,
   GM_MOVES_PANEL_GAP_PX,
   GM_MOVES_PANEL_TOP_PX,
@@ -58,17 +57,17 @@ describe('encounter overlay position', () => {
     expect(pot.right).toBe(tracker.right + ENCOUNTER_TRACKER_WIDTH_REM * 16 + ENCOUNTER_OVERLAY_GAP_PX);
   });
 
-  it('places a tray overlay just left of the tray edge', () => {
+  it('places a left-of-edge overlay using widthRem and gap', () => {
     const style = overlayLeftOfEdgeStyle({
       edgeLeft: 900,
       viewportWidth: 1000,
       triggerTop: 80,
       triggerBottom: 120,
-      widthRem: TRAY_OVERLAY_WIDTH_REM,
+      widthRem: 24,
     });
     expect(style.right).toBe(1000 - 900 + ENCOUNTER_OVERLAY_GAP_PX);
     expect(style.top).toBe(100);
-    expect(style.width).toBe(`calc(${TRAY_OVERLAY_WIDTH_REM}rem + ${ENCOUNTER_OVERLAY_GAP_PX}px)`);
+    expect(style.width).toBe(`calc(24rem + ${ENCOUNTER_OVERLAY_GAP_PX}px)`);
     expect(style.paddingRight).toBe(`${ENCOUNTER_OVERLAY_GAP_PX}px`);
   });
 

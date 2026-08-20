@@ -2932,6 +2932,7 @@ export const DiceRoller = forwardRef(function DiceRoller({
   reactionCallRosterByRollDbId = {},
   canReactionProceed,
   reactionProceedingInstanceId = null,
+  preRollSlot = null,
 }, ref) {
   const diceCanvasHiddenRef = useRef(diceCanvasHidden);
   useEffect(() => {
@@ -3379,7 +3380,7 @@ export const DiceRoller = forwardRef(function DiceRoller({
         }}
       />
       {/* Banner strip — oldest at map bottom-right; newer stack left. Offsets clear the trays. */}
-      {activeBanners.length > 0 && (
+      {(activeBanners.length > 0 || preRollSlot) && (
         <div
           data-testid="banner-strip"
           style={bannerStripStyle({
@@ -3493,6 +3494,7 @@ export const DiceRoller = forwardRef(function DiceRoller({
               />
             )
           ))}
+          {preRollSlot}
         </div>
       )}
     </div>

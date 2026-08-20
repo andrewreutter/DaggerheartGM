@@ -3,6 +3,7 @@ import {
   pickRandomPlaceOnMapSpot,
   pickRandomPlaceOnMapSpots,
   getTokenTrayDirection,
+  tokenPinPrefersLeft,
 } from '../../src/client/lib/place-token-on-map.js';
 
 const footprint5x5 = { halfWidth: 2.5, halfLength: 2.5 };
@@ -12,6 +13,16 @@ describe('getTokenTrayDirection', () => {
     expect(getTokenTrayDirection('adversary')).toBe('right');
     expect(getTokenTrayDirection('character')).toBe('left');
     expect(getTokenTrayDirection('boardToken')).toBe('left');
+  });
+});
+
+describe('tokenPinPrefersLeft', () => {
+  it('is true only for right-tray adversary pins', () => {
+    expect(tokenPinPrefersLeft({ fromTray: true, elementType: 'adversary' })).toBe(true);
+    expect(tokenPinPrefersLeft({ fromTray: false, elementType: 'adversary' })).toBe(false);
+    expect(tokenPinPrefersLeft({ fromTray: true, elementType: 'character' })).toBe(false);
+    expect(tokenPinPrefersLeft({ fromTray: true, elementType: 'boardToken' })).toBe(false);
+    expect(tokenPinPrefersLeft({})).toBe(false);
   });
 });
 

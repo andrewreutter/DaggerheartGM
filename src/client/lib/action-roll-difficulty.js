@@ -7,16 +7,21 @@ export function isAttackRollMeta(meta = {}) {
 }
 
 /**
+ * True when a pre-roll session uses the shared DC slider + Finalize lock:
+ * not an attack (evasion / target DC) and not a GM-called reaction (those use the reaction DC).
+ * Applies to both GM- and player-initiated non-attack rolls so neither party can Proceed early.
+ */
+export function sessionNeedsDifficulty(meta = {}) {
+  return !isAttackRollMeta(meta) && meta._reactionCallRollDbId == null;
+}
+
+/**
  * True when a player-initiated roll needs the GM to set a difficulty before it can proceed:
  * an action roll (opened the "Before you roll" intent panel), not an attack, and not a
  * GM-called reaction roll (those use the reaction's own DC).
  */
 export function requiresGmFinalizedDifficulty(meta = {}) {
-  return (
-    meta._intentPanelForActionRoll === true &&
-    !isAttackRollMeta(meta) &&
-    meta._reactionCallRollDbId == null
-  );
+  return meta._intentPanelForActionRoll === true && sessionNeedsDifficulty(meta);
 }
 
 /**
@@ -25,7 +30,8 @@ export function requiresGmFinalizedDifficulty(meta = {}) {
  * or null (not yet finalized / mismatched intent).
  */
 export function resolveFinalizedIntentDifficulty(banner, intentUpdate) {
-  if (!banner?.requiresGmDifficulty || !banner.intentId) return null;
+  const needsDifficulty = !!(banner?.needsDifficulty || banner?.requiresGmDifficulty);
+  if (!needsDifficulty || !banner.intentId) return null;
   if (!intentUpdate || intentUpdate.intentId !== banner.intentId) return null;
   if (intentUpdate.difficultyFinalized !== true) return null;
   const n = Number(intentUpdate.difficulty);

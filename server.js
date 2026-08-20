@@ -52,6 +52,8 @@ import {
   filterRollsForViewer,
   stampNormalizedRollVisibility,
 } from './src/client/lib/roll-visibility.js';
+import { mergeIntentPatch, resolveDeleteIntentCas } from './src/client/lib/pre-roll-intent.js';
+import { sessionNeedsDifficulty } from './src/client/lib/action-roll-difficulty.js';
 import { v2RollDieExtrasFromActionLoopPayload } from './src/client/lib/v2-action-notification-dice.js';
 import { withActionBannerSuppression } from './src/client/lib/action-notification-banner.js';
 import { computePlayerV2CrossSheetChipApply } from './src/server/v2-player-cross-sheet-chip.js';
@@ -1156,10 +1158,12 @@ async function resolveDisplayNameForMapPing(req) {
   }
 }
 
-// In-memory pending player intents (pre-roll banner state): tableId → intent object
-// Intent shape: { characterName, characterInstanceId, rollText, chips, intentId, needsDifficulty,
-//   difficulty, difficultyFinalized, timestamp }
-// chips are display-only (no functions): [{ label, description, hopeCost, stressCost, frequency, isToggle }]
+// In-memory pending pre-roll sessions: tableId → intent object (GM + initiator + assigned player).
+// Shape: { intentId, characterName, characterInstanceId, pending: { rollText, displayName, meta },
+//   chips, selectedChips, experienceIndex, companionExperienceIndex, advantages, disadvantages,
+//   targetInstanceId, _rollVisibility, needsDifficulty, difficulty, difficultyFinalized,
+//   openedByRole, _initiatorUid, _initiatorEmail, _assignedPlayerEmails, _assignedPlayerUid,
+//   clientWriteSeq, timestamp }
 const pendingIntents = new Map();
 
 function writeFilteredRollHistory(res, rolls, viewer) {
@@ -1214,7 +1218,7 @@ async function applyPostedRollVisibility(rollData, {
   return rollData;
 }
 
-/** Broadcast a pending intent (or its finalize update). Public intents go room-wide; private intents go to GM + initiator only (others get null so a prior public intent is cleared). */
+/** Broadcast a pending intent (or its finalize update). GM + initiator + assigned player receive the payload; everyone else gets null so a prior card clears. */
 function broadcastIntentToRoom(tableId, intent) {
   const room = rooms.get(tableId);
   if (!room) return;
@@ -3562,6 +3566,11 @@ app.get('/api/room/:tableId/stream', async (req, res) => {
     subscriptionManager.subscribe('banners', gmUid, res, { bannersViewer: playerViewer });
     subscriptionManager.subscribe('table_state', tableId, res, { tableStateAudience: 'player' });
 
+    const existingIntent = pendingIntents.get(tableId);
+    if (existingIntent && canViewerSeeIntent(existingIntent, playerViewer)) {
+      writeSseEvent(res, 'intent', existingIntent);
+    }
+
     broadcastPresenceToTable(tableId);
 
     const heartbeat = setInterval(() => { res.write(':heartbeat\n\n'); res.flush?.(); }, 30000);
@@ -4776,36 +4785,80 @@ app.post('/api/room/my/op', requireAuth, async (req, res) => {
 });
 
 
-// POST /api/room/:tableId/intent — Player (or GM) broadcasts a pre-roll intent banner to the whole room.
-// Body: { characterName, characterInstanceId, rollText, chips, intentId?, needsDifficulty? }
-// chips must be plain serializable objects (no functions).
+// POST /api/room/:tableId/intent — Create / replace the shared pre-roll session (GM or player).
+// Body: { intentId, characterName, characterInstanceId, pending, chips, selections, needsDifficulty?, ... }
 app.post('/api/room/:tableId/intent', requireAuth, async (req, res) => {
   const ctx = await resolveTableAccess(APP_ID, req.params.tableId, req);
   if (ctx.error) return res.status(ctx.error).json({ error: ctx.message });
-  const { characterName, characterInstanceId, rollText, chips, intentId, needsDifficulty, _rollVisibility } = req.body;
+  const body = req.body || {};
+  const characterInstanceId = body.characterInstanceId || '';
+  const pending = body.pending && typeof body.pending === 'object'
+    ? body.pending
+    : { rollText: body.rollText || '', displayName: body.displayName || '', meta: {} };
+  const meta = pending.meta && typeof pending.meta === 'object' ? pending.meta : {};
+  const assigned = await lookupAssignedPlayerForAttacker(req.params.tableId, characterInstanceId);
+  const isGm = req.uid === ctx.gmUid;
   const intent = {
-    characterName,
+    characterName: body.characterName || '',
     characterInstanceId,
-    rollText,
-    chips: chips || [],
-    intentId: intentId || null,
-    needsDifficulty: !!needsDifficulty,
+    rollText: pending.rollText || body.rollText || '',
+    chips: Array.isArray(body.chips) ? body.chips : [],
+    pending: {
+      rollText: pending.rollText || body.rollText || '',
+      displayName: pending.displayName || '',
+      meta,
+    },
+    selectedChips: Array.isArray(body.selectedChips) ? body.selectedChips : [],
+    experienceIndex: body.experienceIndex ?? null,
+    companionExperienceIndex: body.companionExperienceIndex ?? null,
+    advantages: Array.isArray(body.advantages) ? body.advantages : [],
+    disadvantages: Array.isArray(body.disadvantages) ? body.disadvantages : [],
+    targetInstanceId: body.targetInstanceId ?? null,
+    intentId: body.intentId || randomUUID(),
+    needsDifficulty: body.needsDifficulty != null ? !!body.needsDifficulty : sessionNeedsDifficulty(meta),
+    difficulty: Number.isFinite(Number(body.difficulty)) ? Math.max(5, Math.min(30, Number(body.difficulty))) : 15,
+    difficultyFinalized: false,
+    openedByRole: isGm ? 'gm' : 'player',
     timestamp: Date.now(),
+    clientWriteSeq: Number.isFinite(Number(body.clientWriteSeq)) ? Number(body.clientWriteSeq) : 0,
     _initiatorUid: req.uid,
     _initiatorEmail: req.email || '',
+    _assignedPlayerEmails: assigned.emails || [],
+    _assignedPlayerUid: assigned.uid || null,
+    _assignedPlayerEmail: assigned.email || null,
   };
-  if (_rollVisibility === 'gm_and_player' || _rollVisibility === 'gm_only') {
-    intent._rollVisibility = 'gm_and_player';
+  if (body._rollVisibility === 'gm_and_player' || body._rollVisibility === 'gm_only') {
+    intent._rollVisibility = body._rollVisibility;
   }
   pendingIntents.set(req.params.tableId, intent);
   broadcastIntentToRoom(req.params.tableId, intent);
+  res.json({ ok: true, intentId: intent.intentId });
+});
+
+// PATCH /api/room/:tableId/intent — Merge selections (both) and DC draft (GM only).
+app.patch('/api/room/:tableId/intent', requireAuth, async (req, res) => {
+  const ctx = await resolveTableAccess(APP_ID, req.params.tableId, req);
+  if (ctx.error) return res.status(ctx.error).json({ error: ctx.message });
+  const existing = pendingIntents.get(req.params.tableId);
+  const body = req.body || {};
+  if (!existing || (body.intentId && existing.intentId !== body.intentId)) {
+    return res.status(409).json({ error: 'Intent no longer pending' });
+  }
+  const isGm = req.uid === ctx.gmUid;
+  const updated = mergeIntentPatch(existing, body, { isGm });
+  pendingIntents.set(req.params.tableId, updated);
+  broadcastIntentToRoom(req.params.tableId, updated);
   res.json({ ok: true });
 });
 
-// DELETE /api/room/:tableId/intent — Clear the pending intent (called after Proceed or Cancel).
+// DELETE /api/room/:tableId/intent — Compare-and-swap clear (require matching intentId).
 app.delete('/api/room/:tableId/intent', requireAuth, async (req, res) => {
   const ctx = await resolveTableAccess(APP_ID, req.params.tableId, req);
   if (ctx.error) return res.status(ctx.error).json({ error: ctx.message });
+  const intentId = req.body?.intentId || req.query?.intentId;
+  const existing = pendingIntents.get(req.params.tableId);
+  const cas = resolveDeleteIntentCas(existing, intentId);
+  if (!cas.ok) return res.status(cas.status).json({ error: cas.error });
   pendingIntents.delete(req.params.tableId);
   broadcastIntentToRoom(req.params.tableId, null);
   res.json({ ok: true });

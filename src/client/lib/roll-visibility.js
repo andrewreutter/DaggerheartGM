@@ -50,21 +50,32 @@ export function canViewerSeeRoll(roll, viewer = {}) {
 }
 
 /**
+ * Who receives a pending pre-roll intent over SSE. Banner visibility is GM + initiator +
+ * the character's assigned player(s) — not `_rollVisibility` (that is eventual dice privacy).
+ * `intent == null` is a clear and is deliverable to everyone so a prior card goes away.
+ *
  * @param {object | null | undefined} intent
  * @param {{ role?: 'gm' | 'player' | 'spectator', uid?: string | null, email?: string | null }} viewer
  * @returns {boolean}
  */
 export function canViewerSeeIntent(intent, viewer = {}) {
   if (intent == null) return true;
-  return canViewerSeeRoll(
-    {
-      _rollVisibility: intent._rollVisibility,
-      _initiatorUid: intent._initiatorUid,
-      _visibilityPlayerUid: intent._visibilityPlayerUid || intent._initiatorUid,
-      _visibilityPlayerEmail: intent._visibilityPlayerEmail || intent._initiatorEmail,
-    },
-    viewer,
-  );
+  if (viewer?.role === 'gm') return true;
+  const uid = viewer?.uid != null && viewer.uid !== '' ? String(viewer.uid) : '';
+  const email = normalizeViewerEmail(viewer?.email);
+  if (uid && intent._initiatorUid && uid === String(intent._initiatorUid)) return true;
+  if (email && intent._initiatorEmail && email === normalizeViewerEmail(intent._initiatorEmail)) return true;
+  const assignedEmails = [
+    ...(Array.isArray(intent._assignedPlayerEmails) ? intent._assignedPlayerEmails : []),
+    intent._assignedPlayerEmail,
+  ];
+  const assignedUids = [
+    ...(Array.isArray(intent._assignedPlayerUids) ? intent._assignedPlayerUids : []),
+    intent._assignedPlayerUid,
+  ];
+  if (email && assignedEmails.some((e) => e && normalizeViewerEmail(e) === email)) return true;
+  if (uid && assignedUids.some((u) => u != null && String(u) === uid)) return true;
+  return false;
 }
 
 /**

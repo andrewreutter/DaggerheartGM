@@ -101,11 +101,12 @@ import { buildCharacterTrayTokenEntries, buildBoardTrayTokenEntries } from '../l
 import {
   trayProxyShouldSnapBullseye,
   bullseyeFtForPlacedTokenHover,
-  shouldPinTokenOnClick,
 } from '../lib/tray-proxy-hover.js';
 import {
   isTokenOverlayActivateEvent,
   resolveTokenHoverHintElement,
+  suppressBrowserContextMenu,
+  swallowNextContextMenu,
   tokenHoverHintModel,
 } from '../lib/token-overlay-activate.js';
 import {
@@ -122,13 +123,7 @@ import {
   ONBOARDING_RESET_EVENT,
 } from '../lib/onboarding-storage.js';
 import { collectTokenNameChipObstacles, placeTokenNameChip } from '../lib/token-name-chip-place.js';
-import { useHoverOverlay } from '../lib/useHoverOverlay.js';
 import { useTouchDevice } from '../lib/useTouchDevice.js';
-import { useViewportClamp } from './EncounterHoverOverlays.jsx';
-import {
-  overlayLeftOfEdgeStyle,
-  TRAY_OVERLAY_WIDTH_REM,
-} from '../lib/encounter-overlay-position.js';
 import { getMapDimensionsFt as getMapDimensions, MAP_SIZE_FT_MIN, MAP_SIZE_FT_MAX, DEFAULT_MAP_SIZE_FT } from '../lib/map-dimensions-ft.js';
 import { getPlayerTotMEmptyMapHint } from '../lib/battle-map-totm-hint.js';
 import { isAdversaryDefeated } from '../lib/helpers.js';
@@ -148,7 +143,7 @@ import {
 import { computeTokenRenderPx } from '../lib/token-size.js';
 import { isCharacterAssignedToPlayer } from '../lib/character-assignment.js';
 import { collectDistinctAdversaryNames, tokenAbbrevForElement } from '../lib/token-abbrev.js';
-import { pickRandomPlaceOnMapSpot, pickRandomPlaceOnMapSpots, getTokenTrayDirection } from '../lib/place-token-on-map.js';
+import { pickRandomPlaceOnMapSpot, pickRandomPlaceOnMapSpots, getTokenTrayDirection, tokenPinPrefersLeft } from '../lib/place-token-on-map.js';
 import {
   altitudeControlExpandLeftPx,
   ALTITUDE_CONTROL_OVERLAP_PX,
@@ -1684,10 +1679,7 @@ const PlacedToken = memo(function PlacedTokenRaw({
       onPointerDown={(e) => onPointerDown(e, element, false)}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
-      onContextMenu={(e) => {
-        e.preventDefault();
-        e.stopPropagation();
-      }}
+      onContextMenu={suppressBrowserContextMenu}
     >
       <div className="relative" style={{ width: tokenSizeWpx, height: tokenSizeHpx }}>
         <TokenCircle
@@ -1800,10 +1792,7 @@ const TrayToken = memo(function TrayTokenRaw({
         onHoverLeave?.(element);
         if (snapBullseyeOnHover) onProxyHoverLeave?.(element);
       }}
-      onContextMenu={(e) => {
-        e.preventDefault();
-        e.stopPropagation();
-      }}
+      onContextMenu={suppressBrowserContextMenu}
     >
       <TokenCircle
         element={element}
@@ -1907,8 +1896,7 @@ function TokenDetailPanel({
   onClose,
   anchorX,
   anchorY,
-  /** When set, portal left-of-tray instead of click-anchored (`useHoverOverlay` dock). */
-  dock = null,
+  preferLeft = false,
   onOpenImageLightbox,
   tableId,
   /** Adversary pin: Encounter-panel-style marked stats + party target aid (replaces HP/Stress checkbox tracks). */
@@ -1946,28 +1934,11 @@ function TokenDetailPanel({
 
   const [openCompanionConditions, setOpenCompanionConditions] = useState(false);
 
-  const wrapPanel = (node) => {
-    if (dock) {
-      if (typeof document === 'undefined') return null;
-      return createPortal(
-        <div
-          ref={dock.overlayRef}
-          data-testid="tray-adversary-overlay"
-          className="fixed z-[55]"
-          style={dock.style}
-          {...(dock.overlayHandlers || {})}
-        >
-          {node}
-        </div>,
-        document.body,
-      );
-    }
-    return (
-      <AnchoredFloatingPanel anchorX={anchorX} anchorY={anchorY} onEscape={onClose}>
-        {node}
-      </AnchoredFloatingPanel>
-    );
-  };
+  const wrapPanel = (node) => (
+    <AnchoredFloatingPanel anchorX={anchorX} anchorY={anchorY} preferLeft={preferLeft} onEscape={onClose}>
+      {node}
+    </AnchoredFloatingPanel>
+  );
 
   if (isBoard) {
     const companion = parentCharacterEl?.companion;
@@ -2455,7 +2426,6 @@ function TrayColumn({
   onAssignCharacterSpotlight,
   highestCatchUpKeySet = null,
   onToggleAdversaryVisibility,
-  hoverOverlay = null,
 }) {
   if (tokens.length === 0) return null;
 
@@ -2469,6 +2439,7 @@ function TrayColumn({
         transition-colors duration-150 ${borderClass}
         ${isHighlighted ? 'bg-amber-900/30' : 'bg-dh-surface/60'}`}
       style={{ width: tokenSizePx + 16, minHeight: 0 }}
+      onContextMenuCapture={suppressBrowserContextMenu}
     >
       {tokens.map(({ element, instanceNum, isMyCharacter, isProxy, isOtherMapShelf }, i) => {
         const showBeam = showSpotlight && side === 'left' && element.elementType === 'character';
@@ -2481,15 +2452,8 @@ function TrayColumn({
         const showTrayName = side === 'left'
           ? (element.elementType === 'character' || element.elementType === 'boardToken')
           : element.elementType === 'adversary' && tokens[i + 1]?.element?.id !== element.id;
-        const hoverProps = hoverOverlay && element.elementType === 'adversary'
-          ? hoverOverlay.triggerProps((e) => ({
-              instanceId: element.instanceId,
-              top: e.currentTarget.getBoundingClientRect().top,
-              bottom: e.currentTarget.getBoundingClientRect().bottom,
-            }))
-          : {};
         return (
-          <div key={element.instanceId} className="flex flex-col items-center max-w-full" {...hoverProps}>
+          <div key={element.instanceId} className="flex flex-col items-center max-w-full">
             <div className="relative flex items-center justify-center">
               <TrayToken
                 element={element}
@@ -3402,13 +3366,6 @@ export function BattleMap({
   gmMovesOverlay = null,
 }) {
   const isTouch = useTouchDevice();
-  const trayAdversaryOverlay = useHoverOverlay({ hideDelay: 150, isTouch });
-  const trayOverlayKey = trayAdversaryOverlay.data?.instanceId ?? null;
-  const trayOverlayAdjust = useViewportClamp(
-    trayAdversaryOverlay.overlayRef,
-    trayAdversaryOverlay.isOpen,
-    trayOverlayKey,
-  );
   const scrollWrapperRef = useRef(null);
   const scrollContainerRef = useRef(null);
   /** GM right-drag map pan: { pointerId, startX, startY, startPanLeft, startPanTop } */
@@ -3487,14 +3444,6 @@ export function BattleMap({
   const [showMapInstructions, setShowMapInstructions] = useState(isMapShowInstructionsEnabled);
   const [chromeTooltipMaxWidth, setChromeTooltipMaxWidth] = useState(MAP_CHROME_TOOLTIP_MIN_WIDTH_PX);
   const [chromeTooltipLeft, setChromeTooltipLeft] = useState(MAP_CHROME_TOOLTIP_GAP_PX);
-
-  useEffect(() => {
-    if (trayAdversaryOverlay.isOpen) gmMovesOverlay?.close();
-  }, [trayAdversaryOverlay.isOpen, gmMovesOverlay?.close]);
-
-  useEffect(() => {
-    if (gmMovesOverlay?.isOpen) trayAdversaryOverlay.close();
-  }, [gmMovesOverlay?.isOpen, trayAdversaryOverlay.close]);
   const [bullseyeFt, setBullseyeFt] = useState(null); // { x, y, altitude?, excludeInstanceId? } in feet, null when off-map
   /** Live altitude while dragging the HUD (table op waits until pointer-up). Range glow + distance lines read this. */
   const [altitudeDragPreview, setAltitudeDragPreview] = useState(null); // { instanceId, altitude } | null
@@ -5573,7 +5522,6 @@ export function BattleMap({
       const next = battleMapEscapeResult({ isPlayer });
       setSelectedMapObjectId(next.selectedMapObjectId);
       setPinnedToken(next.pinnedToken);
-      trayAdversaryOverlay.close();
       gmMovesOverlay?.close();
       if (next.resetDrawToolToHand) {
         drawEraserPendingRef.current = null;
@@ -5582,7 +5530,7 @@ export function BattleMap({
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [isPlayer, mapCameraPickerOpen, trayAdversaryOverlay.close, gmMovesOverlay?.close]);
+  }, [isPlayer, mapCameraPickerOpen, gmMovesOverlay?.close]);
 
   useEffect(() => {
     if (!brushPreviewControlsActive) return;
@@ -6625,25 +6573,16 @@ export function BattleMap({
     if (isTokenOverlayActivateEvent(e)) {
       e.preventDefault();
       e.stopPropagation();
-      if (fromTray && element.elementType === 'adversary') {
-        if (trayAdversaryOverlay.data?.instanceId === element.instanceId) {
-          trayAdversaryOverlay.close();
-        } else {
-          trayAdversaryOverlay.show({
-            instanceId: element.instanceId,
-            top: e.clientY - 20,
-            bottom: e.clientY + 20,
-          });
-        }
-        return;
-      }
-      if (shouldPinTokenOnClick({ fromTray, elementType: element.elementType })) {
-        trayAdversaryOverlay.close();
-        setPinnedToken((prev) => {
-          if (prev?.element.instanceId === element.instanceId) return null;
-          return { element, anchorX: e.clientX, anchorY: e.clientY };
-        });
-      }
+      if (e.button === 2) swallowNextContextMenu();
+      setPinnedToken((prev) => {
+        if (prev?.element.instanceId === element.instanceId) return null;
+        return {
+          element,
+          anchorX: e.clientX,
+          anchorY: e.clientY,
+          preferLeft: tokenPinPrefersLeft({ fromTray, elementType: element.elementType }),
+        };
+      });
       return;
     }
     if (e.button !== 0) return;
@@ -6710,7 +6649,7 @@ export function BattleMap({
           ? { tokenX: element.tokenX, tokenY: element.tokenY, altitude: element.altitude ?? 0 }
           : null,
     };
-  }, [canDrag, instanceNumbers, isMyCharacter, isPlayer, tokenSizePx, pxPerFt, parentByInstanceId, trayAdversaryOverlay]);
+  }, [canDrag, instanceNumbers, isMyCharacter, isPlayer, tokenSizePx, pxPerFt, parentByInstanceId]);
 
   const handlePointerMove = useCallback((e) => {
     const ds = dragRef.current;
@@ -6720,7 +6659,6 @@ export function BattleMap({
     const dy = e.clientY - ds.startY;
     if (!ds.isDragging && (dx * dx + dy * dy) >= DRAG_THRESHOLD_PX * DRAG_THRESHOLD_PX) {
       ds.isDragging = true;
-      trayAdversaryOverlay.close();
       gmMovesOverlay?.close();
       // Freeze bullseye at the dragged token's origin center
       const el = ds.element;
@@ -6774,7 +6712,7 @@ export function BattleMap({
         setFollowBullseyeFt(ft);
       }
     }
-  }, [isPlayer, clientToFt, mapWidthFt, mapHeightFt, parentByInstanceId, trayAdversaryOverlay.close, gmMovesOverlay?.close]);
+  }, [isPlayer, clientToFt, mapWidthFt, mapHeightFt, parentByInstanceId, gmMovesOverlay?.close]);
 
   const handlePointerUp = useCallback((e) => {
     const ds = dragRef.current;
@@ -6802,28 +6740,15 @@ export function BattleMap({
         }
       }
       // Touch tap still pins (no right-click). Mouse overlay is right-click / modifier-click.
-      if (ds.fromTray && ds.element.elementType === 'adversary') {
-        if (isTouch) {
-          if (trayAdversaryOverlay.data?.instanceId === ds.element.instanceId) {
-            trayAdversaryOverlay.close();
-          } else {
-            trayAdversaryOverlay.show({
-              instanceId: ds.element.instanceId,
-              top: e.clientY - 20,
-              bottom: e.clientY + 20,
-            });
-          }
-        }
-        return;
-      }
-      if (
-        isTouch &&
-        shouldPinTokenOnClick({ fromTray: ds.fromTray, elementType: ds.element.elementType })
-      ) {
-        trayAdversaryOverlay.close();
-        setPinnedToken(prev => {
+      if (isTouch) {
+        setPinnedToken((prev) => {
           if (prev?.element.instanceId === ds.element.instanceId) return null;
-          return { element: ds.element, anchorX: e.clientX, anchorY: e.clientY };
+          return {
+            element: ds.element,
+            anchorX: e.clientX,
+            anchorY: e.clientY,
+            preferLeft: tokenPinPrefersLeft({ fromTray: ds.fromTray, elementType: ds.element.elementType }),
+          };
         });
       }
       return;
@@ -6899,7 +6824,7 @@ export function BattleMap({
         });
       }
     }
-  }, [isPlayer, isTouch, pxPerFt, mapWidthFt, mapHeightFt, updateActiveElement, pinnedToken, activeElements, onTokenDragEnd, canControlMapView, centerMapOnPlacedActor, activeMapIdResolved, navigateShelfToCharacterMap, parentByInstanceId, trayAdversaryOverlay]);
+  }, [isPlayer, isTouch, pxPerFt, mapWidthFt, mapHeightFt, updateActiveElement, pinnedToken, activeElements, onTokenDragEnd, canControlMapView, centerMapOnPlacedActor, activeMapIdResolved, navigateShelfToCharacterMap, parentByInstanceId]);
 
   /** Keep the stable proxy callbacks (declared earlier) pointed at the latest handler closures. */
   handlersRef.current = {
@@ -8344,6 +8269,7 @@ export function BattleMap({
             ref={rightTrayRef}
             className={`relative z-20 flex flex-col shrink-0 border-l border-dh-border overflow-visible ${highlightRightTray ? 'bg-amber-900/30' : 'bg-dh-surface/60'}`}
             style={{ width: trayTokenSizePx + 16, minWidth: trayTokenSizePx + 16, maxWidth: trayTokenSizePx + 16, minHeight: 0 }}
+            onContextMenuCapture={suppressBrowserContextMenu}
           >
             {/* Always reserve this row so the GM token does not jump when the first adversary is added, and so player/GM trays share the same height. Icons are GM-only. */}
             <TrayBulkActionsHeader
@@ -8413,9 +8339,8 @@ export function BattleMap({
                   onProxyHoverLeave={stableOnProxyHoverLeave}
                   onHoverEnter={stableOnHoverEnter}
                   onHoverLeave={stableOnHoverLeave}
-                  pinnedInstanceId={pinnedToken?.element.instanceId ?? trayOverlayKey}
+                  pinnedInstanceId={pinnedToken?.element.instanceId}
                   onToggleAdversaryVisibility={stableOnToggleAdversaryVisibility}
-                  hoverOverlay={trayAdversaryOverlay}
                 />
               </div>
             )}
@@ -8468,6 +8393,7 @@ export function BattleMap({
             element: el,
             anchorX: pinnedToken.anchorX,
             anchorY: pinnedToken.anchorY,
+            preferLeft: !!pinnedToken.preferLeft,
             onClose: () => setPinnedToken(null),
             updateActiveElement,
             onRemoveFromMap: canMoveToken
@@ -8512,6 +8438,7 @@ export function BattleMap({
             onClose={() => setPinnedToken(null)}
             anchorX={pinnedToken.anchorX}
             anchorY={pinnedToken.anchorY}
+            preferLeft={!!pinnedToken.preferLeft}
             tableId={tableId}
             onOpenImageLightbox={onOpenImageLightbox}
             onRoll={onRoll}
@@ -8527,73 +8454,6 @@ export function BattleMap({
                 : null
             }
             adversaryPinInstanceNum={advPinInstanceNum}
-            conditionsHistory={conditionsHistory}
-            extraConditionSuggestions={extraConditionSuggestions}
-            onAddConditionsHistoryEntry={onAddConditionsHistoryEntry}
-            onRemoveConditionsHistoryEntry={onRemoveConditionsHistoryEntry}
-          />
-        );
-      })()}
-
-      {trayAdversaryOverlay.isOpen && trayAdversaryOverlay.data?.instanceId && (() => {
-        const elRaw = activeElements.find((e) => e.instanceId === trayAdversaryOverlay.data.instanceId);
-        if (!elRaw || elRaw.elementType !== 'adversary') return null;
-        const el = withResolvedTokenImage(elRaw, parentByInstanceId);
-        const canMoveToken = !isPlayer;
-        const trayLeft = rightTrayRef.current?.getBoundingClientRect().left
-          ?? (typeof window !== 'undefined' ? window.innerWidth - 14 * 16 : 0);
-        const dockStyle = overlayLeftOfEdgeStyle({
-          edgeLeft: trayLeft,
-          viewportWidth: typeof window !== 'undefined' ? window.innerWidth : 0,
-          triggerTop: trayAdversaryOverlay.data.top,
-          triggerBottom: trayAdversaryOverlay.data.bottom,
-          adjust: trayOverlayAdjust,
-          widthRem: TRAY_OVERLAY_WIDTH_REM,
-        });
-        return (
-          <TokenDetailPanel
-            element={el}
-            isPlayer={isPlayer}
-            isMyCharacter={false}
-            updateActiveElement={updateActiveElement}
-            queueManualTrackEdit={queueManualTrackEdit}
-            pendingBanners={pendingBanners}
-            pendingResourceCosts={pendingResourceCosts}
-            lifeSupportSelections={lifeSupportSelections}
-            onRemoveFromMap={canMoveToken ? () => {
-              updateActiveElement(el.instanceId, TRAY_UNPLACE_UPDATES);
-              trayAdversaryOverlay.close();
-            } : undefined}
-            onPlaceOnMap={canMoveToken ? () => {
-              handlePlaceOnMap(el);
-              trayAdversaryOverlay.close();
-            } : undefined}
-            onDeleteFromTable={!isPlayer && onRemoveAdversaryFromTable ? () => {
-              if (window.confirm(`Remove ${el.name || 'Unnamed'} from the table?`)) {
-                onRemoveAdversaryFromTable(el.instanceId);
-                trayAdversaryOverlay.close();
-              }
-            } : undefined}
-            onClose={() => trayAdversaryOverlay.close()}
-            dock={{
-              overlayRef: trayAdversaryOverlay.overlayRef,
-              overlayHandlers: trayAdversaryOverlay.overlayHandlers,
-              style: dockStyle,
-            }}
-            tableId={tableId}
-            onOpenImageLightbox={onOpenImageLightbox}
-            onRoll={onRoll}
-            adversaryEncounterCard={
-              typeof renderAdversaryEncounterCard === 'function'
-                ? renderAdversaryEncounterCard(el)
-                : null
-            }
-            adversaryTargetAid={
-              typeof renderAdversaryTargetAid === 'function'
-                ? renderAdversaryTargetAid(el)
-                : null
-            }
-            adversaryPinInstanceNum={instanceNumbers[el.instanceId]}
             conditionsHistory={conditionsHistory}
             extraConditionSuggestions={extraConditionSuggestions}
             onAddConditionsHistoryEntry={onAddConditionsHistoryEntry}

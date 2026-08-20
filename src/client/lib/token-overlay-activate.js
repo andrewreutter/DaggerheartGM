@@ -24,6 +24,41 @@ export function isTokenOverlayActivateEvent(e) {
 }
 
 /**
+ * Swallow the native browser menu on token / tray right-click.
+ * @param {{ preventDefault?: Function, stopPropagation?: Function }|null|undefined} e
+ */
+export function suppressBrowserContextMenu(e) {
+  if (!e) return;
+  e.preventDefault?.();
+  e.stopPropagation?.();
+}
+
+/**
+ * Capture the following `contextmenu` on `root` so a right-click that opens a
+ * token pin cannot show the native menu after React remounts the target.
+ * @param {{ addEventListener?: Function, removeEventListener?: Function }|null|undefined} root
+ * @param {number} [timeoutMs]
+ * @returns {() => void} cancel
+ */
+export function swallowNextContextMenu(root = typeof document !== 'undefined' ? document : null, timeoutMs = 500) {
+  if (!root?.addEventListener) return () => {};
+  let cleaned = false;
+  const cleanup = () => {
+    if (cleaned) return;
+    cleaned = true;
+    root.removeEventListener('contextmenu', swallow, true);
+    clearTimeout(timer);
+  };
+  const swallow = (ev) => {
+    suppressBrowserContextMenu(ev);
+    cleanup();
+  };
+  root.addEventListener('contextmenu', swallow, true);
+  const timer = setTimeout(cleanup, timeoutMs);
+  return cleanup;
+}
+
+/**
  * Display name used on the instant token hover tooltip.
  * @param {{ elementType?: string, name?: string, label?: string }|null|undefined} element
  */
