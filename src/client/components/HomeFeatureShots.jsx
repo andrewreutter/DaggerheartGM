@@ -33,12 +33,12 @@ export const HOME_FEATURE_SHOTS = [
   {
     id: 'table-built-for-daggerheart',
     title: 'Table built for Daggerheart',
-    image: '/assets/home/table-built-for-daggerheart.png',
-    imageAlt: 'Battle map with drawn room outline, placed door image, range bands, a 15-foot measure, altitude markers, and a hidden adversary token',
+    image: '/assets/home/table-built-for-daggerheart.png?v=tag-team',
+    imageAlt: 'Battle map with tumbling 3D dice, range and altitude markers, and Tag Team result banners offering Help an Ally, Prayer Dice, and Use this roll',
     bullets: [
-      'Draw on the map — scribbles, brush, shapes, and eraser — and drop images you can move and resize.',
+      'Click to roll. Automatic prompts to Help an Ally, initiate a Tag Team, or perform a Group Roll keep the whole table engaged.',
       'Range bands and a tape in feet show Melee through Very Far. Altitude stems mark height, so a 15′ climb is on the table.',
-      'Hide adversaries from players with the eye toggle. They stay on your map until you reveal them.',
+      'Draw on the map — scribbles, brush, shapes, and eraser — and drop images you can move and resize.',
     ],
   },
   {
