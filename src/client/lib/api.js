@@ -1159,6 +1159,20 @@ export const clearTableIntent = async (tableId, intentId) => {
 /** @deprecated use clearTableIntent */
 export const clearPlayerIntent = clearTableIntent;
 
+/**
+ * Observer / GM Help an Ally write — merges only that helper row.
+ * Does not PATCH the rest of the intent (would clobber chips).
+ */
+export const postTableIntentHelp = async (tableId, { intentId, instanceId, active, label }) => {
+  const token = await getAuthToken();
+  if (!token || !tableId) return;
+  fetch(`/api/room/${tableId}/intent/help`, {
+    method: 'POST',
+    headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
+    body: JSON.stringify({ intentId, instanceId, active, label }),
+  }).catch(() => {});
+};
+
 /** GM: lock or unlock the difficulty for a pending intent (`finalized` defaults true). */
 export const postFinalizeIntentDifficulty = async (tableId, { intentId, difficulty, finalized = true }) => {
   const token = await getAuthToken();

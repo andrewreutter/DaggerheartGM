@@ -23,6 +23,13 @@ import {
   buildV2PreRollWeaponAttackRollSkeleton,
   buildV2PreRollTraitRollSkeleton,
 } from '../lib/v2-action-loop-bridge.js';
+import {
+  defaultHelpLabel,
+  eligibleHelpCharacters,
+  isHelpAllyReactionMeta,
+  pickPlayerHelpCharacter,
+  remainingHopeForCharacter,
+} from '../lib/help-an-ally.js';
 
 /**
  * Advantage / disadvantage name field. Draft stays local while typing so a stale
@@ -36,6 +43,7 @@ function DebouncedPoolNameInput({
   className,
   'aria-label': ariaLabel,
   inputRef,
+  testId,
 }) {
   const [draft, setDraft] = useState(() => (typeof value === 'string' ? value : ''));
   const dirtyRef = useRef(false);
@@ -78,13 +86,15 @@ function DebouncedPoolNameInput({
       placeholder={placeholder}
       className={className}
       aria-label={ariaLabel}
+      data-testid={testId}
     />
   );
 }
 
 /**
  * Shared pre-roll strip card (GM + invited players).
- * Other players get `readOnly` (on chips only; empty sections omitted).
+ * Other players get `readOnly` (on chips only; empty sections omitted) and the
+ * kicker “Before the roll” instead of “Before you roll”.
  * Slider id is `#intent-difficulty` so Playwright's existing helper still works.
  */
 export function PreRollBanner({
@@ -123,6 +133,10 @@ export function PreRollBanner({
   fearCount = 0,
   mapConfig = null,
   tableFeatureState = null,
+  helps = [],
+  onHelpChange,
+  helpViewer = null,
+  pendingResourceCosts = {},
 }) {
   const pendingPoolFocusRef = useRef(null);
   const lastAdvantageInputRef = useRef(null);
@@ -325,7 +339,9 @@ export function PreRollBanner({
         className="px-4 py-3 rounded-xl shadow-2xl bg-dh-surface/90 border-2 border-dh-strong text-dh min-w-0 w-full"
         style={BANNER_CARD_SCROLL_STYLE}
       >
-        <div className="text-[10px] font-bold uppercase tracking-wide text-dh-muted mb-0.5">Before you roll</div>
+        <div className="text-[10px] font-bold uppercase tracking-wide text-dh-muted mb-0.5">
+          {readOnly ? 'Before the roll' : 'Before you roll'}
+        </div>
         <div className="flex items-center gap-2 mb-2 flex-wrap">
           <div id="preroll-title" className="text-sm font-bold text-dh">{title}</div>
           {!readOnly && (isPlayer ? (
@@ -656,6 +672,112 @@ export function PreRollBanner({
             </div>
           </div>
         )}
+
+        {(() => {
+          const isReaction = isHelpAllyReactionMeta(meta);
+          const actorId = characterEl?.instanceId;
+          const viewer = helpViewer || { role: isPlayer ? 'player' : 'gm' };
+          const eligible = eligibleHelpCharacters({
+            actorInstanceId: actorId,
+            activeElements,
+            viewer,
+            isReaction,
+          });
+          const playerHelpEl = viewer.role === 'player'
+            ? pickPlayerHelpCharacter({
+              actorInstanceId: actorId,
+              activeElements,
+              viewer,
+              isReaction,
+            })
+            : null;
+          const canViewerHelp = viewer.role === 'gm' ? eligible.length > 0 : !!playerHelpEl;
+          const helpRows = Array.isArray(helps) ? helps : [];
+          if (isReaction || (!canViewerHelp && helpRows.length === 0)) return null;
+          const canEditRow = (instanceId) => {
+            if (viewer.role === 'gm') return true;
+            return playerHelpEl?.instanceId === instanceId;
+          };
+          return (
+            <div className="mb-3 w-full flex flex-col gap-1.5" data-testid="preroll-help">
+              <span className="text-[11px] font-semibold text-dh">Help an Ally</span>
+              <div className="flex flex-wrap gap-1.5 items-center w-full min-w-0">
+                {helpRows.map((h) => (
+                  <div
+                    key={h.instanceId}
+                    data-testid={`preroll-help-row-${h.instanceId}`}
+                    className="inline-flex shrink-0 items-center gap-1 px-2 py-1 rounded border border-amber-700/60 bg-amber-950/35"
+                  >
+                    {canEditRow(h.instanceId) ? (
+                      <>
+                        <DebouncedPoolNameInput
+                          value={h.label}
+                          onCommit={(nextName) => onHelpChange?.({
+                            instanceId: h.instanceId,
+                            active: true,
+                            label: nextName,
+                          })}
+                          placeholder="Help"
+                          className="w-[8rem] bg-transparent text-[11px] text-amber-100 placeholder-amber-200/50 outline-none"
+                          aria-label="Help label"
+                          testId="preroll-help-label"
+                        />
+                        <button
+                          type="button"
+                          data-testid={`preroll-help-remove-${h.instanceId}`}
+                          onMouseDown={(e) => e.preventDefault()}
+                          onClick={() => onHelpChange?.({ instanceId: h.instanceId, active: false })}
+                          className="shrink-0 p-0.5 rounded text-amber-200/70 hover:bg-amber-900/50 hover:text-amber-100"
+                          aria-label="Remove help"
+                        >
+                          <Trash2 size={12} />
+                        </button>
+                      </>
+                    ) : (
+                      <span className="text-[11px] text-amber-100">{h.label}</span>
+                    )}
+                  </div>
+                ))}
+                {viewer.role === 'player' && playerHelpEl && !helpRows.some((h) => h.instanceId === playerHelpEl.instanceId) && (
+                  <button
+                    type="button"
+                    data-testid="preroll-help-toggle"
+                    disabled={remainingHopeForCharacter(playerHelpEl, pendingResourceCosts) < 1}
+                    onClick={() => onHelpChange?.({
+                      instanceId: playerHelpEl.instanceId,
+                      active: true,
+                      label: defaultHelpLabel(playerHelpEl.name),
+                    })}
+                    className="inline-flex shrink-0 items-center gap-1 px-2 py-0.5 rounded text-[11px] text-dh-muted hover:text-amber-300 hover:bg-dh-raised/80 border border-dh-strong hover:border-amber-700/60 disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    Help
+                  </button>
+                )}
+                {viewer.role === 'gm' && eligible
+                  .filter((c) => !helpRows.some((h) => h.instanceId === c.instanceId))
+                  .map((c) => {
+                    const remaining = remainingHopeForCharacter(c, pendingResourceCosts);
+                    return (
+                      <button
+                        key={c.instanceId}
+                        type="button"
+                        data-testid={`preroll-help-add-${c.instanceId}`}
+                        disabled={remaining < 1}
+                        onClick={() => onHelpChange?.({
+                          instanceId: c.instanceId,
+                          active: true,
+                          label: defaultHelpLabel(c.name),
+                        })}
+                        className="inline-flex shrink-0 items-center gap-1 px-2 py-0.5 rounded text-[11px] text-dh-muted hover:text-amber-300 hover:bg-dh-raised/80 border border-dh-strong hover:border-amber-700/60 disabled:opacity-40 disabled:cursor-not-allowed"
+                      >
+                        {c.name} {remaining}
+                      </button>
+                    );
+                  })}
+              </div>
+            </div>
+          );
+        })()}
 
         {!readOnly && (
           <div className="flex items-center gap-2">

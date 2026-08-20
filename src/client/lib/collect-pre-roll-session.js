@@ -77,7 +77,7 @@ export function collectPreRollSession({
         })
       : characterEl;
 
-  const extractedPool = extractOwnPoolFromRollText(rollText);
+  const extractedPool = extractOwnPoolFromRollText(rollText, { helps: rollMeta._helpAlly });
   let textToUse = extractedPool.strippedText;
   const advantageNames = [...extractedPool.advantageNames];
   const disadvantageNames = [...extractedPool.disadvantageNames];

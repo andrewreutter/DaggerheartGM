@@ -103,6 +103,7 @@ import {
   postPlayerV2ReviewChip,
   patchTableIntent,
   clearTableIntent,
+  postTableIntentHelp,
   postFinalizeIntentDifficulty,
   syncDaggerstackCharacter,
   resolveItems,
@@ -195,6 +196,16 @@ import {
   applyOwnPoolDieMutations,
   appendOwnPoolDisadvantageToRollText,
 } from '../lib/advantage-disadvantage-pool.js';
+import {
+  collectIntentHelpCostRows,
+  collectRollResourceCostRows,
+  defaultHelpLabel,
+  formatHelpAllyRollSuffix,
+  mergeHelpAllyEntry,
+  mergePendingResourceCostMaps,
+  resolveHeldHelpAllyRows,
+  subtractPendingResourceCostRows,
+} from '../lib/help-an-ally.js';
 import { getCharactersWithinFarRange, getCharactersWithinCloseRangeWithMarkedHp, getAdversariesWithinMeleeRange, getAdversariesWithinRangeFt, rangeBandNameToFt, RANGE_BANDS_FT, tokenDistanceFtForElements, positionAtDistanceFt, getTokenFootprintFt } from '../lib/map-range.js';
 import {
   collectCompanionDamageTargets,
@@ -966,6 +977,10 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
   const preRollBannerRef = useRef(null);
   const [preRollAdvantages, setPreRollAdvantagesState] = useState([]); // string[]: optional name per advantage ('' = default "Advantage")
   const [preRollDisadvantages, setPreRollDisadvantagesState] = useState([]); // string[]: optional name per disadvantage ('' = default "Disadvantage")
+  const [preRollHelps, setPreRollHelps] = useState([]);
+  const [heldIntentHelps, setHeldIntentHelps] = useState(() => ({ intentId: null, helps: [] }));
+  const preRollHelpsRef = useRef([]);
+  preRollHelpsRef.current = preRollHelps;
   const preRollAdvantagesRef = useRef(preRollAdvantages);
   const preRollDisadvantagesRef = useRef(preRollDisadvantages);
   const setPreRollAdvantages = (next) => {
@@ -1047,50 +1062,28 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
   // Pending resource costs: shown as "halfway" on Hope/Stress/Armor until GM acks (or banner dismissed).
   // Updated when any client adds a roll with costs (initiator or on SSE forward) so everyone sees pending.
   const [pendingResourceCosts, setPendingResourceCosts] = useState(() => ({}));
-  const getRollCosts = (roll) => {
-    if (!roll?._attackerInstanceId) return null;
-    const hope = (parseInt(roll._hopeCost, 10) || 0) + (parseInt(roll._experienceHopeCost, 10) || 0);
-    const stress = parseInt(roll._stressCost, 10) || 0;
-    const armorMark = parseInt(roll._armorMark, 10) || 0;
-    const armorClear = parseInt(roll._armorClear, 10) || 0;
-    if (hope === 0 && stress === 0 && armorMark === 0 && armorClear === 0) return null;
-    return { instanceId: roll._attackerInstanceId, hope, stress, armorMark, armorClear };
-  };
   const addPendingCosts = (roll) => {
-    const c = getRollCosts(roll);
-    if (!c) return;
-    setPendingResourceCosts(prev => {
-      const cur = prev[c.instanceId] || { hope: 0, stress: 0, armorMark: 0, armorClear: 0 };
-      return {
-        ...prev,
-        [c.instanceId]: {
-          hope: cur.hope + c.hope,
-          stress: cur.stress + c.stress,
-          armorMark: cur.armorMark + c.armorMark,
-          armorClear: cur.armorClear + c.armorClear,
-        },
-      };
-    });
+    const rows = collectRollResourceCostRows(roll);
+    if (!rows.length) return;
+    setPendingResourceCosts((prev) => mergePendingResourceCostMaps(prev, rows));
   };
   const removePendingCosts = (roll) => {
-    const c = getRollCosts(roll);
-    if (!c) return;
-    setPendingResourceCosts(prev => {
-      const cur = prev[c.instanceId];
-      if (!cur) return prev;
-      const next = {
-        hope: Math.max(0, cur.hope - c.hope),
-        stress: Math.max(0, cur.stress - c.stress),
-        armorMark: Math.max(0, cur.armorMark - c.armorMark),
-        armorClear: Math.max(0, cur.armorClear - c.armorClear),
-      };
-      if (next.hope === 0 && next.stress === 0 && next.armorMark === 0 && next.armorClear === 0) {
-        const { [c.instanceId]: _, ...rest } = prev;
-        return rest;
-      }
-      return { ...prev, [c.instanceId]: next };
-    });
+    const rows = collectRollResourceCostRows(roll);
+    if (!rows.length) return;
+    setPendingResourceCosts((prev) => subtractPendingResourceCostRows(prev, rows));
   };
+  const extraIntentHelpRows = resolveHeldHelpAllyRows({
+    pendingIntent,
+    held: heldIntentHelps,
+    pendingBanners,
+  });
+  const displayPendingResourceCosts = useMemo(
+    () => mergePendingResourceCostMaps(
+      pendingResourceCosts,
+      collectIntentHelpCostRows(extraIntentHelpRows),
+    ),
+    [pendingResourceCosts, extraIntentHelpRows],
+  );
 
   /** When the GM manually marks stress on a card while rolls show dashed "pending" boxes, drop the matching pending tally. */
   const consumePendingStressForManualMark = useCallback((instanceId, delta) => {
@@ -2587,6 +2580,23 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
         });
       }
     }
+    if (Array.isArray(roll._helpAlly) && roll._helpAlly.length) {
+      const helpUpdates = [];
+      for (const h of roll._helpAlly) {
+        if (!h?.instanceId || !h.hopeCost) continue;
+        const helperEl = activeElements.find((e) => e.instanceId === h.instanceId);
+        if (!helperEl) continue;
+        const maxHope = helperEl.maxHope ?? 6;
+        const current = helperEl.hope ?? maxHope;
+        helpUpdates.push({
+          instanceId: h.instanceId,
+          updates: { hope: Math.max(0, current - h.hopeCost) },
+        });
+      }
+      if (helpUpdates.length) {
+        sendOp({ op: 'update-elements', updates: helpUpdates });
+      }
+    }
     // Dispatch onRollComplete for weapon features on the roll
     {
       const rollTagNames = new Set((roll.tags || []).map(t => t.name));
@@ -3943,6 +3953,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     setPreRollCompanionExperienceIndex(null);
     setPreRollAdvantages([]);
     setPreRollDisadvantages([]);
+    setPreRollHelps([]);
     setPreRollTargetInstanceId(null);
     setPreRollVisibility(ROLL_VISIBILITY_TABLE);
   };
@@ -4078,7 +4089,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     const intentId = generateId();
     const openedByRole = isPlayer ? 'player' : 'gm';
     const onProceed = async () => {
-      const finalText = rollWrapper.getFinalRollText();
+      const finalText = rollWrapper.getFinalRollText() + formatHelpAllyRollSuffix(pending.meta?._helpAlly);
       const metaWithLabel = { ...pending.meta, ...(pending.rollBonusLabel ? { _staticModifierLabel: pending.rollBonusLabel } : {}) };
       try {
         await postRoll(finalText, pending.displayName || pending.rollText, targetTableId, metaWithLabel);
@@ -4309,6 +4320,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
   const clearPreRollBanner = () => {
     const id = preRollBanner?.intentId;
     resetPreRollLocalState();
+    setHeldIntentHelps({ intentId: null, helps: [] });
     if (tableId && id) void clearTableIntent(tableId, id);
   };
 
@@ -4360,7 +4372,11 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
         remoteAckedIntentIdRef.current
         && preRollBannerRef.current?.intentId === remoteAckedIntentIdRef.current
       ) {
+        const goneId = remoteAckedIntentIdRef.current;
         resetPreRollLocalState();
+        if (!(pendingBanners || []).some((b) => b._preRollIntentId === goneId)) {
+          setHeldIntentHelps({ intentId: null, helps: [] });
+        }
         remoteAckedIntentIdRef.current = null;
       }
       return;
@@ -4439,7 +4455,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     const { rollWrapper, chips, getFeatureStateFor, needsDifficulty } = session;
     const targetTableId = isPlayer ? tableId : null;
     const onProceed = async () => {
-      const finalText = rollWrapper.getFinalRollText();
+      const finalText = rollWrapper.getFinalRollText() + formatHelpAllyRollSuffix(session.pending.meta?._helpAlly);
       const metaWithLabel = {
         ...session.pending.meta,
         ...(session.pending.rollBonusLabel ? { _staticModifierLabel: session.pending.rollBonusLabel } : {}),
@@ -4466,7 +4482,22 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
       initiatorEmail: pendingIntent._initiatorEmail,
     });
     applyRemoteSelection(pendingIntent, chips.length);
-  }, [pendingIntent, activeElements]);
+  }, [pendingIntent, activeElements, pendingBanners]);
+
+  useEffect(() => {
+    if (!pendingIntent) return;
+    const nextHelps = Array.isArray(pendingIntent.helps) ? pendingIntent.helps : [];
+    setPreRollHelps(nextHelps);
+    setHeldIntentHelps({ intentId: pendingIntent.intentId, helps: nextHelps });
+  }, [pendingIntent]);
+
+  useEffect(() => {
+    const id = pendingIntent?.intentId || heldIntentHelps.intentId;
+    if (!id) return;
+    if ((pendingBanners || []).some((b) => b._preRollIntentId === id)) {
+      setHeldIntentHelps({ intentId: null, helps: [] });
+    }
+  }, [pendingBanners, pendingIntent?.intentId, heldIntentHelps.intentId]);
 
   useEffect(() => {
     if (!preRollBanner?.intentId || !tableId) return;
@@ -4522,6 +4553,15 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     ) return;
     const intentUsedLog = [];
     const { rollWrapper, chips, characterEl, onProceed, getFeatureStateFor, pending } = preRollBanner;
+    const helpsSnapshot = preRollHelpsRef.current.length
+      ? preRollHelpsRef.current
+      : (Array.isArray(pendingIntent?.helps) ? pendingIntent.helps : (heldIntentHelps.helps || []));
+    setHeldIntentHelps({ intentId: preRollBanner.intentId, helps: helpsSnapshot });
+    pending.meta = {
+      ...pending.meta,
+      _helpAlly: helpsSnapshot,
+      _preRollIntentId: preRollBanner.intentId,
+    };
     if (tableId && preRollBanner.intentId) {
       const cas = await clearTableIntent(tableId, preRollBanner.intentId);
       if (cas?.conflict) {
@@ -4743,6 +4783,11 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     }
     setPreRollAdvantages([]);
     setPreRollDisadvantages([]);
+    pending.meta = {
+      ...pending.meta,
+      _helpAlly: helpsSnapshot,
+      _preRollIntentId: preRollBanner.intentId,
+    };
     if (intentUsedLog.length > 0 || preRollTargetInstanceId != null || (preRollVisibility && preRollVisibility !== ROLL_VISIBILITY_TABLE)) {
       pending.meta = {
         ...pending.meta,
@@ -5385,7 +5430,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
               bottom: e.currentTarget.getBoundingClientRect().bottom,
             }))}
             charComplete={charComplete}
-            pendingResourceCosts={pendingResourceCosts}
+            pendingResourceCosts={displayPendingResourceCosts}
             manualAck={manualAck}
             lsHeal={lsHeal}
             cardTrackUpdateFn={cardTrackUpdateFn}
@@ -5441,7 +5486,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
       activeElements,
       characterDisplayByInstanceId,
       characterOverlay.triggerProps,
-      pendingResourceCosts,
+      displayPendingResourceCosts,
       pendingBanners,
       lifeSupportSelections,
       queueManualTrackEdit,
@@ -6553,7 +6598,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                     };
                   })}
                 charComplete={charComplete}
-                pendingResourceCosts={pendingResourceCosts}
+                pendingResourceCosts={displayPendingResourceCosts}
                 manualAck={manualAck}
                 lsHeal={lsHeal}
                 cardTrackUpdateFn={cardTrackUpdateFn}
@@ -7014,6 +7059,23 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                 fearCount={fearCount}
                 mapConfig={mapConfig}
                 tableFeatureState={tableFeatureState}
+                helps={preRollHelps}
+                helpViewer={intentViewer}
+                pendingResourceCosts={displayPendingResourceCosts}
+                onHelpChange={({ instanceId, active, label }) => {
+                  const el = activeElements.find((e) => e.instanceId === instanceId);
+                  setPreRollHelps((prev) => mergeHelpAllyEntry(prev, active === false
+                    ? { instanceId, active: false }
+                    : { instanceId, label: label || defaultHelpLabel(el?.name), hopeCost: 1, die: 'd6' }));
+                  if (tableId && preRollBanner.intentId) {
+                    postTableIntentHelp(tableId, {
+                      intentId: preRollBanner.intentId,
+                      instanceId,
+                      active,
+                      label,
+                    });
+                  }
+                }}
               />
             ) : null}
           />
@@ -7026,7 +7088,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
             updateActiveElement={updateActiveElement}
             queueManualTrackEdit={queueManualTrackEdit}
             pendingBanners={pendingBanners}
-            pendingResourceCosts={pendingResourceCosts}
+            pendingResourceCosts={displayPendingResourceCosts}
             lifeSupportSelections={lifeSupportSelections}
             mapConfig={mapConfig}
             maps={maps}
@@ -7981,7 +8043,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                     pendingBanners={pendingBanners}
                     lifeSupportSelections={lifeSupportSelections}
                     queueManualTrackEdit={allowPlayMechanics ? queueManualTrackEdit : undefined}
-                    pendingResourceCosts={pendingResourceCosts}
+                    pendingResourceCosts={displayPendingResourceCosts}
                     consumePendingStressForManualMark={consumePendingStressForManualMark}
                     isPlayer={isPlayer}
                     getValidTargets={allowPlayMechanics ? getValidTargets : undefined}

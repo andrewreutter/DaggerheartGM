@@ -53,6 +53,7 @@ import {
   stampNormalizedRollVisibility,
 } from './src/client/lib/roll-visibility.js';
 import { applyIntentDifficultyLock, isPreRollBannerInteractive, mergeIntentPatch, resolveDeleteIntentCas } from './src/client/lib/pre-roll-intent.js';
+import { applyHelpAllyToIntent, validateHelpAllyRequest } from './src/client/lib/help-an-ally.js';
 import { sessionNeedsDifficulty } from './src/client/lib/action-roll-difficulty.js';
 import { v2RollDieExtrasFromActionLoopPayload } from './src/client/lib/v2-action-notification-dice.js';
 import { withActionBannerSuppression } from './src/client/lib/action-notification-banner.js';
@@ -4830,6 +4831,7 @@ app.post('/api/room/:tableId/intent', requireAuth, async (req, res) => {
     _assignedPlayerEmails: assigned.emails || [],
     _assignedPlayerUid: assigned.uid || null,
     _assignedPlayerEmail: assigned.email || null,
+    helps: [],
   };
   if (body._rollVisibility === 'gm_and_player' || body._rollVisibility === 'gm_only') {
     intent._rollVisibility = body._rollVisibility;
@@ -4890,6 +4892,40 @@ app.post('/api/room/:tableId/intent/difficulty', requireAuth, async (req, res) =
     return res.status(409).json({ error: 'Intent no longer pending' });
   }
   const updated = applyIntentDifficultyLock(existing, { difficulty, finalized });
+  pendingIntents.set(req.params.tableId, updated);
+  broadcastIntentToRoom(req.params.tableId, updated);
+  res.json({ ok: true });
+});
+
+// POST /api/room/:tableId/intent/help — Merge one Help an Ally row (GM or assigned player).
+// Body: { intentId, instanceId, active, label? }. Does not accept a full-intent PATCH.
+app.post('/api/room/:tableId/intent/help', requireAuth, async (req, res) => {
+  const ctx = await resolveTableAccess(APP_ID, req.params.tableId, req);
+  if (ctx.error) return res.status(ctx.error).json({ error: ctx.message });
+  const { gmUid, tableState } = ctx;
+  const body = req.body || {};
+  const existing = pendingIntents.get(req.params.tableId);
+  const isGm = req.uid === gmUid;
+  const viewer = { role: isGm ? 'gm' : 'player', uid: req.uid, email: req.email };
+  const instanceId = typeof body.instanceId === 'string' ? body.instanceId.trim() : '';
+  const helperEl = (tableState.elements || []).find((e) => e.instanceId === instanceId) || null;
+  const check = validateHelpAllyRequest({
+    intent: existing,
+    intentId: body.intentId,
+    instanceId,
+    active: body.active === true,
+    viewer,
+    isGm,
+    helperEl,
+  });
+  if (!check.ok) return res.status(check.status).json({ error: check.error });
+  const updated = applyHelpAllyToIntent(existing, {
+    instanceId,
+    active: body.active === true,
+    label: body.label,
+    helperEl,
+    viewer,
+  });
   pendingIntents.set(req.params.tableId, updated);
   broadcastIntentToRoom(req.params.tableId, updated);
   res.json({ ok: true });

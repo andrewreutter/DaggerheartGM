@@ -7,6 +7,8 @@
  * outside this pool and still sum.
  */
 
+import { splitHelpAllySuffix } from './help-an-ally.js';
+
 /** Own-pool die: `[d6]`, `[1d6]`, or `[Nd6kh]` (N ≥ 2). Not bare `[2d6]` damage. */
 const OWN_POOL_DIE_RE = /\[(?:(\d+)d6kh|1d6|d6)\]/i;
 const TRAILING_OWN_POOL_DIE_RE = /\[(?:(\d+)d6kh|1d6|d6)\]\s*$/i;
@@ -116,17 +118,21 @@ function stripLeadingRollNoise(label) {
 /**
  * Pull trailing own-pool advantage / disadvantage blocks off roll text so they can
  * be re-resolved (cancel + keep-highest) instead of stacking a second pool.
+ * Helper names+dice are stripped first when `extra.helps` is set (or a leftover
+ * ` — help:` prefix is present) so they are not treated as own-pool advantage.
  *
  * @param {string} rollText
- * @returns {{ strippedText: string, advantageNames: string[], disadvantageNames: string[] }}
+ * @param {{ helps?: object[] }} [extra]
+ * @returns {{ strippedText: string, advantageNames: string[], disadvantageNames: string[], helpSuffix: string }}
  */
-export function extractOwnPoolFromRollText(rollText) {
+export function extractOwnPoolFromRollText(rollText, extra = {}) {
   if (!rollText || typeof rollText !== 'string') {
-    return { strippedText: rollText, advantageNames: [], disadvantageNames: [] };
+    return { strippedText: rollText, advantageNames: [], disadvantageNames: [], helpSuffix: '' };
   }
   const advantageNames = [];
   const disadvantageNames = [];
-  let s = rollText.trimEnd();
+  const { text: withoutHelp, helpSuffix } = splitHelpAllySuffix(rollText, extra.helps);
+  let s = (typeof withoutHelp === 'string' ? withoutHelp : rollText).trimEnd();
 
   const cancelled = s.match(TRAILING_CANCELLED_RE);
   if (cancelled) {
@@ -155,7 +161,7 @@ export function extractOwnPoolFromRollText(rollText) {
     }
   }
 
-  return { strippedText: s, advantageNames, disadvantageNames };
+  return { strippedText: s, advantageNames, disadvantageNames, helpSuffix };
 }
 
 /**
@@ -163,11 +169,11 @@ export function extractOwnPoolFromRollText(rollText) {
  * second `[d6]` / `[Nd6kh]` block is never emitted).
  *
  * @param {string} rollText
- * @param {{ advantageNames?: string[], disadvantageNames?: string[], includeCancelled?: boolean }} [extra]
+ * @param {{ advantageNames?: string[], disadvantageNames?: string[], includeCancelled?: boolean, helps?: object[] }} [extra]
  * @returns {string}
  */
 export function applyOwnPoolToRollText(rollText, extra = {}) {
-  const extracted = extractOwnPoolFromRollText(rollText);
+  const extracted = extractOwnPoolFromRollText(rollText, extra);
   const resolved = resolveOwnPool({
     advantageNames: [...extracted.advantageNames, ...(extra.advantageNames || [])],
     disadvantageNames: [...extracted.disadvantageNames, ...(extra.disadvantageNames || [])],
@@ -175,7 +181,8 @@ export function applyOwnPoolToRollText(rollText, extra = {}) {
   const includeCancelled = extra.includeCancelled !== false;
   return extracted.strippedText
     + formatOwnPoolDieSuffix(resolved)
-    + (includeCancelled ? formatOwnPoolCancelledNote(resolved) : '');
+    + (includeCancelled ? formatOwnPoolCancelledNote(resolved) : '')
+    + (extracted.helpSuffix || '');
 }
 
 /**

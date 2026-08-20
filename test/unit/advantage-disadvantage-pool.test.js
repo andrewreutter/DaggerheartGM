@@ -170,6 +170,17 @@ describe('extractOwnPoolFromRollText / applyOwnPoolToRollText', () => {
     expect(strippedText).toBe(withHelper);
   });
 
+  it('ignores a trailing Help an Ally suffix when extracting own-pool', () => {
+    const helps = [{ instanceId: 'beau', label: 'Beau helps' }];
+    const withHelp = `${base} Aim [d6] Beau helps [d6]`;
+    const extracted = extractOwnPoolFromRollText(withHelp, { helps });
+    expect(extracted.advantageNames).toEqual(['Aim']);
+    expect(extracted.strippedText).toBe(base);
+    expect(extracted.helpSuffix).toBe(' Beau helps [d6]');
+    expect(applyOwnPoolToRollText(withHelp, { disadvantageNames: ['Retract'], helps }))
+      .toBe(`${base} — cancelled: Aim vs Retract Beau helps [d6]`);
+  });
+
   it('appendOwnPoolAdvantageToRollText merges into one pool (no second block)', () => {
     const once = appendOwnPoolAdvantageToRollText(base, 'Aim');
     expect(once).toBe(`${base} Aim [d6]`);

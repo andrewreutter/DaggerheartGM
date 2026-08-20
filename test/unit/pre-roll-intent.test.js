@@ -77,6 +77,19 @@ describe('mergeIntentPatch', () => {
     expect(mergeIntentPatch(baseIntent, { difficulty: 1 }, { isGm: true }).difficulty).toBe(5);
   });
 
+  it('does not copy helps from a selection PATCH', () => {
+    const withHelp = {
+      ...baseIntent,
+      helps: [{ instanceId: 'char-b', label: 'Beau helps', hopeCost: 1, die: 'd6' }],
+    };
+    const next = mergeIntentPatch(withHelp, {
+      selectedChips: [true, false],
+      helps: [{ instanceId: 'forged', label: 'should not land' }],
+    }, { isGm: false });
+    expect(next.helps).toEqual(withHelp.helps);
+    expect(next.selectedChips).toEqual([true, false]);
+  });
+
   it('returns null when there is no existing session', () => {
     expect(mergeIntentPatch(null, { difficulty: 12 }, { isGm: true })).toBeNull();
   });
@@ -292,6 +305,7 @@ describe('applyRemoteSelectionSnapshot / serialize', () => {
       expect.objectContaining({ label: 'Test Toggle', isToggle: true }),
     ]);
     expect(payload.chips[0].onUse).toBeUndefined();
+    expect(payload.helps).toEqual([]);
     expect(serializeDisplayChips([{ _difficultyChip: true }])).toEqual([]);
   });
 

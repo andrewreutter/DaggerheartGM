@@ -30,6 +30,8 @@ See [Maintenance Instructions](#maintenance-instructions) at the bottom.
 
 **Totals:** 746 SRD submodule elements + 2 hand-authored DT catalog scenes. ~360 fully implemented (adversaries + environments + weapons + abilities as display + armor stat/roll/slot-triggered/damage-type-gated features), ~143 partially implemented, ~243 not in the UI. DT catalog scenes are **Display** (Library + existing Scene → Table flow).
 
+**Core table actions:** **Help an Ally** is **Done** on the shared pre-roll strip (not a V2 feature module): other invited players / the GM can queue helper dice that stay outside the actor’s own-pool (names + keep-highest dice). Each helper spends 1 Hope when the result banner is Applied. Feature die-size overrides (Household Friend, Epic Poetry, Enchanted Aid) and Tag Team stay on their existing wiring.
+
 ---
 
 ## Adversaries (129)

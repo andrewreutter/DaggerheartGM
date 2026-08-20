@@ -65,6 +65,7 @@ describe('PreRollBanner advantage / disadvantage focus', () => {
       b.textContent.includes('Add advantage'),
     );
     expect(add).toBeTruthy();
+    expect(container.textContent).toContain('Before you roll');
     await act(async () => {
       add.click();
     });
@@ -339,6 +340,8 @@ describe('PreRollBanner read-only observer', () => {
   it('shows only turned-on chips and hides empty sections and actions', async () => {
     await mountReadonly();
     expect(container.querySelector('[data-testid="preroll-banner"]')?.getAttribute('data-readonly')).toBe('true');
+    expect(container.textContent).toContain('Before the roll');
+    expect(container.textContent).not.toContain('Before you roll');
     expect(container.textContent).toContain('Rally');
     expect(container.textContent).not.toContain('Cloaked');
     expect(container.textContent).toContain('I moved this turn');
@@ -373,6 +376,84 @@ describe('PreRollBanner read-only observer', () => {
     expect(container.textContent).toContain('Experience');
     expect(container.textContent).toContain('Scout');
     expect(container.textContent).not.toContain('Diplomat');
+  });
+
+  it('shows a Help toggle with the default label on a read-only observer card', async () => {
+    const onHelpChange = vi.fn();
+    await mountReadonly({
+      chips: [],
+      selectedChips: [],
+      advantages: [],
+      helpViewer: { role: 'player', uid: 'player-b', email: 'b@example.com' },
+      activeElements: [
+        { instanceId: 'c1', elementType: 'character', name: 'Hero' },
+        {
+          instanceId: 'c2',
+          elementType: 'character',
+          name: 'Beau',
+          hope: 3,
+          maxHope: 6,
+          assignedPlayerUid: 'player-b',
+          assignedPlayerEmail: 'b@example.com',
+        },
+      ],
+      onHelpChange,
+    });
+    const toggle = container.querySelector('[data-testid="preroll-help-toggle"]');
+    expect(toggle).toBeTruthy();
+    expect(container.textContent).toContain('Help an Ally');
+    await act(async () => {
+      toggle.click();
+    });
+    expect(onHelpChange).toHaveBeenCalledWith(expect.objectContaining({
+      instanceId: 'c2',
+      active: true,
+      label: 'Beau helps',
+    }));
+  });
+
+  it('renders an existing help chip and hides the block on a reaction', async () => {
+    await mountReadonly({
+      chips: [],
+      selectedChips: [],
+      advantages: [],
+      helps: [{ instanceId: 'c2', label: 'Beau helps', hopeCost: 1, die: 'd6' }],
+      helpViewer: { role: 'player', uid: 'player-a', email: 'a@example.com' },
+      activeElements: [
+        { instanceId: 'c1', elementType: 'character', name: 'Hero' },
+        { instanceId: 'c2', elementType: 'character', name: 'Beau', hope: 3 },
+      ],
+    });
+    expect(container.querySelector('[data-testid="preroll-help-row-c2"]')?.textContent).toContain('Beau helps');
+    expect(container.querySelector('[data-testid="preroll-help-toggle"]')).toBeNull();
+
+    container.remove();
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+    await act(async () => {
+      root.render(createElement(PreRollBanner, {
+        pending: { displayName: 'Hero Agility', meta: { _isReaction: true } },
+        characterEl: { instanceId: 'c1', name: 'Hero' },
+        readOnly: true,
+        isPlayer: true,
+        helps: [{ instanceId: 'c2', label: 'Beau helps' }],
+        helpViewer: { role: 'player', uid: 'player-b', email: 'b@example.com' },
+        activeElements: [
+          { instanceId: 'c1', elementType: 'character', name: 'Hero' },
+          {
+            instanceId: 'c2',
+            elementType: 'character',
+            name: 'Beau',
+            assignedPlayerUid: 'player-b',
+            assignedPlayerEmail: 'b@example.com',
+          },
+        ],
+        onProceed: () => {},
+        onCancel: () => {},
+      }));
+    });
+    expect(container.querySelector('[data-testid="preroll-help"]')).toBeNull();
   });
 });
 

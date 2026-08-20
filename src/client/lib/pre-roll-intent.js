@@ -111,6 +111,7 @@ export function serializePreRollIntent({
     difficultyFinalized: !!difficultyFinalized,
     openedByRole: openedByRole === 'gm' ? 'gm' : 'player',
     clientWriteSeq: Number.isFinite(Number(clientWriteSeq)) ? Number(clientWriteSeq) : 0,
+    helps: [],
   };
 }
 
