@@ -69,6 +69,24 @@ describe('SceneTableEditor notes', () => {
     }
   });
 
+  it('hides the note card trash until the card is hovered', async () => {
+    await act(async () => {
+      root.render(
+        createElement(SceneTableEditor, {
+          value: sceneWithNote(),
+          onChange: vi.fn(),
+        }),
+      );
+    });
+
+    const card = container.querySelector('[data-testid="encounter-note-card"]');
+    const remove = card.querySelector('button[title="Remove note"]');
+    expect(remove).toBeTruthy();
+    expect(card.className.split(/\s+/)).toContain('group/note');
+    expect(remove.className.split(/\s+/)).toContain('hidden');
+    expect(remove.className.split(/\s+/)).toContain('group-hover/note:block');
+  });
+
   it('opens the encounter note editor when a scene note card is clicked and applies body edits on blur', async () => {
     const onChange = vi.fn();
     await act(async () => {

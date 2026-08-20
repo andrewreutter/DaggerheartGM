@@ -187,6 +187,7 @@ export function mapObjectHoverHintModel(el, { canModify = true } = {}) {
  *   showInstructions?: boolean,
  *   platform?: string,
  *   isTouch?: boolean,
+ *   isPlayer?: boolean,
  * }} [opts]
  * @returns {{ id: string, title: string, lines: string[], showInstructionsToggle: boolean }}
  */
@@ -199,12 +200,13 @@ export function resolveMapChromeTooltip({
   showInstructions = true,
   platform = 'other',
   isTouch = false,
+  isPlayer = false,
 } = {}) {
   let id = 'game-map';
   let title = GAME_MAP_TITLE;
   let lines = [];
   if (tokenElement) {
-    const hint = tokenHoverHintModel(tokenElement);
+    const hint = tokenHoverHintModel(tokenElement, { isTouch, isPlayer });
     id = tokenElement.instanceId || 'token';
     title = hint.name;
     lines = hint.lines;

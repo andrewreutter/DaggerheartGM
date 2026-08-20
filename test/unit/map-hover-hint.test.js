@@ -14,7 +14,12 @@ import {
   mapZoomChordLabel,
   resolveMapChromeTooltip,
 } from '../../src/client/lib/map-hover-hint.js';
-import { TOKEN_HOVER_HINT_LINES } from '../../src/client/lib/token-overlay-activate.js';
+import {
+  GM_TOKEN_HOVER_HINT_ELEMENT,
+  GM_TOKEN_HOVER_HINT_LINES,
+  GM_TOKEN_HOVER_HINT_LINES_TOUCH,
+  TOKEN_HOVER_HINT_LINES,
+} from '../../src/client/lib/token-overlay-activate.js';
 
 describe('mapChromeTooltipMaxWidthPx', () => {
   it('leaves a gap between the picker right edge and the tooltip left edge', () => {
@@ -105,6 +110,23 @@ describe('resolveMapChromeTooltip', () => {
       lines: TOKEN_HOVER_HINT_LINES,
       showInstructionsToggle: true,
     });
+  });
+
+  it('documents GM Moves open affordance plus table-running copy', () => {
+    expect(resolveMapChromeTooltip({ tokenElement: GM_TOKEN_HOVER_HINT_ELEMENT })).toEqual({
+      id: 'gm-token',
+      title: 'GM Moves',
+      lines: GM_TOKEN_HOVER_HINT_LINES,
+      showInstructionsToggle: true,
+    });
+    expect(resolveMapChromeTooltip({
+      tokenElement: GM_TOKEN_HOVER_HINT_ELEMENT,
+      isTouch: true,
+    }).lines).toEqual(GM_TOKEN_HOVER_HINT_LINES_TOUCH);
+    expect(resolveMapChromeTooltip({
+      tokenElement: GM_TOKEN_HOVER_HINT_ELEMENT,
+      isPlayer: true,
+    }).lines).toEqual([]);
   });
 
   it('uses map-object copy when no token is hovered', () => {

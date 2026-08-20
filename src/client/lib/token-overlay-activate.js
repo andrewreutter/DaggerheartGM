@@ -1,6 +1,6 @@
 /**
  * Token hover tooltip + overlay-activate helpers (BattleMap character,
- * companion, and adversary tokens).
+ * companion, adversary, and GM-crown tokens).
  */
 
 /**
@@ -24,6 +24,16 @@ export function isTokenOverlayActivateEvent(e) {
 }
 
 /**
+ * GM crown only: plain left-click and right-click both toggle GM Moves.
+ * Middle-click does not. Touch tap is handled on pointerup to avoid a double toggle.
+ * @param {{ button?: number }|null|undefined} e
+ */
+export function isGmTokenOverlayActivateEvent(e) {
+  if (!e) return false;
+  return e.button === 0 || e.button === 2;
+}
+
+/**
  * Swallow the native browser menu on token / tray right-click.
  * @param {{ preventDefault?: Function, stopPropagation?: Function }|null|undefined} e
  */
@@ -31,6 +41,25 @@ export function suppressBrowserContextMenu(e) {
   if (!e) return;
   e.preventDefault?.();
   e.stopPropagation?.();
+}
+
+/**
+ * Overlay data for pinning GM Moves from the right-tray GM token.
+ * @param {{ getBoundingClientRect?: () => { left: number } }|null|undefined} triggerEl
+ */
+export function buildGmTokenMovesOverlayData(triggerEl) {
+  const left = triggerEl && typeof triggerEl.getBoundingClientRect === 'function'
+    ? triggerEl.getBoundingClientRect().left
+    : NaN;
+  return {
+    source: 'gm-token',
+    edgeLeft: Number.isFinite(left) ? left : null,
+  };
+}
+
+/** @param {{ source?: string }|null|undefined} data */
+export function isGmTokenMovesOverlay(data) {
+  return data?.source === 'gm-token';
 }
 
 /**
@@ -64,6 +93,7 @@ export function swallowNextContextMenu(root = typeof document !== 'undefined' ? 
  */
 export function tokenHoverTooltipName(element) {
   if (!element) return 'Token';
+  if (element.elementType === 'gmToken') return 'GM Moves';
   const raw = element.elementType === 'boardToken'
     ? (element.label || element.name)
     : element.name;
@@ -77,18 +107,54 @@ export const TOKEN_HOVER_HINT_LINES = [
   'Right-click for action card.',
 ];
 
+/** Sentinel used as `trayHoverInstanceId` while the right-tray GM crown is hovered. */
+export const GM_TOKEN_HINT_INSTANCE_ID = 'gm-token';
+
+export const GM_TOKEN_HOVER_HINT_ELEMENT = {
+  instanceId: GM_TOKEN_HINT_INSTANCE_ID,
+  elementType: 'gmToken',
+  name: 'GM Moves',
+};
+
+/** What the board contains — same facts as the homepage GM Moves shot, for running the table. */
+export const GM_TOKEN_HOVER_HINT_CONTENT_LINES = [
+  'Default Moves plus every passive, Fear action, and attack from environments and adversaries on the table.',
+  'In the panel:',
+  'Click Off-Camera to reveal more actions from off-camera adversaries and environments.',
+  'Click an attack to roll it. Hover a move for its text.',
+];
+
+export const GM_TOKEN_HOVER_HINT_LINES = [
+  'Click or right-click to show or hide.',
+  ...GM_TOKEN_HOVER_HINT_CONTENT_LINES,
+];
+
+export const GM_TOKEN_HOVER_HINT_LINES_TOUCH = [
+  'Tap to show or hide.',
+  ...GM_TOKEN_HOVER_HINT_CONTENT_LINES,
+];
+
 /**
  * @param {string|null|undefined} elementType
  */
 export function isTokenHoverHintType(elementType) {
-  return elementType === 'character' || elementType === 'adversary' || elementType === 'boardToken';
+  return elementType === 'character' || elementType === 'adversary' || elementType === 'boardToken' || elementType === 'gmToken';
 }
 
 /**
  * Name + hint lines for the static token hover inset.
+ * Creature tokens keep the shared drag / altitude / pin copy. The GM crown
+ * documents click-or-right-click toggle (or tap on touch).
  * @param {string|{ elementType?: string, name?: string, label?: string }|null|undefined} nameOrElement
+ * @param {{ isTouch?: boolean, isPlayer?: boolean }} [opts]
  */
-export function tokenHoverHintModel(nameOrElement) {
+export function tokenHoverHintModel(nameOrElement, { isTouch = false, isPlayer = false } = {}) {
+  if (nameOrElement && typeof nameOrElement === 'object' && nameOrElement.elementType === 'gmToken') {
+    return {
+      name: 'GM Moves',
+      lines: isPlayer ? [] : (isTouch ? GM_TOKEN_HOVER_HINT_LINES_TOUCH : GM_TOKEN_HOVER_HINT_LINES),
+    };
+  }
   const name = typeof nameOrElement === 'string'
     ? (nameOrElement.trim() || 'Token')
     : tokenHoverTooltipName(nameOrElement);
@@ -98,9 +164,10 @@ export function tokenHoverHintModel(nameOrElement) {
 /**
  * Instant hover copy for character / companion / adversary tokens.
  * @param {string|{ elementType?: string, name?: string, label?: string }|null|undefined} nameOrElement
+ * @param {{ isTouch?: boolean, isPlayer?: boolean }} [opts]
  */
-export function tokenHoverTooltipText(nameOrElement) {
-  const { name, lines } = tokenHoverHintModel(nameOrElement);
+export function tokenHoverTooltipText(nameOrElement, opts) {
+  const { name, lines } = tokenHoverHintModel(nameOrElement, opts);
   return [name, ...lines].join('\n');
 }
 
@@ -121,6 +188,7 @@ export function resolveTokenHoverHintElement({
   dragging = false,
 } = {}) {
   if (dragging) return null;
+  if (trayHoverInstanceId === GM_TOKEN_HINT_INSTANCE_ID) return GM_TOKEN_HOVER_HINT_ELEMENT;
   const id = trayHoverInstanceId ?? snappedInstanceId ?? null;
   if (!id || !Array.isArray(elements)) return null;
   const el = elements.find((e) => e.instanceId === id);

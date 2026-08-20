@@ -103,6 +103,10 @@ import {
   bullseyeFtForPlacedTokenHover,
 } from '../lib/tray-proxy-hover.js';
 import {
+  buildGmTokenMovesOverlayData,
+  GM_TOKEN_HINT_INSTANCE_ID,
+  isGmTokenMovesOverlay,
+  isGmTokenOverlayActivateEvent,
   isTokenOverlayActivateEvent,
   resolveTokenHoverHintElement,
   suppressBrowserContextMenu,
@@ -1146,6 +1150,8 @@ const CHAR_MINE_TOKEN_CLASSES  = { bg: 'bg-green-700',   border: 'border-green-7
 const CHAR_OTHER_TOKEN_CLASSES = { bg: 'bg-sky-700',     border: 'border-sky-700' };
 const COMPANION_TOKEN_CLASSES  = { bg: 'bg-emerald-900', border: 'border-emerald-900' };
 const DEFEATED_TOKEN_CLASSES   = { bg: 'bg-black',       border: 'border-black' };
+/** Pinned / open-panel ring — same amber as map-tile and camera-lock selection. */
+const PINNED_TOKEN_RING = 'ring-2 ring-amber-500 ring-offset-1 ring-offset-dh-surface';
 
 // Rotating ally palette for characters + companions. Stays in the cool blue→green family so
 // "good guys" remain visually distinct from the warm/magenta adversary role colors above.
@@ -1281,7 +1287,7 @@ function TokenCircle({
         ${isDragging ? 'opacity-30' : ''}
         ${isGhost ? 'opacity-90 pointer-events-none' : ''}
         ${isProxy ? (isOtherMapShelf ? 'opacity-[0.38]' : 'opacity-20') : ''}
-        ${isPinned ? 'ring-2 ring-white ring-offset-1 ring-offset-dh-surface' : ''}
+        ${isPinned ? PINNED_TOKEN_RING : ''}
       `}
       style={{
         width: sizeW,
@@ -2388,13 +2394,23 @@ function SpotlightBeam({ side, active, dimGlow, count, clickable, onClick, label
   );
 }
 
-function GmSpotlightToken({ tokenSizePx }) {
+function GmSpotlightToken({ tokenSizePx, isPinned = false, onPointerDown, onPointerUp, onPointerEnter, onPointerLeave }) {
   return (
     <div
       data-testid="gm-spotlight-token"
-      className="rounded-full flex items-center justify-center border-2 border-black bg-slate-700"
-      style={{ width: tokenSizePx, height: tokenSizePx, minWidth: tokenSizePx, minHeight: tokenSizePx }}
-      title="GM"
+      className={`rounded-full flex items-center justify-center border-2 border-black bg-slate-700 ${isPinned ? PINNED_TOKEN_RING : ''}`}
+      style={{
+        width: tokenSizePx,
+        height: tokenSizePx,
+        minWidth: tokenSizePx,
+        minHeight: tokenSizePx,
+        touchAction: 'none',
+      }}
+      onPointerDown={onPointerDown}
+      onPointerUp={onPointerUp}
+      onPointerEnter={onPointerEnter}
+      onPointerLeave={onPointerLeave}
+      onContextMenu={suppressBrowserContextMenu}
     >
       <Crown size={Math.max(12, Math.round(tokenSizePx * 0.45))} className="text-slate-200" />
     </div>
@@ -3362,7 +3378,7 @@ export function BattleMap({
   showSpotlight = false,
   spotlight = null,
   onSpotlightChange,
-  /** Game Table GM: hover overlay hook for the GM token → GM Moves panel. */
+  /** Game Table GM: click/pin overlay hook for Encounter + GM token → GM Moves panel. */
   gmMovesOverlay = null,
 }) {
   const isTouch = useTouchDevice();
@@ -6574,6 +6590,7 @@ export function BattleMap({
       e.preventDefault();
       e.stopPropagation();
       if (e.button === 2) swallowNextContextMenu();
+      gmMovesOverlay?.close();
       setPinnedToken((prev) => {
         if (prev?.element.instanceId === element.instanceId) return null;
         return {
@@ -6649,7 +6666,7 @@ export function BattleMap({
           ? { tokenX: element.tokenX, tokenY: element.tokenY, altitude: element.altitude ?? 0 }
           : null,
     };
-  }, [canDrag, instanceNumbers, isMyCharacter, isPlayer, tokenSizePx, pxPerFt, parentByInstanceId]);
+  }, [canDrag, instanceNumbers, isMyCharacter, isPlayer, tokenSizePx, pxPerFt, parentByInstanceId, gmMovesOverlay]);
 
   const handlePointerMove = useCallback((e) => {
     const ds = dragRef.current;
@@ -6741,6 +6758,7 @@ export function BattleMap({
       }
       // Touch tap still pins (no right-click). Mouse overlay is right-click / modifier-click.
       if (isTouch) {
+        gmMovesOverlay?.close();
         setPinnedToken((prev) => {
           if (prev?.element.instanceId === ds.element.instanceId) return null;
           return {
@@ -6824,7 +6842,7 @@ export function BattleMap({
         });
       }
     }
-  }, [isPlayer, isTouch, pxPerFt, mapWidthFt, mapHeightFt, updateActiveElement, pinnedToken, activeElements, onTokenDragEnd, canControlMapView, centerMapOnPlacedActor, activeMapIdResolved, navigateShelfToCharacterMap, parentByInstanceId]);
+  }, [isPlayer, isTouch, pxPerFt, mapWidthFt, mapHeightFt, updateActiveElement, pinnedToken, activeElements, onTokenDragEnd, canControlMapView, centerMapOnPlacedActor, activeMapIdResolved, navigateShelfToCharacterMap, parentByInstanceId, gmMovesOverlay]);
 
   /** Keep the stable proxy callbacks (declared earlier) pointed at the latest handler closures. */
   handlersRef.current = {
@@ -7019,6 +7037,42 @@ export function BattleMap({
     if (isPlayer || !onSpotlightChange) return;
     onSpotlightChange(assignSpotlightHolder(spotlight, 'gm'));
   }, [isPlayer, onSpotlightChange, spotlight]);
+
+  const activateGmTokenMoves = useCallback((triggerEl) => {
+    if (isPlayer || !gmMovesOverlay) return;
+    if (isGmTokenMovesOverlay(gmMovesOverlay.data)) {
+      gmMovesOverlay.close();
+      return;
+    }
+    setPinnedToken(null);
+    gmMovesOverlay.show(buildGmTokenMovesOverlayData(triggerEl), triggerEl);
+  }, [isPlayer, gmMovesOverlay]);
+
+  const handleGmTokenPointerDown = useCallback((e) => {
+    if (isPlayer || !gmMovesOverlay) return;
+    if (!isGmTokenOverlayActivateEvent(e)) return;
+    // Touch tap toggles on pointerup so pointerdown + pointerup do not double-toggle.
+    if (e.button === 0 && isTouch) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.button === 2) swallowNextContextMenu();
+    activateGmTokenMoves(e.currentTarget);
+  }, [isPlayer, gmMovesOverlay, isTouch, activateGmTokenMoves]);
+
+  const handleGmTokenHoverEnter = useCallback(() => {
+    setTrayHoverInstanceId(GM_TOKEN_HINT_INSTANCE_ID);
+  }, []);
+  const handleGmTokenHoverLeave = useCallback(() => {
+    setTrayHoverInstanceId((prev) => (prev === GM_TOKEN_HINT_INSTANCE_ID ? null : prev));
+  }, []);
+
+  const handleGmTokenPointerUp = useCallback((e) => {
+    if (isPlayer || !gmMovesOverlay || !isTouch) return;
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    activateGmTokenMoves(e.currentTarget);
+  }, [isPlayer, gmMovesOverlay, isTouch, activateGmTokenMoves]);
 
   // ─── Render ─────────────────────────────────────────────────────────────
 
@@ -7312,7 +7366,9 @@ export function BattleMap({
     elements: activeElements,
     dragging: !!dragGhost,
   });
-  const tokenHoverHint = tokenHoverHintElement ? tokenHoverHintModel(tokenHoverHintElement) : null;
+  const tokenHoverHint = tokenHoverHintElement
+    ? tokenHoverHintModel(tokenHoverHintElement, { isTouch, isPlayer })
+    : null;
   const mapChromeTooltip = resolveMapChromeTooltip({
     tokenElement: tokenHoverHintElement,
     mapObject: dragGhost ? null : hoveredMapObject,
@@ -7322,6 +7378,7 @@ export function BattleMap({
     showInstructions: showMapInstructions,
     platform: detectMapControlPlatform(typeof navigator !== 'undefined' ? navigator : undefined),
     isTouch,
+    isPlayer,
   });
   let tokenNameChip = null;
   if (
@@ -8283,17 +8340,16 @@ export function BattleMap({
             />
             {showSpotlight && (
               <div className="px-1.5 pt-2 pb-1.5 shrink-0">
-                <div
-                  className="flex flex-col items-center"
-                  {...(gmMovesOverlay && !isPlayer
-                    ? gmMovesOverlay.triggerProps((e) => ({
-                        source: 'gm-token',
-                        edgeLeft: e.currentTarget.getBoundingClientRect().left,
-                      }))
-                    : {})}
-                >
+                <div className="flex flex-col items-center">
                   <div className="relative flex items-center justify-center">
-                    <GmSpotlightToken tokenSizePx={trayTokenSizePx} />
+                    <GmSpotlightToken
+                      tokenSizePx={trayTokenSizePx}
+                      isPinned={isGmTokenMovesOverlay(gmMovesOverlay?.data)}
+                      onPointerDown={!isPlayer && gmMovesOverlay ? handleGmTokenPointerDown : undefined}
+                      onPointerUp={!isPlayer && gmMovesOverlay ? handleGmTokenPointerUp : undefined}
+                      onPointerEnter={handleGmTokenHoverEnter}
+                      onPointerLeave={handleGmTokenHoverLeave}
+                    />
                     <div
                       className="absolute top-1/2 right-full z-30 -translate-y-1/2"
                       style={{ marginRight: -SPOTLIGHT_BEAM_OVERLAP_PX }}

@@ -134,7 +134,7 @@ export function EncounterNoteCard({
   return (
     <div
       data-testid="encounter-note-card"
-      className={`flex cursor-pointer gap-1 rounded-lg border border-amber-900/50 bg-amber-950/25 px-2 transition-colors hover:border-amber-700/60 hover:bg-amber-950/40 ${noteTitleOnly ? 'py-1.5' : 'py-2'}`}
+      className={`group/note flex cursor-pointer gap-1 rounded-lg border border-amber-900/50 bg-amber-950/25 px-2 transition-colors hover:border-amber-700/60 hover:bg-amber-950/40 ${noteTitleOnly ? 'py-1.5' : 'py-2'}`}
       {...hoverProps}
     >
       <button
@@ -175,7 +175,7 @@ export function EncounterNoteCard({
           onRemove?.(element);
         }}
         onMouseDown={stopEncounterOverlayFromInteractive}
-        className="shrink-0 self-start text-dh-muted hover:text-red-400 transition-colors p-0.5"
+        className="hidden group-hover/note:block shrink-0 self-start text-dh-muted hover:text-red-400 transition-colors p-0.5"
         title="Remove note"
       >
         <Trash2 size={12} />

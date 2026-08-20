@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildGmTokenMovesOverlayData,
+  GM_TOKEN_HINT_INSTANCE_ID,
+  GM_TOKEN_HOVER_HINT_CONTENT_LINES,
+  GM_TOKEN_HOVER_HINT_ELEMENT,
+  GM_TOKEN_HOVER_HINT_LINES,
+  GM_TOKEN_HOVER_HINT_LINES_TOUCH,
+  isGmTokenMovesOverlay,
+  isGmTokenOverlayActivateEvent,
   isModifierKeyDown,
   isTokenOverlayActivateEvent,
   resolveTokenHoverHintElement,
@@ -48,6 +56,18 @@ describe('isTokenOverlayActivateEvent', () => {
   });
 });
 
+describe('isGmTokenOverlayActivateEvent', () => {
+  it('treats plain left-click and right-click as activate', () => {
+    expect(isGmTokenOverlayActivateEvent({ button: 0 })).toBe(true);
+    expect(isGmTokenOverlayActivateEvent({ button: 2 })).toBe(true);
+  });
+
+  it('does not treat middle-click or a missing event as activate', () => {
+    expect(isGmTokenOverlayActivateEvent({ button: 1 })).toBe(false);
+    expect(isGmTokenOverlayActivateEvent(null)).toBe(false);
+  });
+});
+
 describe('suppressBrowserContextMenu', () => {
   it('prevents default and stops propagation', () => {
     const e = { preventDefault: () => { e.prevented = true; }, stopPropagation: () => { e.stopped = true; } };
@@ -58,6 +78,27 @@ describe('suppressBrowserContextMenu', () => {
 
   it('no-ops on a missing event', () => {
     expect(() => suppressBrowserContextMenu(null)).not.toThrow();
+  });
+});
+
+describe('buildGmTokenMovesOverlayData', () => {
+  it('stamps source gm-token and the trigger left edge', () => {
+    expect(buildGmTokenMovesOverlayData({ getBoundingClientRect: () => ({ left: 880 }) })).toEqual({
+      source: 'gm-token',
+      edgeLeft: 880,
+    });
+  });
+
+  it('uses a null edge when the trigger has no box', () => {
+    expect(buildGmTokenMovesOverlayData(null)).toEqual({ source: 'gm-token', edgeLeft: null });
+  });
+});
+
+describe('isGmTokenMovesOverlay', () => {
+  it('is true only for gm-token source data', () => {
+    expect(isGmTokenMovesOverlay({ source: 'gm-token' })).toBe(true);
+    expect(isGmTokenMovesOverlay({ source: 'encounter' })).toBe(false);
+    expect(isGmTokenMovesOverlay(null)).toBe(false);
   });
 });
 
@@ -117,6 +158,34 @@ describe('tokenHoverTooltipText', () => {
       ],
     });
   });
+
+  it('documents click or right-click toggle for the GM crown', () => {
+    expect(tokenHoverTooltipName(GM_TOKEN_HOVER_HINT_ELEMENT)).toBe('GM Moves');
+    expect(tokenHoverHintModel(GM_TOKEN_HOVER_HINT_ELEMENT)).toEqual({
+      name: 'GM Moves',
+      lines: GM_TOKEN_HOVER_HINT_LINES,
+    });
+    expect(tokenHoverHintModel(GM_TOKEN_HOVER_HINT_ELEMENT, { isTouch: true })).toEqual({
+      name: 'GM Moves',
+      lines: GM_TOKEN_HOVER_HINT_LINES_TOUCH,
+    });
+    expect(tokenHoverHintModel(GM_TOKEN_HOVER_HINT_ELEMENT, { isPlayer: true })).toEqual({
+      name: 'GM Moves',
+      lines: [],
+    });
+  });
+
+  it('summarizes homepage GM Moves copy for running the table', () => {
+    const body = GM_TOKEN_HOVER_HINT_CONTENT_LINES.join(' ');
+    expect(body).toMatch(/environments and adversaries/i);
+    expect(body).not.toMatch(/Encounter order/i);
+    expect(body).toMatch(/off-camera adversaries and environments/i);
+    expect(body).toMatch(/roll/i);
+    expect(GM_TOKEN_HOVER_HINT_LINES[0]).toMatch(/Click or right-click/);
+    expect(GM_TOKEN_HOVER_HINT_LINES_TOUCH[0]).toMatch(/^Tap /);
+    expect(GM_TOKEN_HOVER_HINT_LINES.slice(1)).toEqual(GM_TOKEN_HOVER_HINT_CONTENT_LINES);
+    expect(GM_TOKEN_HOVER_HINT_LINES_TOUCH.slice(1)).toEqual(GM_TOKEN_HOVER_HINT_CONTENT_LINES);
+  });
 });
 
 describe('resolveTokenHoverHintElement', () => {
@@ -148,6 +217,19 @@ describe('resolveTokenHoverHintElement', () => {
     expect(resolveTokenHoverHintElement({
       snappedInstanceId: 'n1',
       elements: [note],
+    })).toBeNull();
+  });
+
+  it('returns the synthetic GM crown element for the tray hover sentinel', () => {
+    expect(resolveTokenHoverHintElement({
+      trayHoverInstanceId: GM_TOKEN_HINT_INSTANCE_ID,
+      snappedInstanceId: 'c1',
+      elements: [char],
+    })).toEqual(GM_TOKEN_HOVER_HINT_ELEMENT);
+    expect(resolveTokenHoverHintElement({
+      trayHoverInstanceId: GM_TOKEN_HINT_INSTANCE_ID,
+      elements: [char],
+      dragging: true,
     })).toBeNull();
   });
 });

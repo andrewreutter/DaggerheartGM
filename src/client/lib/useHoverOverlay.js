@@ -41,7 +41,8 @@ function eventIsInsideOutsideDismissExempt(e) {
  *
  * overlay.data — the value passed to show() / triggerProps()
  * overlay.isOpen — boolean
- * overlay.show(data) — open with given data
+ * overlay.show(data, triggerEl?) — open with given data; optional triggerEl marks the
+ *   active trigger so click-mode outside-dismiss treats that element as “in trigger”
  * overlay.close() — close immediately
  * overlay.triggerRef — ref to attach to the trigger element (used for outside-tap detection)
  */
@@ -70,8 +71,9 @@ export function useHoverOverlay({
     }
   }, []);
 
-  const show = useCallback((newData) => {
+  const show = useCallback((newData, triggerEl) => {
     clearTimer();
+    if (triggerEl) activeTouchTriggerRef.current = triggerEl;
     setData(newData ?? true);
   }, [clearTimer]);
 

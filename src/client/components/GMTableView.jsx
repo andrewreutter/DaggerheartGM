@@ -735,7 +735,12 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     getClickToggleKey: (d) => (d?.type === 'party' ? 'party-loot' : d?.element?.instanceId),
     suppressOutsideDismissRef: suppressCharacterOverlayOutsideDismissRef,
   });
-  const gmMovesOverlay    = useHoverOverlay({ hideDelay: 150, isTouch });
+  const gmMovesOverlay    = useHoverOverlay({
+    hideDelay: 150,
+    isTouch,
+    mode: 'click',
+    getClickToggleKey: (d) => d?.source || 'gm-moves',
+  });
   const gmMovesPortalTooltip = usePortalHoverTooltip();
   const [gmMovesOffCameraOpen, setGmMovesOffCameraOpen] = useState(false);
   const activeElementsRef = useRef(activeElements);
@@ -6605,7 +6610,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
         </div>
       </div>
 
-      {/* GM Moves — hover (Encounter trigger or GM token); Escape closes */}
+      {/* GM Moves — Encounter click or GM-token right-click pin; Escape closes */}
       {gmMovesOverlay.isOpen && (
       <div
         ref={gmMovesOverlay.overlayRef}
@@ -7116,7 +7121,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
               />
             </div>
           </div>
-          {/* GM Moves hover trigger */}
+          {/* GM Moves click trigger */}
           <div
             data-testid="gm-moves-trigger"
             className={`rounded-lg border px-2.5 py-2 flex items-center gap-2 transition-colors cursor-pointer ${gmMovesOverlay.isOpen ? 'border-dh-hope/60 bg-dh-inset' : 'border-dh-strong bg-dh-surface hover:border-dh-hope/40'}`}
