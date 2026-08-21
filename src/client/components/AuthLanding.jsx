@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect } from 'react';
-import { auth } from '../lib/api.js';
+import { auth, daggerheartWhitelistDisabled } from '../lib/api.js';
 import {
   signInWithGoogleAuth,
   registerWithEmailPassword,
@@ -13,6 +13,7 @@ import {
   EMAIL_ALREADY_IN_USE,
 } from '../lib/firebase-account-linking.js';
 import { getEmailFromAuthError } from '../lib/firebase-auth-messages.js';
+import { NEW_SIGNUPS_DISABLED_MESSAGE } from '../lib/new-signups-gate.js';
 
 const AUTH_FIELD_CLASS = 'w-full rounded-md border border-dh-border bg-dh-canvas px-3 py-2 text-sm text-dh';
 
@@ -66,7 +67,7 @@ export function AuthLanding({ disabled = false, initialMode }) {
     resetMessages();
     setBusy(true);
     try {
-      await signInWithGoogleAuth(auth);
+      await signInWithGoogleAuth(auth, { rejectNewUsers: daggerheartWhitelistDisabled });
     } catch (err) {
       const code = err?.code;
       if (code === ACCOUNT_EXISTS_DIFFERENT_CREDENTIAL) {
@@ -85,7 +86,7 @@ export function AuthLanding({ disabled = false, initialMode }) {
     } finally {
       setBusy(false);
     }
-  }, [auth, disabled, email, resetMessages]);
+  }, [auth, disabled, email, resetMessages, daggerheartWhitelistDisabled]);
 
   const onLinkGoogle = useCallback(async () => {
     if (!auth || !linkPending) return;
@@ -118,7 +119,7 @@ export function AuthLanding({ disabled = false, initialMode }) {
 
   const onEmailSignUp = useCallback(async (e) => {
     e.preventDefault();
-    if (!auth || disabled) return;
+    if (!auth || disabled || daggerheartWhitelistDisabled) return;
     resetMessages();
     setBusy(true);
     try {
@@ -144,7 +145,7 @@ export function AuthLanding({ disabled = false, initialMode }) {
     } finally {
       setBusy(false);
     }
-  }, [auth, disabled, email, password, displayName, resetMessages]);
+  }, [auth, disabled, email, password, displayName, resetMessages, daggerheartWhitelistDisabled]);
 
   const onForgotPassword = useCallback(async (e) => {
     e.preventDefault();
@@ -237,6 +238,17 @@ export function AuthLanding({ disabled = false, initialMode }) {
                 </button>
               </div>
             </form>
+          ) : mode === 'signup' && daggerheartWhitelistDisabled ? (
+            <div data-testid="new-signups-closed" className="space-y-4 text-center">
+              <p className="text-sm text-dh-muted">{NEW_SIGNUPS_DISABLED_MESSAGE}</p>
+              <button
+                type="button"
+                onClick={() => { setMode('signin'); resetMessages(); }}
+                className="text-sky-400 hover:underline text-sm"
+              >
+                Sign in
+              </button>
+            </div>
           ) : (
             <form onSubmit={mode === 'signup' ? onEmailSignUp : onEmailSignIn} className="space-y-3">
               {mode === 'signup' && (
@@ -280,18 +292,21 @@ export function AuthLanding({ disabled = false, initialMode }) {
                 {busy ? '…' : mode === 'signup' ? 'Create account' : 'Sign in'}
               </button>
               <div className="flex justify-between text-xs">
-                <button
-                  type="button"
-                  onClick={() => { setMode(mode === 'signin' ? 'signup' : 'signin'); resetMessages(); setInfo(''); }}
-                  className="text-sky-400 hover:underline"
-                >
-                  {mode === 'signin' ? 'Create an account' : 'Already have an account? Sign in'}
-                </button>
+                {!(daggerheartWhitelistDisabled && mode === 'signin') && (
+                  <button
+                    type="button"
+                    data-testid="auth-create-account"
+                    onClick={() => { setMode(mode === 'signin' ? 'signup' : 'signin'); resetMessages(); setInfo(''); }}
+                    className="text-sky-400 hover:underline"
+                  >
+                    {mode === 'signin' ? 'Create an account' : 'Already have an account? Sign in'}
+                  </button>
+                )}
                 {mode === 'signin' && (
                   <button
                     type="button"
                     onClick={() => { setMode('forgot'); resetMessages(); setInfo(''); }}
-                    className="text-dh-muted hover:text-dh"
+                    className={`text-dh-muted hover:text-dh ${daggerheartWhitelistDisabled ? 'ml-auto' : ''}`}
                   >
                     Forgot password?
                   </button>
@@ -300,6 +315,8 @@ export function AuthLanding({ disabled = false, initialMode }) {
             </form>
           )}
 
+          {!(mode === 'signup' && daggerheartWhitelistDisabled) && (
+          <>
           <div className="relative">
             <div className="absolute inset-0 flex items-center">
               <div className="w-full border-t border-dh-border" />
@@ -324,6 +341,8 @@ export function AuthLanding({ disabled = false, initialMode }) {
             </svg>
             <span className="tracking-[0.25px]">Sign in with Google</span>
           </button>
+          </>
+          )}
 
           {error && <p className="text-sm text-red-400 text-center">{error}</p>}
           {info && !error && <p className="text-sm text-green-400 text-center">{info}</p>}

@@ -11,6 +11,9 @@ import {
   fetchSignInMethodsForEmail,
   linkWithCredential,
   updateProfile,
+  getAdditionalUserInfo,
+  deleteUser,
+  signOut,
 } from 'firebase/auth';
 import { auth } from './api.js';
 import {
@@ -18,18 +21,41 @@ import {
   messageForFirebaseAuthError,
   getEmailFromAuthError,
 } from './firebase-auth-messages.js';
+import {
+  beginRejectingNewGoogleUsers,
+  endRejectingNewGoogleUsers,
+  makeSignupsDisabledError,
+  shouldRejectNewGoogleCredential,
+} from './new-signups-gate.js';
 
 export { ACCOUNT_EXISTS_DIFFERENT_CREDENTIAL, EMAIL_ALREADY_IN_USE } from './firebase-auth-messages.js';
 export { messageForFirebaseAuthError, getEmailFromAuthError } from './firebase-auth-messages.js';
 
 /**
  * @param {import('firebase/auth').Auth} authInstance
+ * @param {{ rejectNewUsers?: boolean }} [opts]
  * @returns {Promise<import('firebase/auth').UserCredential>}
  */
-export function signInWithGoogleAuth(authInstance = auth) {
+export async function signInWithGoogleAuth(authInstance = auth, opts = {}) {
   if (!authInstance) throw new Error('Firebase auth not initialized');
+  const rejectNewUsers = !!opts.rejectNewUsers;
   const provider = new GoogleAuthProvider();
-  return signInWithPopup(authInstance, provider);
+  if (rejectNewUsers) beginRejectingNewGoogleUsers();
+  try {
+    const cred = await signInWithPopup(authInstance, provider);
+    const isNewUser = !!getAdditionalUserInfo(cred)?.isNewUser;
+    if (shouldRejectNewGoogleCredential({ rejectNewUsers, isNewUser })) {
+      try {
+        await deleteUser(cred.user);
+      } catch {
+        await signOut(authInstance).catch(() => {});
+      }
+      throw makeSignupsDisabledError();
+    }
+    return cred;
+  } finally {
+    if (rejectNewUsers) endRejectingNewGoogleUsers();
+  }
 }
 
 /**

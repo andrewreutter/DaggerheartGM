@@ -17,6 +17,8 @@ export let imageGenEnabled = false;
 export let supabaseStorageBase = null;
 export let devAgentQueueEnabled = false;
 export let conceptAiEnabled = false;
+/** True when `DAGGERHEART_WHITELIST_DISABLED=1` — homepage omits Daggerheart marketing; new signups are closed. */
+export let daggerheartWhitelistDisabled = false;
 /** Process build id from the first `/api/config` fetch (`null` if missing / fetch failed). */
 export let appBuildId = null;
 try {
@@ -27,6 +29,7 @@ try {
   supabaseStorageBase = json.supabaseStorageBase || null;
   devAgentQueueEnabled = !!json.devAgentQueueEnabled;
   conceptAiEnabled = !!json.conceptAiEnabled;
+  daggerheartWhitelistDisabled = !!json.daggerheartWhitelistDisabled;
   appBuildId = typeof json.buildId === 'string' && json.buildId.trim() ? json.buildId.trim() : null;
 } catch(e) {
   console.error('Failed to fetch /api/config:', e);

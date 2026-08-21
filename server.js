@@ -91,6 +91,7 @@ import { registerDevAgentRoutes } from './src/server/dev-agent-routes.js';
 import { DEFAULT_CHARACTER_STARTING_HOPE, ROLES, ENV_TYPES } from './src/game-constants.js';
 import { shouldSkipActivityStamp } from './src/server/activity-stamp-throttle.js';
 import { applyAppBuildIdToSpaHtml, resolveAppBuildId, SPA_HTML_CACHE_CONTROL } from './src/server/app-build-id.js';
+import { isDaggerheartWhitelistDisabled } from './src/server/daggerheart-whitelist.js';
 import { parseHttpBooleanLoose } from './src/parse-http-bool.js';
 import { normalizeManualBugReportCreate } from './src/client/lib/bug-report-admin.js';
 import { isCharacterAssignedToPlayer } from './src/client/lib/character-assignment.js';
@@ -146,6 +147,8 @@ function isAdminEmail(email) {
 
 // Global AI kill switch — set AI_FEATURES_DISABLED=1 to disable all AI surfaces regardless of key presence.
 const AI_FEATURES_DISABLED = process.env.AI_FEATURES_DISABLED === '1';
+// Homepage / auth: omit Daggerheart marketing and refuse new signups when DAGGERHEART_WHITELIST_DISABLED=1.
+const DAGGERHEART_WHITELIST_DISABLED = isDaggerheartWhitelistDisabled();
 
 // --- Supabase Storage client (optional — only when env vars are set) ---
 const supabase = (process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY)
@@ -289,6 +292,7 @@ app.get('/api/config', (req, res) => {
       : null,
     devAgentQueueEnabled: process.env.DEV_AGENT_QUEUE_ENABLED === '1',
     conceptAiEnabled: !AI_FEATURES_DISABLED && !!process.env.OPENAI_API_KEY,
+    daggerheartWhitelistDisabled: DAGGERHEART_WHITELIST_DISABLED,
     buildId: APP_BUILD_ID,
   });
 });

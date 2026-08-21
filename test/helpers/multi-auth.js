@@ -152,6 +152,8 @@ export async function fetchSignInMethodsForEmail() { return []; }
 export async function linkWithCredential() { return { user: mockUser }; }
 export async function updateProfile() {}
 export async function signOut() {}
+export function getAdditionalUserInfo() { return { isNewUser: false }; }
+export async function deleteUser() {}
 `;
 }
 

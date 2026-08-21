@@ -62,7 +62,49 @@ export async function fetchSignInMethodsForEmail() { return []; }
 export async function linkWithCredential() { return { user: mockUser }; }
 export async function updateProfile() {}
 export async function signOut() {}
+export function getAdditionalUserInfo() { return { isNewUser: false }; }
+export async function deleteUser() {}
 `;
+
+const MOCK_ANONYMOUS_FIREBASE_AUTH_JS = `
+const mockAuth = { currentUser: null };
+
+export function getAuth() { return mockAuth; }
+
+export function onAuthStateChanged(_auth, callback) {
+  setTimeout(() => callback(null), 0);
+  return () => {};
+}
+
+export class GoogleAuthProvider {}
+GoogleAuthProvider.credentialFromError = function () { return null; };
+GoogleAuthProvider.credentialFromResult = function () { return { accessToken: null }; };
+export async function signInWithPopup() { return { user: null }; }
+export async function linkWithPopup() { return { user: null }; }
+export async function reauthenticateWithPopup() { return { user: null }; }
+export async function createUserWithEmailAndPassword() { return { user: null }; }
+export async function signInWithEmailAndPassword() { return { user: null }; }
+export async function sendPasswordResetEmail() {}
+export async function fetchSignInMethodsForEmail() { return []; }
+export async function linkWithCredential() { return { user: null }; }
+export async function updateProfile() {}
+export async function signOut() {}
+export function getAdditionalUserInfo() { return { isNewUser: false }; }
+export async function deleteUser() {}
+`;
+
+/**
+ * Mock Firebase CDN so AuthLanding renders (auth is initialized, no signed-in user).
+ * Caller still mocks `/api/config`. MUST be called before page.goto().
+ */
+export async function mockAnonymousFirebase(page) {
+  await page.route('https://www.gstatic.com/firebasejs/**firebase-app.js', (route) => {
+    route.fulfill({ contentType: 'application/javascript', body: MOCK_FIREBASE_APP_JS });
+  });
+  await page.route('https://www.gstatic.com/firebasejs/**firebase-auth.js', (route) => {
+    route.fulfill({ contentType: 'application/javascript', body: MOCK_ANONYMOUS_FIREBASE_AUTH_JS });
+  });
+}
 
 /**
  * Set up all route mocks required for an authenticated session.

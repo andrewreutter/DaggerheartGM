@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import ReactDOM from 'react-dom/client';
 import { createPortal } from 'react-dom';
-import { signOut, onAuthStateChanged } from 'firebase/auth';
+import { signOut, onAuthStateChanged, deleteUser } from 'firebase/auth';
 import { BookOpen, LayoutDashboard, ChevronDown, LogOut, Upload, Download, Trash2, Circle, Plus, ScrollText, Sparkles, Bot, ShieldOff, Bug, Ellipsis } from 'lucide-react';
 
-import { auth, getAuthToken, CLIENT_ID, loadCollection, loadTableState, resolveItems, saveItem as apiSaveItem, saveImage as apiSaveImage, deleteItem as apiDeleteItem, cloneItemToLibrary, recordPlay, fetchMe, fetchMyRooms, fetchMyTables, fetchPublicTables, createTable, postCharacterUpdate, postAddCharacter, postTableOp, postLifeSupportSelect, postRestMoveSelect, normalizeRoll, conceptAiEnabled, imageGenEnabled, fetchTableBillingStatus, postMapImageFile, postMapImageFileForTable, postMapImageObject, postGenerateInviteLink, postRevokeInviteLink, postJoinInviteToken, postLeaveTable, putUserPreferences } from './lib/api.js';
+import { auth, getAuthToken, CLIENT_ID, loadCollection, loadTableState, resolveItems, saveItem as apiSaveItem, saveImage as apiSaveImage, deleteItem as apiDeleteItem, cloneItemToLibrary, recordPlay, fetchMe, fetchMyRooms, fetchMyTables, fetchPublicTables, createTable, postCharacterUpdate, postAddCharacter, postTableOp, postLifeSupportSelect, postRestMoveSelect, normalizeRoll, conceptAiEnabled, imageGenEnabled, daggerheartWhitelistDisabled, fetchTableBillingStatus, postMapImageFile, postMapImageFileForTable, postMapImageObject, postGenerateInviteLink, postRevokeInviteLink, postJoinInviteToken, postLeaveTable, putUserPreferences } from './lib/api.js';
 import { dataUrlToFile, loadImageNaturalSizeFromUrl } from './lib/map-image-data-url.js';
 import { withImageUploadBusy } from './lib/image-upload-busy.js';
 import { AiUiPreferenceProvider, useAiUiPreference } from './lib/ai-ui-preference-context.jsx';
@@ -38,6 +38,11 @@ import { grantSpotlightToCharacter, showChooseSpotlightBanner } from './lib/spot
 import { shouldStartGmTableRoomEffects } from './lib/gm-table-sse-ownership-gate.js';
 import { shouldFetchTableState, tableAccessErrorAfterFetch } from './lib/table-state-load.js';
 import { billingNavIndicatorCopy } from './lib/billing-status-copy.js';
+import {
+  isGoogleSignInRejectingNewUsers,
+  isLikelyBrandNewFirebaseUser,
+  shouldSkipAuthAdmission,
+} from './lib/new-signups-gate.js';
 import {
   collectNavTableEntries,
   loadTableNavAccessMap,
@@ -456,6 +461,18 @@ function App() {
     if (!auth) { setLoading(false); return; }
 
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      if (
+        currentUser
+        && daggerheartWhitelistDisabled
+        && shouldSkipAuthAdmission({
+          rejectingNewGoogleUsers: isGoogleSignInRejectingNewUsers(),
+          isBrandNew: isLikelyBrandNewFirebaseUser(currentUser),
+        })
+      ) {
+        deleteUser(currentUser).catch(() => {});
+        setLoading(false);
+        return;
+      }
       userRef.current = currentUser;
       setUser(currentUser);
       setLoading(false);
@@ -2587,7 +2604,9 @@ function App() {
         ) : (
           <div className="flex-1 min-h-0 overflow-y-auto flex flex-col items-center px-8 py-10 bg-gradient-to-b from-dh-surface to-dh-canvas">
             <img src="/assets/daggertop-logo.png" alt="Daggertop" className="w-40 h-40 object-contain mb-4" />
-            <h1 className="text-5xl font-bold text-red-500 tracking-wider mb-3 flex items-center gap-3">DAGGERTOP</h1>
+            <h1 className={`text-5xl font-bold text-red-500 tracking-wider flex items-center gap-3 ${daggerheartWhitelistDisabled ? 'mb-8' : 'mb-3'}`}>DAGGERTOP</h1>
+            {!daggerheartWhitelistDisabled && (
+            <div data-testid="home-marketing">
             <p className="text-lg text-dh-muted mb-4 text-center max-w-lg">The best way to play the Daggerheart RPG.</p>
             <ul className="text-dh-muted text-sm text-left max-w-lg mb-8 space-y-2 list-none">
             <li className="flex gap-2"><span className="text-red-500 mt-0.5 shrink-0">•</span><span>Virtual tabletop (VTT) built specifically for Daggerheart, with Hope, Fear, and range tracking, multiple maps and cameras, a dice roller and action log, and more!</span></li>
@@ -2595,8 +2614,10 @@ function App() {
             <li className="flex gap-2"><span className="text-red-500 mt-0.5 shrink-0">•</span><span>Character builder with full support through level 10 and easy renaming of features for flavor.</span></li>
               <li className="flex gap-2"><span className="text-red-500 mt-0.5 shrink-0">•</span><span>Library of adversaries, environments, and more — pick up and play or dive deep into homebrew built by you and other creators.</span></li>
             </ul>
+            </div>
+            )}
             <AuthLanding initialMode={route.authMode || 'signin'} />
-            <HomeFeatureShots navigate={navigate} />
+            {!daggerheartWhitelistDisabled && <HomeFeatureShots navigate={navigate} />}
             <Footer navigate={navigate} />
           </div>
         ))}

@@ -1,7 +1,10 @@
 /** User-facing strings and small helpers — no firebase/auth import (safe for unit tests). */
 
+import { NEW_SIGNUPS_DISABLED_CODE, NEW_SIGNUPS_DISABLED_MESSAGE } from './new-signups-gate.js';
+
 export const ACCOUNT_EXISTS_DIFFERENT_CREDENTIAL = 'auth/account-exists-with-different-credential';
 export const EMAIL_ALREADY_IN_USE = 'auth/email-already-in-use';
+export { NEW_SIGNUPS_DISABLED_CODE };
 
 /**
  * @param {string} [code]
@@ -26,6 +29,8 @@ export function messageForFirebaseAuthError(code) {
       return 'Sign-in was cancelled.';
     case ACCOUNT_EXISTS_DIFFERENT_CREDENTIAL:
       return 'An account with this email already exists. Enter your password below to link Google.';
+    case NEW_SIGNUPS_DISABLED_CODE:
+      return NEW_SIGNUPS_DISABLED_MESSAGE;
     case 'auth/network-request-failed':
       return 'Network error. Check your connection.';
     default:
